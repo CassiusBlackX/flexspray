@@ -36,7 +36,6 @@ UbTransaction::UbTransaction(Ptr<Node> node)
     m_random = CreateObject<UniformRandomVariable>();
     m_random->SetAttribute("Min", DoubleValue(0.0));
     m_random->SetAttribute("Max", DoubleValue(1.0));
-    m_pushWqeSegmentToTpCb = MakeCallback(&UbTransaction::OnScheduleWqeSegmentFinish, this);
 }
 
 void UbTransaction::TpInit(Ptr<UbTransportChannel> tp)
@@ -274,6 +273,8 @@ void UbTransaction::ScheduleWqeSegment(Ptr<UbTransportChannel> tp)
     }
 
     Ptr<UbWqeSegment> wqeSegment = nullptr;
+    bool localOperation = false;
+    uint32_t nextRrIndex = m_tpRRIndex[tpn];
     // 从tpRRIndex开始轮询，找到第一个非空且可以拿到wqesegment的jetty，获取wqesegment
     for (uint32_t i = 0; i < rrCount; i++) {
         uint32_t rrIndex = (m_tpRRIndex[tpn] + i) % rrCount;
@@ -283,11 +284,12 @@ void UbTransaction::ScheduleWqeSegment(Ptr<UbTransportChannel> tp)
             if (currentJetty == nullptr) {
                 continue;
             }
-            wqeSegment = currentJetty->GetNextWqeSegment();
+            wqeSegment = currentJetty->PrepareNextWqeSegment();
             if (wqeSegment == nullptr) {
                 continue;
             }
             ValidateUrmaServiceModeOrDie(currentJetty->GetJettyNum(), wqeSegment);
+            localOperation = true;
         } else { // 轮询remoteRequest
             uint32_t remoteIndex = rrIndex - jettyCount;
             auto remoteIt = m_tpRelatedRemoteRequests.find(tpn);
@@ -317,33 +319,109 @@ void UbTransaction::ScheduleWqeSegment(Ptr<UbTransportChannel> tp)
             }
         }
         if (wqeSegment != nullptr) {
-            m_tpRRIndex[tpn] = (rrIndex + 1) % rrCount;
+            nextRrIndex = (rrIndex + 1) % rrCount;
             break;
         }
     }
     if (wqeSegment != nullptr) {
         wqeSegment->SetTpn(tpn);
-        Simulator::ScheduleNow(&UbTransaction::OnScheduleWqeSegmentFinish, this, wqeSegment);
+        Simulator::ScheduleNow(&UbTransaction::OnScheduleWqeSegmentFinish,
+                               this,
+                               wqeSegment,
+                               nextRrIndex,
+                               localOperation);
     } else {
         m_tpSchedulingStatus[tpn] = false;
     }
 
 }
 
-void UbTransaction::OnScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment)
+void UbTransaction::OnScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment,
+                                               uint32_t nextRrIndex,
+                                               bool localOperation)
 {
-    Ptr<UbTransportChannel> tp = m_tpnMap[segment->GetTpn()];
-    segment->SetTpMsn(tp->GetMsnCnt());
-    segment->SetPsnStart(tp->GetPsnCnt());
-    tp->UpdatePsnCnt(segment->GetPsnSize());
-    tp->UpDateMsnCnt(1);
-    tp->PushWqeSegment(segment);
+    const auto tpIt = m_tpnMap.find(segment->GetTpn());
+    if (tpIt == m_tpnMap.end() || tpIt->second == nullptr)
+    {
+        m_tpSchedulingStatus.erase(segment->GetTpn());
+        return;
+    }
+    Ptr<UbTransportChannel> tp = tpIt->second;
+    if (!tp->TryAdmitWqeSegment(segment))
+    {
+        if (!localOperation)
+        {
+            auto& remoteSegments =
+                m_tpRelatedRemoteRequests[segment->GetTpn()][segment->GetOriginJettyNum()];
+            remoteSegments.insert(remoteSegments.begin(), segment);
+        }
+        tp->SetTpFullStatus(tp->IsWqeSegmentLimited());
+        m_tpSchedulingStatus[segment->GetTpn()] = false;
+        return;
+    }
+
+    if (localOperation)
+    {
+        Ptr<UbJetty> jetty = GetJetty(segment->GetJettyNum());
+        NS_ABORT_MSG_IF(jetty == nullptr,
+                        "Admitted local WQE segment references a missing Jetty");
+        jetty->CommitWqeSegmentAdmission(segment);
+        RecordSegmentAdmission(segment);
+    }
+    m_tpRRIndex[segment->GetTpn()] = nextRrIndex;
     NS_LOG_INFO("WQE Segment Sends, taskId:" << segment->GetTaskId()
         << "TASSN: "<< segment->GetTaSsn());
     tp->WqeSegmentTriggerPortTransmit(segment);
     // TP调度状态重置
     m_tpSchedulingStatus[segment->GetTpn()] = false;
     ScheduleWqeSegment(tp);
+}
+
+void
+UbTransaction::RecordSegmentAdmission(Ptr<UbWqeSegment> segment)
+{
+    const std::pair<uint32_t, uint32_t> key{segment->GetJettyNum(), segment->GetTaskId()};
+    auto operation = m_operations.find(key);
+    NS_ABORT_MSG_IF(operation == m_operations.end(),
+                    "Admitted WQE segment has no Transaction operation context");
+    NS_ABORT_MSG_IF(operation->second.segments.find(segment->GetTaSsn()) !=
+                        operation->second.segments.end(),
+                    "Duplicate Transaction segment admission");
+
+    Ptr<UbLifecycleCoordinator> coordinator =
+        UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId));
+    const uint64_t localId = (static_cast<uint64_t>(segment->GetJettyNum()) << 32) |
+                             segment->GetTaSsn();
+    OperationRecord::SegmentRecord record;
+    record.identity = coordinator->OpenResource(UbLifecycleResourceKind::TRANSACTION_SEGMENT,
+                                                localId);
+    record.childLease = coordinator->AcquireLease(operation->second.wqeIdentity,
+                                                  UbLifecycleLeaseKind::CHILD,
+                                                  record.identity);
+    operation->second.segments.emplace(segment->GetTaSsn(), record);
+}
+
+bool
+UbTransaction::RecordSegmentSuccess(uint32_t jettyNum, uint32_t wqeId, uint32_t taSsn)
+{
+    auto operation = m_operations.find({jettyNum, wqeId});
+    if (operation == m_operations.end())
+    {
+        return true;
+    }
+    auto segment = operation->second.segments.find(taSsn);
+    if (segment == operation->second.segments.end())
+    {
+        return false;
+    }
+
+    Ptr<UbLifecycleCoordinator> coordinator =
+        UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId));
+    coordinator->ReleaseLease(segment->second.childLease);
+    coordinator->RecordSuccessfulTerminal(segment->second.identity);
+    coordinator->RetireResource(segment->second.identity);
+    operation->second.segments.erase(segment);
+    return true;
 }
 
 bool UbTransaction::ProcessWqeSegmentComplete(Ptr<UbWqeSegment> wqeSegment)
@@ -357,6 +435,11 @@ bool UbTransaction::ProcessWqeSegmentComplete(Ptr<UbWqeSegment> wqeSegment)
     if (wqeSegment->GetSegmentKind() == UbTransactionSegmentKind::RESPONSE) {
         jettyNum = wqeSegment->GetOriginJettyNum();
         taSsn = wqeSegment->GetRequestTassn();
+    }
+
+    if (!RecordSegmentSuccess(jettyNum, wqeSegment->GetTaskId(), taSsn))
+    {
+        return false;
     }
 
     Ptr<UbJetty> jetty = GetJetty(jettyNum);
@@ -605,8 +688,85 @@ void UbTransaction::AddWqe(uint32_t jettyNum, Ptr<UbWqe> wqe)
     }
 }
 
+bool
+UbTransaction::TryAdmitDirectWqe(uint32_t jettyNum,
+                                 Ptr<UbWqe> wqe,
+                                 const UbLifecycleResourceIdentity& wqeIdentity)
+{
+    const auto tpGroup = m_jettyTpGroup.find(jettyNum);
+    if (wqe == nullptr || tpGroup == m_jettyTpGroup.end() || tpGroup->second.size() != 1 ||
+        tpGroup->second.front() == nullptr)
+    {
+        return false;
+    }
+
+    const std::pair<uint32_t, uint32_t> key{jettyNum, wqe->GetWqeId()};
+    if (m_operations.find(key) != m_operations.end())
+    {
+        return false;
+    }
+
+    Ptr<UbTransportChannel> tp = tpGroup->second.front();
+    Ptr<UbLifecycleCoordinator> coordinator =
+        UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId));
+    OperationRecord operation;
+    operation.wqe = wqe;
+    operation.wqeIdentity = wqeIdentity;
+    operation.operationIdentity = coordinator->OpenResource(
+        UbLifecycleResourceKind::TRANSACTION_OPERATION,
+        wqe->GetWqeId());
+    operation.directTpn = tp->GetTpn();
+    operation.workLease = coordinator->AcquireLease(wqeIdentity,
+                                                    UbLifecycleLeaseKind::WORK,
+                                                    operation.operationIdentity);
+    operation.transportUseLease = coordinator->AcquireLease(wqeIdentity,
+                                                            UbLifecycleLeaseKind::TRANSPORT_USE,
+                                                            tp->GetLifecycleOwner());
+    m_operations.emplace(key, operation);
+    return true;
+}
+
+uint32_t
+UbTransaction::GetActiveOperationCount() const
+{
+    return static_cast<uint32_t>(m_operations.size());
+}
+
+bool
+UbTransaction::TryGetOperationSnapshot(uint32_t jettyNum,
+                                       uint32_t wqeId,
+                                       UbTransactionOperationSnapshot& snapshot) const
+{
+    const auto it = m_operations.find({jettyNum, wqeId});
+    if (it == m_operations.end())
+    {
+        return false;
+    }
+    snapshot.wqeIdentity = it->second.wqeIdentity;
+    snapshot.operationIdentity = it->second.operationIdentity;
+    snapshot.directTpn = it->second.directTpn;
+    snapshot.activeSegments = static_cast<uint32_t>(it->second.segments.size());
+    return true;
+}
+
 void UbTransaction::WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe)
 {
+    const auto operation = m_operations.find({jettyNum, wqe->GetWqeId()});
+    if (operation != m_operations.end())
+    {
+        NS_ABORT_MSG_IF(!operation->second.segments.empty(),
+                        "Cannot retire a WQE with active Transaction segments");
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId));
+        coordinator->ReleaseLease(operation->second.workLease);
+        coordinator->ReleaseLease(operation->second.transportUseLease);
+        coordinator->RecordSuccessfulTerminal(operation->second.operationIdentity);
+        coordinator->RetireResource(operation->second.operationIdentity);
+        coordinator->RecordSuccessfulTerminal(operation->second.wqeIdentity);
+        coordinator->RetireResource(operation->second.wqeIdentity);
+        m_operations.erase(operation);
+    }
+
     if (m_serviceMode.find(jettyNum) == m_serviceMode.end() || m_serviceMode[jettyNum] != TransactionServiceMode::ROI) {
         return;
     }
@@ -647,6 +807,7 @@ void UbTransaction::DoDispose()
     m_random = nullptr;
     m_serviceMode.clear();
     m_memoryStore.clear();
+    m_operations.clear();
     for (auto &it : m_jettyOrderedWqe) {
         it.second.clear();
     }

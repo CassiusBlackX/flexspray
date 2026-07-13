@@ -19,6 +19,16 @@ class Node;
 enum class UbLifecycleResourceKind : uint8_t
 {
     RTP_ENDPOINT = 1,
+    WQE = 2,
+    TRANSACTION_OPERATION = 3,
+    TRANSACTION_SEGMENT = 4,
+};
+
+enum class UbLifecycleLeaseKind : uint8_t
+{
+    WORK = 1,
+    CHILD = 2,
+    TRANSPORT_USE = 3,
 };
 
 enum class UbPacketTransfer : uint8_t
@@ -52,6 +62,16 @@ struct UbPacketAttemptIdentity
     bool operator==(const UbPacketAttemptIdentity&) const = default;
 };
 
+struct UbLifecycleLeaseIdentity
+{
+    UbLifecycleResourceIdentity owner;
+    UbLifecycleResourceIdentity related;
+    UbLifecycleLeaseKind kind{UbLifecycleLeaseKind::WORK};
+    uint64_t lease{0};
+
+    bool operator==(const UbLifecycleLeaseIdentity&) const = default;
+};
+
 std::ostream& operator<<(std::ostream& os, const UbLifecycleResourceIdentity& identity);
 std::ostream& operator<<(std::ostream& os, const UbPacketAttemptIdentity& identity);
 
@@ -83,6 +103,10 @@ struct UbLifecycleResourceSnapshot
     uint64_t lastBirthSequence{0};
     uint64_t lastTransferSequence{0};
     uint64_t lastTerminalSequence{0};
+    uint64_t activeWorkLeases{0};
+    uint64_t activeChildLeases{0};
+    uint64_t activeTransportUseLeases{0};
+    uint64_t successfulTerminals{0};
     bool retired{false};
 };
 
@@ -92,6 +116,14 @@ class UbLifecycleCoordinator : public Object
     static TypeId GetTypeId();
 
     static Ptr<UbLifecycleCoordinator> GetOrCreate(Ptr<Node> node);
+
+    UbLifecycleResourceIdentity OpenResource(UbLifecycleResourceKind kind, uint64_t localId);
+    void RetireResource(const UbLifecycleResourceIdentity& identity);
+    UbLifecycleLeaseIdentity AcquireLease(const UbLifecycleResourceIdentity& owner,
+                                          UbLifecycleLeaseKind kind,
+                                          const UbLifecycleResourceIdentity& related);
+    void ReleaseLease(const UbLifecycleLeaseIdentity& lease);
+    void RecordSuccessfulTerminal(const UbLifecycleResourceIdentity& identity);
 
     UbLifecycleResourceIdentity OpenPacketOwner(UbLifecycleResourceKind kind, uint64_t localId);
     void RetirePacketOwner(const UbLifecycleResourceIdentity& identity);
@@ -115,9 +147,11 @@ class UbLifecycleCoordinator : public Object
     {
         uint64_t generation{0};
         uint64_t nextAttempt{0};
+        uint64_t nextLease{0};
         uint64_t sequence{0};
         UbLifecycleResourceSnapshot snapshot;
         std::set<uint64_t> activeAttempts;
+        std::map<uint64_t, UbLifecycleLeaseIdentity> activeLeases;
     };
 
     static bool TryReadIdentity(Ptr<const Packet> packet, UbPacketAttemptIdentity& identity);

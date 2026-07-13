@@ -15,6 +15,20 @@
 
 namespace ns3 {
     class UbController;
+
+    enum class UbWqeSubmissionStatus : uint8_t
+    {
+        ACCEPTED = 0,
+        JETTY_NOT_FOUND = 1,
+        JETTY_BINDING_MISMATCH = 2,
+        NO_DIRECT_TRANSPORT = 3,
+    };
+
+    struct UbWqeSubmissionResult
+    {
+        UbWqeSubmissionStatus status{UbWqeSubmissionStatus::JETTY_NOT_FOUND};
+        UbLifecycleResourceIdentity wqeIdentity;
+    };
     /**
     * @brief 管理jetty
     */
@@ -69,6 +83,7 @@ namespace ns3 {
          * @param Client传入URMA任务
          */
         void PushWqeToJetty(Ptr<UbWqe> wqe, uint32_t jettyNum);
+        UbWqeSubmissionResult SubmitWqe(Ptr<UbWqe> wqe, uint32_t jettyNum);
     private:
         void DoDispose() override;
         Ptr<UbTransaction> GetTransaction();
@@ -90,6 +105,8 @@ namespace ns3 {
         static TypeId GetTypeId(void);
         UbJetty();
         Ptr<UbWqeSegment> GetNextWqeSegment();
+        Ptr<UbWqeSegment> PrepareNextWqeSegment();
+        void CommitWqeSegmentAdmission(Ptr<UbWqeSegment> segment);
         bool ProcessWqeSegmentComplete(uint32_t taSsnFin);
         void RightShiftBitset(uint32_t shiftCount);
         void SetTaSegmentBytes(uint32_t bytes);
@@ -205,6 +222,11 @@ namespace ns3 {
         uint32_t GetTaSsnSndNxtForTest() const
         {
             return m_taSsnSndNxt;
+        }
+
+        uint32_t GetActiveWqeCount() const
+        {
+            return static_cast<uint32_t>(m_wqeVector.size());
         }
 
     private:
