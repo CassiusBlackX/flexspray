@@ -1236,6 +1236,20 @@ void UbTransaction::WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe, UbWorkOutcome o
         hadLifecycleOperation = true;
         wqeIdentity = operation->second.wqeIdentity;
         Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
+        std::vector<uint32_t> terminalTaSsns;
+        terminalTaSsns.reserve(operation->second.segments.size());
+        for (const auto& [taSsn, segment] : operation->second.segments)
+        {
+            (void)segment;
+            terminalTaSsns.push_back(taSsn);
+        }
+        if (!terminalTaSsns.empty())
+        {
+            Ptr<UbJetty> jetty = GetJetty(jettyNum);
+            NS_ABORT_MSG_IF(jetty == nullptr,
+                            "Admitted Transaction segments require their Jetty owner");
+            jetty->ApplyWqeSegmentTerminalProgress(terminalTaSsns);
+        }
         for (const auto& [taSsn, segment] : operation->second.segments)
         {
             (void)taSsn;
@@ -1270,9 +1284,7 @@ void UbTransaction::WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe, UbWorkOutcome o
         hadLifecycleOperation && !orderedWqes.empty() &&
         orderedWqes.front() == wqe->GetWqeId();
     const bool wakeOrderedSuccessor =
-        terminalizedOrderedFront &&
-        (outcome == UbWorkOutcome::COMPLETED ||
-         GetFunction()->IsJettyAcceptingWqes(jettyNum));
+        terminalizedOrderedFront && GetFunction()->ShouldContinueAcceptedWqes(jettyNum);
     auto it = std::find(orderedWqes.begin(), orderedWqes.end(), wqe->GetWqeId());
     if (it != orderedWqes.end()) {
         orderedWqes.erase(it);
