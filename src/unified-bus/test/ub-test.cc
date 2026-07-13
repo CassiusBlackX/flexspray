@@ -8164,6 +8164,193 @@ class UbLifecycleSameJettyConcurrentWqesMakeIndependentProgressTest : public Tes
     std::set<uint32_t> m_completedTasks;
 };
 
+class UbLifecycleStrongOrderTerminalWakesSuccessorTest : public TestCase
+{
+  public:
+    UbLifecycleStrongOrderTerminalWakesSuccessorTest(UbWorkOutcome frontOutcome,
+                                                     const std::string& outcomeName)
+        : TestCase("UnifiedBus - strong-order " + outcomeName +
+                   " front wakes accepted successor"),
+          m_frontOutcome(frontOutcome)
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        m_transaction = controller->GetUbTransaction();
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->JettyBindTp(topo.sender->GetId(),
+                                                         topo.receiver->GetId(),
+                                                         kUrmaWriteRegressionJettyNum,
+                                                         false,
+                                                         {kUrmaWriteRegressionSenderTpn}),
+                              true,
+                              "Strong-order WQEs should share one direct TP binding");
+
+        controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn)
+            ->TraceConnectWithoutContext(
+                "WqeSegmentSendsNotify",
+                MakeCallback(&UbLifecycleStrongOrderTerminalWakesSuccessorTest::OnAdmitted,
+                             this));
+        function->GetJetty(kUrmaWriteRegressionJettyNum)
+            ->SetWqeCompletionCallback(MakeCallback(
+                &UbLifecycleStrongOrderTerminalWakesSuccessorTest::OnTerminal,
+                this));
+
+        for (uint32_t taskId : {kUrmaWriteRegressionTaskId,
+                                kUrmaWriteRegressionTaskId + 1})
+        {
+            Ptr<UbWqe> wqe = function->CreateWqe(topo.sender->GetId(),
+                                                 topo.receiver->GetId(),
+                                                 64,
+                                                 taskId,
+                                                 TaOpcode::TA_OPCODE_WRITE);
+            wqe->SetOrderType(OrderType::ORDER_STRONG);
+            if (taskId == kUrmaWriteRegressionTaskId + 1)
+            {
+                m_successorWqe = wqe;
+            }
+            NS_TEST_ASSERT_MSG_EQ(
+                static_cast<uint32_t>(
+                    function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status),
+                static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+                "Each strong-order WQE should enter its own lifecycle operation");
+        }
+
+        Simulator::ScheduleNow(
+            &UbLifecycleStrongOrderTerminalWakesSuccessorTest::TerminalizeFront,
+            this);
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
+
+        NS_TEST_ASSERT_MSG_EQ(m_blockedSuccessorObserved,
+                              true,
+                              "Successor initial prepare should be blocked before front terminal");
+        NS_TEST_ASSERT_MSG_EQ(m_admittedTasks.size(),
+                              1u,
+                              "Only the successor should reach TP admission after front terminal");
+        if (m_admittedTasks.size() == 1)
+        {
+            NS_TEST_ASSERT_MSG_EQ(m_admittedTasks[0],
+                                  kUrmaWriteRegressionTaskId + 1,
+                                  "Strong-order successor should admit after front terminal");
+        }
+        NS_TEST_ASSERT_MSG_EQ(m_terminals.size(),
+                              2u,
+                              "Front and successor should each produce one typed terminal");
+        if (m_terminals.size() == 2)
+        {
+            NS_TEST_ASSERT_MSG_EQ(m_terminals[0].wqeId,
+                                  kUrmaWriteRegressionTaskId,
+                                  "Front WQE should terminalize first");
+            NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_terminals[0].outcome),
+                                  static_cast<uint32_t>(m_frontOutcome),
+                                  "Front WQE should preserve its requested typed terminal");
+            NS_TEST_ASSERT_MSG_EQ(m_terminals[1].wqeId,
+                                  kUrmaWriteRegressionTaskId + 1,
+                                  "Successor WQE should terminalize second");
+            NS_TEST_ASSERT_MSG_EQ(
+                static_cast<uint32_t>(m_terminals[1].outcome),
+                static_cast<uint32_t>(UbWorkOutcome::COMPLETED),
+                "Successor WQE should complete normally after ordered admission");
+        }
+        NS_TEST_ASSERT_MSG_EQ(m_progress.size(),
+                              3u,
+                              "Strong-order terminal wake should expose one exact progress chain");
+        if (m_progress.size() == 3)
+        {
+            NS_TEST_ASSERT_MSG_EQ(m_progress[0],
+                                  TerminalEvent(kUrmaWriteRegressionTaskId),
+                                  "Front typed terminal should happen first");
+            NS_TEST_ASSERT_MSG_EQ(m_progress[1],
+                                  kUrmaWriteRegressionTaskId + 1,
+                                  "Successor admission should follow the front terminal");
+            NS_TEST_ASSERT_MSG_EQ(m_progress[2],
+                                  TerminalEvent(kUrmaWriteRegressionTaskId + 1),
+                                  "Successor completion should follow its admission");
+        }
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->GetActiveOperationCount(),
+                              0u,
+                              "Front terminal and successor completion should retire both "
+                              "operations");
+        NS_TEST_ASSERT_MSG_EQ(m_successorAdmissionPinned,
+                              true,
+                              "Direct completion seam should observe one admitted successor "
+                              "segment");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    static uint64_t TerminalEvent(uint32_t taskId)
+    {
+        return (uint64_t{1} << 32) | taskId;
+    }
+
+    void TerminalizeFront()
+    {
+        UbTransactionOperationSnapshot successor;
+        m_blockedSuccessorObserved =
+            m_transaction->TryGetOperationSnapshot(kUrmaWriteRegressionJettyNum,
+                                                   kUrmaWriteRegressionTaskId + 1,
+                                                   successor) &&
+            successor.activeSegments == 0 && m_admittedTasks.empty();
+        m_transaction->CompleteWqeOperation(kUrmaWriteRegressionJettyNum,
+                                            kUrmaWriteRegressionTaskId,
+                                            m_frontOutcome);
+    }
+
+    void OnAdmitted(uint32_t, uint32_t taskId, uint32_t)
+    {
+        m_admittedTasks.push_back(taskId);
+        m_progress.push_back(taskId);
+        if (taskId == kUrmaWriteRegressionTaskId + 1)
+        {
+            Simulator::ScheduleNow(
+                &UbLifecycleStrongOrderTerminalWakesSuccessorTest::CompleteSuccessor,
+                this);
+        }
+    }
+
+    void CompleteSuccessor()
+    {
+        UbTransactionOperationSnapshot successor;
+        m_successorAdmissionPinned =
+            m_transaction->TryGetOperationSnapshot(kUrmaWriteRegressionJettyNum,
+                                                   kUrmaWriteRegressionTaskId + 1,
+                                                   successor) &&
+            successor.activeSegments == 1 &&
+            successor.activeTransportWorkLeases == 1;
+        m_transaction->WqeFinish(kUrmaWriteRegressionJettyNum,
+                                 m_successorWqe,
+                                 UbWorkOutcome::COMPLETED);
+        Simulator::Stop();
+    }
+
+    void OnTerminal(UbWqeCompletion completion)
+    {
+        m_terminals.push_back(completion);
+        m_progress.push_back(TerminalEvent(completion.wqeId));
+    }
+
+    UbWorkOutcome m_frontOutcome;
+    Ptr<UbTransaction> m_transaction;
+    Ptr<UbWqe> m_successorWqe;
+    bool m_blockedSuccessorObserved{false};
+    bool m_successorAdmissionPinned{false};
+    std::vector<uint32_t> m_admittedTasks;
+    std::vector<UbWqeCompletion> m_terminals;
+    std::vector<uint64_t> m_progress;
+};
+
 #ifndef _WIN32
 class UbLifecycleAcceptedTpWorkBlocksGenerationRetirementTest : public TestCase
 {
@@ -17055,6 +17242,14 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
     AddTestCase(new UbLifecycleTpgRoundRobinPreservesCrossJettyInitialPhaseTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleSameJettyConcurrentWqesMakeIndependentProgressTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleStrongOrderTerminalWakesSuccessorTest(
+                    UbWorkOutcome::FAILED,
+                    "failed"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleStrongOrderTerminalWakesSuccessorTest(
+                    UbWorkOutcome::CANCELED,
+                    "canceled"),
                 TestCase::Duration::QUICK);
 #ifndef _WIN32
     AddTestCase(new UbLifecycleAcceptedTpWorkBlocksGenerationRetirementTest(),

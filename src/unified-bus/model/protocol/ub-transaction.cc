@@ -1266,16 +1266,20 @@ void UbTransaction::WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe, UbWorkOutcome o
     }
     // 从vector中寻找该wqe并删除
     std::vector<uint32_t>& orderedWqes = m_jettyOrderedWqe[jettyNum];
-    const bool completedOrderedFront =
-        hadLifecycleOperation && outcome == UbWorkOutcome::COMPLETED && !orderedWqes.empty() &&
+    const bool terminalizedOrderedFront =
+        hadLifecycleOperation && !orderedWqes.empty() &&
         orderedWqes.front() == wqe->GetWqeId();
+    const bool wakeOrderedSuccessor =
+        terminalizedOrderedFront &&
+        (outcome == UbWorkOutcome::COMPLETED ||
+         GetFunction()->IsJettyAcceptingWqes(jettyNum));
     auto it = std::find(orderedWqes.begin(), orderedWqes.end(), wqe->GetWqeId());
     if (it != orderedWqes.end()) {
         orderedWqes.erase(it);
     }
 
     Ptr<UbWqe> newlyEligibleStrongWqe;
-    if (completedOrderedFront && !orderedWqes.empty())
+    if (wakeOrderedSuccessor && !orderedWqes.empty())
     {
         const auto nextOperation = m_operations.find({jettyNum, orderedWqes.front()});
         if (nextOperation != m_operations.end() && nextOperation->second.wqe != nullptr &&
