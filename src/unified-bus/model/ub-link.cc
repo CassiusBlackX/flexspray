@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "ub-link.h"
 #include "ns3/log.h"
+#include "ns3/ub-lifecycle.h"
 
 NS_LOG_COMPONENT_DEFINE("UbLink");
 
@@ -56,6 +57,8 @@ bool UbLink::TransmitStart(Ptr<Packet> p, Ptr<UbPort> src, Time txTime)
     NS_ASSERT(m_link[1].m_state != WireState::INITIALIZING);
 
     uint32_t wire = src == m_link[0].m_src ? 0 : 1;
+
+    UbLifecycleCoordinator::ObservePacketTransfer(p, UbPacketTransfer::LOCAL_LINK);
 
     Simulator::ScheduleWithContext(m_link[wire].m_dst->GetNode()->GetId(), txTime + m_delay, &UbPort::Receive,
                                    m_link[wire].m_dst, p);

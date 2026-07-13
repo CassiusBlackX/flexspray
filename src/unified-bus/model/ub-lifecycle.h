@@ -1,0 +1,137 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#ifndef UB_LIFECYCLE_H
+#define UB_LIFECYCLE_H
+
+#include "ns3/object.h"
+#include "ns3/packet.h"
+#include "ns3/tag.h"
+
+#include <cstdint>
+#include <map>
+#include <ostream>
+#include <set>
+
+namespace ns3
+{
+
+class Node;
+
+enum class UbLifecycleResourceKind : uint8_t
+{
+    RTP_ENDPOINT = 1,
+};
+
+enum class UbPacketTransfer : uint8_t
+{
+    EGRESS_QUEUE_ENQUEUE = 1,
+    EGRESS_QUEUE_DEQUEUE = 2,
+    LOCAL_LINK = 3,
+};
+
+enum class UbPacketTerminal : uint8_t
+{
+    ENDPOINT_CONSUMED = 1,
+    ROUTE_NOT_FOUND = 2,
+};
+
+struct UbLifecycleResourceIdentity
+{
+    uint32_t ownerNodeId{0};
+    UbLifecycleResourceKind kind{UbLifecycleResourceKind::RTP_ENDPOINT};
+    uint64_t localId{0};
+    uint64_t generation{0};
+
+    bool operator==(const UbLifecycleResourceIdentity&) const = default;
+};
+
+struct UbPacketAttemptIdentity
+{
+    UbLifecycleResourceIdentity owner;
+    uint64_t attempt{0};
+
+    bool operator==(const UbPacketAttemptIdentity&) const = default;
+};
+
+std::ostream& operator<<(std::ostream& os, const UbLifecycleResourceIdentity& identity);
+std::ostream& operator<<(std::ostream& os, const UbPacketAttemptIdentity& identity);
+
+class UbPacketLifecycleTag : public Tag
+{
+  public:
+    static TypeId GetTypeId();
+    TypeId GetInstanceTypeId() const override;
+
+    uint32_t GetSerializedSize() const override;
+    void Serialize(TagBuffer buffer) const override;
+    void Deserialize(TagBuffer buffer) override;
+    void Print(std::ostream& os) const override;
+
+    void SetIdentity(const UbPacketAttemptIdentity& identity);
+    UbPacketAttemptIdentity GetIdentity() const;
+
+  private:
+    UbPacketAttemptIdentity m_identity;
+};
+
+struct UbLifecycleResourceSnapshot
+{
+    uint64_t inFlightPackets{0};
+    uint64_t registeredPackets{0};
+    uint64_t transferObservations{0};
+    uint64_t endpointConsumed{0};
+    uint64_t routeNotFoundDrops{0};
+    uint64_t lastBirthSequence{0};
+    uint64_t lastTransferSequence{0};
+    uint64_t lastTerminalSequence{0};
+    bool retired{false};
+};
+
+class UbLifecycleCoordinator : public Object
+{
+  public:
+    static TypeId GetTypeId();
+
+    static Ptr<UbLifecycleCoordinator> GetOrCreate(Ptr<Node> node);
+
+    UbLifecycleResourceIdentity OpenPacketOwner(UbLifecycleResourceKind kind, uint64_t localId);
+    void RetirePacketOwner(const UbLifecycleResourceIdentity& identity);
+    UbPacketAttemptIdentity RegisterPacketAttempt(const UbLifecycleResourceIdentity& owner,
+                                                  Ptr<Packet> packet);
+    UbLifecycleResourceSnapshot GetSnapshot(const UbLifecycleResourceIdentity& owner) const;
+
+    static void ObservePacketTransfer(Ptr<Packet> packet, UbPacketTransfer transfer);
+    static void TerminatePacket(Ptr<Packet> packet, UbPacketTerminal terminal);
+
+  private:
+    struct ResourceKey
+    {
+        UbLifecycleResourceKind kind;
+        uint64_t localId;
+
+        bool operator<(const ResourceKey& other) const;
+    };
+
+    struct ResourceState
+    {
+        uint64_t generation{0};
+        uint64_t nextAttempt{0};
+        uint64_t sequence{0};
+        UbLifecycleResourceSnapshot snapshot;
+        std::set<uint64_t> activeAttempts;
+    };
+
+    static bool TryReadIdentity(Ptr<const Packet> packet, UbPacketAttemptIdentity& identity);
+    static Ptr<UbLifecycleCoordinator> Resolve(const UbPacketAttemptIdentity& identity);
+
+    ResourceState& ValidateMutable(const UbLifecycleResourceIdentity& identity);
+    const ResourceState& Validate(const UbLifecycleResourceIdentity& identity) const;
+    void ObservePacketTransfer(const UbPacketAttemptIdentity& identity, UbPacketTransfer transfer);
+    void TerminatePacket(const UbPacketAttemptIdentity& identity, UbPacketTerminal terminal);
+
+    uint32_t m_ownerNodeId{0};
+    std::map<ResourceKey, ResourceState> m_resources;
+};
+
+} // namespace ns3
+
+#endif // UB_LIFECYCLE_H

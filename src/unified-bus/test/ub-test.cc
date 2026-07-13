@@ -24,6 +24,7 @@
 #include "ns3/ub-flow-control.h"
 #include "ns3/ub-function.h"
 #include "ns3/ub-link.h"
+#include "ns3/ub-lifecycle.h"
 #include "ns3/ub-modulo-sequence.h"
 #include "ns3/ub-port.h"
 #include "ns3/ub-queue-manager.h"
@@ -6713,6 +6714,395 @@ RunInChildProcess(const std::function<void()>& fn)
 
 } // namespace
 
+class UbLifecyclePacketAccountingTest : public TestCase
+{
+  public:
+    UbLifecyclePacketAccountingTest()
+        : TestCase("UnifiedBus - packet lifecycle balances typed terminals by generation")
+    {
+    }
+
+    void DoRun() override
+    {
+        Ptr<Node> ownerNode = CreateObject<Node>();
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(ownerNode);
+        const UbLifecycleResourceIdentity firstOwner =
+            coordinator->OpenPacketOwner(UbLifecycleResourceKind::RTP_ENDPOINT, 101);
+
+        Ptr<Packet> consumedPacket = Create<Packet>(64);
+        const UbPacketAttemptIdentity consumedAttempt =
+            coordinator->RegisterPacketAttempt(firstOwner, consumedPacket);
+        UbLifecycleResourceSnapshot snapshot = coordinator->GetSnapshot(firstOwner);
+        NS_TEST_ASSERT_MSG_EQ(snapshot.inFlightPackets,
+                              1u,
+                              "Packet birth should increment the owner balance exactly once");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.registeredPackets,
+                              1u,
+                              "Packet birth should register one physical attempt");
+
+        UbLifecycleCoordinator::TerminatePacket(consumedPacket,
+                                                UbPacketTerminal::ENDPOINT_CONSUMED);
+        snapshot = coordinator->GetSnapshot(firstOwner);
+        NS_TEST_ASSERT_MSG_EQ(snapshot.inFlightPackets,
+                              0u,
+                              "Endpoint consumption should return the balance to zero");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.endpointConsumed,
+                              1u,
+                              "Endpoint consumption should record one typed terminal");
+
+        Ptr<Packet> droppedPacket = Create<Packet>(64);
+        const UbPacketAttemptIdentity droppedAttempt =
+            coordinator->RegisterPacketAttempt(firstOwner, droppedPacket);
+        UbLifecycleCoordinator::TerminatePacket(droppedPacket,
+                                                UbPacketTerminal::ROUTE_NOT_FOUND);
+        snapshot = coordinator->GetSnapshot(firstOwner);
+        NS_TEST_ASSERT_MSG_EQ(snapshot.inFlightPackets,
+                              0u,
+                              "Explicit drop should return the balance to zero");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.routeNotFoundDrops,
+                              1u,
+                              "Route failure should record one typed drop terminal");
+        NS_TEST_ASSERT_MSG_LT(consumedAttempt.attempt,
+                              droppedAttempt.attempt,
+                              "Physical attempts should receive monotonic owner-local identities");
+        NS_TEST_ASSERT_MSG_LT(snapshot.lastBirthSequence,
+                              snapshot.lastTerminalSequence,
+                              "Terminal application must be causally after packet birth");
+
+        coordinator->RetirePacketOwner(firstOwner);
+        const UbLifecycleResourceIdentity secondOwner =
+            coordinator->OpenPacketOwner(UbLifecycleResourceKind::RTP_ENDPOINT, 101);
+        NS_TEST_ASSERT_MSG_GT(secondOwner.generation,
+                              firstOwner.generation,
+                              "Reopening an owner-local resource should allocate a new generation");
+
+        Simulator::Destroy();
+    }
+};
+
+class UbLifecyclePacketMetadataTransferTest : public TestCase
+{
+  public:
+    UbLifecyclePacketMetadataTransferTest()
+        : TestCase("UnifiedBus - packet lifecycle identity survives queue link copy and serialization")
+    {
+    }
+
+    void DoRun() override
+    {
+        Ptr<Node> ownerNode = CreateObject<Node>();
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(ownerNode);
+        const UbLifecycleResourceIdentity owner =
+            coordinator->OpenPacketOwner(UbLifecycleResourceKind::RTP_ENDPOINT, 7);
+        Ptr<Packet> packet = Create<Packet>(32);
+        const UbPacketAttemptIdentity attempt =
+            coordinator->RegisterPacketAttempt(owner, packet);
+
+        Ptr<Packet> copy = packet->Copy();
+        UbPacketLifecycleTag copyTag;
+        NS_TEST_ASSERT_MSG_EQ(copy->PeekPacketTag(copyTag),
+                              true,
+                              "Packet copy should retain simulator-only lifecycle metadata");
+        NS_TEST_ASSERT_MSG_EQ(copyTag.GetIdentity(),
+                              attempt,
+                              "Packet copy should preserve the same accounting identity");
+
+        std::vector<uint8_t> serialized(copy->GetSerializedSize());
+        NS_TEST_ASSERT_MSG_EQ(copy->Serialize(serialized.data(), serialized.size()),
+                              1u,
+                              "Packet serialization should include simulator-only tags");
+        Ptr<Packet> decoded =
+            Create<Packet>(serialized.data(), serialized.size(), true);
+        UbPacketLifecycleTag decodedTag;
+        NS_TEST_ASSERT_MSG_EQ(decoded->PeekPacketTag(decodedTag),
+                              true,
+                              "Deserialized packet should retain lifecycle metadata");
+        NS_TEST_ASSERT_MSG_EQ(decodedTag.GetIdentity(),
+                              attempt,
+                              "Serialization must not replace the accounting identity");
+
+        Ptr<UbEgressQueue> queue = CreateObject<UbEgressQueue>();
+        NS_TEST_ASSERT_MSG_EQ(queue->DoEnqueue(std::make_tuple(0, 1, decoded)),
+                              true,
+                              "Tracked packet should enter the egress queue");
+        auto [inPort, priority, dequeued] = queue->DoDequeue();
+        NS_TEST_ASSERT_MSG_EQ(inPort, 0u, "Egress queue should preserve ingress port metadata");
+        NS_TEST_ASSERT_MSG_EQ(priority, 1u, "Egress queue should preserve priority metadata");
+        NS_TEST_ASSERT_MSG_EQ(dequeued, decoded, "Queue transfer should preserve the packet object");
+
+        Ptr<Node> peerNode = CreateObject<Node>();
+        Ptr<UbPort> sourcePort = CreatePort(ownerNode);
+        Ptr<UbPort> destinationPort = CreatePort(peerNode);
+        Ptr<UbLink> link = CreateObject<UbLink>();
+        sourcePort->Attach(link);
+        destinationPort->Attach(link);
+        NS_TEST_ASSERT_MSG_EQ(link->TransmitStart(dequeued,
+                                                  sourcePort,
+                                                  NanoSeconds(1)),
+                              true,
+                              "Local link should accept the tracked packet");
+
+        const UbLifecycleResourceSnapshot snapshot = coordinator->GetSnapshot(owner);
+        NS_TEST_ASSERT_MSG_EQ(snapshot.inFlightPackets,
+                              1u,
+                              "Queue and local-link transfer must not recount the packet");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.registeredPackets,
+                              1u,
+                              "Transfer must preserve the original physical attempt count");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.transferObservations,
+                              3u,
+                              "Queue enqueue, queue dequeue, and local link should be observed");
+        NS_TEST_ASSERT_MSG_LT(snapshot.lastBirthSequence,
+                              snapshot.lastTransferSequence,
+                              "Transfer observations must be causally after packet birth");
+
+        UbLifecycleCoordinator::TerminatePacket(dequeued,
+                                                UbPacketTerminal::ENDPOINT_CONSUMED);
+        Simulator::Destroy();
+    }
+};
+
+Ptr<Packet>
+BuildLifecycleTracerPacket(const LocalTpTopology& topo)
+{
+    Ptr<UbTransportChannel> senderTp =
+        topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+    Ptr<UbWqeSegment> segment = CreateObject<UbWqeSegment>();
+    segment->SetSrc(topo.sender->GetId());
+    segment->SetDest(topo.receiver->GetId());
+    segment->SetSport(topo.senderPort->GetIfIndex());
+    segment->SetDport(topo.receiverPort->GetIfIndex());
+    segment->SetType(TaOpcode::TA_OPCODE_WRITE);
+    segment->SetSize(128);
+    segment->SetPriority(kUrmaWriteRegressionPriority);
+    segment->SetTaskId(kUrmaWriteRegressionTaskId);
+    segment->SetWqeSize(128);
+    segment->SetJettyNum(kUrmaWriteRegressionJettyNum);
+    segment->SetTaMsn(0);
+    segment->SetTaSsn(0);
+    segment->SetOrderType(OrderType::ORDER_NO);
+    segment->SetTpn(kUrmaWriteRegressionSenderTpn);
+    segment->SetTpMsn(0);
+    segment->SetPsnStart(0);
+    segment->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
+    segment->SetOriginJettyNum(kUrmaWriteRegressionJettyNum);
+    segment->SetRequestTassn(0);
+    segment->SetRequestOpcode(TaOpcode::TA_OPCODE_WRITE);
+    segment->SetResponseBytes(0);
+    segment->SetNeedsTransactionResponse(true);
+    segment->SetResLenBytes(128);
+    segment->SetPayloadBytes(128);
+    segment->SetCarrierBytes(128);
+    return senderTp->GenDataPacket(segment, 64, 64, 64);
+}
+
+class UbLifecycleRtpEndpointConsumeIntegrationTest : public TestCase
+{
+  public:
+    UbLifecycleRtpEndpointConsumeIntegrationTest()
+        : TestCase("UnifiedBus - RTP data birth drains after queue link and endpoint consume")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<Packet> packet = BuildLifecycleTracerPacket(topo);
+
+        UbPacketLifecycleTag tag;
+        const bool hasIdentity = packet->PeekPacketTag(tag);
+        NS_TEST_ASSERT_MSG_EQ(hasIdentity,
+                              true,
+                              "RTP DATA birth should attach a simulator-only lifecycle identity");
+        if (!hasIdentity)
+        {
+            Simulator::Destroy();
+            Config::Reset();
+            return;
+        }
+
+        const UbLifecycleResourceIdentity owner = tag.GetIdentity().owner;
+        NS_TEST_ASSERT_MSG_EQ(topo.senderPort->EnqueueToEgress(
+                                  std::make_tuple(0,
+                                                  kUrmaWriteRegressionPriority,
+                                                  packet)),
+                              true,
+                              "RTP DATA should enter the source egress queue");
+        topo.senderPort->TriggerTransmit();
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
+
+        Ptr<UbLifecycleCoordinator> coordinator =
+            topo.sender->GetObject<UbLifecycleCoordinator>();
+        NS_TEST_ASSERT_MSG_NE(coordinator,
+                              nullptr,
+                              "Packet accounting should remain node scoped at the birth owner");
+        const UbLifecycleResourceSnapshot snapshot = coordinator->GetSnapshot(owner);
+        NS_TEST_ASSERT_MSG_EQ(snapshot.registeredPackets,
+                              1u,
+                              "The physical RTP DATA attempt should be registered exactly once");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.inFlightPackets,
+                              0u,
+                              "Endpoint consumption should drain the packet balance");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.endpointConsumed,
+                              1u,
+                              "The endpoint should record one typed consume terminal");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.routeNotFoundDrops,
+                              0u,
+                              "The successful path should not record a route drop");
+        NS_TEST_ASSERT_MSG_GT(snapshot.transferObservations,
+                              0u,
+                              "The successful path should observe queue and local-link transfers");
+        NS_TEST_ASSERT_MSG_LT(snapshot.lastBirthSequence,
+                              snapshot.lastTransferSequence,
+                              "Birth should causally precede transfer");
+        NS_TEST_ASSERT_MSG_LT(snapshot.lastTransferSequence,
+                              snapshot.lastTerminalSequence,
+                              "Transfer should causally precede endpoint consumption");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbLifecycleRtpRouteDropIntegrationTest : public TestCase
+{
+  public:
+    UbLifecycleRtpRouteDropIntegrationTest()
+        : TestCase("UnifiedBus - RTP route failure records one typed drop and drains")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<Packet> packet = BuildLifecycleTracerPacket(topo);
+
+        UbPacketLifecycleTag tag;
+        const bool hasIdentity = packet->PeekPacketTag(tag);
+        NS_TEST_ASSERT_MSG_EQ(hasIdentity,
+                              true,
+                              "RTP DATA birth should attach lifecycle identity before a route drop");
+        if (!hasIdentity)
+        {
+            Simulator::Destroy();
+            Config::Reset();
+            return;
+        }
+
+        const UbLifecycleResourceIdentity owner = tag.GetIdentity().owner;
+        Ptr<UbRoutingProcess> switchRouting =
+            topo.switch0->GetObject<UbSwitch>()->GetRoutingProcess();
+        switchRouting->RemoveShortestRoute(NodeIdToIp(topo.receiver->GetId()).Get());
+        switchRouting->RemoveShortestRoute(
+            NodeIdToIp(topo.receiver->GetId(), topo.receiverPort->GetIfIndex()).Get());
+
+        NS_TEST_ASSERT_MSG_EQ(topo.senderPort->EnqueueToEgress(
+                                  std::make_tuple(0,
+                                                  kUrmaWriteRegressionPriority,
+                                                  packet)),
+                              true,
+                              "RTP DATA should enter the source egress queue before route lookup");
+        topo.senderPort->TriggerTransmit();
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
+
+        Ptr<UbLifecycleCoordinator> coordinator =
+            topo.sender->GetObject<UbLifecycleCoordinator>();
+        const UbLifecycleResourceSnapshot snapshot = coordinator->GetSnapshot(owner);
+        NS_TEST_ASSERT_MSG_EQ(snapshot.registeredPackets,
+                              1u,
+                              "Dropped RTP DATA should still be registered exactly once");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.inFlightPackets,
+                              0u,
+                              "Route drop should drain the packet balance");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.endpointConsumed,
+                              0u,
+                              "Route drop should not be reported as endpoint consumption");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.routeNotFoundDrops,
+                              1u,
+                              "Route failure should record exactly one typed drop terminal");
+        NS_TEST_ASSERT_MSG_LT(snapshot.lastTransferSequence,
+                              snapshot.lastTerminalSequence,
+                              "Route drop should be causally after local-link transfer");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+#ifndef _WIN32
+class UbLifecycleFailFastTest : public TestCase
+{
+  public:
+    UbLifecycleFailFastTest()
+        : TestCase("UnifiedBus - packet lifecycle rejects underflow stale and retired mutation")
+    {
+    }
+
+    void DoRun() override
+    {
+        ExpectAbort([]() {
+            auto [coordinator, owner] = CreateOwner();
+            Ptr<Packet> packet = Create<Packet>();
+            coordinator->RegisterPacketAttempt(owner, packet);
+            UbLifecycleCoordinator::TerminatePacket(packet,
+                                                    UbPacketTerminal::ENDPOINT_CONSUMED);
+            UbLifecycleCoordinator::TerminatePacket(packet,
+                                                    UbPacketTerminal::ENDPOINT_CONSUMED);
+        }, "Duplicate terminal should fail as packet-accounting underflow");
+
+        ExpectAbort([]() {
+            auto [coordinator, owner] = CreateOwner();
+            coordinator->RetirePacketOwner(owner);
+            coordinator->RegisterPacketAttempt(owner, Create<Packet>());
+        }, "Mutation after retirement should fail immediately");
+
+        ExpectAbort([]() {
+            auto [coordinator, owner] = CreateOwner();
+            coordinator->RetirePacketOwner(owner);
+            coordinator->OpenPacketOwner(owner.kind, owner.localId);
+            coordinator->RegisterPacketAttempt(owner, Create<Packet>());
+        }, "Stale generation mutation should fail immediately");
+
+        ExpectAbort([]() {
+            LocalTpTopology topo = BuildLocalTpTopology();
+            InstallStaticTpPair(topo);
+            Ptr<UbLifecycleCoordinator> coordinator =
+                UbLifecycleCoordinator::GetOrCreate(topo.sender);
+            const UbLifecycleResourceIdentity owner = coordinator->OpenPacketOwner(
+                UbLifecycleResourceKind::RTP_ENDPOINT,
+                kUrmaWriteRegressionSenderTpn);
+            coordinator->RetirePacketOwner(owner);
+            BuildLifecycleTracerPacket(topo);
+        }, "Retired RTP endpoint should not reopen itself during packet birth");
+    }
+
+  private:
+    static std::pair<Ptr<UbLifecycleCoordinator>, UbLifecycleResourceIdentity> CreateOwner()
+    {
+        Ptr<Node> node = CreateObject<Node>();
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(node);
+        return {coordinator,
+                coordinator->OpenPacketOwner(UbLifecycleResourceKind::RTP_ENDPOINT, 42)};
+    }
+
+    void ExpectAbort(const std::function<void()>& mutation, const std::string& message)
+    {
+        const int status = RunInChildProcess(mutation);
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, message << " with SIGABRT");
+        NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status), SIGABRT, message << " with SIGABRT");
+    }
+};
+#endif
+
 class UbPfcFixedModeCountsHeadroomTest : public TestCase
 {
   public:
@@ -12115,6 +12505,12 @@ class UbLinkDelayOffsetTestSuite : public TestSuite
     UbLinkDelayOffsetTestSuite();
 };
 
+class UbLifecycleTestSuite : public TestSuite
+{
+  public:
+    UbLifecycleTestSuite();
+};
+
 UbTestSuite::UbTestSuite()
     : TestSuite("unified-bus", Type::UNIT)
 {
@@ -12391,6 +12787,21 @@ UbLinkDelayOffsetTestSuite::UbLinkDelayOffsetTestSuite()
 }
 
 static UbLinkDelayOffsetTestSuite g_ubLinkDelayOffsetTestSuite;
+
+UbLifecycleTestSuite::UbLifecycleTestSuite()
+    : TestSuite("unified-bus-lifecycle", Type::UNIT)
+{
+    AddTestCase(new UbLifecyclePacketAccountingTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecyclePacketMetadataTransferTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleRtpEndpointConsumeIntegrationTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleRtpRouteDropIntegrationTest(), TestCase::Duration::QUICK);
+#ifndef _WIN32
+    AddTestCase(new UbLifecycleFailFastTest(), TestCase::Duration::QUICK);
+#endif
+}
+
+static UbLifecycleTestSuite g_ubLifecycleTestSuite;
 
 UbWireFormatTestSuite::UbWireFormatTestSuite()
     : TestSuite("unified-bus-wire-format", Type::UNIT)

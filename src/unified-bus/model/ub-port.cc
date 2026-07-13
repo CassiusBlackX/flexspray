@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "ns3/ub-port.h"
 #include "ns3/ub-link.h"
+#include "ns3/ub-lifecycle.h"
 #include "ns3/log.h"
 #include "ns3/ub-network-address.h"
 #include "ns3/ub-caqm.h"
@@ -70,6 +71,9 @@ bool UbEgressQueue::DoEnqueue(PacketEntry packetEntry)
     
     m_egressQ.push(packetEntry);
     m_currentBytes += pktSize;  // 更新字节统计
+    UbLifecycleCoordinator::ObservePacketTransfer(
+        pkt,
+        UbPacketTransfer::EGRESS_QUEUE_ENQUEUE);
     m_traceUbEnqueue(pkt, static_cast<uint32_t>(m_currentBytes));
 
     NS_LOG_LOGIC ("[UbEgressQueue DoEnqueue] Egress Queue size: " << m_egressQ.size () 
@@ -131,6 +135,9 @@ PacketEntry UbEgressQueue::DoDequeue()
     auto [inPortId, priority, pkt] = packetEntry;
     uint32_t pktSize = pkt->GetSize();
     m_currentBytes -= pktSize;  // 更新字节统计
+    UbLifecycleCoordinator::ObservePacketTransfer(
+        pkt,
+        UbPacketTransfer::EGRESS_QUEUE_DEQUEUE);
     m_traceUbDequeue(pkt, static_cast<uint32_t>(m_currentBytes));
 
     NS_LOG_LOGIC ("[UbEgressQueue DoDequeue] Egress Queue size: " << m_egressQ.size ()
