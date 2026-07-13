@@ -1149,6 +1149,11 @@ public:
         return m_bytesLeft == 0;
     }
 
+    bool HasStartedSending() const
+    {
+        return m_hasStartedSending;
+    }
+
     /**
      * @brief 更新已发送的字节数
      * @param sentBytes 本次发送的字节数
@@ -1158,6 +1163,7 @@ public:
     {
         uint64_t actualSent = std::min(sentBytes, m_bytesLeft);
         m_bytesLeft -= actualSent;
+        m_hasStartedSending = m_hasStartedSending || actualSent != 0;
         return actualSent;
     }
 
@@ -1406,6 +1412,7 @@ private:
     uint8_t m_dport{0};                             // 目的端口号
     TaOpcode m_type{TaOpcode::TA_OPCODE_WRITE};     // 操作类型 (READ/WRITE)
     uint32_t m_size{0};                             // 分段数据大小 (字节)
+    bool m_hasStartedSending{false};
     UbPriority m_priority{UB_PRIORITY_DEFAULT};     // 分段优先级
     uint32_t m_taskId{0};                           // 流的任务ID
     uint32_t m_wqeSize{0};                          // 所属WQE的size

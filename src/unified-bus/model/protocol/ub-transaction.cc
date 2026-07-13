@@ -743,6 +743,7 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
     const uint64_t localId = (static_cast<uint64_t>(segment->GetJettyNum()) << 32) |
                              segment->GetTaSsn();
     OperationRecord::SegmentRecord record;
+    record.segment = segment;
     record.identity = coordinator->OpenResource(UbLifecycleResourceKind::TRANSACTION_SEGMENT,
                                                 localId);
     record.childLease = coordinator->AcquireLease(operation->second.wqeIdentity,
@@ -1249,6 +1250,23 @@ void UbTransaction::WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe, UbWorkOutcome o
             NS_ABORT_MSG_IF(jetty == nullptr,
                             "Admitted Transaction segments require their Jetty owner");
             jetty->ApplyWqeSegmentTerminalProgress(terminalTaSsns);
+        }
+        for (auto segment = operation->second.segments.rbegin();
+             segment != operation->second.segments.rend();
+             ++segment)
+        {
+            const OperationRecord::SegmentRecord& record = segment->second;
+            NS_ABORT_MSG_IF(record.segment == nullptr,
+                            "Admitted Transaction record lost its segment instance");
+            const auto transport = m_tpnMap.find(record.segment->GetTpn());
+            NS_ABORT_MSG_IF(transport == m_tpnMap.end() || transport->second == nullptr ||
+                                transport->second->GetLifecycleOwner() !=
+                                    record.resolvedTpIdentity,
+                            "Admitted Transaction terminal lost its exact TP generation");
+            transport->second->TryCancelUnsentWqeSegment(
+                record.segment,
+                {operation->second.operationIdentity, record.identity},
+                record.resolvedTpIdentity);
         }
         for (const auto& [taSsn, segment] : operation->second.segments)
         {

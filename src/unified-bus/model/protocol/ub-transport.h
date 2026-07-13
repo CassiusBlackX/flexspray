@@ -278,6 +278,10 @@ public:
 
     bool TryAdmitWqeSegment(Ptr<UbWqeSegment> segment);
     bool CanAdmitWqeSegment(Ptr<const UbWqeSegment> segment) const;
+    bool TryCancelUnsentWqeSegment(
+        Ptr<UbWqeSegment> segment,
+        const UbTransactionCorrelationIdentity& expectedCorrelation,
+        const UbLifecycleResourceIdentity& expectedTpIdentity);
 
     uint32_t GetWqeSegmentVecSize() { return m_wqeSegmentVector.size(); }
     uint32_t GetActiveSendSegmentCount() const;
