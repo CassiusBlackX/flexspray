@@ -2002,7 +2002,7 @@ UbTransportChannel::CanAdmitWqeSegment(Ptr<const UbWqeSegment> segment) const
     return segment != nullptr && !IsWqeSegmentLimited() && CanScheduleAnotherSegment();
 }
 
-bool
+UbWqeSegmentTerminalDisposition
 UbTransportChannel::TryCancelUnsentWqeSegment(
     Ptr<UbWqeSegment> segment,
     const UbTransactionCorrelationIdentity& expectedCorrelation,
@@ -2020,21 +2020,78 @@ UbTransportChannel::TryCancelUnsentWqeSegment(
     const auto retained = std::find(m_wqeSegmentVector.begin(),
                                     m_wqeSegmentVector.end(),
                                     segment);
-    NS_ABORT_MSG_IF(retained == m_wqeSegmentVector.end(),
-                    "Admitted segment cancellation references non-retained TP work");
+    if (retained == m_wqeSegmentVector.end())
+    {
+        const uint64_t segmentEnd = segment->GetPsnStart() + segment->GetPsnSize();
+        NS_ABORT_MSG_IF(m_psnSndUna < segmentEnd,
+                        "Admitted segment disappeared before exact TP ACK cleanup");
+        return UbWqeSegmentTerminalDisposition::TRANSPORT_CLEANED;
+    }
 
-    const uint64_t segmentEnd = segment->GetPsnStart() + segment->GetPsnSize();
-    const bool currentReservationTail = segmentEnd == m_tpPsnCnt &&
-                                        segment->GetTpMsn() + 1 == m_tpMsnCnt;
-    if (segment->HasStartedSending() || !currentReservationTail ||
-        m_psnSndNxt > segment->GetPsnStart())
+    if (segment->HasStartedSending() || m_psnSndNxt > segment->GetPsnStart())
+    {
+        return UbWqeSegmentTerminalDisposition::RETAINED;
+    }
+
+    uint64_t expectedPsnStart = segment->GetPsnStart();
+    uint64_t expectedTpMsn = segment->GetTpMsn();
+    for (auto suffix = retained; suffix != m_wqeSegmentVector.end(); ++suffix)
+    {
+        const Ptr<UbWqeSegment>& retainedSegment = *suffix;
+        if (retainedSegment == nullptr || retainedSegment->HasStartedSending() ||
+            retainedSegment->GetPsnStart() != expectedPsnStart ||
+            retainedSegment->GetTpMsn() != expectedTpMsn)
+        {
+            return UbWqeSegmentTerminalDisposition::RETAINED;
+        }
+        expectedPsnStart += retainedSegment->GetPsnSize();
+        ++expectedTpMsn;
+    }
+    if (expectedPsnStart != m_tpPsnCnt || expectedTpMsn != m_tpMsnCnt)
+    {
+        return UbWqeSegmentTerminalDisposition::RETAINED;
+    }
+
+    const uint32_t canceledPsnSize = segment->GetPsnSize();
+    for (auto suffix = std::next(retained); suffix != m_wqeSegmentVector.end(); ++suffix)
+    {
+        (*suffix)->SetPsnStart((*suffix)->GetPsnStart() - canceledPsnSize);
+        (*suffix)->SetTpMsn((*suffix)->GetTpMsn() - 1);
+    }
+    m_wqeSegmentVector.erase(retained);
+    m_tpPsnCnt -= canceledPsnSize;
+    --m_tpMsnCnt;
+    return UbWqeSegmentTerminalDisposition::CANCELED_UNSENT;
+}
+
+bool
+UbTransportChannel::ForceRemoveRetainedWqeSegment(
+    Ptr<UbWqeSegment> segment,
+    const UbTransactionCorrelationIdentity& expectedCorrelation,
+    const UbLifecycleResourceIdentity& expectedTpIdentity)
+{
+    NS_ABORT_MSG_IF(segment == nullptr, "Cannot force-remove a null admitted segment");
+    NS_ABORT_MSG_IF(expectedTpIdentity != m_packetLifecycleOwner ||
+                        !segment->HasResolvedTpIdentity() ||
+                        segment->GetResolvedTpIdentity() != expectedTpIdentity,
+                    "Forced admitted-segment removal references the wrong TP generation");
+    NS_ABORT_MSG_IF(!segment->HasTransactionCorrelation() ||
+                        segment->GetTransactionCorrelation() != expectedCorrelation,
+                    "Forced admitted-segment removal references the wrong Transaction generation");
+
+    const auto retained = std::find(m_wqeSegmentVector.begin(),
+                                    m_wqeSegmentVector.end(),
+                                    segment);
+    if (retained == m_wqeSegmentVector.end())
     {
         return false;
     }
-
     m_wqeSegmentVector.erase(retained);
-    m_tpPsnCnt = segment->GetPsnStart();
-    m_tpMsnCnt = segment->GetTpMsn();
+    if (m_wqeSegmentVector.empty() && m_retrans != nullptr)
+    {
+        m_retrans->CancelTimer();
+        m_retrans->ClearRetainedState();
+    }
     return true;
 }
 

@@ -620,7 +620,8 @@ UbTransaction::IsCurrentWqeOperation(uint32_t jettyNum, Ptr<UbWqe> wqe) const
         return false;
     }
     const auto operation = m_operations.find({jettyNum, wqe->GetWqeId()});
-    return operation != m_operations.end() && operation->second.wqe == wqe;
+    return operation != m_operations.end() && operation->second.wqe == wqe &&
+           !operation->second.terminalPending;
 }
 
 void UbTransaction::OnScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment,
@@ -797,12 +798,25 @@ UbTransaction::RecordSegmentSuccess(uint32_t jettyNum,
         return false;
     }
 
+    const bool terminalCleanup = operation->second.terminalPending;
     Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
     coordinator->ReleaseLease(segment->second.childLease);
     coordinator->ReleaseLease(segment->second.transportWorkLease);
-    coordinator->RecordWorkTerminal(segment->second.identity, UbWorkOutcome::COMPLETED);
+    if (!terminalCleanup)
+    {
+        coordinator->RecordWorkTerminal(segment->second.identity, UbWorkOutcome::COMPLETED);
+    }
     coordinator->RetireResource(segment->second.identity);
     operation->second.segments.erase(segment);
+    if (terminalCleanup && operation->second.segments.empty())
+    {
+        coordinator->ReleaseLease(operation->second.workLease);
+        coordinator->ReleaseLease(operation->second.transportUseLease);
+        coordinator->RetireResource(operation->second.operationIdentity);
+        coordinator->RetireResource(operation->second.wqeIdentity);
+        m_operations.erase(operation);
+        GetFunction()->NotifyJettyProgress(jettyNum);
+    }
     return true;
 }
 
@@ -819,9 +833,16 @@ bool UbTransaction::ProcessWqeSegmentComplete(Ptr<UbWqeSegment> wqeSegment)
         taSsn = wqeSegment->GetRequestTassn();
     }
 
+    const auto operation = m_operations.find({jettyNum, wqeSegment->GetTaskId()});
+    const bool terminalCleanup = operation != m_operations.end() &&
+                                 operation->second.terminalPending;
     if (!RecordSegmentSuccess(jettyNum, wqeSegment->GetTaskId(), taSsn, wqeSegment))
     {
         return false;
+    }
+    if (terminalCleanup)
+    {
+        return true;
     }
 
     Ptr<UbJetty> jetty = GetJetty(jettyNum);
@@ -1234,9 +1255,12 @@ void UbTransaction::WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe, UbWorkOutcome o
     UbLifecycleResourceIdentity wqeIdentity;
     if (operation != m_operations.end())
     {
+        NS_ABORT_MSG_IF(operation->second.terminalPending,
+                        "WqeFinish references an operation already awaiting transport cleanup");
         hadLifecycleOperation = true;
         wqeIdentity = operation->second.wqeIdentity;
         Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
+        const bool forceDrain = GetFunction()->ShouldForceDrainAcceptedWqes(jettyNum);
         std::vector<uint32_t> terminalTaSsns;
         terminalTaSsns.reserve(operation->second.segments.size());
         for (const auto& [taSsn, segment] : operation->second.segments)
@@ -1251,6 +1275,7 @@ void UbTransaction::WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe, UbWorkOutcome o
                             "Admitted Transaction segments require their Jetty owner");
             jetty->ApplyWqeSegmentTerminalProgress(terminalTaSsns);
         }
+        std::vector<uint32_t> canceledTaSsns;
         for (auto segment = operation->second.segments.rbegin();
              segment != operation->second.segments.rend();
              ++segment)
@@ -1263,27 +1288,55 @@ void UbTransaction::WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe, UbWorkOutcome o
                                 transport->second->GetLifecycleOwner() !=
                                     record.resolvedTpIdentity,
                             "Admitted Transaction terminal lost its exact TP generation");
-            transport->second->TryCancelUnsentWqeSegment(
-                record.segment,
-                {operation->second.operationIdentity, record.identity},
-                record.resolvedTpIdentity);
+            const UbWqeSegmentTerminalDisposition disposition =
+                transport->second->TryCancelUnsentWqeSegment(
+                    record.segment,
+                    {operation->second.operationIdentity, record.identity},
+                    record.resolvedTpIdentity);
+            if (disposition == UbWqeSegmentTerminalDisposition::RETAINED && forceDrain)
+            {
+                transport->second->ForceRemoveRetainedWqeSegment(
+                    record.segment,
+                    {operation->second.operationIdentity, record.identity},
+                    record.resolvedTpIdentity);
+            }
+            if (disposition != UbWqeSegmentTerminalDisposition::RETAINED || forceDrain)
+            {
+                canceledTaSsns.push_back(segment->first);
+            }
         }
-        for (const auto& [taSsn, segment] : operation->second.segments)
+        for (uint32_t taSsn : canceledTaSsns)
         {
-            (void)taSsn;
-            coordinator->ReleaseLease(segment.childLease);
-            coordinator->ReleaseLease(segment.transportWorkLease);
-            coordinator->RecordWorkTerminal(segment.identity, outcome);
-            coordinator->RetireResource(segment.identity);
+            const auto segment = operation->second.segments.find(taSsn);
+            NS_ABORT_MSG_IF(segment == operation->second.segments.end(),
+                            "Canceled Transaction segment disappeared before release");
+            coordinator->ReleaseLease(segment->second.childLease);
+            coordinator->ReleaseLease(segment->second.transportWorkLease);
+            coordinator->RecordWorkTerminal(segment->second.identity, outcome);
+            coordinator->RetireResource(segment->second.identity);
+            operation->second.segments.erase(segment);
         }
-        operation->second.segments.clear();
-        coordinator->ReleaseLease(operation->second.workLease);
-        coordinator->ReleaseLease(operation->second.transportUseLease);
-        coordinator->RecordWorkTerminal(operation->second.operationIdentity, outcome);
-        coordinator->RetireResource(operation->second.operationIdentity);
-        coordinator->RecordWorkTerminal(operation->second.wqeIdentity, outcome);
-        coordinator->RetireResource(operation->second.wqeIdentity);
-        m_operations.erase(operation);
+        if (!operation->second.segments.empty())
+        {
+            operation->second.terminalPending = true;
+            for (const auto& [taSsn, segment] : operation->second.segments)
+            {
+                (void)taSsn;
+                coordinator->RecordWorkTerminal(segment.identity, outcome);
+            }
+            coordinator->RecordWorkTerminal(operation->second.operationIdentity, outcome);
+            coordinator->RecordWorkTerminal(operation->second.wqeIdentity, outcome);
+        }
+        else
+        {
+            coordinator->ReleaseLease(operation->second.workLease);
+            coordinator->ReleaseLease(operation->second.transportUseLease);
+            coordinator->RecordWorkTerminal(operation->second.operationIdentity, outcome);
+            coordinator->RetireResource(operation->second.operationIdentity);
+            coordinator->RecordWorkTerminal(operation->second.wqeIdentity, outcome);
+            coordinator->RetireResource(operation->second.wqeIdentity);
+            m_operations.erase(operation);
+        }
     }
 
     if (m_serviceMode.find(jettyNum) == m_serviceMode.end() || m_serviceMode[jettyNum] != TransactionServiceMode::ROI) {
@@ -1347,6 +1400,45 @@ UbTransaction::CompleteWqeOperation(uint32_t jettyNum,
                     "Transaction outcome references an unknown, duplicate, or stale operation");
     Ptr<UbWqe> wqe = operation->second.wqe;
     WqeFinish(jettyNum, wqe, outcome);
+}
+
+void
+UbTransaction::ForceDrainTerminalPendingOperations(uint32_t jettyNum)
+{
+    Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
+    for (auto operation = m_operations.lower_bound({jettyNum, 0});
+         operation != m_operations.end() && operation->first.first == jettyNum;)
+    {
+        if (!operation->second.terminalPending)
+        {
+            ++operation;
+            continue;
+        }
+        for (const auto& [taSsn, segment] : operation->second.segments)
+        {
+            (void)taSsn;
+            NS_ABORT_MSG_IF(segment.segment == nullptr,
+                            "Terminal-pending operation lost its exact segment instance");
+            const auto transport = m_tpnMap.find(segment.segment->GetTpn());
+            NS_ABORT_MSG_IF(transport == m_tpnMap.end() || transport->second == nullptr ||
+                                transport->second->GetLifecycleOwner() !=
+                                    segment.resolvedTpIdentity,
+                            "Forced terminal-pending drain lost its exact TP generation");
+            transport->second->ForceRemoveRetainedWqeSegment(
+                segment.segment,
+                {operation->second.operationIdentity, segment.identity},
+                segment.resolvedTpIdentity);
+            coordinator->ReleaseLease(segment.childLease);
+            coordinator->ReleaseLease(segment.transportWorkLease);
+            coordinator->RetireResource(segment.identity);
+        }
+        operation->second.segments.clear();
+        coordinator->ReleaseLease(operation->second.workLease);
+        coordinator->ReleaseLease(operation->second.transportUseLease);
+        coordinator->RetireResource(operation->second.operationIdentity);
+        coordinator->RetireResource(operation->second.wqeIdentity);
+        operation = m_operations.erase(operation);
+    }
 }
 
 void UbTransaction::DoDispose()

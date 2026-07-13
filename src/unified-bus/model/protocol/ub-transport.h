@@ -38,6 +38,13 @@ struct UbTransportGroupMember
     UbLifecycleResourceIdentity tpIdentity;
 };
 
+enum class UbWqeSegmentTerminalDisposition : uint8_t
+{
+    CANCELED_UNSENT,
+    RETAINED,
+    TRANSPORT_CLEANED,
+};
+
 const uint32_t UB_TP_PSN_OOO_THRESHOLD = 2048;   // Jetty分段乱序阈值（用于乱序缓存等）
 
 /**
@@ -278,7 +285,11 @@ public:
 
     bool TryAdmitWqeSegment(Ptr<UbWqeSegment> segment);
     bool CanAdmitWqeSegment(Ptr<const UbWqeSegment> segment) const;
-    bool TryCancelUnsentWqeSegment(
+    UbWqeSegmentTerminalDisposition TryCancelUnsentWqeSegment(
+        Ptr<UbWqeSegment> segment,
+        const UbTransactionCorrelationIdentity& expectedCorrelation,
+        const UbLifecycleResourceIdentity& expectedTpIdentity);
+    bool ForceRemoveRetainedWqeSegment(
         Ptr<UbWqeSegment> segment,
         const UbTransactionCorrelationIdentity& expectedCorrelation,
         const UbLifecycleResourceIdentity& expectedTpIdentity);

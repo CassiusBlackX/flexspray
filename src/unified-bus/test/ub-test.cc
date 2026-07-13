@@ -8466,6 +8466,654 @@ class UbLifecycleStrongOrderTerminalWakesSuccessorTest : public TestCase
     std::vector<uint64_t> m_progress;
 };
 
+class UbLifecycleSharedTpNonTailUnsentTerminalTest : public TestCase
+{
+  public:
+    UbLifecycleSharedTpNonTailUnsentTerminalTest(UbWorkOutcome outcome,
+                                                 const std::string& outcomeName)
+        : TestCase("UnifiedBus - shared TP non-tail unsent " + outcomeName +
+                   " compacts later admission"),
+          m_outcome(outcome)
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        m_transaction = controller->GetUbTransaction();
+        m_tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+
+        for (uint32_t jettyNum : {kUrmaWriteRegressionJettyNum,
+                                  kUrmaWriteRegressionJettyNum + 1})
+        {
+            function->CreateJetty(topo.sender->GetId(), topo.receiver->GetId(), jettyNum);
+            NS_TEST_ASSERT_MSG_EQ(m_transaction->JettyBindTp(
+                                      topo.sender->GetId(),
+                                      topo.receiver->GetId(),
+                                      jettyNum,
+                                      false,
+                                      {kUrmaWriteRegressionSenderTpn}),
+                                  true,
+                                  "Both independent Jetties should share one direct TP");
+            function->GetJetty(jettyNum)->SetWqeCompletionCallback(
+                MakeCallback(&UbLifecycleSharedTpNonTailUnsentTerminalTest::OnTerminal, this));
+        }
+        m_tp->TraceConnectWithoutContext(
+            "WqeSegmentSendsNotify",
+            MakeCallback(&UbLifecycleSharedTpNonTailUnsentTerminalTest::OnAdmitted, this));
+        m_tp->TraceConnectWithoutContext(
+            "FirstPacketSendsNotify",
+            MakeCallback(&UbLifecycleSharedTpNonTailUnsentTerminalTest::OnFirstPacket, this));
+
+        for (uint32_t offset : {0u, 1u})
+        {
+            Ptr<UbWqe> wqe = function->CreateWqe(topo.sender->GetId(),
+                                                 topo.receiver->GetId(),
+                                                 64,
+                                                 kUrmaWriteRegressionTaskId + offset,
+                                                 TaOpcode::TA_OPCODE_WRITE);
+            wqe->SetOrderType(OrderType::ORDER_NO);
+            NS_TEST_ASSERT_MSG_EQ(
+                static_cast<uint32_t>(
+                    function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum + offset).status),
+                static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+                "Each independent WQE should enter lifecycle admission");
+        }
+
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(m_admittedTasks.size(),
+                              2u,
+                              "Both WQEs should admit before either physical packet is sent");
+        NS_TEST_ASSERT_MSG_EQ(m_firstPacketTasks.empty(),
+                              true,
+                              "Admission stop must precede physical transmission");
+        NS_TEST_ASSERT_MSG_EQ(m_tp->GetWqeSegmentVecSize(),
+                              2u,
+                              "Shared TP should retain A before B");
+        NS_TEST_ASSERT_MSG_EQ(m_tp->GetPsnSndNxtForTest(),
+                              0u,
+                              "Neither retained segment should have started");
+
+        m_transaction->CompleteWqeOperation(kUrmaWriteRegressionJettyNum,
+                                            kUrmaWriteRegressionTaskId,
+                                            m_outcome);
+        NS_TEST_ASSERT_MSG_EQ(m_tp->GetWqeSegmentVecSize(),
+                              1u,
+                              "Terminal non-tail A should leave only B retained");
+        NS_TEST_ASSERT_MSG_EQ(m_tp->GetPsnCnt(),
+                              1u,
+                              "Fully-unsent suffix compaction should reclaim A's PSN");
+        NS_TEST_ASSERT_MSG_EQ(m_tp->GetMsnCnt(),
+                              1u,
+                              "Fully-unsent suffix compaction should reclaim A's TP MSN");
+
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
+
+        NS_TEST_ASSERT_MSG_EQ(m_firstPacketTasks.size(),
+                              1u,
+                              "Only B should emit a physical packet after A terminal");
+        if (m_firstPacketTasks.size() == 1)
+        {
+            NS_TEST_ASSERT_MSG_EQ(m_firstPacketTasks[0],
+                                  kUrmaWriteRegressionTaskId + 1,
+                                  "A must never emit after its typed terminal");
+            NS_TEST_ASSERT_MSG_EQ(m_firstPacketPsns[0],
+                                  0u,
+                                  "B should reuse A's fully-unsent PSN reservation");
+            NS_TEST_ASSERT_MSG_EQ(m_firstPacketMsns[0],
+                                  0u,
+                                  "B should reuse A's fully-unsent TP MSN reservation");
+        }
+        NS_TEST_ASSERT_MSG_EQ(m_terminals.size(),
+                              2u,
+                              "A terminal and B completion should each surface exactly once");
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->GetActiveOperationCount(),
+                              0u,
+                              "B natural completion should retire the remaining operation");
+        NS_TEST_ASSERT_MSG_EQ(m_tp->GetWqeSegmentVecSize(),
+                              0u,
+                              "B natural completion should leave no retained TP residue");
+        NS_TEST_ASSERT_MSG_EQ(m_tp->GetOutstandingUnackedSegmentCount(),
+                              0u,
+                              "B natural completion should leave no unacked TP residue");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    void OnAdmitted(uint32_t, uint32_t taskId, uint32_t)
+    {
+        m_admittedTasks.push_back(taskId);
+        if (m_admittedTasks.size() == 2)
+        {
+            Simulator::Stop();
+        }
+    }
+
+    void OnFirstPacket(uint32_t,
+                       uint32_t taskId,
+                       uint32_t,
+                       uint32_t,
+                       uint32_t tpMsn,
+                       uint32_t psn,
+                       uint32_t)
+    {
+        m_firstPacketTasks.push_back(taskId);
+        m_firstPacketMsns.push_back(tpMsn);
+        m_firstPacketPsns.push_back(psn);
+    }
+
+    void OnTerminal(UbWqeCompletion completion)
+    {
+        m_terminals.push_back(completion);
+    }
+
+    UbWorkOutcome m_outcome;
+    Ptr<UbTransaction> m_transaction;
+    Ptr<UbTransportChannel> m_tp;
+    std::vector<uint32_t> m_admittedTasks;
+    std::vector<uint32_t> m_firstPacketTasks;
+    std::vector<uint32_t> m_firstPacketMsns;
+    std::vector<uint32_t> m_firstPacketPsns;
+    std::vector<UbWqeCompletion> m_terminals;
+};
+
+class UbLifecycleStartedTerminalRetainsCorrelationUntilResponseTest : public TestCase
+{
+  public:
+    UbLifecycleStartedTerminalRetainsCorrelationUntilResponseTest(
+        UbWorkOutcome outcome,
+        const std::string& outcomeName)
+        : TestCase("UnifiedBus - started " + outcomeName +
+                   " work retains correlation until response cleanup"),
+          m_outcome(outcome)
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        m_transaction = controller->GetUbTransaction();
+        m_tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        m_coordinator = UbLifecycleCoordinator::GetOrCreate(topo.sender);
+
+        for (uint32_t jettyNum : {kUrmaWriteRegressionJettyNum,
+                                  kUrmaWriteRegressionJettyNum + 1})
+        {
+            function->CreateJetty(topo.sender->GetId(), topo.receiver->GetId(), jettyNum);
+            NS_TEST_ASSERT_MSG_EQ(m_transaction->JettyBindTp(
+                                      topo.sender->GetId(),
+                                      topo.receiver->GetId(),
+                                      jettyNum,
+                                      false,
+                                      {kUrmaWriteRegressionSenderTpn}),
+                                  true,
+                                  "Started fixture Jetties should share one direct TP");
+            function->GetJetty(jettyNum)->SetWqeCompletionCallback(MakeCallback(
+                &UbLifecycleStartedTerminalRetainsCorrelationUntilResponseTest::OnTerminal,
+                this));
+        }
+        m_tp->TraceConnectWithoutContext(
+            "WqeSegmentSendsNotify",
+            MakeCallback(
+                &UbLifecycleStartedTerminalRetainsCorrelationUntilResponseTest::OnAdmitted,
+                this));
+        m_tp->TraceConnectWithoutContext(
+            "FirstPacketSendsNotify",
+            MakeCallback(
+                &UbLifecycleStartedTerminalRetainsCorrelationUntilResponseTest::OnFirstPacket,
+                this));
+
+        for (uint32_t offset : {0u, 1u})
+        {
+            Ptr<UbWqe> wqe = function->CreateWqe(topo.sender->GetId(),
+                                                 topo.receiver->GetId(),
+                                                 64,
+                                                 kUrmaWriteRegressionTaskId + offset,
+                                                 TaOpcode::TA_OPCODE_WRITE);
+            wqe->SetOrderType(OrderType::ORDER_NO);
+            NS_TEST_ASSERT_MSG_EQ(
+                static_cast<uint32_t>(
+                    function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum + offset).status),
+                static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+                "Each started fixture WQE should be accepted");
+        }
+
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(m_admittedTasks.size(),
+                              2u,
+                              "A and B should both admit before A's first packet stop");
+        NS_TEST_ASSERT_MSG_EQ(m_firstPacketTasks.size(),
+                              1u,
+                              "Fixture should stop after A's first physical packet");
+        if (m_firstPacketTasks.size() == 1)
+        {
+            NS_TEST_ASSERT_MSG_EQ(m_firstPacketTasks[0],
+                                  kUrmaWriteRegressionTaskId,
+                                  "A must be the physically started front segment");
+        }
+
+        UbTransactionOperationSnapshot beforeTerminal;
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->TryGetOperationSnapshot(
+                                  kUrmaWriteRegressionJettyNum,
+                                  kUrmaWriteRegressionTaskId,
+                                  beforeTerminal),
+                              true,
+                              "Started A should expose its exact operation");
+        NS_TEST_ASSERT_MSG_EQ(beforeTerminal.activeSegments,
+                              1u,
+                              "Started A should own one exact segment");
+        const UbLifecycleResourceSnapshot tpBeforeTerminal =
+            m_coordinator->GetSnapshot(m_tp->GetLifecycleOwner());
+        NS_TEST_ASSERT_MSG_EQ(tpBeforeTerminal.activeTransportWorkLeases,
+                              2u,
+                              "Shared TP should own exact work for A and B");
+
+        m_transaction->CompleteWqeOperation(kUrmaWriteRegressionJettyNum,
+                                            kUrmaWriteRegressionTaskId,
+                                            m_outcome);
+
+        UbTransactionOperationSnapshot terminalPending;
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->TryGetOperationSnapshot(
+                                  kUrmaWriteRegressionJettyNum,
+                                  kUrmaWriteRegressionTaskId,
+                                  terminalPending),
+                              true,
+                              "Started terminal A must remain as lifecycle cleanup work");
+        NS_TEST_ASSERT_MSG_EQ(terminalPending.operationIdentity,
+                              beforeTerminal.operationIdentity,
+                              "Terminal-pending A must retain its exact operation generation");
+        NS_TEST_ASSERT_MSG_EQ(terminalPending.segmentIdentities.size(),
+                              1u,
+                              "Terminal-pending A must retain one exact segment generation");
+        NS_TEST_ASSERT_MSG_EQ(terminalPending.resolvedTpIdentities.size(),
+                              1u,
+                              "Terminal-pending A must retain one exact resolved TP generation");
+        if (terminalPending.segmentIdentities.size() == 1 &&
+            beforeTerminal.segmentIdentities.size() == 1 &&
+            terminalPending.resolvedTpIdentities.size() == 1 &&
+            beforeTerminal.resolvedTpIdentities.size() == 1)
+        {
+            NS_TEST_ASSERT_MSG_EQ(terminalPending.segmentIdentities[0],
+                                  beforeTerminal.segmentIdentities[0],
+                                  "Terminal-pending A must keep its segment identity");
+            NS_TEST_ASSERT_MSG_EQ(terminalPending.resolvedTpIdentities[0],
+                                  beforeTerminal.resolvedTpIdentities[0],
+                                  "Terminal-pending A must keep its resolved TP identity");
+        }
+        NS_TEST_ASSERT_MSG_EQ(terminalPending.activeTransportWorkLeases,
+                              1u,
+                              "Terminal-pending A must retain its TP work lease");
+        NS_TEST_ASSERT_MSG_EQ(
+            m_coordinator->GetSnapshot(m_tp->GetLifecycleOwner()).activeTransportWorkLeases,
+            2u,
+            "Started terminal must not release shared TP work before response cleanup");
+        NS_TEST_ASSERT_MSG_EQ(m_terminals.size(),
+                              1u,
+                              "Application should observe A terminal exactly once immediately");
+
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
+
+        NS_TEST_ASSERT_MSG_EQ(m_firstPacketTasks.size(),
+                              2u,
+                              "A and B should each emit one physical packet");
+        if (m_firstPacketTasks.size() == 2)
+        {
+            NS_TEST_ASSERT_MSG_EQ(m_firstPacketTasks[1],
+                                  kUrmaWriteRegressionTaskId + 1,
+                                  "B should continue after started A terminal");
+        }
+        NS_TEST_ASSERT_MSG_EQ(m_terminals.size(),
+                              2u,
+                              "Response cleanup must not emit a second A terminal");
+        uint32_t frontTerminalCount = 0;
+        uint32_t successorCompletionCount = 0;
+        for (const UbWqeCompletion& completion : m_terminals)
+        {
+            if (completion.wqeId == kUrmaWriteRegressionTaskId)
+            {
+                ++frontTerminalCount;
+                NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(completion.outcome),
+                                      static_cast<uint32_t>(m_outcome),
+                                      "A should retain its requested terminal outcome");
+            }
+            if (completion.wqeId == kUrmaWriteRegressionTaskId + 1 &&
+                completion.outcome == UbWorkOutcome::COMPLETED)
+            {
+                ++successorCompletionCount;
+            }
+        }
+        NS_TEST_ASSERT_MSG_EQ(frontTerminalCount,
+                              1u,
+                              "A terminal should remain exactly-once after real response cleanup");
+        NS_TEST_ASSERT_MSG_EQ(successorCompletionCount,
+                              1u,
+                              "B should complete naturally through its real response");
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->GetActiveOperationCount(),
+                              0u,
+                              "Real responses should finalize both lifecycle operations");
+        NS_TEST_ASSERT_MSG_EQ(
+            m_coordinator->GetSnapshot(m_tp->GetLifecycleOwner()).activeTransportWorkLeases,
+            0u,
+            "Real responses should release both TP work leases");
+        NS_TEST_ASSERT_MSG_EQ(m_tp->GetWqeSegmentVecSize(),
+                              0u,
+                              "Real TP ACKs should leave no retained segment residue");
+        NS_TEST_ASSERT_MSG_EQ(m_tp->GetOutstandingUnackedSegmentCount(),
+                              0u,
+                              "Real TP ACKs should leave no unacked segment residue");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    void OnAdmitted(uint32_t, uint32_t taskId, uint32_t)
+    {
+        m_admittedTasks.push_back(taskId);
+    }
+
+    void OnFirstPacket(uint32_t,
+                       uint32_t taskId,
+                       uint32_t,
+                       uint32_t,
+                       uint32_t,
+                       uint32_t,
+                       uint32_t)
+    {
+        m_firstPacketTasks.push_back(taskId);
+        if (taskId == kUrmaWriteRegressionTaskId)
+        {
+            Simulator::Stop();
+        }
+    }
+
+    void OnTerminal(UbWqeCompletion completion)
+    {
+        m_terminals.push_back(completion);
+    }
+
+    UbWorkOutcome m_outcome;
+    Ptr<UbTransaction> m_transaction;
+    Ptr<UbTransportChannel> m_tp;
+    Ptr<UbLifecycleCoordinator> m_coordinator;
+    std::vector<uint32_t> m_admittedTasks;
+    std::vector<uint32_t> m_firstPacketTasks;
+    std::vector<UbWqeCompletion> m_terminals;
+};
+
+class UbLifecycleStartedTerminalPendingForcedDrainTest : public TestCase
+{
+  public:
+    UbLifecycleStartedTerminalPendingForcedDrainTest(UbDestroyReason reason,
+                                                      const std::string& reasonName)
+        : TestCase("UnifiedBus - started terminal-pending work survives " + reasonName +
+                   " forced drain"),
+          m_reason(reason)
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        Ptr<UbTransportChannel> tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(topo.sender);
+
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
+                                                       topo.receiver->GetId(),
+                                                       kUrmaWriteRegressionJettyNum,
+                                                       false,
+                                                       {kUrmaWriteRegressionSenderTpn}),
+                              true,
+                              "Forced-drain fixture should bind its direct TP");
+        function->GetJetty(kUrmaWriteRegressionJettyNum)
+            ->SetWqeCompletionCallback(MakeCallback(
+                &UbLifecycleStartedTerminalPendingForcedDrainTest::OnTerminal,
+                this));
+        tp->TraceConnectWithoutContext(
+            "FirstPacketSendsNotify",
+            MakeCallback(&UbLifecycleStartedTerminalPendingForcedDrainTest::OnFirstPacket,
+                         this));
+
+        Ptr<UbWqe> wqe = function->CreateWqe(topo.sender->GetId(),
+                                             topo.receiver->GetId(),
+                                             64,
+                                             kUrmaWriteRegressionTaskId,
+                                             TaOpcode::TA_OPCODE_WRITE);
+        wqe->SetOrderType(OrderType::ORDER_NO);
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(
+                function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status),
+            static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+            "Forced-drain fixture WQE should be accepted");
+
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(m_started,
+                              true,
+                              "Forced-drain fixture should stop after physical send starts");
+        transaction->CompleteWqeOperation(kUrmaWriteRegressionJettyNum,
+                                          kUrmaWriteRegressionTaskId,
+                                          UbWorkOutcome::CANCELED);
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
+                              1u,
+                              "Started cancel should first leave one terminal-pending operation");
+        NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(tp->GetLifecycleOwner())
+                                  .activeTransportWorkLeases,
+                              1u,
+                              "Started cancel should retain TP work before forced drain");
+        NS_TEST_ASSERT_MSG_EQ(m_terminals.size(),
+                              1u,
+                              "Started cancel should notify the application once");
+
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(function->DestroyJetty(
+                                  kUrmaWriteRegressionJettyNum,
+                                  m_reason)),
+                              static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
+                              "Forced drain should synchronously finalize terminal-pending work");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
+                              0u,
+                              "Forced drain should leave no terminal-pending operation");
+        NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(tp->GetLifecycleOwner())
+                                  .activeTransportWorkLeases,
+                              0u,
+                              "Forced drain should release terminal-pending TP work");
+        NS_TEST_ASSERT_MSG_EQ(tp->GetWqeSegmentVecSize(),
+                              0u,
+                              "Forced drain should remove exact terminal-pending TP retained work");
+        NS_TEST_ASSERT_MSG_EQ(tp->GetOutstandingUnackedSegmentCount(),
+                              0u,
+                              "Forced drain should leave no terminal-pending TP outstanding work");
+        NS_TEST_ASSERT_MSG_EQ(m_terminals.size(),
+                              1u,
+                              "Forced drain must not apply a second WQE terminal");
+        NS_TEST_ASSERT_MSG_EQ(function->GetJetty(kUrmaWriteRegressionJettyNum),
+                              nullptr,
+                              "Forced drain should erase the Jetty without deadlock");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    void OnFirstPacket(uint32_t,
+                       uint32_t taskId,
+                       uint32_t,
+                       uint32_t,
+                       uint32_t,
+                       uint32_t,
+                       uint32_t)
+    {
+        if (taskId == kUrmaWriteRegressionTaskId)
+        {
+            m_started = true;
+            Simulator::Stop();
+        }
+    }
+
+    void OnTerminal(UbWqeCompletion completion)
+    {
+        m_terminals.push_back(completion);
+    }
+
+    UbDestroyReason m_reason;
+    bool m_started{false};
+    std::vector<UbWqeCompletion> m_terminals;
+};
+
+class UbLifecycleResponseBearingTpAckBeforeTerminalTest : public TestCase
+{
+  public:
+    UbLifecycleResponseBearingTpAckBeforeTerminalTest(UbWorkOutcome outcome,
+                                                       const std::string& outcomeName)
+        : TestCase("UnifiedBus - response-bearing TP ACK precedes " + outcomeName +
+                   " terminal"),
+          m_outcome(outcome)
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        m_transaction = controller->GetUbTransaction();
+        m_tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        m_coordinator = UbLifecycleCoordinator::GetOrCreate(topo.sender);
+
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->JettyBindTp(
+                                  topo.sender->GetId(),
+                                  topo.receiver->GetId(),
+                                  kUrmaWriteRegressionJettyNum,
+                                  false,
+                                  {kUrmaWriteRegressionSenderTpn}),
+                              true,
+                              "Response-bearing fixture should bind its direct TP");
+        function->GetJetty(kUrmaWriteRegressionJettyNum)
+            ->SetWqeCompletionCallback(MakeCallback(
+                &UbLifecycleResponseBearingTpAckBeforeTerminalTest::OnTerminal,
+                this));
+        m_tp->TraceConnectWithoutContext(
+            "LastPacketACKsNotify",
+            MakeCallback(&UbLifecycleResponseBearingTpAckBeforeTerminalTest::OnTpAck,
+                         this));
+
+        Ptr<UbWqe> wqe = function->CreateWqe(topo.sender->GetId(),
+                                             topo.receiver->GetId(),
+                                             64,
+                                             kUrmaWriteRegressionTaskId,
+                                             TaOpcode::TA_OPCODE_WRITE);
+        wqe->SetOrderType(OrderType::ORDER_NO);
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(
+                function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status),
+            static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+            "Response-bearing fixture WQE should be accepted");
+
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(m_tpAckObserved,
+                              true,
+                              "Fixture should stop on the real request TP ACK");
+        NS_TEST_ASSERT_MSG_EQ(m_tp->GetPsnSndUnaForTest(),
+                              1u,
+                              "Real TP ACK should cover the exact request PSN range");
+        NS_TEST_ASSERT_MSG_EQ(m_tp->GetWqeSegmentVecSize(),
+                              0u,
+                              "TP ACK should clean transport retention before TA response");
+        UbTransactionOperationSnapshot awaitingResponse;
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->TryGetOperationSnapshot(
+                                  kUrmaWriteRegressionJettyNum,
+                                  kUrmaWriteRegressionTaskId,
+                                  awaitingResponse),
+                              true,
+                              "Transaction should still await its TA response");
+        NS_TEST_ASSERT_MSG_EQ(awaitingResponse.activeSegments,
+                              1u,
+                              "TA response wait should retain exact Transaction segment state");
+        NS_TEST_ASSERT_MSG_EQ(m_terminals.empty(),
+                              true,
+                              "TP ACK alone must not complete a WRITE WQE");
+
+        m_transaction->CompleteWqeOperation(kUrmaWriteRegressionJettyNum,
+                                            kUrmaWriteRegressionTaskId,
+                                            m_outcome);
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->GetActiveOperationCount(),
+                              0u,
+                              "ACK-cleaned terminal should retire Transaction lifecycle state");
+        NS_TEST_ASSERT_MSG_EQ(
+            m_coordinator->GetSnapshot(m_tp->GetLifecycleOwner()).activeTransportWorkLeases,
+            0u,
+            "ACK-cleaned terminal should release exact TP work ownership");
+        NS_TEST_ASSERT_MSG_EQ(m_terminals.size(),
+                              1u,
+                              "ACK-cleaned terminal should notify the application exactly once");
+
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(m_terminals.size(),
+                              1u,
+                              "Late TA response must not repeat an applied terminal");
+        NS_TEST_ASSERT_MSG_EQ(m_tp->GetWqeSegmentVecSize(),
+                              0u,
+                              "Late TA response must not recreate TP retained work");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    void OnTpAck(uint32_t,
+                 uint32_t taskId,
+                 uint32_t,
+                 uint32_t,
+                 uint32_t,
+                 uint32_t,
+                 uint32_t)
+    {
+        if (taskId == kUrmaWriteRegressionTaskId)
+        {
+            m_tpAckObserved = true;
+            Simulator::Stop();
+        }
+    }
+
+    void OnTerminal(UbWqeCompletion completion)
+    {
+        m_terminals.push_back(completion);
+    }
+
+    UbWorkOutcome m_outcome;
+    bool m_tpAckObserved{false};
+    Ptr<UbTransaction> m_transaction;
+    Ptr<UbTransportChannel> m_tp;
+    Ptr<UbLifecycleCoordinator> m_coordinator;
+    std::vector<UbWqeCompletion> m_terminals;
+};
+
 class UbLifecycleExplicitDrainContinuesStrongSuccessorTest : public TestCase
 {
   public:
@@ -17682,6 +18330,33 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
                     UbWorkOutcome::CANCELED,
                     "canceled",
                     true),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleSharedTpNonTailUnsentTerminalTest(UbWorkOutcome::FAILED,
+                                                                "failed"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleSharedTpNonTailUnsentTerminalTest(UbWorkOutcome::CANCELED,
+                                                                "canceled"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleStartedTerminalRetainsCorrelationUntilResponseTest(
+                    UbWorkOutcome::FAILED,
+                    "failed"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleStartedTerminalRetainsCorrelationUntilResponseTest(
+                    UbWorkOutcome::CANCELED,
+                    "canceled"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleStartedTerminalPendingForcedDrainTest(UbDestroyReason::ERROR,
+                                                                    "error"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleStartedTerminalPendingForcedDrainTest(
+                    UbDestroyReason::SIMULATION_STOP,
+                    "simulation-stop"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleResponseBearingTpAckBeforeTerminalTest(UbWorkOutcome::FAILED,
+                                                                     "failed"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleResponseBearingTpAckBeforeTerminalTest(UbWorkOutcome::CANCELED,
+                                                                     "canceled"),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleExplicitDrainContinuesStrongSuccessorTest(),
                 TestCase::Duration::QUICK);
