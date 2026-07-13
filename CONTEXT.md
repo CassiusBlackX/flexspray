@@ -102,6 +102,10 @@ _Avoid_: RDMA synonym unless the discussion is explicitly comparative
 The basic URMA communication unit used to issue and execute asynchronous transaction operations.
 _Avoid_: queue, flow
 
+**Jetty lifecycle authority**:
+The upper-layer URMA client that decides whether a Jetty is created, reused, or explicitly destroyed.
+_Avoid_: lifecycle coordinator, transport algorithm
+
 **Jetty group**:
 A target-side group of Jetties used to distribute requests across multiple receive queues or processing contexts.
 _Avoid_: TPG
@@ -114,13 +118,13 @@ _Avoid_: standard Jetty
 URMA Jetties used for completion polling, completion events, and asynchronous events respectively.
 _Avoid_: transport ACK path
 
-**Work queue element (WQE)**:
-A submitted URMA work item that the simulator can split into transaction-layer WQE segments.
-_Avoid_: packet, TP packet
+**Transaction queue**:
+The function-layer software-hardware interface used by the URMA programming model, comprising send, receive, completion, and event queues bound to Jetties or completion objects.
+_Avoid_: transaction-layer context, TP queue
 
-**WQE segment**:
-The simulator's transaction-sized slice of a WQE.
-_Avoid_: whole task, whole WQE
+**Work queue element (WQE)**:
+A submitted URMA work item that the simulator can lower into transaction segments.
+_Avoid_: packet, TP packet
 
 ### Transaction Layer
 
@@ -131,6 +135,50 @@ _Avoid_: transport layer
 **Transaction operation**:
 One operation identified by a transaction operation code and represented by at least one request, optionally with a response.
 _Avoid_: packet
+
+**Transaction segment**:
+A TASSN-identified transaction-layer slice of a transaction operation that is completed by its corresponding transaction response.
+_Avoid_: WQE segment, packet, whole WQE
+
+**Ready transaction source**:
+A local Jetty or remote-origin response source that currently has transaction work eligible for an admission attempt.
+_Avoid_: queued segment copy, scheduler object, future work prediction
+
+**RTP transport reference**:
+A non-owning, generation-aware reference to either a TP channel or TPG used by an RTP transaction operation before each segment resolves one concrete TP.
+_Avoid_: transport target, transport selection, network route, concrete path
+
+**Resolved segment TP**:
+The concrete TP channel selected for one transaction segment; all packets and retransmissions of that segment use this TP generation.
+_Avoid_: operation-wide TP, per-packet route
+
+**TPG member selection**:
+The TPG policy decision that resolves one transaction segment to one member TP channel when its RTP transport reference contains a TPG reference.
+_Avoid_: direct-TP admission, Jetty scheduling, per-packet routing
+
+**Eligible TPG member**:
+A member TP channel whose current generation can atomically admit the candidate transaction segment under its lifecycle, window, and capacity constraints.
+_Avoid_: merely active TP, permanently preferred TP
+
+**TP selection metrics**:
+The bounded read-only snapshot of aggregate TP channel load and send capacity available to a TPG member-selection policy.
+_Avoid_: TP internal state, queue container view, congestion-control object
+
+**TPG member weight**:
+The configured share of one TP channel within the selection policy of the TPG-member binding that contains it.
+_Avoid_: TP channel capacity, direct-traffic weight, global TP weight
+
+**Retiring TPG member**:
+A TPG-member binding already excluded from new selection while its synchronous in-progress selection reference is being released.
+_Avoid_: draining TP channel, migrated segment, destroyed TP
+
+**Empty TPG**:
+An active TPG with no member bindings and no admitted operation still holding a TPG-use lease.
+_Avoid_: deferred TPG, destroyed TPG, memberless TPG with active work
+
+**TP admission**:
+The acceptance of a transaction segment by its already resolved TP channel subject to channel capacity and backpressure.
+_Avoid_: TPG member selection, second-stage TP selection
 
 **Transaction operation code (TAOpcode)**:
 The transaction-layer operation code for memory, message, maintenance, or management operations.
@@ -222,6 +270,30 @@ _Avoid_: random TPN, first-touch TPN
 The pre-traffic resource preparation step that assigns TPNs to TP channel keys before packets are released.
 _Avoid_: packet-time TP negotiation
 
+**TP reservation owner**:
+The node that authoritatively manages one TP reservation generation while both endpoints retain local lookup views.
+_Avoid_: process-global TP owner, two authoritative endpoint copies
+
+**Drain-only TP endpoint**:
+A TP endpoint materialized or retained during connection draining solely to finish packets and protocol work from the closing reservation generation.
+_Avoid_: reopened TP channel, new TP generation
+
+**TP endpoint slot**:
+One of the two lightweight endpoint positions fixed by a TP reservation, whether or not its runtime TP endpoint is materialized.
+_Avoid_: TP endpoint object, dynamically added connection child
+
+**TP runtime state reclamation**:
+A simulator-local release of reconstructible TP endpoint state while the TP reservation, TPN, endpoint identity, and current generation remain valid.
+_Avoid_: TP teardown, logical closure, endpoint destroy
+
+**TP endpoint destroy**:
+An explicit simulator-local management action that ends one local TP endpoint generation after its accepted work and packets drain, while its parent reservation may remain valid.
+_Avoid_: idle-state reclamation, connection teardown, automatic cleanup
+
+**TP connection teardown**:
+An explicit simulator-local management action that ends a TP reservation and session generation only after both endpoint slots and all old protocol work drain.
+_Avoid_: runtime state reclamation, task completion, idle timeout
+
 **Reserved TPN**:
 A TPN already assigned to a TP channel key for the local node, even if the local TP channel object has not been created yet.
 _Avoid_: planned TPN, missing TP
@@ -237,6 +309,14 @@ _Avoid_: ROI
 **Compact transport (CTP)**:
 The transport mode that relies on lower protocol layers for reliability and offers coarser congestion management.
 _Avoid_: compressed RTP
+
+**CTP entity key**:
+The node-local value key identifying one source Entity, destination node and Entity, and VL communication domain inside the node-scoped CTP service; the source node is implicit in the owner.
+_Avoid_: CTP channel reference, CTP generation, lifecycle owner
+
+**CTP congestion key**:
+The node-local key identifying one destination node, destination Entity, and VL congestion-control aggregation domain.
+_Avoid_: CTP entity key, source-specific congestion context, RTP CC context
 
 **Unreliable transport (UTP)**:
 The transport mode that provides unreliable, connectionless service.
@@ -394,6 +474,26 @@ _Avoid_: packet
 The rule used to choose forwarding candidates or paths for packets.
 _Avoid_: topology
 
+**Modeled resource lifecycle**:
+The simulated creation, active use, draining, and closure of a UB resource as observable network or management behavior.
+_Avoid_: memory cleanup, garbage collection
+
+**Logical closure**:
+The modeled end of a resource generation, after which that identity cannot accept new work and later use requires an explicitly modeled reacquisition or creation.
+_Avoid_: C++ destructor, storage reclamation
+
+**Lifecycle-managed child resource**:
+A finite packet, work, event, binding, queue entry, or retained protocol record whose terminal condition is tracked independently from its parent instance.
+_Avoid_: parent object lifetime, future workload use
+
+**Layer-owned lifecycle accounting**:
+The rule that each protocol layer records the finite resources it creates and owns, while cross-layer lifecycle coordination validates relationships without duplicating those records.
+_Avoid_: one global ledger owning all protocol state, multi-layer counting of one packet
+
+**Storage policy**:
+The allocation and capacity-retention choice for a container after its logical elements terminate; it does not define protocol lifetime.
+_Avoid_: lifecycle policy, connection teardown
+
 ### Simulation Cases
 
 **Simulation case**:
@@ -513,6 +613,38 @@ _Avoid_: preconfigured transport-channel mode
 **Observability**:
 The chosen trace, debug, and parser posture for a simulation case.
 _Avoid_: logging level
+
+**Observability category**:
+A protocol or simulator concern whose runtime evidence can be enabled and detailed independently from other concerns.
+_Avoid_: log component, output file
+
+**Observability level**:
+The amount of runtime evidence retained for one observability category, ranging from no evidence through summary and event records to detailed history.
+_Avoid_: diagnostic strength, protocol behavior
+
+**Trace source**:
+A producer of typed runtime events that is independent from whether and how those events are retained.
+_Avoid_: trace file, correctness ledger
+
+**Trace sink**:
+A consumer that filters, aggregates, or records events published by a trace source.
+_Avoid_: protocol owner, lifecycle manager
+
+**Identity-coherent trace sampling**:
+A trace-volume reduction rule that selects complete resource generations or packet lifetime identities and retains every event for each selected identity.
+_Avoid_: independent event sampling, incomplete lifecycle chain
+
+**Lifecycle trace record**:
+A versioned runtime evidence row that identifies one resource generation, one lifecycle event, and any affected child identity without becoming the protocol's correctness ledger.
+_Avoid_: free-form log line, lifecycle state, packet header
+
+**Trace schema metadata**:
+A run-level description of a trace schema and its numeric enum mappings, emitted from the same definitions used by the simulator so parsers do not maintain a second semantic table.
+_Avoid_: per-record metadata, parser guess, protocol configuration
+
+**Diagnostic level**:
+The amount of runtime consistency verification requested for a simulation, independently from trace detail.
+_Avoid_: observability level, logging severity
 
 **Trace output**:
 Raw emitted runtime evidence such as packet, task, port, flow-control, or congestion-control traces.
