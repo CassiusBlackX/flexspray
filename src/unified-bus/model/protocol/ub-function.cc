@@ -151,9 +151,24 @@ Ptr<UbWqe> UbFunction::CreateWqe(uint32_t src, uint32_t dest, uint32_t size, uin
 void UbFunction::PushWqeToJetty(Ptr<UbWqe> wqe, uint32_t jettyNum)
 {
     const UbWqeSubmissionResult result = SubmitWqe(wqe, jettyNum);
+    if (result.status == UbWqeSubmissionStatus::LEGACY_MULTI_TRANSPORT) {
+        PushLegacyWqeToJetty(wqe, jettyNum);
+        return;
+    }
     if (result.status != UbWqeSubmissionStatus::ACCEPTED) {
         NS_LOG_WARN("WQE submission rejected with status " << static_cast<uint32_t>(result.status));
     }
+}
+
+void UbFunction::PushLegacyWqeToJetty(Ptr<UbWqe> wqe, uint32_t jettyNum)
+{
+    Ptr<UbJetty> jetty = GetJetty(jettyNum);
+    NS_ABORT_MSG_IF(jetty == nullptr || !jetty->CanAcceptWqe(wqe),
+                    "Legacy multi-TP WQE submission lost its validated Jetty binding");
+    jetty->SetNodeId(m_nodeId);
+    jetty->PushWqe(wqe);
+    GetTransaction()->AddWqe(jettyNum, wqe);
+    GetTransaction()->TriggerScheduleWqeSegment(jettyNum);
 }
 
 UbWqeSubmissionResult UbFunction::SubmitWqe(Ptr<UbWqe> wqe, uint32_t jettyNum)
@@ -166,15 +181,23 @@ UbWqeSubmissionResult UbFunction::SubmitWqe(Ptr<UbWqe> wqe, uint32_t jettyNum)
     if (!ubJetty->CanAcceptWqe(wqe)) {
         return {UbWqeSubmissionStatus::JETTY_BINDING_MISMATCH, {}};
     }
+    const auto tpGroup = GetTransaction()->GetJettyRelatedTpVec(jettyNum);
+    if (tpGroup.size() > 1) {
+        return {UbWqeSubmissionStatus::LEGACY_MULTI_TRANSPORT, {}};
+    }
+    if (tpGroup.empty() || tpGroup.front() == nullptr) {
+        return {UbWqeSubmissionStatus::NO_DIRECT_TRANSPORT, {}};
+    }
+    if (GetTransaction()->HasWqeOperation(jettyNum, wqe->GetWqeId())) {
+        return {UbWqeSubmissionStatus::DUPLICATE_OPERATION, {}};
+    }
 
     Ptr<UbLifecycleCoordinator> coordinator =
         UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId));
     const UbLifecycleResourceIdentity wqeIdentity =
         coordinator->OpenResource(UbLifecycleResourceKind::WQE, wqe->GetWqeId());
-    if (!GetTransaction()->TryAdmitDirectWqe(jettyNum, wqe, wqeIdentity)) {
-        coordinator->RetireResource(wqeIdentity);
-        return {UbWqeSubmissionStatus::NO_DIRECT_TRANSPORT, {}};
-    }
+    NS_ABORT_MSG_IF(!GetTransaction()->TryAdmitDirectWqe(jettyNum, wqe, wqeIdentity),
+                    "Validated direct WQE admission changed before commit");
 
     ubJetty->SetNodeId(m_nodeId);
     ubJetty->PushWqe(wqe);

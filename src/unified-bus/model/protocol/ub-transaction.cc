@@ -273,7 +273,8 @@ void UbTransaction::ScheduleWqeSegment(Ptr<UbTransportChannel> tp)
     }
 
     Ptr<UbWqeSegment> wqeSegment = nullptr;
-    bool localOperation = false;
+    bool localSegment = false;
+    bool lifecycleOperation = false;
     uint32_t nextRrIndex = m_tpRRIndex[tpn];
     // 从tpRRIndex开始轮询，找到第一个非空且可以拿到wqesegment的jetty，获取wqesegment
     for (uint32_t i = 0; i < rrCount; i++) {
@@ -284,12 +285,14 @@ void UbTransaction::ScheduleWqeSegment(Ptr<UbTransportChannel> tp)
             if (currentJetty == nullptr) {
                 continue;
             }
-            wqeSegment = currentJetty->PrepareNextWqeSegment();
+            lifecycleOperation = HasLifecycleOperationForJetty(currentJetty->GetJettyNum());
+            wqeSegment = lifecycleOperation ? currentJetty->PrepareNextWqeSegment()
+                                            : currentJetty->GetNextWqeSegment();
             if (wqeSegment == nullptr) {
                 continue;
             }
             ValidateUrmaServiceModeOrDie(currentJetty->GetJettyNum(), wqeSegment);
-            localOperation = true;
+            localSegment = true;
         } else { // 轮询remoteRequest
             uint32_t remoteIndex = rrIndex - jettyCount;
             auto remoteIt = m_tpRelatedRemoteRequests.find(tpn);
@@ -329,7 +332,8 @@ void UbTransaction::ScheduleWqeSegment(Ptr<UbTransportChannel> tp)
                                this,
                                wqeSegment,
                                nextRrIndex,
-                               localOperation);
+                               localSegment,
+                               lifecycleOperation);
     } else {
         m_tpSchedulingStatus[tpn] = false;
     }
@@ -338,7 +342,8 @@ void UbTransaction::ScheduleWqeSegment(Ptr<UbTransportChannel> tp)
 
 void UbTransaction::OnScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment,
                                                uint32_t nextRrIndex,
-                                               bool localOperation)
+                                               bool localSegment,
+                                               bool lifecycleOperation)
 {
     const auto tpIt = m_tpnMap.find(segment->GetTpn());
     if (tpIt == m_tpnMap.end() || tpIt->second == nullptr)
@@ -349,7 +354,7 @@ void UbTransaction::OnScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment,
     Ptr<UbTransportChannel> tp = tpIt->second;
     if (!tp->TryAdmitWqeSegment(segment))
     {
-        if (!localOperation)
+        if (!localSegment)
         {
             auto& remoteSegments =
                 m_tpRelatedRemoteRequests[segment->GetTpn()][segment->GetOriginJettyNum()];
@@ -360,7 +365,7 @@ void UbTransaction::OnScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment,
         return;
     }
 
-    if (localOperation)
+    if (lifecycleOperation)
     {
         Ptr<UbJetty> jetty = GetJetty(segment->GetJettyNum());
         NS_ABORT_MSG_IF(jetty == nullptr,
@@ -375,6 +380,13 @@ void UbTransaction::OnScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment,
     // TP调度状态重置
     m_tpSchedulingStatus[segment->GetTpn()] = false;
     ScheduleWqeSegment(tp);
+}
+
+bool
+UbTransaction::HasLifecycleOperationForJetty(uint32_t jettyNum) const
+{
+    const auto first = m_operations.lower_bound({jettyNum, 0});
+    return first != m_operations.end() && first->first.first == jettyNum;
 }
 
 void
@@ -726,6 +738,12 @@ UbTransaction::TryAdmitDirectWqe(uint32_t jettyNum,
     return true;
 }
 
+bool
+UbTransaction::HasWqeOperation(uint32_t jettyNum, uint32_t wqeId) const
+{
+    return m_operations.find({jettyNum, wqeId}) != m_operations.end();
+}
+
 uint32_t
 UbTransaction::GetActiveOperationCount() const
 {
@@ -747,6 +765,15 @@ UbTransaction::TryGetOperationSnapshot(uint32_t jettyNum,
     snapshot.directTpn = it->second.directTpn;
     snapshot.activeSegments = static_cast<uint32_t>(it->second.segments.size());
     return true;
+}
+
+uint32_t
+UbTransaction::GetTpRoundRobinIndexForTest(uint32_t tpn) const
+{
+    const auto it = m_tpRRIndex.find(tpn);
+    NS_ABORT_MSG_IF(it == m_tpRRIndex.end(),
+                    "Transaction RR query references an unknown TP");
+    return it->second;
 }
 
 void UbTransaction::WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe)

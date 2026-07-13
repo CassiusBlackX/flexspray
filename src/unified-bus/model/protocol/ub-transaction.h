@@ -96,10 +96,12 @@ namespace ns3 {
         bool TryAdmitDirectWqe(uint32_t jettyNum,
                                Ptr<UbWqe> wqe,
                                const UbLifecycleResourceIdentity& wqeIdentity);
+        bool HasWqeOperation(uint32_t jettyNum, uint32_t wqeId) const;
         uint32_t GetActiveOperationCount() const;
         bool TryGetOperationSnapshot(uint32_t jettyNum,
                                      uint32_t wqeId,
                                      UbTransactionOperationSnapshot& snapshot) const;
+        uint32_t GetTpRoundRobinIndexForTest(uint32_t tpn) const;
 
         // 某个wqe完成，刷新状态
         void WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe);
@@ -119,7 +121,9 @@ namespace ns3 {
 
         void OnScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment,
                                         uint32_t nextRrIndex,
-                                        bool localOperation);
+                                        bool localSegment,
+                                        bool lifecycleOperation);
+        bool HasLifecycleOperationForJetty(uint32_t jettyNum) const;
         void RecordSegmentAdmission(Ptr<UbWqeSegment> segment);
         bool RecordSegmentSuccess(uint32_t jettyNum, uint32_t wqeId, uint32_t taSsn);
 
