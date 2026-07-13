@@ -273,6 +273,7 @@ namespace ns3 {
             UbLifecycleLeaseIdentity transportUseLease;
             struct SegmentRecord
             {
+                Ptr<UbWqeSegment> segment;
                 UbLifecycleResourceIdentity identity;
                 UbLifecycleLeaseIdentity childLease;
                 UbLifecycleResourceIdentity resolvedTpIdentity;

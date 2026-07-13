@@ -8197,11 +8197,11 @@ class UbLifecycleStrongOrderTerminalWakesSuccessorTest : public TestCase
                               true,
                               "Strong-order WQEs should share one direct TP binding");
 
-        controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn)
-            ->TraceConnectWithoutContext(
-                "WqeSegmentSendsNotify",
-                MakeCallback(&UbLifecycleStrongOrderTerminalWakesSuccessorTest::OnAdmitted,
-                             this));
+        m_tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        m_tp->TraceConnectWithoutContext(
+            "WqeSegmentSendsNotify",
+            MakeCallback(&UbLifecycleStrongOrderTerminalWakesSuccessorTest::OnAdmitted,
+                         this));
         function->GetJetty(kUrmaWriteRegressionJettyNum)
             ->SetWqeCompletionCallback(MakeCallback(
                 &UbLifecycleStrongOrderTerminalWakesSuccessorTest::OnTerminal,
@@ -8313,6 +8313,39 @@ class UbLifecycleStrongOrderTerminalWakesSuccessorTest : public TestCase
                               0u,
                               "Front terminal and successor completion should retire both "
                               "operations");
+        if (m_terminalizeAfterAdmission)
+        {
+            NS_TEST_ASSERT_MSG_EQ(m_frontTpRetainedStateCleared,
+                                  true,
+                                  "Post-admission terminal should remove front TP retained work");
+            NS_TEST_ASSERT_MSG_EQ(m_frontCannotSendAfterTerminal,
+                                  true,
+                                  "Triggering the TP after terminal must not emit the front");
+            NS_TEST_ASSERT_MSG_EQ(m_frontReservationRebased,
+                                  true,
+                                  "Unsent tail terminal should reclaim its TP MSN and PSN reservation");
+            NS_TEST_ASSERT_MSG_EQ(m_successorTpSequenceReused,
+                                  true,
+                                  "Successor should reuse the reclaimed tail sequence");
+            NS_TEST_ASSERT_MSG_EQ(m_tp->GetWqeSegmentVecSize(),
+                                  0u,
+                                  "Natural successor completion should drain TP retained work");
+            NS_TEST_ASSERT_MSG_EQ(m_tp->GetOutstandingUnackedSegmentCount(),
+                                  0u,
+                                  "Natural successor completion should leave no TP segment");
+            NS_TEST_ASSERT_MSG_EQ(m_tp->GetPsnSndUnaForTest(),
+                                  1u,
+                                  "Successor response should advance the reused PSN once");
+            NS_TEST_ASSERT_MSG_EQ(m_tp->GetPsnSndNxtForTest(),
+                                  1u,
+                                  "Successor should be the only physical TP send");
+            NS_TEST_ASSERT_MSG_EQ(m_tp->GetPsnCnt(),
+                                  1u,
+                                  "Canceled front must not leave a reserved PSN behind");
+            NS_TEST_ASSERT_MSG_EQ(m_tp->GetMsnCnt(),
+                                  1u,
+                                  "Canceled front must not leave a reserved TP MSN behind");
+        }
         NS_TEST_ASSERT_MSG_EQ(m_successorAdmissionPinned,
                               true,
                               "Natural completion path should observe one admitted successor "
@@ -8369,6 +8402,16 @@ class UbLifecycleStrongOrderTerminalWakesSuccessorTest : public TestCase
         m_transaction->CompleteWqeOperation(kUrmaWriteRegressionJettyNum,
                                             kUrmaWriteRegressionTaskId,
                                             m_frontOutcome);
+        if (m_terminalizeAfterAdmission)
+        {
+            m_frontTpRetainedStateCleared = m_tp->GetWqeSegmentVecSize() == 0 &&
+                                            m_tp->GetOutstandingUnackedSegmentCount() == 0;
+            m_frontReservationRebased = m_tp->GetPsnCnt() == 0 &&
+                                        m_tp->GetMsnCnt() == 0 &&
+                                        m_tp->GetPsnSndNxtForTest() == 0;
+            m_frontCannotSendAfterTerminal = m_frontTpRetainedStateCleared &&
+                                             m_tp->GetNextPacketForTest() == nullptr;
+        }
     }
 
     void OnAdmitted(uint32_t, uint32_t taskId, uint32_t taSsn)
@@ -8392,6 +8435,9 @@ class UbLifecycleStrongOrderTerminalWakesSuccessorTest : public TestCase
                 successor.activeSegments == 1 &&
                 successor.activeTransportWorkLeases == 1;
             m_successorAdmittedTassn = taSsn;
+            m_successorTpSequenceReused = m_tp->GetPsnCnt() == 1 &&
+                                          m_tp->GetMsnCnt() == 1 &&
+                                          m_tp->GetPsnSndNxtForTest() == 0;
         }
     }
 
@@ -8404,10 +8450,15 @@ class UbLifecycleStrongOrderTerminalWakesSuccessorTest : public TestCase
     UbWorkOutcome m_frontOutcome;
     bool m_terminalizeAfterAdmission;
     Ptr<UbTransaction> m_transaction;
+    Ptr<UbTransportChannel> m_tp;
     Ptr<UbWqe> m_successorWqe;
     bool m_blockedSuccessorObserved{false};
     bool m_successorAdmissionPinned{false};
     bool m_terminalScheduled{false};
+    bool m_frontTpRetainedStateCleared{false};
+    bool m_frontCannotSendAfterTerminal{false};
+    bool m_frontReservationRebased{false};
+    bool m_successorTpSequenceReused{false};
     uint32_t m_reservedSuccessorTassn{UINT32_MAX};
     uint32_t m_successorAdmittedTassn{UINT32_MAX};
     std::vector<uint32_t> m_admittedTasks;
