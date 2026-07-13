@@ -103,15 +103,6 @@ void UbTransaction::TpInit(Ptr<UbTransportChannel> tp)
 
 void UbTransaction::TpDeinit(uint32_t tpn)
 {
-    // 删除与该tp绑定的jetty
-    m_tpRelatedJetties.erase(tpn);
-    for (auto it = m_jettyTpGroup.begin(); it != m_jettyTpGroup.end(); ++it) {
-        // 删除所有jetty中该tp的绑定关系
-        auto tpIt = std::find(it->second.begin(), it->second.end(), m_tpnMap[tpn]);
-        if (tpIt != it->second.end()) {
-            it->second.erase(tpIt);
-        }
-    }
     m_tpnMap.erase(tpn);
     m_tpRRIndex.erase(tpn);
     m_tpSchedulingStatus.erase(tpn);
@@ -167,14 +158,6 @@ bool UbTransaction::JettyBindTp(uint32_t src, uint32_t dest, uint32_t jettyNum,
     if (multiPath && requestedTransports.size() > 1) {
         NS_LOG_DEBUG("Multiple tp");
         boundTransports = requestedTransports;
-        for (const Ptr<UbTransportChannel>& transport : boundTransports) {
-            const uint32_t tpn = transport->GetTpn();
-            if (std::find(m_tpRelatedJetties[tpn].begin(),
-                          m_tpRelatedJetties[tpn].end(),
-                          ubJetty) == m_tpRelatedJetties[tpn].end()) {
-                m_tpRelatedJetties[tpn].push_back(ubJetty);
-            }
-        }
         Ptr<UbController> controller = GetOwnerController();
         if (controller == nullptr)
         {
@@ -184,6 +167,10 @@ bool UbTransaction::JettyBindTp(uint32_t src, uint32_t dest, uint32_t jettyNum,
             m_nextJettyTpStartIndex % boundTransports.size();
         Ptr<UbTransportGroup> group =
             controller->CreateRtpTpGroup(boundTransports, initialSelectionCursor);
+        if (group == nullptr)
+        {
+            return false;
+        }
         m_jettyRtpReferences.insert_or_assign(
             jettyNum,
             UbRtpTransportReference::ForTpGroup(group->GetLifecycleIdentity()));
@@ -196,71 +183,118 @@ bool UbTransaction::JettyBindTp(uint32_t src, uint32_t dest, uint32_t jettyNum,
         Ptr<UbTransportChannel> transport = requestedTransports[pos];
         boundTransports.push_back(transport);
         const uint32_t tpn = transport->GetTpn();
-        if (std::find(m_tpRelatedJetties[tpn].begin(),
-                      m_tpRelatedJetties[tpn].end(),
-                      ubJetty) == m_tpRelatedJetties[tpn].end()) {
-            m_tpRelatedJetties[tpn].push_back(ubJetty);
-        }
         m_jettyRtpReferences.insert_or_assign(
             jettyNum,
             UbRtpTransportReference::ForDirectTp(tpn, transport->GetLifecycleOwner()));
     }
 
-    m_jettyTpGroup[jettyNum] = boundTransports;
     if (!boundTransports.empty()) {
         m_jettyTpNextIndex[jettyNum] = m_nextJettyTpStartIndex % boundTransports.size();
         m_nextJettyTpStartIndex = (m_nextJettyTpStartIndex + 1) % boundTransports.size();
     } else {
         m_jettyTpNextIndex[jettyNum] = 0;
     }
-    GetFunction()->RegisterJettyRtpBinding(jettyNum, boundTransports);
+    GetFunction()->RegisterJettyRtpBinding(
+        jettyNum,
+        m_jettyRtpReferences.at(jettyNum).GetIdentity());
     return true;
 }
 
 void UbTransaction::DestroyJettyTpMap(uint32_t jettyNum)
 {
-    auto itJettyTp = m_jettyTpGroup.find(jettyNum);
-    if (itJettyTp != m_jettyTpGroup.end()) {
-        // 解除关系
-        m_jettyTpGroup.erase(itJettyTp);
-        m_jettyRtpReferences.erase(jettyNum);
-        m_jettyTpNextIndex.erase(jettyNum);
-        NS_LOG_DEBUG("Destroyed jetty in m_jettyTpGroup");
-    } else {
-        NS_LOG_WARN("Jetty Tp map not found for destruction");
-    }
+    m_jettyRtpReferences.erase(jettyNum);
+    m_jettyTpNextIndex.erase(jettyNum);
+}
 
-    for (auto it = m_tpRelatedJetties.begin(); it != m_tpRelatedJetties.end(); it++) {
-        for (auto jettyIt = it->second.begin(); jettyIt != it->second.end();) {
-            if ((*jettyIt)->GetJettyNum() == jettyNum) {
-                jettyIt = it->second.erase(jettyIt);
-            } else {
-                ++jettyIt;
-            }
+void
+UbTransaction::ReleaseRtpTpGroupBindingLeases(
+    const UbLifecycleResourceIdentity& groupIdentity)
+{
+    GetFunction()->ReleaseJettyRtpBindings(groupIdentity);
+}
+
+void
+UbTransaction::EraseRtpTpGroupBindings(
+    const UbLifecycleResourceIdentity& groupIdentity)
+{
+    std::vector<uint32_t> jettyNums;
+    for (const auto& [jettyNum, reference] : m_jettyRtpReferences)
+    {
+        if (!reference.IsDirectTp() && reference.GetIdentity() == groupIdentity)
+        {
+            jettyNums.push_back(jettyNum);
         }
+    }
+    for (uint32_t jettyNum : jettyNums)
+    {
+        DestroyJettyTpMap(jettyNum);
     }
 }
 
 const std::vector<Ptr<UbTransportChannel>> UbTransaction::GetJettyRelatedTpVec(uint32_t jettyNum)
 {
     NS_LOG_DEBUG(this);
-    auto it = m_jettyTpGroup.find(jettyNum);
-    if (it != m_jettyTpGroup.end()) {
-        return it->second;
+    const auto reference = m_jettyRtpReferences.find(jettyNum);
+    if (reference == m_jettyRtpReferences.end())
+    {
+        return {};
     }
-    NS_LOG_DEBUG("UbTransportChannel vector not found");
-    return {};
+    if (reference->second.IsDirectTp())
+    {
+        const auto transport = m_tpnMap.find(reference->second.GetDirectTpn());
+        if (transport == m_tpnMap.end() || transport->second == nullptr ||
+            transport->second->GetLifecycleOwner() != reference->second.GetIdentity())
+        {
+            return {};
+        }
+        return {transport->second};
+    }
+
+    Ptr<UbController> controller = GetOwnerController();
+    Ptr<UbTransportGroup> group =
+        controller == nullptr ? nullptr
+                              : controller->ResolveRtpTpGroup(reference->second.GetIdentity());
+    if (group == nullptr)
+    {
+        return {};
+    }
+    std::vector<Ptr<UbTransportChannel>> transports;
+    transports.reserve(group->GetMemberCount());
+    for (uint32_t index = 0; index < group->GetMemberCount(); ++index)
+    {
+        const UbTransportGroupMember& member = group->GetMember(index);
+        const auto transport = m_tpnMap.find(member.tpn);
+        if (transport != m_tpnMap.end() && transport->second != nullptr &&
+            transport->second->GetLifecycleOwner() == member.tpIdentity)
+        {
+            transports.push_back(transport->second);
+        }
+    }
+    return transports;
 }
 
 std::vector<Ptr<UbJetty>> UbTransaction::GetTpRelatedJettyVec(uint32_t tpn)
 {
     NS_LOG_DEBUG(this);
-    auto it = m_tpRelatedJetties.find(tpn);
-    if (it != m_tpRelatedJetties.end()) {
-        return it->second;
+    std::vector<Ptr<UbJetty>> jetties;
+    for (const auto& [jettyNum, reference] : m_jettyRtpReferences)
+    {
+        (void)reference;
+        const std::vector<Ptr<UbTransportChannel>> transports =
+            GetJettyRelatedTpVec(jettyNum);
+        const bool related = std::any_of(
+            transports.begin(),
+            transports.end(),
+            [tpn](const Ptr<UbTransportChannel>& transport) {
+                return transport != nullptr && transport->GetTpn() == tpn;
+            });
+        Ptr<UbJetty> jetty = related ? GetJetty(jettyNum) : nullptr;
+        if (jetty != nullptr)
+        {
+            jetties.push_back(jetty);
+        }
     }
-    NS_LOG_DEBUG("UbJetty vector not found");
-    return {};
+    return jetties;
 }
 
 void
@@ -270,28 +304,7 @@ UbTransaction::TriggerScheduleWqeSegment(uint32_t jettyNum,
 {
     if (lifecycleOperation)
     {
-        const auto operation = originatingWqe == nullptr
-                                   ? m_operations.end()
-                                   : m_operations.find({jettyNum, originatingWqe->GetWqeId()});
-        if (operation == m_operations.end() || operation->second.wqe != originatingWqe ||
-            operation->second.terminalPending || operation->second.rtpScheduleChainActive)
-        {
-            return;
-        }
-        operation->second.rtpScheduleChainActive = true;
-        const uint64_t eventToken = GetFunction()->TrackJettyEvent(jettyNum);
-        const EventId event = Simulator::ScheduleNow(
-            &UbTransaction::RunTrackedPrepareRtpWqeSegment,
-            this,
-            jettyNum,
-            originatingWqe,
-            eventToken);
-        GetFunction()->AttachJettyEvent(
-            jettyNum,
-            eventToken,
-            event,
-            MakeCallback(&UbTransaction::ClearRtpScheduleChain, this)
-                .Bind(jettyNum, originatingWqe));
+        EnqueueRtpSource(jettyNum, originatingWqe, false);
         return;
     }
 
@@ -322,6 +335,7 @@ UbTransaction::TriggerScheduleWqeSegment(uint32_t jettyNum,
 void
 UbTransaction::RunTrackedPrepareRtpWqeSegment(uint32_t jettyNum,
                                               Ptr<UbWqe> originatingWqe,
+                                              AdmissionDomainKey domainKey,
                                               uint64_t eventToken)
 {
     if (!GetFunction()->BeginJettyEvent(jettyNum, eventToken))
@@ -342,22 +356,30 @@ UbTransaction::RunTrackedPrepareRtpWqeSegment(uint32_t jettyNum,
                 this,
                 segment,
                 originatingWqe,
+                domainKey,
                 finishToken);
             GetFunction()->AttachJettyEvent(
                 jettyNum,
                 finishToken,
                 finishEvent,
-                MakeCallback(&UbTransaction::ClearRtpScheduleChain, this)
-                    .Bind(jettyNum, originatingWqe));
+                MakeCallback(&UbTransaction::CancelRtpScheduleChain, this)
+                    .Bind(domainKey, jettyNum, originatingWqe));
         }
         else
         {
             ClearRtpScheduleChain(jettyNum, originatingWqe);
+            CompleteAdmissionDomainAttempt(jettyNum, originatingWqe);
+            const auto operation = m_operations.find({jettyNum, originatingWqe->GetWqeId()});
+            if (operation != m_operations.end() && operation->second.wqe == originatingWqe)
+            {
+                ScheduleAdmissionDomain(
+                    MakeAdmissionDomainKey(operation->second.transportReference));
+            }
         }
     }
     else
     {
-        ClearRtpScheduleChain(jettyNum, originatingWqe);
+        CancelRtpScheduleChain(domainKey, jettyNum, originatingWqe);
     }
     GetFunction()->ResolveJettyEvent(jettyNum, eventToken);
 }
@@ -365,6 +387,7 @@ UbTransaction::RunTrackedPrepareRtpWqeSegment(uint32_t jettyNum,
 void
 UbTransaction::RunTrackedAdmitRtpWqeSegment(Ptr<UbWqeSegment> segment,
                                             Ptr<UbWqe> originatingWqe,
+                                            AdmissionDomainKey domainKey,
                                             uint64_t eventToken)
 {
     const uint32_t jettyNum = segment->GetJettyNum();
@@ -378,14 +401,26 @@ UbTransaction::RunTrackedAdmitRtpWqeSegment(Ptr<UbWqeSegment> segment,
         const RtpSegmentAdmissionResult result =
             TryAdmitRtpSegment(jettyNum, originatingWqe, segment, admittedTp);
         ClearRtpScheduleChain(jettyNum, originatingWqe);
+        CompleteAdmissionDomainAttempt(jettyNum, originatingWqe);
         if (result == RtpSegmentAdmissionResult::ADMITTED)
         {
             NS_LOG_INFO("WQE Segment Sends, taskId:" << segment->GetTaskId()
                                                      << "TASSN: " << segment->GetTaSsn());
             admittedTp->WqeSegmentTriggerPortTransmit(segment);
-            // T05 owns capacity wakeups. T04 only continues after a successful admission so the
-            // next segment observes the newly committed TPG cursor.
-            TriggerScheduleWqeSegment(jettyNum, originatingWqe, true);
+            if (originatingWqe->GetBytesLeft() != 0)
+            {
+                TriggerScheduleWqeSegment(jettyNum, originatingWqe, true);
+            }
+            else
+            {
+                const auto operation =
+                    m_operations.find({jettyNum, originatingWqe->GetWqeId()});
+                if (operation != m_operations.end())
+                {
+                    ScheduleAdmissionDomain(
+                        MakeAdmissionDomainKey(operation->second.transportReference));
+                }
+            }
         }
         else if (result == RtpSegmentAdmissionResult::STALE_PREPARED_CANDIDATE)
         {
@@ -395,10 +430,19 @@ UbTransaction::RunTrackedAdmitRtpWqeSegment(Ptr<UbWqeSegment> segment,
         {
             DeferRtpSource(jettyNum, originatingWqe);
         }
+        else
+        {
+            const auto operation = m_operations.find({jettyNum, originatingWqe->GetWqeId()});
+            if (operation != m_operations.end())
+            {
+                ScheduleAdmissionDomain(
+                    MakeAdmissionDomainKey(operation->second.transportReference));
+            }
+        }
     }
     else
     {
-        ClearRtpScheduleChain(jettyNum, originatingWqe);
+        CancelRtpScheduleChain(domainKey, jettyNum, originatingWqe);
     }
     GetFunction()->ResolveJettyEvent(jettyNum, eventToken);
 }
@@ -423,7 +467,7 @@ UbTransaction::RunTrackedScheduleWqeSegment(uint32_t jettyNum,
 
 void UbTransaction::ApplyScheduleWqeSegment(Ptr<UbTransportChannel> tp)
 {
-    WakeDeferredDirectRtpSources(tp);
+    WakeDeferredRtpSources(tp);
     Simulator::ScheduleNow(&UbTransaction::ScheduleWqeSegment, this, tp);
 }
 
@@ -776,17 +820,35 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
     else
     {
         selectedGroup = resolution.group;
-        selectedGroupIndex = selectedGroup->GetMemberIndexAtOffset(0);
-        const UbTransportGroupMember& member = selectedGroup->GetMember(selectedGroupIndex);
-        const auto transport = m_tpnMap.find(member.tpn);
-        if (transport == m_tpnMap.end() || transport->second == nullptr ||
-            transport->second->GetLifecycleOwner() != member.tpIdentity ||
-            !m_coordinator->IsResourceActive(member.tpIdentity) ||
-            !transport->second->CanAdmitWqeSegment(segment))
+        bool hasLiveMember = false;
+        for (uint32_t offset = 0; offset < selectedGroup->GetMemberCount(); ++offset)
         {
-            return RtpSegmentAdmissionResult::REJECTED;
+            const uint32_t candidateIndex = selectedGroup->GetMemberIndexAtOffset(offset);
+            if (!selectedGroup->IsMemberSelectable(candidateIndex))
+            {
+                continue;
+            }
+            const UbTransportGroupMember& member = selectedGroup->GetMember(candidateIndex);
+            const auto transport = m_tpnMap.find(member.tpn);
+            if (transport == m_tpnMap.end() || transport->second == nullptr ||
+                transport->second->GetLifecycleOwner() != member.tpIdentity ||
+                !m_coordinator->IsResourceActive(member.tpIdentity))
+            {
+                continue;
+            }
+            hasLiveMember = true;
+            if (transport->second->CanAdmitWqeSegment(segment))
+            {
+                selectedGroupIndex = candidateIndex;
+                admittedTp = transport->second;
+                break;
+            }
         }
-        admittedTp = transport->second;
+        if (admittedTp == nullptr)
+        {
+            return hasLiveMember ? RtpSegmentAdmissionResult::DEFERRED
+                                 : RtpSegmentAdmissionResult::REJECTED;
+        }
     }
 
     // Every expected rejection is complete above. From here to cursor commit, owner-local
@@ -819,6 +881,10 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
     if (selectedGroup != nullptr)
     {
         selectedGroup->CommitSelection(selectedGroupIndex);
+        if (originatingWqe->GetBytesLeft() == 0)
+        {
+            ReleaseTransportUseLease(operation->second);
+        }
     }
     return RtpSegmentAdmissionResult::ADMITTED;
 }
@@ -830,7 +896,53 @@ UbTransaction::MakeAdmissionDomainKey(const UbRtpTransportReference& reference)
 }
 
 void
-UbTransaction::DeferRtpSource(uint32_t jettyNum, Ptr<UbWqe> originatingWqe)
+UbTransaction::StartRtpScheduleChain(uint32_t jettyNum, Ptr<UbWqe> originatingWqe)
+{
+    const auto operation = originatingWqe == nullptr
+                               ? m_operations.end()
+                               : m_operations.find({jettyNum, originatingWqe->GetWqeId()});
+    if (operation == m_operations.end() || operation->second.wqe != originatingWqe ||
+        operation->second.terminalPending || operation->second.rtpScheduleChainActive)
+    {
+        return;
+    }
+    operation->second.rtpScheduleChainActive = true;
+    const AdmissionDomainKey domainKey =
+        MakeAdmissionDomainKey(operation->second.transportReference);
+    const uint64_t eventToken = GetFunction()->TrackJettyEvent(jettyNum);
+    const EventId event = Simulator::ScheduleNow(
+        &UbTransaction::RunTrackedPrepareRtpWqeSegment,
+        this,
+        jettyNum,
+        originatingWqe,
+        domainKey,
+        eventToken);
+    GetFunction()->AttachJettyEvent(
+        jettyNum,
+        eventToken,
+        event,
+        MakeCallback(&UbTransaction::CancelRtpScheduleChain, this)
+            .Bind(domainKey, jettyNum, originatingWqe));
+}
+
+void
+UbTransaction::ScheduleAdmissionDomain(const AdmissionDomainKey& domainKey)
+{
+    const auto domain = m_admissionDomains.find(domainKey);
+    if (domain == m_admissionDomains.end() || domain->second.blocked ||
+        domain->second.readySources.empty() || domain->second.eventPending ||
+        domain->second.sourceActive)
+    {
+        return;
+    }
+    domain->second.eventPending = true;
+    Simulator::ScheduleNow(&UbTransaction::RunAdmissionDomainWake, this, domainKey);
+}
+
+void
+UbTransaction::EnqueueRtpSource(uint32_t jettyNum,
+                                Ptr<UbWqe> originatingWqe,
+                                bool restoreBlockedFront)
 {
     if (originatingWqe == nullptr)
     {
@@ -838,43 +950,100 @@ UbTransaction::DeferRtpSource(uint32_t jettyNum, Ptr<UbWqe> originatingWqe)
     }
     const auto operation = m_operations.find({jettyNum, originatingWqe->GetWqeId()});
     if (operation == m_operations.end() || operation->second.wqe != originatingWqe ||
-        operation->second.terminalPending)
+        operation->second.terminalPending || operation->second.rtpScheduleChainActive)
     {
         return;
     }
 
+    const AdmissionDomainKey key = MakeAdmissionDomainKey(operation->second.transportReference);
     AdmissionDomainState& domain =
-        m_admissionDomains[MakeAdmissionDomainKey(operation->second.transportReference)];
+        m_admissionDomains[key];
     if (!operation->second.readyQueued)
     {
-        domain.readySources.push_front(
-            {jettyNum, originatingWqe->GetWqeId(), operation->second.operationIdentity});
+        const ReadySourceKey source{
+            jettyNum,
+            originatingWqe->GetWqeId(),
+            operation->second.operationIdentity};
+        if (restoreBlockedFront)
+        {
+            domain.readySources.push_front(source);
+        }
+        else
+        {
+            domain.readySources.push_back(source);
+        }
         operation->second.readyQueued = true;
     }
-    domain.blocked = true;
+    if (!restoreBlockedFront && !domain.sourceActive && !domain.eventPending && !domain.blocked)
+    {
+        RunAdmissionDomainWake(key);
+    }
 }
 
 void
-UbTransaction::WakeDeferredDirectRtpSources(Ptr<UbTransportChannel> tp)
+UbTransaction::DeferRtpSource(uint32_t jettyNum, Ptr<UbWqe> originatingWqe)
 {
-    if (tp == nullptr || tp->IsWqeSegmentLimited() || !tp->CanScheduleAnotherSegment())
+    EnqueueRtpSource(jettyNum, originatingWqe, true);
+    if (originatingWqe == nullptr)
     {
         return;
     }
+    const auto operation = m_operations.find({jettyNum, originatingWqe->GetWqeId()});
+    if (operation != m_operations.end())
+    {
+        m_admissionDomains[MakeAdmissionDomainKey(operation->second.transportReference)].blocked =
+            true;
+    }
+}
 
-    const AdmissionDomainKey key{
-        UbRtpTransportReferenceKind::DIRECT_TP,
-        tp->GetLifecycleOwner()};
+void
+UbTransaction::WakeAdmissionDomain(const AdmissionDomainKey& key, bool capacityTransition)
+{
     const auto domain = m_admissionDomains.find(key);
     if (domain == m_admissionDomains.end() || !domain->second.blocked ||
         domain->second.readySources.empty() || domain->second.eventPending)
     {
         return;
     }
-
     domain->second.blocked = false;
-    domain->second.eventPending = true;
-    Simulator::ScheduleNow(&UbTransaction::RunAdmissionDomainWake, this, key);
+    ScheduleAdmissionDomain(key);
+    if (capacityTransition && domain->second.eventPending)
+    {
+        ++domain->second.capacityWakeEvents;
+    }
+}
+
+void
+UbTransaction::WakeDeferredRtpSources(Ptr<UbTransportChannel> tp)
+{
+    if (tp == nullptr || tp->IsWqeSegmentLimited() || !tp->CanScheduleAnotherSegment())
+    {
+        return;
+    }
+
+    WakeAdmissionDomain({
+        UbRtpTransportReferenceKind::DIRECT_TP,
+        tp->GetLifecycleOwner()},
+        true);
+
+    Ptr<UbController> controller = GetOwnerController();
+    Ptr<UbTransportGroup> group =
+        controller == nullptr
+            ? nullptr
+            : controller->ResolveRtpTpGroupForMember(tp->GetLifecycleOwner());
+    if (group != nullptr)
+    {
+        WakeAdmissionDomain({UbRtpTransportReferenceKind::TPG,
+                             group->GetLifecycleIdentity()},
+                            true);
+    }
+}
+
+void
+UbTransaction::NotifyRtpTpGroupMemberAvailable(
+    const UbLifecycleResourceIdentity& groupIdentity)
+{
+    WakeAdmissionDomain({UbRtpTransportReferenceKind::TPG, groupIdentity}, false);
 }
 
 void
@@ -886,6 +1055,10 @@ UbTransaction::RunAdmissionDomainWake(AdmissionDomainKey domainKey)
         return;
     }
     domain->second.eventPending = false;
+    if (domain->second.sourceActive || domain->second.blocked)
+    {
+        return;
+    }
 
     while (!domain->second.readySources.empty())
     {
@@ -900,10 +1073,37 @@ UbTransaction::RunAdmissionDomainWake(AdmissionDomainKey domainKey)
         operation->second.readyQueued = false;
         if (!operation->second.terminalPending)
         {
-            TriggerScheduleWqeSegment(source.jettyNum, operation->second.wqe, true);
+            domain->second.sourceActive = true;
+            StartRtpScheduleChain(source.jettyNum, operation->second.wqe);
         }
         break;
     }
+}
+
+void
+UbTransaction::CompleteAdmissionDomainAttempt(uint32_t jettyNum, Ptr<UbWqe> originatingWqe)
+{
+    if (originatingWqe == nullptr)
+    {
+        return;
+    }
+    const auto operation = m_operations.find({jettyNum, originatingWqe->GetWqeId()});
+    if (operation == m_operations.end() || operation->second.wqe != originatingWqe)
+    {
+        return;
+    }
+    m_admissionDomains[MakeAdmissionDomainKey(operation->second.transportReference)].sourceActive =
+        false;
+}
+
+void
+UbTransaction::CancelRtpScheduleChain(AdmissionDomainKey domainKey,
+                                      uint32_t jettyNum,
+                                      Ptr<UbWqe> originatingWqe)
+{
+    ClearRtpScheduleChain(jettyNum, originatingWqe);
+    m_admissionDomains[domainKey].sourceActive = false;
+    ScheduleAdmissionDomain(domainKey);
 }
 
 bool
@@ -945,7 +1145,7 @@ UbTransaction::RecordSegmentSuccess(uint32_t jettyNum,
     if (terminalCleanup && operation->second.segments.empty())
     {
         coordinator->ReleaseLease(operation->second.workLease);
-        coordinator->ReleaseLease(operation->second.transportUseLease);
+        ReleaseTransportUseLease(operation->second);
         coordinator->RetireResource(operation->second.operationIdentity);
         coordinator->RetireResource(operation->second.wqeIdentity);
         m_operations.erase(operation);
@@ -1288,6 +1488,27 @@ UbTransaction::IsRtpTransportReferenceCurrent(
     return ResolveRtpTransportReference(reference, resolution);
 }
 
+UbRtpOperationPreflightResult
+UbTransaction::PreflightRtpOperation(const UbRtpTransportReference& reference) const
+{
+    RtpTransportResolution resolution;
+    if (!ResolveRtpTransportReference(reference, resolution))
+    {
+        return UbRtpOperationPreflightResult::STALE_REFERENCE;
+    }
+    if (reference.IsDirectTp())
+    {
+        return UbRtpOperationPreflightResult::ACCEPTING;
+    }
+    if (!resolution.group->IsAcceptingNewOperations())
+    {
+        return UbRtpOperationPreflightResult::NOT_ACCEPTING;
+    }
+    return resolution.group->GetMemberCount() == 0
+               ? UbRtpOperationPreflightResult::NO_MEMBER
+               : UbRtpOperationPreflightResult::ACCEPTING;
+}
+
 bool
 UbTransaction::TryAdmitRtpWqe(uint32_t jettyNum,
                               Ptr<UbWqe> wqe,
@@ -1296,7 +1517,8 @@ UbTransaction::TryAdmitRtpWqe(uint32_t jettyNum,
     const UbRtpTransportReference* reference = FindRtpTransportReference(jettyNum);
     RtpTransportResolution resolution;
     if (wqe == nullptr || reference == nullptr ||
-        !ResolveRtpTransportReference(*reference, resolution))
+        !ResolveRtpTransportReference(*reference, resolution) ||
+        PreflightRtpOperation(*reference) != UbRtpOperationPreflightResult::ACCEPTING)
     {
         return false;
     }
@@ -1319,12 +1541,41 @@ UbTransaction::TryAdmitRtpWqe(uint32_t jettyNum,
     operation.workLease = coordinator->AcquireLease(wqeIdentity,
                                                     UbLifecycleLeaseKind::WORK,
                                                     operation.operationIdentity);
-    operation.transportUseLease = coordinator->AcquireLease(wqeIdentity,
-                                                            UbLifecycleLeaseKind::TRANSPORT_USE,
-                                                            reference->GetIdentity());
+    operation.transportUseLease = reference->IsDirectTp()
+                                      ? coordinator->AcquireLease(
+                                            wqeIdentity,
+                                            UbLifecycleLeaseKind::TRANSPORT_USE,
+                                            reference->GetIdentity())
+                                      : coordinator->AcquireLease(
+                                            reference->GetIdentity(),
+                                            UbLifecycleLeaseKind::TRANSPORT_USE,
+                                            operation.operationIdentity);
+    operation.transportUseLeaseHeld = true;
     m_operations.emplace(key, operation);
     wqe->MarkLifecycleManaged();
     return true;
+}
+
+void
+UbTransaction::ReleaseTransportUseLease(OperationRecord& operation)
+{
+    if (!operation.transportUseLeaseHeld)
+    {
+        return;
+    }
+    const bool tpgUse = !operation.transportReference.IsDirectTp();
+    const UbLifecycleResourceIdentity groupIdentity =
+        operation.transportReference.GetIdentity();
+    m_coordinator->ReleaseLease(operation.transportUseLease);
+    operation.transportUseLeaseHeld = false;
+    if (tpgUse)
+    {
+        Ptr<UbController> controller = GetOwnerController();
+        if (controller != nullptr)
+        {
+            controller->NotifyRtpTpGroupUseLeaseReleased(groupIdentity);
+        }
+    }
 }
 
 bool
@@ -1337,6 +1588,47 @@ uint32_t
 UbTransaction::GetActiveOperationCount() const
 {
     return static_cast<uint32_t>(m_operations.size());
+}
+
+uint32_t
+UbTransaction::GetAdmissionDomainReadySourceCountForTest(
+    const UbLifecycleResourceIdentity& identity) const
+{
+    const AdmissionDomainKey key{
+        identity.kind == UbLifecycleResourceKind::RTP_TPG
+            ? UbRtpTransportReferenceKind::TPG
+            : UbRtpTransportReferenceKind::DIRECT_TP,
+        identity};
+    const auto domain = m_admissionDomains.find(key);
+    return domain == m_admissionDomains.end()
+               ? 0
+               : static_cast<uint32_t>(domain->second.readySources.size());
+}
+
+bool
+UbTransaction::IsAdmissionDomainBlockedForTest(
+    const UbLifecycleResourceIdentity& identity) const
+{
+    const AdmissionDomainKey key{
+        identity.kind == UbLifecycleResourceKind::RTP_TPG
+            ? UbRtpTransportReferenceKind::TPG
+            : UbRtpTransportReferenceKind::DIRECT_TP,
+        identity};
+    const auto domain = m_admissionDomains.find(key);
+    return domain != m_admissionDomains.end() && domain->second.blocked;
+}
+
+uint64_t
+UbTransaction::GetAdmissionDomainCapacityWakeCountForTest(
+    const UbLifecycleResourceIdentity& identity) const
+{
+    const AdmissionDomainKey key{
+        identity.kind == UbLifecycleResourceKind::RTP_TPG
+            ? UbRtpTransportReferenceKind::TPG
+            : UbRtpTransportReferenceKind::DIRECT_TP,
+        identity};
+    const auto domain = m_admissionDomains.find(key);
+    return domain == m_admissionDomains.end() ? 0 : domain->second.capacityWakeEvents;
 }
 
 bool
@@ -1471,7 +1763,7 @@ void UbTransaction::WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe, UbWorkOutcome o
         else
         {
             coordinator->ReleaseLease(operation->second.workLease);
-            coordinator->ReleaseLease(operation->second.transportUseLease);
+            ReleaseTransportUseLease(operation->second);
             coordinator->RecordWorkTerminal(operation->second.operationIdentity, outcome);
             coordinator->RetireResource(operation->second.operationIdentity);
             coordinator->RecordWorkTerminal(operation->second.wqeIdentity, outcome);
@@ -1580,7 +1872,7 @@ UbTransaction::ForceDrainTerminalPendingOperations(uint32_t jettyNum)
         }
         operation->second.segments.clear();
         coordinator->ReleaseLease(operation->second.workLease);
-        coordinator->ReleaseLease(operation->second.transportUseLease);
+        ReleaseTransportUseLease(operation->second);
         coordinator->RetireResource(operation->second.operationIdentity);
         coordinator->RetireResource(operation->second.wqeIdentity);
         operation = m_operations.erase(operation);
@@ -1592,19 +1884,7 @@ void UbTransaction::DoDispose()
     NS_LOG_FUNCTION(this);
     m_tpnMap.clear();
     m_jettyOrderedWqe.clear();
-    for (auto &it : m_jettyTpGroup) {
-        for (auto tp : it.second) {
-            tp = nullptr;
-        }
-    }
-    m_jettyTpGroup.clear();
     m_jettyRtpReferences.clear();
-    for (auto &it : m_tpRelatedJetties) {
-        for(auto jetty : it.second) {
-            jetty = nullptr;
-        }
-    }
-    m_tpRelatedJetties.clear();
     for (auto &it : m_tpRelatedRemoteRequests) {
         for (auto &remoteMap : it.second) {
             for (auto segment : remoteMap.second) {
@@ -1644,13 +1924,7 @@ std::vector<uint32_t> UbTransaction::GetUselessTpns()
 bool UbTransaction::IsTpInUse(uint32_t tpn)
 {
     NS_ASSERT_MSG(m_tpnMap.find(tpn) != m_tpnMap.end(), "no such tp.");
-    auto it = m_tpRelatedJetties.find(tpn);
-    if (it == m_tpRelatedJetties.end()) {
-        // 不存在记录表示无jetty使用
-        return false;
-    }
-    // 若存在记录且对应jetty数目为0，表示使用完毕，非0，表示正在使用
-    return (it->second.size() != 0);
+    return !GetTpRelatedJettyVec(tpn).empty();
 }
 
 bool UbTransaction::IsPeerTpInUse(uint32_t tpn)

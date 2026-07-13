@@ -29,6 +29,8 @@ namespace ns3 {
         LEGACY_MULTI_TRANSPORT = 5,
         JETTY_DESTROYING = 6,
         STALE_TRANSPORT_REFERENCE = 7,
+        TPG_NOT_ACCEPTING = 8,
+        TPG_NO_MEMBER = 9,
     };
 
     struct UbWqeSubmissionResult
@@ -122,7 +124,9 @@ namespace ns3 {
         bool IsJettyDrainReady(uint32_t jettyNum) const;
         void RegisterJettyRtpBinding(
             uint32_t jettyNum,
-            const std::vector<Ptr<UbTransportChannel>>& transports);
+            const UbLifecycleResourceIdentity& transportIdentity);
+        void ReleaseJettyRtpBindings(
+            const UbLifecycleResourceIdentity& transportIdentity);
         void RegisterJettyCtpBinding(uint32_t jettyNum,
                                      Ptr<UbCtpTransportService> service);
     private:
@@ -178,7 +182,9 @@ namespace ns3 {
         bool TryGetIdentity(uint32_t jettyNum, UbLifecycleResourceIdentity& identity) const;
         void ReplaceRtpBinding(
             uint32_t jettyNum,
-            const std::vector<UbLifecycleResourceIdentity>& transportIdentities);
+            const UbLifecycleResourceIdentity& transportIdentity);
+        void ReleaseRtpBindings(
+            const UbLifecycleResourceIdentity& transportIdentity);
         void RegisterCtpBinding(uint32_t jettyNum, Ptr<UbCtpTransportService> service);
         void DisposeAll();
 
