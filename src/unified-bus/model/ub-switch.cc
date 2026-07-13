@@ -10,6 +10,7 @@
 #include "ns3/ub-port.h"
 #include "ns3/ub-switch.h"
 #include "ns3/ub-controller.h"
+#include "ns3/ub-lifecycle.h"
 #include "ns3/ub-utils.h"
 
 namespace ns3 {
@@ -803,6 +804,8 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
     int outPort = m_routingProcess->GetOutPort(rtKey, selectedShortestPath, port->GetIfIndex());
     if (outPort < 0) {
         utils::UbUtils::RecordRuntimePacketDrop("route cannot be found");
+        UbLifecycleCoordinator::TerminatePacket(packet,
+                                                UbPacketTerminal::ROUTE_NOT_FOUND);
         NS_LOG_WARN("The route cannot be found. Packet Dropped!");
         return;
     }

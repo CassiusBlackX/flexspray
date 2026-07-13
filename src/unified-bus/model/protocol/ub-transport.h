@@ -21,6 +21,7 @@
 #include "ns3/ub-queue-manager.h"
 #include "ns3/ub-retrans.h"
 #include "ns3/ub-tag.h"
+#include "ns3/ub-lifecycle.h"
 namespace ns3 {
 
 class UbFunction;
@@ -496,6 +497,7 @@ private:
     uint32_t m_dest;
     uint32_t m_tpn;           // TP Number
     uint32_t m_dstTpn;
+    UbLifecycleResourceIdentity m_packetLifecycleOwner;
     uint64_t m_size;          // Size parameter
     uint16_t m_priority;      // Process group identifier
     uint16_t m_sport;

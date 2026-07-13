@@ -2,6 +2,7 @@
 #include "ns3/log.h"
 #include "ns3/simulator.h"
 #include "ns3/ub-controller.h"
+#include "ns3/ub-lifecycle.h"
 #include "ns3/ub-transaction.h"
 #include "ns3/ub-caqm.h"
 #include "ns3/ub-dcqcn.h"
@@ -952,6 +953,9 @@ Ptr<Packet> UbTransportChannel::GenDataPacket(Ptr<UbWqeSegment> wqeSegment,
     // add dl header
     UbDataLink::GenPacketHeader(p, false, false, m_priority, m_priority, m_usePacketSpray,
                                 m_useShortestPaths, UbDatalinkHeaderConfig::PACKET_IPV4);
+    Ptr<UbLifecycleCoordinator> coordinator =
+        UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId));
+    coordinator->RegisterPacketAttempt(m_packetLifecycleOwner, p);
     return p;
 }
 
@@ -1523,6 +1527,9 @@ void UbTransportChannel::SetUbTransport(uint32_t nodeId,
     m_dest = dest;
     m_tpn = srcTpn;
     m_dstTpn = dstTpn;
+    m_packetLifecycleOwner =
+        UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId))
+            ->OpenPacketOwner(UbLifecycleResourceKind::RTP_ENDPOINT, m_tpn);
     m_size = size;
     m_priority = priority;
     m_sport = sport;
@@ -1863,6 +1870,9 @@ void UbTransportChannel::RecvDataPacket(Ptr<Packet> p)
     if (!ParseReceivedDataPacket(p, ctx)) {
         return;
     }
+
+    UbLifecycleCoordinator::TerminatePacket(ctx.packet,
+                                            UbPacketTerminal::ENDPOINT_CONSUMED);
 
     TraceReceivedDataPacket(ctx);
     UbRetransReceiveDecision receiveDecision;
