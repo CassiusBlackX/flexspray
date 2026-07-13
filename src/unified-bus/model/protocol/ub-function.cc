@@ -160,7 +160,7 @@ void UbFunction::PushLegacyWqeToJetty(Ptr<UbWqe> wqe, uint32_t jettyNum)
     jetty->SetNodeId(m_nodeId);
     jetty->PushWqe(wqe);
     GetTransaction()->AddWqe(jettyNum, wqe);
-    GetTransaction()->TriggerScheduleWqeSegment(jettyNum, wqe->GetWqeId(), false);
+    GetTransaction()->TriggerScheduleWqeSegment(jettyNum, wqe, false);
 }
 
 UbWqeSubmissionResult UbFunction::SubmitWqe(Ptr<UbWqe> wqe, uint32_t jettyNum)
@@ -198,7 +198,7 @@ UbWqeSubmissionResult UbFunction::SubmitWqe(Ptr<UbWqe> wqe, uint32_t jettyNum)
     ubJetty->PushWqe(wqe);
     m_jettyManager->RegisterWqe(jettyNum, wqe->GetWqeId(), wqeIdentity);
     GetTransaction()->AddWqe(jettyNum, wqe);
-    GetTransaction()->TriggerScheduleWqeSegment(jettyNum, wqe->GetWqeId(), true);
+    GetTransaction()->TriggerScheduleWqeSegment(jettyNum, wqe, true);
     return {UbWqeSubmissionStatus::ACCEPTED, wqeIdentity};
 }
 
@@ -530,10 +530,6 @@ UbJettyManager::AttachEvent(uint32_t jettyNum, uint64_t token, EventId event)
 bool
 UbJettyManager::IsEventActive(uint32_t jettyNum, uint64_t token) const
 {
-    if (m_canceledEventTokens.find(token) != m_canceledEventTokens.end())
-    {
-        return false;
-    }
     const auto it = m_records.find(jettyNum);
     return it != m_records.end() && it->second.trackedEvents.find(token) !=
                                            it->second.trackedEvents.end();
@@ -542,12 +538,6 @@ UbJettyManager::IsEventActive(uint32_t jettyNum, uint64_t token) const
 void
 UbJettyManager::ResolveEvent(uint32_t jettyNum, uint64_t token)
 {
-    const auto canceled = m_canceledEventTokens.find(token);
-    if (canceled != m_canceledEventTokens.end())
-    {
-        m_canceledEventTokens.erase(canceled);
-        return;
-    }
     auto it = m_records.find(jettyNum);
     NS_ABORT_MSG_IF(it == m_records.end(), "Tracked event references a retired Jetty");
     const auto event = it->second.trackedEvents.find(token);
@@ -610,7 +600,7 @@ UbJettyManager::DestroyJetty(uint32_t jettyNum,
             {
                 tracked.event.Cancel();
             }
-            m_canceledEventTokens.insert(token);
+            (void)token;
             coordinator->ReleaseLease(tracked.lease);
         }
         it->second.trackedEvents.clear();
@@ -688,7 +678,6 @@ UbJettyManager::DisposeAll()
     m_ctpService = nullptr;
     m_transaction = nullptr;
     m_coordinator = nullptr;
-    m_canceledEventTokens.clear();
 }
 
 void
@@ -700,7 +689,6 @@ UbJettyManager::DoDispose()
     m_ctpService = nullptr;
     m_transaction = nullptr;
     m_coordinator = nullptr;
-    m_canceledEventTokens.clear();
     Object::DoDispose();
 }
 

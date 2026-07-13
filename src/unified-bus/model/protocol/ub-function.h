@@ -4,7 +4,6 @@
 
 #include <ns3/event-id.h>
 #include <ns3/node.h>
-#include <set>
 #include <unordered_map>
 #include "ns3/ub-sliding-bitmap-window.h"
 #include "ub-transport.h"
@@ -203,7 +202,6 @@ namespace ns3 {
         Ptr<UbTransaction> m_transaction;
         Ptr<UbCtpTransportService> m_ctpService;
         uint64_t m_nextEventToken{0};
-        std::set<uint64_t> m_canceledEventTokens;
         std::map<uint32_t, JettyRecord> m_records;
     };
 
