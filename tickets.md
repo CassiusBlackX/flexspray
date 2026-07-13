@@ -1,0 +1,297 @@
+# Tickets: Unified Bus Modeled Resource Lifecycle
+
+Status: ready-for-agent
+
+These tickets implement the lifecycle specification in `.scratch/unified-bus-lifecycle/PRD.md` as independently verifiable tracer-bullet slices.
+
+Work the **frontier**: a ticket may start only after every title listed under **Blocked by** is complete. The initial frontier contains only T00.
+
+## Acceptance Protocol
+
+The following contract applies to every ticket:
+
+- Build current `main@ccf41b58` once before implementation and preserve the executable, SHA-256 digest, build configuration, compiler/runtime versions, linked-library facts, input hashes, and output manifest.
+- Reuse that exact reference executable for every old-versus-new comparison. Do not rebuild the reference per ticket.
+- Prove reference self-reproducibility by running each accepted case at least twice before treating an output as byte-stable.
+- Use minimal targeted cases for implementation and debugging. Use separate medium-complexity, risk-focused cases for acceptance; do not use one large all-features scenario.
+- Require raw byte equality for every reference output proven byte-stable. If a raw output is not self-stable, retain it and compare a documented canonical representation byte-for-byte without deleting semantic events or values.
+- Validate new lifecycle-only output through schema, balance, generation, terminal-outcome, and causal-order invariants because no old counterpart exists.
+- Record every intentional output difference in an explicit exception manifest with old bytes, new bytes, Specification or characterization evidence, and approval. Any unexplained difference fails.
+
+## Task 00: Freeze the current-main executable and two-tier acceptance corpus
+
+**What to build:** Create the immutable executable baseline, comparison harness, and bounded case corpus that every later slice reuses.
+
+**Blocked by:** None - can start immediately.
+
+- [ ] The reference executable is built from `main@ccf41b58`; its executable hash and complete build manifest are recorded.
+- [ ] All case inputs and comparison rules have recorded hashes and cannot silently drift between tickets.
+- [ ] The minimal corpus contains a two-node, single-RTP-TP, single-operation case suitable for fast diagnosis.
+- [ ] The medium corpus contains separate bounded cases for shared-TP concurrency, multi-TP plus deterministic loss/retransmission, CTP Entity/VL queue pressure, and a small cross-owner runtime.
+- [ ] Every selected reference artifact is generated twice; raw byte-stable artifacts and canonical-only artifacts are listed explicitly.
+- [ ] The harness reports the first differing artifact and byte offset and preserves both old and new outputs for diagnosis.
+
+## Task 01: Establish a single-TP packet lifecycle tracer bullet
+
+**What to build:** Carry one single-threaded RTP packet through protocol birth, queue and link transfer, endpoint consumption, and one explicit drop without changing the modeled network result.
+
+**Blocked by:** T00 Freeze the current-main executable and two-tier acceptance corpus.
+
+- [ ] One RTP DATA attempt is registered exactly once before entering the packet pipeline.
+- [ ] Queue and local-link transfer preserve the same packet accounting identity and do not change the in-flight count.
+- [ ] Endpoint consumption and one explicit drop each produce exactly one typed terminal outcome and return the generation balance to zero.
+- [ ] Underflow, stale generation, and mutation after retirement fail immediately.
+- [ ] The minimal case passes, and every byte-stable reference artifact is byte-identical to the frozen executable output.
+
+## Task 02: Make WQE submission and completion atomic
+
+**What to build:** Carry one direct-TP WRITE WQE through Function, Transaction, lazy segment creation, TP admission, transaction completion, WQE removal, and upper-layer completion as one atomic ownership chain.
+
+**Blocked by:** T01 Establish a single-TP packet lifecycle tracer bullet.
+
+- [ ] Failed admission changes neither the Jetty WQE collection nor the Transaction operation collection.
+- [ ] Successful admission exposes the WQE, operation context, and transport-use lease atomically.
+- [ ] Segment creation remains lazy and advances its cursor only after transport admission succeeds.
+- [ ] The WQE receives one completion, its work and child counts return to zero, and existing completion timing is preserved.
+- [ ] Minimal WRITE output is byte-identical to the frozen baseline; the shared-TP acceptance case shows no unexplained difference.
+
+## Task 03: Complete WQE outcomes and explicit Jetty drain
+
+**What to build:** Extend the WQE chain to READ and response-bearing work, typed failure/cancel/flush outcomes, and upper-layer-requested Jetty destruction that freezes admission and drains accepted work.
+
+**Blocked by:** T02 Make WQE submission and completion atomic.
+
+- [ ] WRITE, READ, and response-bearing operations each produce exactly one typed WQE terminal outcome.
+- [ ] Duplicate and stale Transaction outcomes fail without notifying the application twice.
+- [ ] A destroy request rejects new WQEs while allowing already accepted response, error, cancel, and flush work to finish.
+- [ ] Transaction references, tracked events, and RTP/CTP bindings are released before the Jetty collection entry retires.
+- [ ] A pending destroy callback executes once after erase; synchronous completion does not invoke it.
+- [ ] Minimal cases remain diagnosable, and the medium shared-TP READ/WRITE outputs match the frozen baseline byte-for-byte where stable.
+
+## Task 04: Resolve direct TP and TPG references through one RTP path
+
+**What to build:** Carry direct-TP and multi-TP operations through one generation-aware RTP submission path with explicit per-segment TPG member selection.
+
+**Blocked by:** T03 Complete WQE outcomes and explicit Jetty drain.
+
+- [ ] Direct TP references bypass member selection and use the same final admission path as selected TPG members.
+- [ ] A single-segment operation resolves one TP; a multi-segment operation can distribute segments across TPG members.
+- [ ] Every accepted segment, its packets, responses, and retransmissions stay on its resolved TP generation.
+- [ ] Generation validation, member selection, TP work-lease acquisition, and enqueue are atomic in the RTP owner context.
+- [ ] Existing implicit multi-TP result and task artifacts match the frozen medium-case baseline unless an approved exception documents a change.
+
+## Task 05: Preserve backpressure and TPG member lifecycle
+
+**What to build:** Make ready-source scheduling, capacity wakeup, TPG membership changes, and group destruction bounded and event-driven while preserving current observable fairness.
+
+**Blocked by:** T04 Resolve direct TP and TPG references through one RTP path.
+
+- [ ] Temporarily full members cause deferred admission without advancing RR, offset, or TASSN state.
+- [ ] One capacity transition produces at most one pending wakeup per affected admission domain.
+- [ ] Shared direct and TPG-selected traffic use the same TP capacity, queue, PSN, retransmission, and congestion state.
+- [ ] Member retirement excludes new selection but never migrates an accepted segment or destroys the member TP.
+- [ ] Removing the last member cannot deadlock an operation that still holds a TPG-use lease.
+- [ ] Fairness, starvation, event-rate, throughput, and byte-stable outputs match the frozen shared/multi-TP baselines.
+
+## Task 06: Introduce a descriptor-backed GBN transmit buffer
+
+**What to build:** Carry GBN initial send, timeout/NAK selection, packet rebuilding, retransmission, acknowledgement, and item retirement through one descriptor-backed transmit buffer.
+
+**Blocked by:** T02 Make WQE submission and completion atomic.
+
+- [ ] Sent items retain protocol descriptors and progress state rather than complete wire packets.
+- [ ] The first-never-sent PSN remains monotonic; retransmission selection uses separate state.
+- [ ] Every retransmission rebuilds headers and payload through the common RTP builder and registers a new physical packet attempt.
+- [ ] ACK, operation failure, and cancellation retire the corresponding items and tracked timer state.
+- [ ] Rebuilt bytes, protocol traces, task results, and throughput match the frozen deterministic-loss GBN baseline byte-for-byte where stable.
+
+## Task 07: Migrate selective retransmission and remove full-packet retention
+
+**What to build:** Carry TPSACK holes, fast retransmit, RTO, selective packet rebuilding, and ACK retirement through the shared descriptor-backed transmit buffer, then remove the old full-packet cache.
+
+**Blocked by:** T06 Introduce a descriptor-backed GBN transmit buffer.
+
+- [ ] Missing PSNs enter retransmission selection once and acknowledged stale entries are removed.
+- [ ] Cumulative ACK and selective acknowledgement retire the correct descriptor ranges.
+- [ ] Selective retransmission uses the common builder and creates a separately tracked physical attempt.
+- [ ] No active selective path retains a complete previously sent wire packet.
+- [ ] Existing selective, wire-wrap, congestion-accounting, queue-priority, and fault cases remain green.
+- [ ] Byte-stable artifacts match the frozen selective-loss acceptance baseline.
+
+## Task 08: Close all RTP packet and tracked-event terminal paths
+
+**What to build:** Extend lifecycle closure across RTP DATA, TPACK, TPNAK, TPSACK, CNP, semantic packet copies, explicit drops, and delayed protocol work.
+
+**Blocked by:** T05 Preserve backpressure and TPG member lifecycle; T07 Migrate selective retransmission and remove full-packet retention.
+
+- [ ] Parser view, local/remote transfer, retained template, physical fork, and terminal operations use distinct named semantics.
+- [ ] Route failure, ingress/egress admission failure, fault drop, channel failure, invalid endpoint, malformed packet, and forced stop all produce explicit terminal outcomes.
+- [ ] DATA and every RTP control packet balance at their direct endpoint generation owner.
+- [ ] Retransmission, congestion-control, delayed-response, and scheduling events release their tokens exactly once on fire or cancel.
+- [ ] Trace off, summary, and existing trace modes produce identical network results.
+- [ ] Minimal fault cases pass and medium retransmission artifacts match the frozen baseline where byte-stable.
+
+## Task 09: Give TP endpoints a complete manager-owned lifecycle
+
+**What to build:** Move TP runtime collection ownership behind a complete manager contract and carry explicit local endpoint destroy through freeze, drain, finalize, and optional later rematerialization.
+
+**Blocked by:** T08 Close all RTP packet and tracked-event terminal paths.
+
+- [ ] Create, resolve, state query, destroy request, drain inspection, private finalization, and forced disposal share one manager-owned record.
+- [ ] Endpoint destruction waits for bindings, segments, packets, events, retained state, queues, and allocator ownership.
+- [ ] Finalization unregisters the allocator and erases the endpoint exactly once while leaving the parent reservation and TPN valid.
+- [ ] Later legitimate demand can create a new endpoint generation under the still-valid reservation.
+- [ ] Idle alone never invokes endpoint destroy or resets required PSN/congestion continuity.
+- [ ] The legacy task-driven removal default remains disabled, and enabling it fails with the specified unsupported-teardown error.
+
+## Task 10: Tear down a paired TP connection only after both slots drain
+
+**What to build:** Carry explicit connection teardown from either endpoint through canonical reservation ownership, two fixed endpoint slots, late-packet drain-only materialization, paired completion, reservation removal, and TPN release.
+
+**Blocked by:** T09 Give TP endpoints a complete manager-owned lifecycle.
+
+- [ ] A connection generation owns exactly two endpoint slots with explicit unmaterialized, active, draining, and retired states.
+- [ ] A valid late packet for the closing generation creates or retains a drain-only endpoint before processing derived terminal or response work.
+- [ ] New application work is rejected while old DATA, ACK/NAK/SACK/CNP, transaction response, and required error handling can drain.
+- [ ] Repeated, simultaneous two-sided, and stronger-mode destroy requests share one monotonic drain/finalize flow.
+- [ ] Reservation indexes and both TPNs are released only after both slots retire; reuse creates a new connection generation.
+- [ ] Single-thread teardown outputs and callback ordering meet the acceptance manifest without unexplained byte differences.
+
+## Task 11: Move CTP transaction progress into the Transaction owner
+
+**What to build:** Carry CTP WRITE and READ through the common WQE/Transaction lifecycle while CTP remains a persistent node-scoped transport service.
+
+**Blocked by:** T03 Complete WQE outcomes and explicit Jetty drain.
+
+- [ ] Transaction owns TASSN, windows, pending/outstanding segments, inbound units, response matching, and operation completion.
+- [ ] CTP reports MTU and one-packet constraints without modifying Function or Jetty segmentation state.
+- [ ] WRITE can use multiple one-packet segments; READ responses and single-packet operations obey their operation-specific limits.
+- [ ] Segment and WQE outcomes are emitted once and completed Transaction records are removed.
+- [ ] No CTP path creates an RTP TP reservation, TPN, PSN, transport ACK, retransmission context, or CTP root generation.
+- [ ] Stable CTP task and packet outputs match the frozen minimal and medium baselines.
+
+## Task 12: Make CTP keys, queues, events, and finite children retire independently
+
+**What to build:** Carry CTP packets through canonical Entity/congestion keys, complete-packet transmit queues, allocator registration, endpoint terminal, and independent cleanup without destroying the persistent service.
+
+**Blocked by:** T01 Establish a single-TP packet lifecycle tracer bullet; T11 Move CTP transaction progress into the Transaction owner.
+
+- [ ] Entity keys are node-local directed communication keys and congestion keys aggregate only destination node, destination Entity, and VL.
+- [ ] Sharing and isolation tests cover source Entity, destination node, destination Entity, VL, and reverse-packet normalization.
+- [ ] Transmit queues contain complete packets and no raw pointer to cacheable Entity or Transaction state.
+- [ ] DATA, ACK, and CNP priority, packet terminal accounting, queue registration, and tracked events balance independently.
+- [ ] Empty queue and completed Transaction state can retire while the CTP service and allowed cacheable policy state persist.
+- [ ] Loss without lower-layer recovery remains explicitly unresolved rather than being hidden by forced cleanup.
+
+## Task 13: Close the LDST operation lifecycle
+
+**What to build:** Carry LOAD and STORE task segments through worker admission, request/response packets, acknowledgement, completion, tracked events, active-record erasure, and forced stop.
+
+**Blocked by:** T01 Establish a single-TP packet lifecycle tracer bullet.
+
+- [ ] Task segment, request/response packet, ACK record, and scheduled action each have one owner and terminal path.
+- [ ] Successful completion removes the segment from every active LDST map and updates compact statistics only where required.
+- [ ] Unknown, duplicate, and stale ACKs cannot insert records or underflow counters.
+- [ ] Forced stop reports active LDST residue explicitly and releases scheduled work before disposal.
+- [ ] Thread selection, address behavior, packet sizes, completion timing, and stable outputs match the frozen baseline.
+
+## Task 14: Separate route storage from routing policy on the live packet path
+
+**What to build:** Carry packets through separated route lookup and out-port selection while preserving exact/range routes, port-set sharing, hash, packet spray, adaptive selection, and ingress filtering.
+
+**Blocked by:** T01 Establish a single-TP packet lifecycle tracer bullet.
+
+- [ ] Route lookup performs no policy selection and returns a bounded read-only candidate view.
+- [ ] Hash, spray, shortest/non-shortest, adaptive selection, ingress filtering, and tie-break results match current behavior.
+- [ ] The forwarding hot path does not allocate temporary route or best-port containers per packet.
+- [ ] Route failure still produces exactly one packet terminal outcome.
+- [ ] Existing routing tests, packet traces, and byte-stable medium-case outputs match the frozen baseline; allocation count and forwarding time are reported.
+
+## Task 15: Split Datalink flow control without changing control frames
+
+**What to build:** Carry NONE, CBFC, shared-credit CBFC, and PFC traffic through distinct Datalink owners while preserving switch arbitration, thresholds, credit behavior, pause/resume, and control-packet lifecycle.
+
+**Blocked by:** T01 Establish a single-TP packet lifecycle tracer bullet.
+
+- [ ] Base flow-control, CBFC, shared-credit behavior, PFC, and decision hooks retain their existing public configuration and trace behavior.
+- [ ] Credit, pause, resume, piggyback, and fallback control-frame behavior matches current tests.
+- [ ] Every Datalink control packet has one persistent port/VL accounting owner and one terminal outcome.
+- [ ] Switch allocator order and queue ownership do not move into the flow-control modules.
+- [ ] Minimal threshold cases pass and stable medium queue-pressure outputs match the frozen baseline.
+
+## Task 16: Balance VOQ ownership, allocator events, and queue disposal
+
+**What to build:** Carry packets through switch-owned sparse VOQs and queue-manager buffer accounting, then safely retain or retire empty VOQs through one gated unregister/finalize path.
+
+**Blocked by:** T15 Split Datalink flow control without changing control frames.
+
+- [ ] The switch is the only VOQ collection owner; the queue manager owns buffer pools, admission, and occupancy only.
+- [ ] Queue entry removal, ingress/VOQ/egress occupancy, overflow-storage release, and flow-control views remain balanced.
+- [ ] A VOQ cannot retire while a packet, in-port event, allocator token, flow-control occupancy, or algorithm lease remains.
+- [ ] Retaining an empty shell and destroying it use the same safe gate and are selected only by explicit teardown or measured storage policy.
+- [ ] Allocator and diagnostic events are saved, canceled, and resolved symmetrically; forced disposal records residue.
+- [ ] Sparse allocation, allocator order, queue traces, TypeId/attributes, and byte-stable acceptance outputs remain compatible.
+
+## Task 17: Route lifecycle accounting through MTP, MPI, and hybrid owners
+
+**What to build:** Carry remote packet terminal, resource mutation, endpoint-slot state, destroy request, and destroy completion through fixed-size causal control records routed to the owning LP/rank.
+
+**Blocked by:** T10 Tear down a paired TP connection only after both slots drain; T12 Make CTP keys, queues, events, and finite children retire independently; T13 Close the LDST operation lifecycle; T14 Separate route storage from routing policy on the live packet path; T16 Balance VOQ ownership, allocator events, and queue disposal.
+
+- [ ] Only the execution owner mutates each resource generation's ledger and protocol container.
+- [ ] Remote terminal and destroy-completion records are delivered exactly once or rejected as duplicate/stale in diagnostic injection tests.
+- [ ] Drain-only slot creation is causally visible before terminal, response, or endpoint completion derived from the late packet.
+- [ ] Raw callbacks, mutable protocol objects, and direct peer-object mutation never cross LP/rank boundaries.
+- [ ] Unsupported control transport fails before enabling lifecycle functionality that needs remote confirmation.
+- [ ] Single-thread, MTP, MPI, and hybrid semantic artifacts match according to the frozen acceptance manifest; owner sequence and pending-record balance are reported.
+
+## Task 18: Publish lifecycle trace schema and parser semantics
+
+**What to build:** Carry lifecycle state, ledger delta, identity, and terminal evidence from typed trace sources through SUMMARY/EVENT/DETAIL sinks, versioned schema metadata, complete-identity sampling, and parser validation.
+
+**Blocked by:** T17 Route lifecycle accounting through MTP, MPI, and hybrid owners.
+
+- [ ] Correctness ledger, trace sources, and deep verification remain independent execution planes.
+- [ ] Summary reads existing counters without creating duplicate event accounting.
+- [ ] Event/detail records use fixed fields, generation-aware identities, owner sequence, stable numeric enums, and one schema metadata source.
+- [ ] Detail filtering retains complete selected resource generations or packet identities and never randomly drops events from a retained chain.
+- [ ] Missing metadata, unknown version/enum, and inconsistent MPI-rank mappings are explicit parser errors.
+- [ ] Trace off, summary, event, and detail produce identical existing network artifacts under the acceptance protocol.
+
+## Task 19: Bound trace writer memory, file descriptors, and write overhead
+
+**What to build:** Carry trace records through pre-resolved sink handles, owner-local bounded chunks, pressure flushing, batched writes, and file-descriptor LRU without changing existing artifact names or parser inputs.
+
+**Blocked by:** T18 Publish lifecycle trace schema and parser semantics.
+
+- [ ] Default chunks are 64 KiB and are created lazily; no owner/sink holds more than one unfinished chunk.
+- [ ] Each execution owner enforces the 1 MiB/512 KiB high/low-water budget without a polling timer or unbounded completed-chunk queue.
+- [ ] Effective open-file count respects the configured 1024 maximum, platform soft limit minus reserved descriptors, and conservative fallback.
+- [ ] File reopen uses append mode, and open/write/flush/close errors cannot silently lose enabled evidence.
+- [ ] Existing final filenames and parser inputs remain unchanged.
+- [ ] Benchmarks report 16/64/256 KiB results, wall time, syscall count, RSS, trace bytes, descriptor pressure, visibility behavior, and MTP scaling.
+
+## Task 20: Contract compatibility layers after all owners migrate
+
+**What to build:** Complete the expand-contract migration by removing obsolete ownership, dead mirrors, and no-longer-needed compatibility forms only after every vertical slice has moved to the canonical owner and interface.
+
+**Blocked by:** T05 Preserve backpressure and TPG member lifecycle; T07 Migrate selective retransmission and remove full-packet retention; T10 Tear down a paired TP connection only after both slots drain; T12 Make CTP keys, queues, events, and finite children retire independently; T13 Close the LDST operation lifecycle; T14 Separate route storage from routing policy on the live packet path; T16 Balance VOQ ownership, allocator events, and queue disposal; T18 Publish lifecycle trace schema and parser semantics.
+
+- [ ] Every migrated collection has one owner and no old caller retains a mutable mirror or erase path.
+- [ ] Compatibility forwarding and aliases remain only where an explicit public compatibility decision requires them.
+- [ ] Protocol headers, value types, managers, queues, routing, and flow-control modules reflect their canonical domain ownership.
+- [ ] Pure movement/renaming is separated from behavior changes in reviewable commits.
+- [ ] Build, module tests, minimal cases, and all applicable byte-stable medium-case outputs remain green.
+
+## Task 21: Run the full semantic and performance acceptance matrix
+
+**What to build:** Execute the complete validation matrix, classify every result, and decide storage/default policies from evidence without enabling automatic close or destroy prematurely.
+
+**Blocked by:** T17 Route lifecycle accounting through MTP, MPI, and hybrid owners; T19 Bound trace writer memory, file descriptors, and write overhead; T20 Contract compatibility layers after all owners migrate.
+
+- [ ] RTP, CTP, LDST, WRITE, READ, response work, loss/drop, GBN/selective, CAQM/DCQCN, NONE/PFC/CBFC, direct/TPG, teardown, late reuse, lifecycle races, and forced stop all have required evidence.
+- [ ] Single-thread, MTP, MPI, and hybrid comparisons include owner-local balance and deterministic/canonical artifact checks.
+- [ ] Every reference artifact classified as byte-stable is byte-identical; every canonical-only artifact has matching canonical bytes and preserved raw evidence.
+- [ ] Every mismatch is either fixed or listed in the approved exception manifest with Specification or characterization evidence.
+- [ ] Accounting, deep verification, detail trace, writer settings, and storage policies are measured separately for wall time, events, objects/allocations, peak RSS, trace bytes, syscalls, descriptors, and scaling.
+- [ ] Automatic TP close/destroy remains disabled; any storage-retention default is selected only from the reported measurements.
