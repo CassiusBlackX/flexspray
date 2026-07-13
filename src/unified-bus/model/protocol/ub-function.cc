@@ -216,6 +216,12 @@ UbFunction::ShouldContinueAcceptedWqes(uint32_t jettyNum) const
     return m_jettyManager->ShouldContinueAcceptedWqes(jettyNum);
 }
 
+bool
+UbFunction::ShouldForceDrainAcceptedWqes(uint32_t jettyNum) const
+{
+    return m_jettyManager->ShouldForceDrainAcceptedWqes(jettyNum);
+}
+
 uint64_t
 UbFunction::TrackJettyEvent(uint32_t jettyNum)
 {
@@ -377,6 +383,15 @@ UbJettyManager::ShouldContinueAcceptedWqes(uint32_t jettyNum) const
     return it->second.state == UbJettyLifecycleState::ACTIVE ||
            (it->second.state == UbJettyLifecycleState::DRAINING &&
             it->second.reason == UbDestroyReason::EXPLICIT);
+}
+
+bool
+UbJettyManager::ShouldForceDrainAcceptedWqes(uint32_t jettyNum) const
+{
+    const auto it = m_records.find(jettyNum);
+    return it != m_records.end() && it->second.state == UbJettyLifecycleState::DRAINING &&
+           (it->second.reason == UbDestroyReason::ERROR ||
+            it->second.reason == UbDestroyReason::SIMULATION_STOP);
 }
 
 bool
@@ -613,6 +628,7 @@ UbJettyManager::DestroyJetty(uint32_t jettyNum,
                 return UbDestroyStatus::COMPLETED;
             }
         }
+        GetTransaction()->ForceDrainTerminalPendingOperations(jettyNum);
         if (reason == UbDestroyReason::SIMULATION_STOP &&
             it->second.jetty->GetActiveWqeCount() != 0)
         {

@@ -108,6 +108,7 @@ namespace ns3 {
         void NotifyJettyProgress(uint32_t jettyNum);
         bool IsJettyAcceptingWqes(uint32_t jettyNum) const;
         bool ShouldContinueAcceptedWqes(uint32_t jettyNum) const;
+        bool ShouldForceDrainAcceptedWqes(uint32_t jettyNum) const;
         uint64_t TrackJettyEvent(uint32_t jettyNum);
         void AttachJettyEvent(uint32_t jettyNum,
                               uint64_t token,
@@ -153,6 +154,7 @@ namespace ns3 {
         Ptr<UbJetty> GetJetty(uint32_t jettyNum) const;
         bool IsAcceptingWqes(uint32_t jettyNum) const;
         bool ShouldContinueAcceptedWqes(uint32_t jettyNum) const;
+        bool ShouldForceDrainAcceptedWqes(uint32_t jettyNum) const;
         bool TryGetState(uint32_t jettyNum, UbJettyLifecycleState& state) const;
         void RegisterWqe(uint32_t jettyNum,
                          uint32_t wqeId,

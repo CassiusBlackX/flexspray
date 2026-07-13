@@ -156,6 +156,7 @@ namespace ns3 {
         void CompleteWqeOperation(uint32_t jettyNum,
                                   uint32_t wqeId,
                                   UbWorkOutcome outcome);
+        void ForceDrainTerminalPendingOperations(uint32_t jettyNum);
 
         // 判断本地tp是否处于使用状态
         bool IsTpInUse(uint32_t tpn);
@@ -271,6 +272,7 @@ namespace ns3 {
             uint32_t directTpn{UINT32_MAX};
             UbLifecycleLeaseIdentity workLease;
             UbLifecycleLeaseIdentity transportUseLease;
+            bool terminalPending{false};
             struct SegmentRecord
             {
                 Ptr<UbWqeSegment> segment;
