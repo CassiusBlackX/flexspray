@@ -374,6 +374,8 @@ private:
         uint32_t resLenBytes{0};
         uint32_t payloadBytes{0};
         uint32_t taskId{0};
+        bool hasTransactionCorrelation{false};
+        UbTransactionCorrelationIdentity transactionCorrelation;
     };
 
     struct ReceivedDataPacketContext
@@ -387,6 +389,8 @@ private:
         UbTransactionHeader transactionHeader;
         UbMAExtTah maExtHeader;
         UbFlowTag flowTag;
+        bool hasTransactionCorrelation{false};
+        UbTransactionCorrelationIdentity transactionCorrelation;
         uint64_t psn{0};
         uint32_t payloadBytes{0};
         uint32_t resLenBytes{0};
@@ -442,7 +446,9 @@ private:
                                            const UbTransactionHeader& taHeader,
                                            uint32_t resLenBytes,
                                            uint32_t payloadBytes,
-                                           uint32_t taskId);
+                                           uint32_t taskId,
+                                           bool hasTransactionCorrelation,
+                                           const UbTransactionCorrelationIdentity& correlation);
     bool ShouldCompleteOnTpAck(const Ptr<UbWqeSegment>& segment) const;
     uint64_t GetCumulativeAckPsn() const;
     TpOpcode GetResponseOpcode(bool selectiveAck) const;
@@ -581,7 +587,8 @@ public:
     virtual ~UbTransportGroup();
 
     void Init(const UbLifecycleResourceIdentity& identity,
-              const std::vector<UbTransportGroupMember>& members);
+              const std::vector<UbTransportGroupMember>& members,
+              uint32_t initialSelectionCursor);
     const UbLifecycleResourceIdentity& GetLifecycleIdentity() const;
     uint32_t GetMemberCount() const;
     uint32_t GetSelectionCursor() const;

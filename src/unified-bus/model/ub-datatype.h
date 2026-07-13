@@ -1244,6 +1244,43 @@ public:
         return m_resolvedTpIdentity;
     }
 
+    void SetTransactionCorrelation(const UbLifecycleResourceIdentity& operationIdentity,
+                                   const UbLifecycleResourceIdentity& segmentIdentity)
+    {
+        m_operationIdentity = operationIdentity;
+        m_segmentIdentity = segmentIdentity;
+        m_hasTransactionCorrelation = true;
+    }
+
+    void SetTransactionCorrelation(const UbTransactionCorrelationIdentity& identity)
+    {
+        SetTransactionCorrelation(identity.operation, identity.segment);
+    }
+
+    bool HasTransactionCorrelation() const
+    {
+        return m_hasTransactionCorrelation;
+    }
+
+    const UbLifecycleResourceIdentity& GetTransactionOperationIdentity() const
+    {
+        NS_ABORT_MSG_IF(!m_hasTransactionCorrelation,
+                        "WQE segment has no Transaction lifecycle correlation");
+        return m_operationIdentity;
+    }
+
+    const UbLifecycleResourceIdentity& GetTransactionSegmentIdentity() const
+    {
+        NS_ABORT_MSG_IF(!m_hasTransactionCorrelation,
+                        "WQE segment has no Transaction lifecycle correlation");
+        return m_segmentIdentity;
+    }
+
+    UbTransactionCorrelationIdentity GetTransactionCorrelation() const
+    {
+        return {GetTransactionOperationIdentity(), GetTransactionSegmentIdentity()};
+    }
+
     void SetSegmentKind(UbTransactionSegmentKind segmentKind)
     {
         m_segmentKind = segmentKind;
@@ -1376,6 +1413,9 @@ private:
     uint32_t m_tpn{UINT32_MAX}; // 当前WqeSegment由哪一个TP进行传输
     bool m_hasResolvedTpIdentity{false};
     UbLifecycleResourceIdentity m_resolvedTpIdentity;
+    bool m_hasTransactionCorrelation{false};
+    UbLifecycleResourceIdentity m_operationIdentity;
+    UbLifecycleResourceIdentity m_segmentIdentity;
 
     // ========== 网络层信息 ==========
     Ipv4Address m_sip; // 源IP地址

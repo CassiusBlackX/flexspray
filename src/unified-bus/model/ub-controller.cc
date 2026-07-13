@@ -284,7 +284,8 @@ void UbController::DestroyTpGroup(TpgTag tpgTag)
 }
 
 Ptr<UbTransportGroup>
-UbController::CreateRtpTpGroup(const std::vector<Ptr<UbTransportChannel>>& members)
+UbController::CreateRtpTpGroup(const std::vector<Ptr<UbTransportChannel>>& members,
+                               uint32_t initialSelectionCursor)
 {
     NS_ABORT_MSG_IF(members.empty(), "Cannot create an empty RTP TPG");
     NS_ABORT_MSG_IF(m_nextRtpTpGroupId == std::numeric_limits<uint64_t>::max(),
@@ -307,7 +308,7 @@ UbController::CreateRtpTpGroup(const std::vector<Ptr<UbTransportChannel>>& membe
     const UbLifecycleResourceIdentity identity =
         coordinator->OpenResource(UbLifecycleResourceKind::RTP_TPG, localId);
     Ptr<UbTransportGroup> group = CreateObject<UbTransportGroup>();
-    group->Init(identity, records);
+    group->Init(identity, records, initialSelectionCursor);
     const bool inserted = m_rtpTpGroups.emplace(localId, group).second;
     NS_ABORT_MSG_IF(!inserted, "Duplicate RTP TPG collection identity");
     return group;

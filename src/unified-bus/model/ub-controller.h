@@ -101,13 +101,10 @@ public:
     void DestroyTpGroup(TpgTag tpgTag);
 
     Ptr<UbTransportGroup> CreateRtpTpGroup(
-        const std::vector<Ptr<UbTransportChannel>>& members);
+        const std::vector<Ptr<UbTransportChannel>>& members,
+        uint32_t initialSelectionCursor);
     Ptr<UbTransportGroup> ResolveRtpTpGroup(
         const UbLifecycleResourceIdentity& identity) const;
-    uint32_t GetRtpTpGroupCountForTest() const
-    {
-        return static_cast<uint32_t>(m_rtpTpGroups.size());
-    }
 
     // Port management
     /**
