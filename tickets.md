@@ -10,8 +10,8 @@ Work the **frontier**: a ticket may start only after every title listed under **
 
 The following contract applies to every ticket:
 
-- Build current `main@ccf41b58` once before implementation and preserve the executable, SHA-256 digest, build configuration, compiler/runtime versions, linked-library facts, input hashes, and output manifest.
-- Reuse that exact reference executable for every old-versus-new comparison. Do not rebuild the reference per ticket.
+- Before implementation, freeze exactly one current `main@ccf41b58` reference executable for each incompatible build configuration required by the acceptance matrix. Preserve each executable's SHA-256 digest, build configuration, compiler/runtime versions, linked-library facts, input hashes, and output manifest.
+- Reuse the exact matching frozen executable for every old-versus-new comparison in all later tickets. Never rebuild a frozen configuration per ticket or replace it with a different compile-time superset.
 - Prove reference self-reproducibility by running each accepted case at least twice before treating an output as byte-stable.
 - Use minimal targeted cases for implementation and debugging. Use separate medium-complexity, risk-focused cases for acceptance; do not use one large all-features scenario.
 - Require raw byte equality for every reference output proven byte-stable. If a raw output is not self-stable, retain it and compare a documented canonical representation byte-for-byte without deleting semantic events or values.
@@ -24,12 +24,12 @@ The following contract applies to every ticket:
 
 **Blocked by:** None - can start immediately.
 
-- [x] The reference executable is built from `main@ccf41b58`; its executable hash and complete build manifest are recorded.
+- [x] Exactly one reference executable is frozen from `main@ccf41b58` for each incompatible accepted build configuration: local single-thread (`local-single`), local MTP (`local-mtp`), and MPI plus MTP (`parallel-all`). Every hash and complete build manifest is recorded, and all later tickets reuse these exact variants without rebuilding.
 - [x] All case inputs and comparison rules have recorded hashes and cannot silently drift between tickets.
 - [x] The minimal corpus contains a two-node, single-RTP-TP, single-operation case suitable for fast diagnosis.
 - [x] The medium corpus contains separate bounded cases for shared-TP concurrency, multi-TP plus deterministic loss/retransmission, CTP Entity/VL queue pressure, and a small cross-owner runtime.
-- [x] Every selected reference artifact is generated twice; raw byte-stable artifacts and canonical-only artifacts are listed explicitly.
-- [x] The harness reports the first differing artifact and byte offset and preserves both old and new outputs for diagnosis.
+- [x] Every generated reference output is generated twice; all proven byte-stable outputs are listed explicitly for raw byte equality, and canonical-only artifact lists are explicit and empty.
+- [x] The harness requires the exact managed artifact set on both sides, rejects missing or unclassified artifacts, reports the first differing artifact and byte offset, and preserves both old and new outputs for diagnosis.
 
 ## Task 01: Establish a single-TP packet lifecycle tracer bullet
 
