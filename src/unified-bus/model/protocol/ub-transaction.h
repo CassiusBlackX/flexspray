@@ -61,7 +61,7 @@ namespace ns3 {
 
         // function层调用
         void TriggerScheduleWqeSegment(uint32_t jettyNum,
-                                       uint32_t wqeId,
+                                       Ptr<UbWqe> originatingWqe,
                                        bool lifecycleOperation);
 
         // tp调用
@@ -128,7 +128,7 @@ namespace ns3 {
 
         void ScheduleWqeSegment(Ptr<UbTransportChannel> tp);
         void RunTrackedScheduleWqeSegment(uint32_t jettyNum,
-                                          uint32_t wqeId,
+                                          Ptr<UbWqe> originatingWqe,
                                           bool lifecycleOperation,
                                           Ptr<UbTransportChannel> tp,
                                           uint64_t eventToken);
@@ -138,10 +138,12 @@ namespace ns3 {
                                         bool localSegment,
                                         bool lifecycleOperation);
         void RunTrackedScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment,
+                                                Ptr<UbWqe> originatingWqe,
                                                 uint32_t nextRrIndex,
                                                 bool localSegment,
                                                 bool lifecycleOperation,
                                                 uint64_t eventToken);
+        bool IsCurrentWqeOperation(uint32_t jettyNum, Ptr<UbWqe> wqe) const;
         void RecordSegmentAdmission(Ptr<UbWqeSegment> segment);
         bool RecordSegmentSuccess(uint32_t jettyNum, uint32_t wqeId, uint32_t taSsn);
 

@@ -8347,6 +8347,34 @@ class UbLifecycleForcedStopCancelsTrackedScheduleTest : public TestCase
             {
                 std::_Exit(5);
             }
+            if (function->DestroyJetty(kUrmaWriteRegressionJettyNum,
+                                       UbDestroyReason::SIMULATION_STOP) !=
+                UbDestroyStatus::COMPLETED)
+            {
+                std::_Exit(6);
+            }
+
+            function->CreateJetty(topo.sender->GetId(),
+                                  topo.receiver->GetId(),
+                                  kUrmaWriteRegressionJettyNum);
+            if (!transaction->JettyBindTp(topo.sender->GetId(),
+                                          topo.receiver->GetId(),
+                                          kUrmaWriteRegressionJettyNum,
+                                          false,
+                                          {kUrmaWriteRegressionSenderTpn}))
+            {
+                std::_Exit(7);
+            }
+            Ptr<UbWqe> finalWqe = function->CreateWqe(topo.sender->GetId(),
+                                                      topo.receiver->GetId(),
+                                                      64,
+                                                      kUrmaWriteRegressionTaskId,
+                                                      TaOpcode::TA_OPCODE_WRITE);
+            if (function->SubmitWqe(finalWqe, kUrmaWriteRegressionJettyNum).status !=
+                UbWqeSubmissionStatus::ACCEPTED)
+            {
+                std::_Exit(8);
+            }
 
             Simulator::Stop(MilliSeconds(1));
             Simulator::Run();
@@ -8354,7 +8382,7 @@ class UbLifecycleForcedStopCancelsTrackedScheduleTest : public TestCase
             if (newJetty == nullptr || newJetty->GetActiveWqeCount() != 0 ||
                 transaction->GetActiveOperationCount() != 0)
             {
-                std::_Exit(6);
+                std::_Exit(9);
             }
             Simulator::Destroy();
             Config::Reset();
@@ -8449,6 +8477,103 @@ class UbLifecycleCancelBetweenTrackedSchedulePhasesTest : public TestCase
             NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(status),
                                   0,
                                   "Canceled finish work must not commit or enqueue a stale segment");
+        }
+    }
+};
+
+class UbLifecycleSameJettyWqeReuseRejectsStaleFinishTest : public TestCase
+{
+  public:
+    UbLifecycleSameJettyWqeReuseRejectsStaleFinishTest()
+        : TestCase("UnifiedBus - stale finish cannot commit into same-Jetty reused WQE key")
+    {
+    }
+
+    void DoRun() override
+    {
+        const int status = RunInChildProcess([]() {
+            Config::Reset();
+            LocalTpTopology topo = BuildLocalTpTopology();
+            InstallStaticTpPair(topo);
+            Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+            Ptr<UbFunction> function = controller->GetUbFunction();
+            Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+            function->CreateJetty(topo.sender->GetId(),
+                                  topo.receiver->GetId(),
+                                  kUrmaWriteRegressionJettyNum);
+            if (!transaction->JettyBindTp(topo.sender->GetId(),
+                                          topo.receiver->GetId(),
+                                          kUrmaWriteRegressionJettyNum,
+                                          false,
+                                          {kUrmaWriteRegressionSenderTpn}))
+            {
+                std::_Exit(2);
+            }
+            Ptr<UbTransportChannel> tp =
+                controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            Ptr<UbWqe> oldWqe = function->CreateWqe(topo.sender->GetId(),
+                                                    topo.receiver->GetId(),
+                                                    64,
+                                                    kUrmaWriteRegressionTaskId,
+                                                    TaOpcode::TA_OPCODE_WRITE);
+            Ptr<UbWqe> replacement = function->CreateWqe(topo.sender->GetId(),
+                                                         topo.receiver->GetId(),
+                                                         2 * UB_WQE_TA_SEGMENT_BYTE,
+                                                         kUrmaWriteRegressionTaskId,
+                                                         TaOpcode::TA_OPCODE_WRITE);
+            if (function->SubmitWqe(oldWqe, kUrmaWriteRegressionJettyNum).status !=
+                UbWqeSubmissionStatus::ACCEPTED)
+            {
+                std::_Exit(3);
+            }
+
+            bool observedBeforeReplacementFinish = false;
+            Simulator::ScheduleNow([&]() {
+                transaction->CompleteWqeOperation(kUrmaWriteRegressionJettyNum,
+                                                  kUrmaWriteRegressionTaskId,
+                                                  UbWorkOutcome::CANCELED);
+                if (function->SubmitWqe(replacement, kUrmaWriteRegressionJettyNum).status !=
+                    UbWqeSubmissionStatus::ACCEPTED)
+                {
+                    std::_Exit(4);
+                }
+                Simulator::ScheduleNow([&]() {
+                    UbTransactionOperationSnapshot operation;
+                    Ptr<UbJetty> jetty = function->GetJetty(kUrmaWriteRegressionJettyNum);
+                    if (jetty == nullptr || transaction->GetActiveOperationCount() != 1 ||
+                        !transaction->TryGetOperationSnapshot(kUrmaWriteRegressionJettyNum,
+                                                              kUrmaWriteRegressionTaskId,
+                                                              operation) ||
+                        operation.activeSegments != 0 || tp->GetWqeSegmentVecSize() != 0 ||
+                        tp->GetMsnCnt() != 0 || tp->GetPsnCnt() != 0 ||
+                        jetty->GetTaSsnSndNxtForTest() != 0)
+                    {
+                        std::_Exit(5);
+                    }
+                    observedBeforeReplacementFinish = true;
+                    Simulator::Stop();
+                });
+            });
+            Simulator::Run();
+            if (!observedBeforeReplacementFinish ||
+                function->DestroyJetty(kUrmaWriteRegressionJettyNum,
+                                       UbDestroyReason::SIMULATION_STOP) !=
+                    UbDestroyStatus::COMPLETED)
+            {
+                std::_Exit(6);
+            }
+            Simulator::Destroy();
+            Config::Reset();
+        });
+
+        NS_TEST_ASSERT_MSG_EQ(WIFEXITED(status),
+                              1,
+                              "Stale finish should not fail while a same-key replacement is active");
+        if (WIFEXITED(status))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(status),
+                                  0,
+                                  "Old finish must not commit, enqueue, or advance replacement work");
         }
     }
 };
@@ -14900,6 +15025,8 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
     AddTestCase(new UbLifecycleForcedStopCancelsTrackedScheduleTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleCancelBetweenTrackedSchedulePhasesTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleSameJettyWqeReuseRejectsStaleFinishTest(),
                 TestCase::Duration::QUICK);
 #endif
     AddTestCase(new UbLifecycleCtpCachedJettyAdmissionFreezeTest(),

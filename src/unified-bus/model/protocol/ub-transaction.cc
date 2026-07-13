@@ -184,7 +184,7 @@ std::vector<Ptr<UbJetty>> UbTransaction::GetTpRelatedJettyVec(uint32_t tpn)
 
 void
 UbTransaction::TriggerScheduleWqeSegment(uint32_t jettyNum,
-                                         uint32_t wqeId,
+                                         Ptr<UbWqe> originatingWqe,
                                          bool lifecycleOperation)
 {
     // 遍历与该jetty绑定的tp，按轮转起点调度，避免短 WQE 总落到第一个 TP。
@@ -201,7 +201,7 @@ UbTransaction::TriggerScheduleWqeSegment(uint32_t jettyNum,
                 &UbTransaction::RunTrackedScheduleWqeSegment,
                 this,
                 jettyNum,
-                wqeId,
+                originatingWqe,
                 lifecycleOperation,
                 tpVec[idx],
                 eventToken);
@@ -213,13 +213,16 @@ UbTransaction::TriggerScheduleWqeSegment(uint32_t jettyNum,
 
 void
 UbTransaction::RunTrackedScheduleWqeSegment(uint32_t jettyNum,
-                                            uint32_t wqeId,
+                                            Ptr<UbWqe> originatingWqe,
                                             bool lifecycleOperation,
                                             Ptr<UbTransportChannel> tp,
                                             uint64_t eventToken)
 {
-    if (GetFunction()->IsJettyEventActive(jettyNum, eventToken) &&
-        (!lifecycleOperation || HasWqeOperation(jettyNum, wqeId)))
+    if (!GetFunction()->IsJettyEventActive(jettyNum, eventToken))
+    {
+        return;
+    }
+    if (!lifecycleOperation || IsCurrentWqeOperation(jettyNum, originatingWqe))
     {
         ScheduleWqeSegment(tp);
     }
@@ -367,12 +370,18 @@ void UbTransaction::ScheduleWqeSegment(Ptr<UbTransportChannel> tp)
         wqeSegment->SetTpn(tpn);
         if (lifecycleOperation)
         {
+            const auto operation = m_operations.find(
+                {wqeSegment->GetJettyNum(), wqeSegment->GetTaskId()});
+            NS_ABORT_MSG_IF(operation == m_operations.end(),
+                            "Prepared WQE segment has no originating operation");
+            Ptr<UbWqe> originatingWqe = operation->second.wqe;
             const uint64_t eventToken =
                 GetFunction()->TrackJettyEvent(wqeSegment->GetJettyNum());
             const EventId event = Simulator::ScheduleNow(
                 &UbTransaction::RunTrackedScheduleWqeSegmentFinish,
                 this,
                 wqeSegment,
+                originatingWqe,
                 nextRrIndex,
                 localSegment,
                 lifecycleOperation,
@@ -396,18 +405,49 @@ void UbTransaction::ScheduleWqeSegment(Ptr<UbTransportChannel> tp)
 
 void
 UbTransaction::RunTrackedScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment,
+                                                  Ptr<UbWqe> originatingWqe,
                                                   uint32_t nextRrIndex,
                                                   bool localSegment,
                                                   bool lifecycleOperation,
                                                   uint64_t eventToken)
 {
     const uint32_t jettyNum = segment->GetJettyNum();
-    if (GetFunction()->IsJettyEventActive(jettyNum, eventToken) &&
-        HasWqeOperation(jettyNum, segment->GetTaskId()))
+    if (!GetFunction()->IsJettyEventActive(jettyNum, eventToken))
+    {
+        return;
+    }
+    if (IsCurrentWqeOperation(jettyNum, originatingWqe))
     {
         OnScheduleWqeSegmentFinish(segment, nextRrIndex, localSegment, lifecycleOperation);
     }
+    else
+    {
+        const uint32_t tpn = segment->GetTpn();
+        const auto tp = m_tpnMap.find(tpn);
+        if (tp != m_tpnMap.end() && tp->second != nullptr)
+        {
+            // The prepared segment held this TP's scheduler busy flag. Hand it back before
+            // resuming current-generation work without committing the stale segment.
+            m_tpSchedulingStatus[tpn] = false;
+            ScheduleWqeSegment(tp->second);
+        }
+        else
+        {
+            m_tpSchedulingStatus.erase(tpn);
+        }
+    }
     GetFunction()->ResolveJettyEvent(jettyNum, eventToken);
+}
+
+bool
+UbTransaction::IsCurrentWqeOperation(uint32_t jettyNum, Ptr<UbWqe> wqe) const
+{
+    if (wqe == nullptr)
+    {
+        return false;
+    }
+    const auto operation = m_operations.find({jettyNum, wqe->GetWqeId()});
+    return operation != m_operations.end() && operation->second.wqe == wqe;
 }
 
 void UbTransaction::OnScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment,
