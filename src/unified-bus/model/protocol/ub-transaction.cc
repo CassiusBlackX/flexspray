@@ -1265,9 +1265,32 @@ void UbTransaction::WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe, UbWorkOutcome o
         return;
     }
     // 从vector中寻找该wqe并删除
-    auto it = std::find(m_jettyOrderedWqe[jettyNum].begin(), m_jettyOrderedWqe[jettyNum].end(), wqe->GetWqeId());
-    if (it != m_jettyOrderedWqe[jettyNum].end()) {
-        m_jettyOrderedWqe[jettyNum].erase(it);
+    std::vector<uint32_t>& orderedWqes = m_jettyOrderedWqe[jettyNum];
+    const bool completedOrderedFront =
+        hadLifecycleOperation && outcome == UbWorkOutcome::COMPLETED && !orderedWqes.empty() &&
+        orderedWqes.front() == wqe->GetWqeId();
+    auto it = std::find(orderedWqes.begin(), orderedWqes.end(), wqe->GetWqeId());
+    if (it != orderedWqes.end()) {
+        orderedWqes.erase(it);
+    }
+
+    Ptr<UbWqe> newlyEligibleStrongWqe;
+    if (completedOrderedFront && !orderedWqes.empty())
+    {
+        const auto nextOperation = m_operations.find({jettyNum, orderedWqes.front()});
+        if (nextOperation != m_operations.end() && nextOperation->second.wqe != nullptr &&
+            nextOperation->second.wqe->GetOrderType() == OrderType::ORDER_STRONG &&
+            nextOperation->second.segments.empty() &&
+            !nextOperation->second.wqe->IsSentCompleted())
+        {
+            newlyEligibleStrongWqe = nextOperation->second.wqe;
+        }
+    }
+    if (newlyEligibleStrongWqe != nullptr)
+    {
+        // This is an ordering transition, not a TP-capacity retry. The tracked exact-WQE event
+        // runs after the current terminal callback and remains cancelable by Jetty drain.
+        TriggerScheduleWqeSegment(jettyNum, newlyEligibleStrongWqe, true);
     }
     if (hadLifecycleOperation)
     {

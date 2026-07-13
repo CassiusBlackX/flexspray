@@ -8058,6 +8058,12 @@ class UbLifecycleSameJettyConcurrentWqesMakeIndependentProgressTest : public Tes
                                                        {kUrmaWriteRegressionSenderTpn}),
                               true,
                               "Concurrent WQEs should share one direct TP binding");
+        controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn)
+            ->TraceConnectWithoutContext(
+                "WqeSegmentSendsNotify",
+                MakeCallback(
+                    &UbLifecycleSameJettyConcurrentWqesMakeIndependentProgressTest::OnAdmitted,
+                    this));
         function->GetJetty(kUrmaWriteRegressionJettyNum)
             ->SetClientCallback(MakeCallback(
                 &UbLifecycleSameJettyConcurrentWqesMakeIndependentProgressTest::OnCompleted,
@@ -8071,6 +8077,7 @@ class UbLifecycleSameJettyConcurrentWqesMakeIndependentProgressTest : public Tes
                                                  64,
                                                  taskId,
                                                  TaOpcode::TA_OPCODE_WRITE);
+            wqe->SetOrderType(OrderType::ORDER_STRONG);
             NS_TEST_ASSERT_MSG_EQ(
                 static_cast<uint32_t>(
                     function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status),
@@ -8081,6 +8088,39 @@ class UbLifecycleSameJettyConcurrentWqesMakeIndependentProgressTest : public Tes
         Simulator::Stop(MilliSeconds(1));
         Simulator::Run();
 
+        NS_TEST_ASSERT_MSG_EQ(m_admittedTasks.size(),
+                              2u,
+                              "Both accepted strong-order WQEs should reach TP admission");
+        if (!m_admittedTasks.empty())
+        {
+            NS_TEST_ASSERT_MSG_EQ(m_admittedTasks[0],
+                                  kUrmaWriteRegressionTaskId,
+                                  "Strong-order WQE A must admit first");
+        }
+        if (m_admittedTasks.size() == 2)
+        {
+            NS_TEST_ASSERT_MSG_EQ(m_admittedTasks[1],
+                                  kUrmaWriteRegressionTaskId + 1,
+                                  "Strong-order WQE B may admit only after A completes");
+        }
+        NS_TEST_ASSERT_MSG_EQ(m_progress.size(),
+                              4u,
+                              "Strong-order A/B should expose two admissions and two completions");
+        if (m_progress.size() == 4)
+        {
+            NS_TEST_ASSERT_MSG_EQ(m_progress[0],
+                                  kUrmaWriteRegressionTaskId,
+                                  "WQE A should admit first");
+            NS_TEST_ASSERT_MSG_EQ(m_progress[1],
+                                  CompletionEvent(kUrmaWriteRegressionTaskId),
+                                  "WQE A should complete before WQE B admission");
+            NS_TEST_ASSERT_MSG_EQ(m_progress[2],
+                                  kUrmaWriteRegressionTaskId + 1,
+                                  "WQE B should admit only after WQE A completion");
+            NS_TEST_ASSERT_MSG_EQ(m_progress[3],
+                                  CompletionEvent(kUrmaWriteRegressionTaskId + 1),
+                                  "WQE B should complete after its ordered admission");
+        }
         NS_TEST_ASSERT_MSG_EQ(m_completedTasks.size(),
                               2u,
                               "Both accepted same-Jetty WQEs should reach upper-layer completion");
@@ -8099,14 +8139,28 @@ class UbLifecycleSameJettyConcurrentWqesMakeIndependentProgressTest : public Tes
     }
 
   private:
+    static uint64_t CompletionEvent(uint32_t taskId)
+    {
+        return (uint64_t{1} << 32) | taskId;
+    }
+
+    void OnAdmitted(uint32_t, uint32_t taskId, uint32_t)
+    {
+        m_admittedTasks.push_back(taskId);
+        m_progress.push_back(taskId);
+    }
+
     void OnCompleted(uint32_t taskId, uint32_t jettyNum)
     {
         if (jettyNum == kUrmaWriteRegressionJettyNum)
         {
             m_completedTasks.insert(taskId);
+            m_progress.push_back(CompletionEvent(taskId));
         }
     }
 
+    std::vector<uint32_t> m_admittedTasks;
+    std::vector<uint64_t> m_progress;
     std::set<uint32_t> m_completedTasks;
 };
 
