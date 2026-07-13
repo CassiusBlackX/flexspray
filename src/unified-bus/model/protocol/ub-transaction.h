@@ -3,6 +3,8 @@
 #define UB_TRANSACTION_H
 
 #include <ns3/node.h>
+#include <deque>
+#include <tuple>
 #include <vector>
 #include <unordered_map>
 #include "ns3/ub-datatype.h"
@@ -180,6 +182,7 @@ namespace ns3 {
         {
             ADMITTED,
             STALE_PREPARED_CANDIDATE,
+            DEFERRED,
             REJECTED,
         };
         RtpSegmentAdmissionResult TryAdmitRtpSegment(
@@ -205,6 +208,42 @@ namespace ns3 {
                                                 uint64_t eventToken);
         void CancelPendingScheduleWqeSegmentFinish(uint32_t tpn);
         void ClearRtpScheduleChain(uint32_t jettyNum, Ptr<UbWqe> originatingWqe);
+        struct AdmissionDomainKey
+        {
+            UbRtpTransportReferenceKind kind{UbRtpTransportReferenceKind::DIRECT_TP};
+            UbLifecycleResourceIdentity identity;
+
+            bool operator<(const AdmissionDomainKey& other) const
+            {
+                return std::tie(kind,
+                                identity.ownerNodeId,
+                                identity.kind,
+                                identity.localId,
+                                identity.generation) <
+                       std::tie(other.kind,
+                                other.identity.ownerNodeId,
+                                other.identity.kind,
+                                other.identity.localId,
+                                other.identity.generation);
+            }
+        };
+        struct ReadySourceKey
+        {
+            uint32_t jettyNum{0};
+            uint32_t wqeId{0};
+            UbLifecycleResourceIdentity operationIdentity;
+        };
+        struct AdmissionDomainState
+        {
+            std::deque<ReadySourceKey> readySources;
+            bool blocked{false};
+            bool eventPending{false};
+        };
+        static AdmissionDomainKey MakeAdmissionDomainKey(
+            const UbRtpTransportReference& reference);
+        void DeferRtpSource(uint32_t jettyNum, Ptr<UbWqe> originatingWqe);
+        void WakeDeferredDirectRtpSources(Ptr<UbTransportChannel> tp);
+        void RunAdmissionDomainWake(AdmissionDomainKey domainKey);
         bool IsCurrentWqeOperation(uint32_t jettyNum, Ptr<UbWqe> wqe) const;
         bool RecordSegmentSuccess(uint32_t jettyNum,
                                   uint32_t wqeId,
@@ -274,6 +313,7 @@ namespace ns3 {
             UbLifecycleLeaseIdentity workLease;
             UbLifecycleLeaseIdentity transportUseLease;
             bool rtpScheduleChainActive{false};
+            bool readyQueued{false};
             bool terminalPending{false};
             struct SegmentRecord
             {
@@ -287,6 +327,7 @@ namespace ns3 {
         };
 
         std::map<std::pair<uint32_t, uint32_t>, OperationRecord> m_operations;
+        std::map<AdmissionDomainKey, AdmissionDomainState> m_admissionDomains;
     };
 
 } // namespace ns3

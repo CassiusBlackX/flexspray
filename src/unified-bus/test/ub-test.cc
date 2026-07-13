@@ -7522,6 +7522,166 @@ class UbLifecycleCurrentTpgMemberBackpressurePreservesAtomicStateTest : public T
     uint32_t m_groupCursorBefore{0};
 };
 
+class UbLifecycleDirectCapacityTransitionWakesDeferredSourceTest : public TestCase
+{
+  public:
+    UbLifecycleDirectCapacityTransitionWakesDeferredSourceTest()
+        : TestCase("UnifiedBus - direct TP capacity transition wakes one deferred source")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        Config::SetDefault("ns3::UbTransportChannel::DefaultMaxWqeSegNum",
+                           UintegerValue(1));
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        m_transaction = controller->GetUbTransaction();
+        m_tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        m_tp->TraceConnectWithoutContext(
+            "WqeSegmentSendsNotify",
+            MakeCallback(&UbLifecycleDirectCapacityTransitionWakesDeferredSourceTest::ObserveAdmission,
+                         this));
+
+        const uint32_t secondJettyNum = kUrmaWriteRegressionJettyNum + 1;
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              kUrmaWriteRegressionJettyNum);
+        function->CreateJetty(topo.sender->GetId(), topo.receiver->GetId(), secondJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->JettyBindTp(topo.sender->GetId(),
+                                                         topo.receiver->GetId(),
+                                                         kUrmaWriteRegressionJettyNum,
+                                                         false,
+                                                         {kUrmaWriteRegressionSenderTpn}),
+                              true,
+                              "First direct source should bind to the shared TP");
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->JettyBindTp(topo.sender->GetId(),
+                                                         topo.receiver->GetId(),
+                                                         secondJettyNum,
+                                                         false,
+                                                         {kUrmaWriteRegressionSenderTpn}),
+                              true,
+                              "Second direct source should bind to the shared TP");
+
+        Ptr<UbWqe> first = function->CreateWqe(topo.sender->GetId(),
+                                               topo.receiver->GetId(),
+                                               64,
+                                               kUrmaWriteRegressionTaskId,
+                                               TaOpcode::TA_OPCODE_WRITE);
+        m_secondWqe = function->CreateWqe(topo.sender->GetId(),
+                                          topo.receiver->GetId(),
+                                          64,
+                                          kUrmaWriteRegressionTaskId + 1,
+                                          TaOpcode::TA_OPCODE_WRITE);
+        m_secondJetty = function->GetJetty(secondJettyNum);
+        m_secondTassnBefore = m_secondJetty->GetTaSsnSndNxtForTest();
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(function->SubmitWqe(first, kUrmaWriteRegressionJettyNum).status),
+            static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+            "First direct source should enter lifecycle admission");
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(function->SubmitWqe(m_secondWqe, secondJettyNum).status),
+            static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+            "Second direct source should enter lifecycle admission");
+
+        Simulator::ScheduleNow(
+            &UbLifecycleDirectCapacityTransitionWakesDeferredSourceTest::ScheduleBlockedCheckpoint,
+            this);
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
+
+        NS_TEST_ASSERT_MSG_EQ(m_checkpointObserved,
+                              true,
+                              "Fixture should observe the second source after its first attempt");
+        NS_TEST_ASSERT_MSG_EQ(m_queueAtCheckpoint,
+                              1u,
+                              "First source should occupy the one-slot TP at the blocked checkpoint");
+        NS_TEST_ASSERT_MSG_EQ(m_msnAtCheckpoint,
+                              1u,
+                              "Deferred source must not reserve a TP MSN");
+        NS_TEST_ASSERT_MSG_EQ(m_psnAtCheckpoint,
+                              1u,
+                              "Deferred source must not reserve a TP PSN");
+        NS_TEST_ASSERT_MSG_EQ(m_secondBytesAtCheckpoint,
+                              64u,
+                              "Deferred source must not advance its WQE cursor");
+        NS_TEST_ASSERT_MSG_EQ(m_secondTassnAtCheckpoint,
+                              m_secondTassnBefore,
+                              "Deferred source must not advance its TASSN cursor");
+        NS_TEST_ASSERT_MSG_EQ(m_secondSegmentsAtCheckpoint,
+                              0u,
+                              "Deferred source must not expose a Transaction child");
+        NS_TEST_ASSERT_MSG_EQ(m_firstAdmissions,
+                              1u,
+                              "First source should be admitted exactly once");
+        NS_TEST_ASSERT_MSG_EQ(m_secondAdmissions,
+                              1u,
+                              "One real capacity transition should admit the deferred source once");
+        NS_TEST_ASSERT_MSG_EQ(m_secondWqe->GetBytesLeft(),
+                              0u,
+                              "Deferred source should commit after capacity returns");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    void ScheduleBlockedCheckpoint()
+    {
+        Simulator::ScheduleNow(
+            &UbLifecycleDirectCapacityTransitionWakesDeferredSourceTest::ObserveBlockedCheckpoint,
+            this);
+    }
+
+    void ObserveBlockedCheckpoint()
+    {
+        m_checkpointObserved = true;
+        m_queueAtCheckpoint = m_tp->GetWqeSegmentVecSize();
+        m_msnAtCheckpoint = m_tp->GetMsnCnt();
+        m_psnAtCheckpoint = m_tp->GetPsnCnt();
+        m_secondBytesAtCheckpoint = m_secondWqe->GetBytesLeft();
+        m_secondTassnAtCheckpoint = m_secondJetty->GetTaSsnSndNxtForTest();
+        UbTransactionOperationSnapshot snapshot;
+        if (m_transaction->TryGetOperationSnapshot(m_secondJetty->GetJettyNum(),
+                                                   m_secondWqe->GetWqeId(),
+                                                   snapshot))
+        {
+            m_secondSegmentsAtCheckpoint = snapshot.activeSegments;
+        }
+    }
+
+    void ObserveAdmission(uint32_t, uint32_t taskId, uint32_t)
+    {
+        if (taskId == kUrmaWriteRegressionTaskId)
+        {
+            ++m_firstAdmissions;
+        }
+        else if (taskId == kUrmaWriteRegressionTaskId + 1)
+        {
+            ++m_secondAdmissions;
+        }
+    }
+
+    Ptr<UbTransaction> m_transaction;
+    Ptr<UbTransportChannel> m_tp;
+    Ptr<UbJetty> m_secondJetty;
+    Ptr<UbWqe> m_secondWqe;
+    bool m_checkpointObserved{false};
+    uint32_t m_queueAtCheckpoint{0};
+    uint64_t m_msnAtCheckpoint{0};
+    uint64_t m_psnAtCheckpoint{0};
+    uint64_t m_secondBytesAtCheckpoint{0};
+    uint32_t m_secondTassnBefore{0};
+    uint32_t m_secondTassnAtCheckpoint{0};
+    uint32_t m_secondSegmentsAtCheckpoint{UINT32_MAX};
+    uint32_t m_firstAdmissions{0};
+    uint32_t m_secondAdmissions{0};
+};
+
 class UbLifecycleMultiSegmentTpgRoundRobinPinsGenerationsTest : public TestCase
 {
   public:
@@ -18604,6 +18764,8 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
     AddTestCase(new UbLifecycleTwoMemberTpgSubmissionUsesAtomicRtpPathTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleCurrentTpgMemberBackpressurePreservesAtomicStateTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleDirectCapacityTransitionWakesDeferredSourceTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleMultiSegmentTpgRoundRobinPinsGenerationsTest(),
                 TestCase::Duration::QUICK);
