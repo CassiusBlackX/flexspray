@@ -7104,6 +7104,148 @@ class UbLifecycleLegacyMultiTpSubmissionCompatibilityTest : public TestCase
     uint32_t m_completionCount{0};
 };
 
+class UbLifecycleLegacyMultiTpSchedulerRaceTest : public TestCase
+{
+  public:
+    UbLifecycleLegacyMultiTpSchedulerRaceTest()
+        : TestCase("UnifiedBus - legacy multi TP scheduler race preserves eager segment commit")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        Config::SetDefault("ns3::UbTransportChannel::DefaultMaxWqeSegNum",
+                           UintegerValue(1));
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbController> receiverController = topo.receiver->GetObject<UbController>();
+        controller->CreateTp(topo.sender->GetId(),
+                             topo.receiver->GetId(),
+                             topo.senderPort->GetIfIndex(),
+                             topo.receiverPort->GetIfIndex(),
+                             kUrmaWriteRegressionPriority,
+                             303,
+                             404,
+                             UbCongestionControl::Create(UB_DEVICE));
+        receiverController->CreateTp(topo.receiver->GetId(),
+                                     topo.sender->GetId(),
+                                     topo.receiverPort->GetIfIndex(),
+                                     topo.senderPort->GetIfIndex(),
+                                     kUrmaWriteRegressionPriority,
+                                     404,
+                                     303,
+                                     UbCongestionControl::Create(UB_DEVICE));
+
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        m_transaction = controller->GetUbTransaction();
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              kUrmaWriteRegressionJettyNum);
+        const std::vector<uint32_t> tpns = {kUrmaWriteRegressionSenderTpn, 303};
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->JettyBindTp(topo.sender->GetId(),
+                                                         topo.receiver->GetId(),
+                                                         kUrmaWriteRegressionJettyNum,
+                                                         true,
+                                                         tpns),
+                              true,
+                              "Legacy multi-TP Jetty binding should succeed");
+
+        m_jetty = function->GetJetty(kUrmaWriteRegressionJettyNum);
+        m_tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        m_wqe = function->CreateWqe(topo.sender->GetId(),
+                                    topo.receiver->GetId(),
+                                    64,
+                                    kUrmaWriteRegressionTaskId,
+                                    TaOpcode::TA_OPCODE_WRITE);
+        m_tassnBefore = m_jetty->GetTaSsnSndNxtForTest();
+
+        function->PushWqeToJetty(m_wqe, kUrmaWriteRegressionJettyNum);
+        // The first legacy scheduler event eagerly commits the WQE cursor. This later UID fills
+        // that TP before the finish event, then schedules observation after finish but before the
+        // port allocator can consume the intentionally minimal blocker.
+        Simulator::ScheduleNow(&UbLifecycleLegacyMultiTpSchedulerRaceTest::SaturateTp, this);
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
+
+        NS_TEST_ASSERT_MSG_EQ(m_saturationObserved,
+                              true,
+                              "Race seam should run after legacy prepare");
+        NS_TEST_ASSERT_MSG_EQ(m_finishObserved,
+                              true,
+                              "Race seam should observe the legacy finish event");
+        NS_TEST_ASSERT_MSG_EQ(m_bytesAtSaturation,
+                              0u,
+                              "Legacy eager prepare should commit the WQE bytes before finish");
+        NS_TEST_ASSERT_MSG_EQ(m_tassnAtSaturation,
+                              m_tassnBefore + 1,
+                              "Legacy eager prepare should commit one TASSN before finish");
+        NS_TEST_ASSERT_MSG_EQ(m_wqe->GetBytesLeft(),
+                              0u,
+                              "Legacy finish must preserve the eagerly committed WQE cursor");
+        NS_TEST_ASSERT_MSG_EQ(m_jetty->GetTaSsnSndNxtForTest(),
+                              m_tassnBefore + 1,
+                              "Legacy finish must not duplicate or lose the committed TASSN");
+        NS_TEST_ASSERT_MSG_EQ(m_queueAfterFinish,
+                              m_queueAtSaturation + 1,
+                              "Legacy finish must enqueue the already committed segment");
+        NS_TEST_ASSERT_MSG_EQ(m_msnAfterFinish,
+                              m_msnAtSaturation + 1,
+                              "Legacy finish must retain the old TP MSN commit");
+        NS_TEST_ASSERT_MSG_EQ(m_psnAfterFinish,
+                              m_psnAtSaturation + 1,
+                              "Legacy finish must retain the old TP PSN commit");
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->GetActiveOperationCount(),
+                              0u,
+                              "Legacy race compatibility must not create lifecycle operations");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    void SaturateTp()
+    {
+        Ptr<UbWqeSegment> blocker = CreateObject<UbWqeSegment>();
+        blocker->SetSize(1);
+        m_tp->PushWqeSegment(blocker);
+        m_saturationObserved = true;
+        m_bytesAtSaturation = m_wqe->GetBytesLeft();
+        m_tassnAtSaturation = m_jetty->GetTaSsnSndNxtForTest();
+        m_msnAtSaturation = m_tp->GetMsnCnt();
+        m_psnAtSaturation = m_tp->GetPsnCnt();
+        m_queueAtSaturation = m_tp->GetWqeSegmentVecSize();
+        Simulator::ScheduleNow(&UbLifecycleLegacyMultiTpSchedulerRaceTest::ObserveFinish, this);
+    }
+
+    void ObserveFinish()
+    {
+        m_finishObserved = true;
+        m_msnAfterFinish = m_tp->GetMsnCnt();
+        m_psnAfterFinish = m_tp->GetPsnCnt();
+        m_queueAfterFinish = m_tp->GetWqeSegmentVecSize();
+        Simulator::Stop();
+    }
+
+    Ptr<UbTransaction> m_transaction;
+    Ptr<UbJetty> m_jetty;
+    Ptr<UbTransportChannel> m_tp;
+    Ptr<UbWqe> m_wqe;
+    bool m_saturationObserved{false};
+    bool m_finishObserved{false};
+    uint64_t m_bytesAtSaturation{0};
+    uint64_t m_msnAtSaturation{0};
+    uint64_t m_msnAfterFinish{0};
+    uint64_t m_psnAtSaturation{0};
+    uint64_t m_psnAfterFinish{0};
+    uint32_t m_tassnBefore{0};
+    uint32_t m_tassnAtSaturation{0};
+    uint32_t m_queueAtSaturation{0};
+    uint32_t m_queueAfterFinish{0};
+};
+
 class UbLifecycleRejectedTpAdmissionPreservesLazyCursorTest : public TestCase
 {
   public:
@@ -13556,6 +13698,7 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
 #endif
     AddTestCase(new UbLifecycleLegacyMultiTpSubmissionCompatibilityTest(),
                 TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleLegacyMultiTpSchedulerRaceTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleRejectedTpAdmissionPreservesLazyCursorTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleSchedulerRaceBackpressureTest(),
