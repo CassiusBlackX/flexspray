@@ -107,8 +107,11 @@ namespace ns3 {
         void NotifyJettyProgress(uint32_t jettyNum);
         bool IsJettyAcceptingWqes(uint32_t jettyNum) const;
         uint64_t TrackJettyEvent(uint32_t jettyNum);
-        void AttachJettyEvent(uint32_t jettyNum, uint64_t token, EventId event);
-        bool IsJettyEventActive(uint32_t jettyNum, uint64_t token) const;
+        void AttachJettyEvent(uint32_t jettyNum,
+                              uint64_t token,
+                              EventId event,
+                              Callback<void> cancelCleanup = {});
+        bool BeginJettyEvent(uint32_t jettyNum, uint64_t token);
         void ResolveJettyEvent(uint32_t jettyNum, uint64_t token);
         bool TryGetJettyLifecycleIdentity(uint32_t jettyNum,
                                           UbLifecycleResourceIdentity& identity) const;
@@ -162,8 +165,11 @@ namespace ns3 {
         void NotifyProgress(uint32_t jettyNum);
         bool IsDrainReady(uint32_t jettyNum) const;
         uint64_t TrackEvent(uint32_t jettyNum);
-        void AttachEvent(uint32_t jettyNum, uint64_t token, EventId event);
-        bool IsEventActive(uint32_t jettyNum, uint64_t token) const;
+        void AttachEvent(uint32_t jettyNum,
+                         uint64_t token,
+                         EventId event,
+                         Callback<void> cancelCleanup);
+        bool BeginEvent(uint32_t jettyNum, uint64_t token);
         void ResolveEvent(uint32_t jettyNum, uint64_t token);
         bool TryGetIdentity(uint32_t jettyNum, UbLifecycleResourceIdentity& identity) const;
         void ReplaceRtpBinding(
@@ -173,10 +179,18 @@ namespace ns3 {
         void DisposeAll();
 
       private:
+        enum class TrackedEventPhase : uint8_t
+        {
+            PENDING = 0,
+            RUNNING = 1,
+        };
+
         struct TrackedEventRecord
         {
             UbLifecycleLeaseIdentity lease;
             EventId event;
+            Callback<void> cancelCleanup;
+            TrackedEventPhase phase{TrackedEventPhase::PENDING};
         };
 
         struct JettyRecord
