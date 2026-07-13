@@ -5555,6 +5555,8 @@ class UbUrmaReadCompletionNeedsReadResponseTest : public TestCase
         NS_TEST_ASSERT_MSG_NE(jetty, nullptr, "Sender Jetty should exist");
         jetty->SetClientCallback(
             MakeCallback(&UbUrmaReadCompletionNeedsReadResponseTest::OnTaskCompleted, this));
+        jetty->SetWqeCompletionCallback(
+            MakeCallback(&UbUrmaReadCompletionNeedsReadResponseTest::OnWqeCompleted, this));
 
         Ptr<UbTransportChannel> senderTp = senderCtrl->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
         NS_TEST_ASSERT_MSG_NE(senderTp, nullptr, "Sender TP should exist");
@@ -5571,10 +5573,11 @@ class UbUrmaReadCompletionNeedsReadResponseTest : public TestCase
                                                    4096,
                                                    kUrmaReadRegressionTaskId,
                                                    TaOpcode::TA_OPCODE_READ);
-        Simulator::ScheduleNow(&UbFunction::PushWqeToJetty,
-                               senderFunction,
-                               wqe,
-                               kUrmaReadRegressionJettyNum);
+        const UbWqeSubmissionResult submitted =
+            senderFunction->SubmitWqe(wqe, kUrmaReadRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(submitted.status),
+                              static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+                              "Direct READ should enter the lifecycle path");
 
         Simulator::Stop(MilliSeconds(1));
         Simulator::Run();
@@ -5594,6 +5597,17 @@ class UbUrmaReadCompletionNeedsReadResponseTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(m_completedTaskId,
                               kUrmaReadRegressionTaskId,
                               "Completion callback should report the original read task");
+        NS_TEST_ASSERT_MSG_EQ(m_typedCompletionCount,
+                              1u,
+                              "READ_RESPONSE should produce one typed WQE terminal");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_outcome),
+                              static_cast<uint32_t>(UbWorkOutcome::COMPLETED),
+                              "READ_RESPONSE should complete the READ WQE successfully");
+        const UbLifecycleResourceSnapshot snapshot =
+            UbLifecycleCoordinator::GetOrCreate(topo.sender)->GetSnapshot(submitted.wqeIdentity);
+        NS_TEST_ASSERT_MSG_EQ(snapshot.completedTerminals,
+                              1u,
+                              "READ should record one typed completed terminal");
         const bool completionAfterResponse = m_taskCompleteTime >= m_readResponseTime;
         NS_TEST_ASSERT_MSG_EQ(completionAfterResponse,
                               true,
@@ -5658,11 +5672,19 @@ class UbUrmaReadCompletionNeedsReadResponseTest : public TestCase
         m_taskCompleteTime = Simulator::Now();
     }
 
+    void OnWqeCompleted(UbWqeCompletion completion)
+    {
+        ++m_typedCompletionCount;
+        m_outcome = completion.outcome;
+    }
+
     bool m_requestTpAckObserved{false};
     bool m_readResponseObserved{false};
     bool m_taskCompleted{false};
     bool m_completedImmediatelyAfterRequestTpAck{false};
     uint32_t m_completedTaskId{UINT32_MAX};
+    uint32_t m_typedCompletionCount{0};
+    UbWorkOutcome m_outcome{UbWorkOutcome::FAILED};
     Time m_readResponseTime{Seconds(0)};
     Time m_taskCompleteTime{Seconds(0)};
 };
@@ -7491,6 +7513,8 @@ class UbLifecycleDirectWriteCompletionTest : public TestCase
         m_jetty = function->GetJetty(kUrmaWriteRegressionJettyNum);
         m_jetty->SetClientCallback(
             MakeCallback(&UbLifecycleDirectWriteCompletionTest::OnTaskCompleted, this));
+        m_jetty->SetWqeCompletionCallback(
+            MakeCallback(&UbLifecycleDirectWriteCompletionTest::OnWqeCompleted, this));
         m_tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
         m_tp->TraceConnectWithoutContext(
             "WqeSegmentSendsNotify",
@@ -7548,6 +7572,12 @@ class UbLifecycleDirectWriteCompletionTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(m_completionCount,
                               1u,
                               "Direct WRITE should notify the upper layer exactly once");
+        NS_TEST_ASSERT_MSG_EQ(m_typedCompletionCount,
+                              1u,
+                              "Direct WRITE should produce one typed WQE terminal");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_lastOutcome),
+                              static_cast<uint32_t>(UbWorkOutcome::COMPLETED),
+                              "A successful WRITE response should produce COMPLETED");
         const bool completionAfterResponse = m_completionTime >= m_transactionResponseTime;
         NS_TEST_ASSERT_MSG_EQ(completionAfterResponse,
                               true,
@@ -7577,6 +7607,9 @@ class UbLifecycleDirectWriteCompletionTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(wqeSnapshot.successfulTerminals,
                               1u,
                               "WQE should receive one typed success terminal");
+        NS_TEST_ASSERT_MSG_EQ(wqeSnapshot.completedTerminals,
+                              1u,
+                              "WQE should receive one typed completed terminal");
         NS_TEST_ASSERT_MSG_EQ(wqeSnapshot.retired,
                               true,
                               "Successful WQE generation should retire");
@@ -7664,6 +7697,12 @@ class UbLifecycleDirectWriteCompletionTest : public TestCase
         }
     }
 
+    void OnWqeCompleted(UbWqeCompletion completion)
+    {
+        ++m_typedCompletionCount;
+        m_lastOutcome = completion.outcome;
+    }
+
     Ptr<UbTransaction> m_transaction;
     Ptr<UbJetty> m_jetty;
     Ptr<UbTransportChannel> m_tp;
@@ -7677,9 +7716,787 @@ class UbLifecycleDirectWriteCompletionTest : public TestCase
     uint32_t m_activeSegmentsAtAdmission{0};
     uint32_t m_childLeasesAtAdmission{0};
     uint32_t m_completionCount{0};
+    uint32_t m_typedCompletionCount{0};
+    UbWorkOutcome m_lastOutcome{UbWorkOutcome::FAILED};
     Time m_transactionResponseTime{Seconds(0)};
     Time m_completionTime{Seconds(0)};
 };
+
+class UbLifecycleFailedWqeOutcomeTest : public TestCase
+{
+  public:
+    UbLifecycleFailedWqeOutcomeTest()
+        : TestCase("UnifiedBus - Transaction failure produces one typed WQE terminal")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
+                                                       topo.receiver->GetId(),
+                                                       kUrmaWriteRegressionJettyNum,
+                                                       false,
+                                                       {kUrmaWriteRegressionSenderTpn}),
+                              true,
+                              "Direct TP binding should succeed");
+
+        Ptr<UbJetty> jetty = function->GetJetty(kUrmaWriteRegressionJettyNum);
+        jetty->SetClientCallback(
+            MakeCallback(&UbLifecycleFailedWqeOutcomeTest::OnLegacyCompletion, this));
+        jetty->SetWqeCompletionCallback(
+            MakeCallback(&UbLifecycleFailedWqeOutcomeTest::OnWqeCompleted, this));
+        Ptr<UbWqe> wqe = function->CreateWqe(topo.sender->GetId(),
+                                             topo.receiver->GetId(),
+                                             64,
+                                             kUrmaWriteRegressionTaskId,
+                                             TaOpcode::TA_OPCODE_WRITE);
+        const UbWqeSubmissionResult result =
+            function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(result.status),
+                              static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+                              "The failure tracer WQE should first be admitted");
+
+        transaction->CompleteWqeOperation(kUrmaWriteRegressionJettyNum,
+                                          kUrmaWriteRegressionTaskId,
+                                          UbWorkOutcome::FAILED);
+
+        NS_TEST_ASSERT_MSG_EQ(m_typedCompletionCount,
+                              1u,
+                              "Failure should notify the typed completion seam exactly once");
+        NS_TEST_ASSERT_MSG_EQ(m_legacyCompletionCount,
+                              0u,
+                              "Failure must not be reported as application success");
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetActiveWqeCount(),
+                              0u,
+                              "Failed WQE should leave its Jetty");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
+                              0u,
+                              "Failed WQE should release its Transaction operation");
+        const UbLifecycleResourceSnapshot snapshot =
+            UbLifecycleCoordinator::GetOrCreate(topo.sender)->GetSnapshot(result.wqeIdentity);
+        NS_TEST_ASSERT_MSG_EQ(snapshot.failedTerminals,
+                              1u,
+                              "Failed WQE should record its typed terminal exactly once");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.activeWorkLeases,
+                              0u,
+                              "Failure should release the Transaction work lease");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.activeTransportUseLeases,
+                              0u,
+                              "Failure should release the transport-use lease");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.retired,
+                              true,
+                              "Failed WQE generation should retire");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    void OnWqeCompleted(UbWqeCompletion completion)
+    {
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(completion.outcome),
+                              static_cast<uint32_t>(UbWorkOutcome::FAILED),
+                              "Typed completion should preserve FAILED");
+        ++m_typedCompletionCount;
+    }
+
+    void OnLegacyCompletion(uint32_t, uint32_t)
+    {
+        ++m_legacyCompletionCount;
+    }
+
+    uint32_t m_typedCompletionCount{0};
+    uint32_t m_legacyCompletionCount{0};
+};
+
+class UbLifecycleCancelFlushOutcomeTest : public TestCase
+{
+  public:
+    UbLifecycleCancelFlushOutcomeTest()
+        : TestCase("UnifiedBus - cancel and flush retain distinct typed WQE terminals")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+
+        const uint32_t canceledJetty = kUrmaWriteRegressionJettyNum;
+        const uint32_t flushedJetty = kUrmaWriteRegressionJettyNum + 1;
+        function->CreateJetty(topo.sender->GetId(), topo.receiver->GetId(), canceledJetty);
+        function->CreateJetty(topo.sender->GetId(), topo.receiver->GetId(), flushedJetty);
+        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
+                                                       topo.receiver->GetId(),
+                                                       canceledJetty,
+                                                       false,
+                                                       {kUrmaWriteRegressionSenderTpn}),
+                              true,
+                              "Canceled WQE Jetty should bind to its direct TP");
+        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
+                                                       topo.receiver->GetId(),
+                                                       flushedJetty,
+                                                       false,
+                                                       {kUrmaWriteRegressionSenderTpn}),
+                              true,
+                              "Flushed WQE Jetty should bind to its direct TP");
+        function->GetJetty(canceledJetty)->SetWqeCompletionCallback(
+            MakeCallback(&UbLifecycleCancelFlushOutcomeTest::OnWqeCompleted, this));
+        function->GetJetty(flushedJetty)->SetWqeCompletionCallback(
+            MakeCallback(&UbLifecycleCancelFlushOutcomeTest::OnWqeCompleted, this));
+
+        Ptr<UbWqe> canceled = function->CreateWqe(topo.sender->GetId(),
+                                                  topo.receiver->GetId(),
+                                                  64,
+                                                  kUrmaWriteRegressionTaskId,
+                                                  TaOpcode::TA_OPCODE_WRITE);
+        Ptr<UbWqe> flushed = function->CreateWqe(topo.sender->GetId(),
+                                                 topo.receiver->GetId(),
+                                                 64,
+                                                 kUrmaWriteRegressionTaskId + 1,
+                                                 TaOpcode::TA_OPCODE_READ);
+        const UbWqeSubmissionResult canceledSubmission =
+            function->SubmitWqe(canceled, canceledJetty);
+        const UbWqeSubmissionResult flushedSubmission =
+            function->SubmitWqe(flushed, flushedJetty);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(canceledSubmission.status),
+                              static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+                              "Canceled WQE should first be accepted");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(flushedSubmission.status),
+                              static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+                              "Flushed WQE should first be accepted");
+
+        transaction->CompleteWqeOperation(canceledJetty,
+                                          canceled->GetWqeId(),
+                                          UbWorkOutcome::CANCELED);
+        transaction->CompleteWqeOperation(flushedJetty,
+                                          flushed->GetWqeId(),
+                                          UbWorkOutcome::FLUSHED);
+
+        NS_TEST_ASSERT_MSG_EQ(m_canceledCount,
+                              1u,
+                              "Cancel should deliver one CANCELED completion");
+        NS_TEST_ASSERT_MSG_EQ(m_flushedCount,
+                              1u,
+                              "Flush should deliver one FLUSHED completion");
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(topo.sender);
+        NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(canceledSubmission.wqeIdentity)
+                                  .canceledTerminals,
+                              1u,
+                              "Canceled WQE should retain its terminal type");
+        NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(flushedSubmission.wqeIdentity)
+                                  .flushedTerminals,
+                              1u,
+                              "Flushed WQE should retain its terminal type");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    void OnWqeCompleted(UbWqeCompletion completion)
+    {
+        if (completion.outcome == UbWorkOutcome::CANCELED)
+        {
+            ++m_canceledCount;
+        }
+        else if (completion.outcome == UbWorkOutcome::FLUSHED)
+        {
+            ++m_flushedCount;
+        }
+    }
+
+    uint32_t m_canceledCount{0};
+    uint32_t m_flushedCount{0};
+};
+
+class UbLifecycleIdleJettyDestroyTest : public TestCase
+{
+  public:
+    UbLifecycleIdleJettyDestroyTest()
+        : TestCase("UnifiedBus - idle Jetty destroy completes synchronously without callback")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
+                                                       topo.receiver->GetId(),
+                                                       kUrmaWriteRegressionJettyNum,
+                                                       false,
+                                                       {kUrmaWriteRegressionSenderTpn}),
+                              true,
+                              "Idle destroy test should establish an RTP binding");
+        UbLifecycleResourceIdentity jettyIdentity;
+        NS_TEST_ASSERT_MSG_EQ(function->TryGetJettyLifecycleIdentity(
+                                  kUrmaWriteRegressionJettyNum,
+                                  jettyIdentity),
+                              true,
+                              "Manager should expose the current Jetty generation");
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(topo.sender);
+        NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(jettyIdentity).activeBindingLeases,
+                              1u,
+                              "Direct RTP binding should own one typed binding lease");
+
+        const UbDestroyStatus status = function->DestroyJetty(
+            kUrmaWriteRegressionJettyNum,
+            UbDestroyReason::EXPLICIT,
+            MakeCallback(&UbLifecycleIdleJettyDestroyTest::OnDestroyed, this));
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(status),
+                              static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
+                              "Idle Jetty should complete destruction synchronously");
+        NS_TEST_ASSERT_MSG_EQ(m_callbackCount,
+                              0u,
+                              "Synchronous destroy must not register or invoke callback");
+        NS_TEST_ASSERT_MSG_EQ(function->GetJetty(kUrmaWriteRegressionJettyNum),
+                              nullptr,
+                              "Synchronous destroy should erase the Jetty collection entry");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetJettyRelatedTpVec(
+                                  kUrmaWriteRegressionJettyNum).empty(),
+                              true,
+                              "Jetty RTP binding should be released before retirement");
+        const UbLifecycleResourceSnapshot retired = coordinator->GetSnapshot(jettyIdentity);
+        NS_TEST_ASSERT_MSG_EQ(retired.activeBindingLeases,
+                              0u,
+                              "Jetty retirement should release its binding lease");
+        NS_TEST_ASSERT_MSG_EQ(retired.retired,
+                              true,
+                              "Idle destroy should retire the Jetty generation");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    void OnDestroyed(UbLifecycleResourceIdentity, UbDestroyStatus)
+    {
+        ++m_callbackCount;
+    }
+
+    uint32_t m_callbackCount{0};
+};
+
+class UbLifecycleCtpBindingDestroyTest : public TestCase
+{
+  public:
+    UbLifecycleCtpBindingDestroyTest()
+        : TestCase("UnifiedBus - Jetty destroy releases CTP binding without destroying service")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              kUrmaWriteRegressionJettyNum);
+        Ptr<UbJetty> jetty = function->GetJetty(kUrmaWriteRegressionJettyNum);
+        const UbCtpEntityKey key{.srcNodeId = topo.sender->GetId(),
+                                 .srcEntityId = 1,
+                                 .dstNodeId = topo.receiver->GetId(),
+                                 .dstEntityId = 2,
+                                 .vl = 3};
+        service->StartJetty(jetty, key);
+        NS_TEST_ASSERT_MSG_EQ(service->HasJettyBindingForTest(kUrmaWriteRegressionJettyNum),
+                              true,
+                              "CTP service should retain the registered Jetty binding");
+
+        const UbDestroyStatus status = function->DestroyJetty(
+            kUrmaWriteRegressionJettyNum,
+            UbDestroyReason::EXPLICIT);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(status),
+                              static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
+                              "Idle CTP-bound Jetty should destroy synchronously");
+        NS_TEST_ASSERT_MSG_EQ(service->HasJettyBindingForTest(kUrmaWriteRegressionJettyNum),
+                              false,
+                              "Jetty retirement should erase CTP binding references");
+        NS_TEST_ASSERT_MSG_EQ(controller->PeekCtpTransportService(),
+                              service,
+                              "Jetty retirement must not destroy the persistent CTP service");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbLifecycleForcedJettyDisposalTest : public TestCase
+{
+  public:
+    UbLifecycleForcedJettyDisposalTest()
+        : TestCase("UnifiedBus - forced Jetty disposal flushes accepted work synchronously")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
+                                                       topo.receiver->GetId(),
+                                                       kUrmaWriteRegressionJettyNum,
+                                                       false,
+                                                       {kUrmaWriteRegressionSenderTpn}),
+                              true,
+                              "Forced disposal test should establish an RTP binding");
+        Ptr<UbJetty> jetty = function->GetJetty(kUrmaWriteRegressionJettyNum);
+        jetty->SetWqeCompletionCallback(
+            MakeCallback(&UbLifecycleForcedJettyDisposalTest::OnWqeCompleted, this));
+        Ptr<UbWqe> wqe = function->CreateWqe(topo.sender->GetId(),
+                                             topo.receiver->GetId(),
+                                             64,
+                                             kUrmaWriteRegressionTaskId,
+                                             TaOpcode::TA_OPCODE_WRITE);
+        const UbWqeSubmissionResult submitted =
+            function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(submitted.status),
+                              static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+                              "Forced disposal WQE should first be accepted");
+        UbLifecycleResourceIdentity jettyIdentity;
+        function->TryGetJettyLifecycleIdentity(kUrmaWriteRegressionJettyNum, jettyIdentity);
+
+        const UbDestroyStatus status = function->DestroyJetty(
+            kUrmaWriteRegressionJettyNum,
+            UbDestroyReason::SIMULATION_STOP,
+            MakeCallback(&UbLifecycleForcedJettyDisposalTest::OnDestroyed, this));
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(status),
+                              static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
+                              "Forced disposal should complete synchronously");
+        NS_TEST_ASSERT_MSG_EQ(m_destroyCallbackCount,
+                              0u,
+                              "Synchronous forced disposal must not invoke pending callback");
+        NS_TEST_ASSERT_MSG_EQ(m_flushedCompletionCount,
+                              1u,
+                              "Forced disposal should flush accepted WQE exactly once");
+        NS_TEST_ASSERT_MSG_EQ(function->GetJetty(kUrmaWriteRegressionJettyNum),
+                              nullptr,
+                              "Forced disposal should erase the Jetty record");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
+                              0u,
+                              "Forced disposal should release Transaction references");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetJettyRelatedTpVec(
+                                  kUrmaWriteRegressionJettyNum).empty(),
+                              true,
+                              "Forced disposal should release RTP binding references");
+        const UbLifecycleResourceSnapshot jettySnapshot =
+            UbLifecycleCoordinator::GetOrCreate(topo.sender)->GetSnapshot(jettyIdentity);
+        NS_TEST_ASSERT_MSG_EQ(jettySnapshot.activeBindingLeases,
+                              0u,
+                              "Forced disposal should release binding lease");
+        NS_TEST_ASSERT_MSG_EQ(jettySnapshot.activeTrackedEventLeases,
+                              0u,
+                              "Forced disposal should resolve tracked event residue");
+        NS_TEST_ASSERT_MSG_EQ(jettySnapshot.retired,
+                              true,
+                              "Forced disposal should retire the Jetty generation");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    void OnWqeCompleted(UbWqeCompletion completion)
+    {
+        if (completion.outcome == UbWorkOutcome::FLUSHED)
+        {
+            ++m_flushedCompletionCount;
+        }
+    }
+
+    void OnDestroyed(UbLifecycleResourceIdentity, UbDestroyStatus)
+    {
+        ++m_destroyCallbackCount;
+    }
+
+    uint32_t m_flushedCompletionCount{0};
+    uint32_t m_destroyCallbackCount{0};
+};
+
+class UbLifecyclePendingJettyDestroyTest : public TestCase
+{
+  public:
+    UbLifecyclePendingJettyDestroyTest()
+        : TestCase("UnifiedBus - active Jetty freezes admission and finalizes once after drain")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        m_function = topo.sender->GetObject<UbController>()->GetUbFunction();
+        m_transaction = topo.sender->GetObject<UbController>()->GetUbTransaction();
+        m_function->CreateJetty(topo.sender->GetId(),
+                                topo.receiver->GetId(),
+                                kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->JettyBindTp(topo.sender->GetId(),
+                                                         topo.receiver->GetId(),
+                                                         kUrmaWriteRegressionJettyNum,
+                                                         false,
+                                                         {kUrmaWriteRegressionSenderTpn}),
+                              true,
+                              "Pending destroy test should establish an RTP binding");
+        Ptr<UbWqe> accepted = m_function->CreateWqe(topo.sender->GetId(),
+                                                    topo.receiver->GetId(),
+                                                    64,
+                                                    kUrmaWriteRegressionTaskId,
+                                                    TaOpcode::TA_OPCODE_WRITE);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_function->SubmitWqe(
+                                  accepted,
+                                  kUrmaWriteRegressionJettyNum).status),
+                              static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+                              "Original WQE should be accepted before destroy");
+
+        const UbDestroyStatus first = m_function->DestroyJetty(
+            kUrmaWriteRegressionJettyNum,
+            UbDestroyReason::EXPLICIT,
+            MakeCallback(&UbLifecyclePendingJettyDestroyTest::OnFirstDestroyed, this));
+        const UbDestroyStatus repeated = m_function->DestroyJetty(
+            kUrmaWriteRegressionJettyNum,
+            UbDestroyReason::EXPLICIT,
+            MakeCallback(&UbLifecyclePendingJettyDestroyTest::OnSecondDestroyed, this));
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(first),
+                              static_cast<uint32_t>(UbDestroyStatus::PENDING),
+                              "Active Jetty destroy should return PENDING");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(repeated),
+                              static_cast<uint32_t>(UbDestroyStatus::PENDING),
+                              "Repeated destroy should share the pending flow");
+
+        Ptr<UbWqe> rejected = m_function->CreateWqe(topo.sender->GetId(),
+                                                    topo.receiver->GetId(),
+                                                    64,
+                                                    kUrmaWriteRegressionTaskId + 1,
+                                                    TaOpcode::TA_OPCODE_WRITE);
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(m_function->SubmitWqe(rejected,
+                                                       kUrmaWriteRegressionJettyNum).status),
+            static_cast<uint32_t>(UbWqeSubmissionStatus::JETTY_DESTROYING),
+            "Destroy request must freeze new WQE admission");
+
+        m_transaction->CompleteWqeOperation(kUrmaWriteRegressionJettyNum,
+                                            kUrmaWriteRegressionTaskId,
+                                            UbWorkOutcome::CANCELED);
+        NS_TEST_ASSERT_MSG_NE(m_function->GetJetty(kUrmaWriteRegressionJettyNum),
+                              nullptr,
+                              "Tracked scheduling event should keep the drained Jetty pending");
+        NS_TEST_ASSERT_MSG_EQ(m_firstCallbackCount + m_secondCallbackCount,
+                              0u,
+                              "Callbacks must wait for tracked event drain and erase");
+
+        Simulator::Stop(NanoSeconds(1));
+        Simulator::Run();
+
+        NS_TEST_ASSERT_MSG_EQ(m_function->GetJetty(kUrmaWriteRegressionJettyNum),
+                              nullptr,
+                              "Jetty should erase after accepted work and tracked events drain");
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->GetJettyRelatedTpVec(
+                                  kUrmaWriteRegressionJettyNum).empty(),
+                              true,
+                              "RTP binding should be released before callbacks");
+        NS_TEST_ASSERT_MSG_EQ(m_firstCallbackCount,
+                              1u,
+                              "First pending request callback should run exactly once");
+        NS_TEST_ASSERT_MSG_EQ(m_secondCallbackCount,
+                              1u,
+                              "Repeated pending request callback should run exactly once");
+        NS_TEST_ASSERT_MSG_EQ(m_callbackObservedErase,
+                              true,
+                              "Callbacks should observe the owner-local erase");
+        NS_TEST_ASSERT_MSG_EQ(m_callbackObservedBindingRelease,
+                              true,
+                              "Callbacks should observe binding release");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    void ObserveFinalizeOrder()
+    {
+        m_callbackObservedErase =
+            m_callbackObservedErase ||
+            m_function->GetJetty(kUrmaWriteRegressionJettyNum) == nullptr;
+        m_callbackObservedBindingRelease =
+            m_callbackObservedBindingRelease ||
+            m_transaction->GetJettyRelatedTpVec(kUrmaWriteRegressionJettyNum).empty();
+    }
+
+    void OnFirstDestroyed(UbLifecycleResourceIdentity, UbDestroyStatus status)
+    {
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(status),
+                              static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
+                              "Pending callback should report COMPLETED");
+        ++m_firstCallbackCount;
+        ObserveFinalizeOrder();
+    }
+
+    void OnSecondDestroyed(UbLifecycleResourceIdentity, UbDestroyStatus status)
+    {
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(status),
+                              static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
+                              "Repeated pending callback should report COMPLETED");
+        ++m_secondCallbackCount;
+        ObserveFinalizeOrder();
+    }
+
+    Ptr<UbFunction> m_function;
+    Ptr<UbTransaction> m_transaction;
+    uint32_t m_firstCallbackCount{0};
+    uint32_t m_secondCallbackCount{0};
+    bool m_callbackObservedErase{false};
+    bool m_callbackObservedBindingRelease{false};
+};
+
+class UbLifecycleResponseDrainsPendingDestroyTest : public TestCase
+{
+  public:
+    UbLifecycleResponseDrainsPendingDestroyTest()
+        : TestCase("UnifiedBus - accepted response work drains an explicit Jetty destroy")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        m_function = topo.sender->GetObject<UbController>()->GetUbFunction();
+        Ptr<UbTransaction> transaction =
+            topo.sender->GetObject<UbController>()->GetUbTransaction();
+        m_function->CreateJetty(topo.sender->GetId(),
+                                topo.receiver->GetId(),
+                                kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
+                                                       topo.receiver->GetId(),
+                                                       kUrmaWriteRegressionJettyNum,
+                                                       false,
+                                                       {kUrmaWriteRegressionSenderTpn}),
+                              true,
+                              "Response drain test should establish a direct TP binding");
+        Ptr<UbJetty> jetty = m_function->GetJetty(kUrmaWriteRegressionJettyNum);
+        jetty->SetWqeCompletionCallback(
+            MakeCallback(&UbLifecycleResponseDrainsPendingDestroyTest::OnWqeCompleted, this));
+        Ptr<UbWqe> wqe = m_function->CreateWqe(topo.sender->GetId(),
+                                               topo.receiver->GetId(),
+                                               64,
+                                               kUrmaWriteRegressionTaskId,
+                                               TaOpcode::TA_OPCODE_WRITE);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_function->SubmitWqe(
+                                  wqe,
+                                  kUrmaWriteRegressionJettyNum).status),
+                              static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+                              "WRITE should be accepted before destroy request");
+        const UbDestroyStatus status = m_function->DestroyJetty(
+            kUrmaWriteRegressionJettyNum,
+            UbDestroyReason::EXPLICIT,
+            MakeCallback(&UbLifecycleResponseDrainsPendingDestroyTest::OnDestroyed, this));
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(status),
+                              static_cast<uint32_t>(UbDestroyStatus::PENDING),
+                              "Accepted WRITE should make explicit destroy pending");
+
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
+
+        NS_TEST_ASSERT_MSG_EQ(m_completedCount,
+                              1u,
+                              "Transaction response should complete accepted WRITE once");
+        NS_TEST_ASSERT_MSG_EQ(m_destroyedCount,
+                              1u,
+                              "Response drain should finalize destroy once");
+        NS_TEST_ASSERT_MSG_EQ(m_callbackObservedErase,
+                              true,
+                              "Destroy callback should run after manager erase");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    void OnWqeCompleted(UbWqeCompletion completion)
+    {
+        if (completion.outcome == UbWorkOutcome::COMPLETED)
+        {
+            ++m_completedCount;
+        }
+    }
+
+    void OnDestroyed(UbLifecycleResourceIdentity, UbDestroyStatus)
+    {
+        ++m_destroyedCount;
+        m_callbackObservedErase =
+            m_function->GetJetty(kUrmaWriteRegressionJettyNum) == nullptr;
+    }
+
+    Ptr<UbFunction> m_function;
+    uint32_t m_completedCount{0};
+    uint32_t m_destroyedCount{0};
+    bool m_callbackObservedErase{false};
+};
+
+#ifndef _WIN32
+class UbLifecycleDuplicateOutcomeFailFastTest : public TestCase
+{
+  public:
+    UbLifecycleDuplicateOutcomeFailFastTest()
+        : TestCase("UnifiedBus - duplicate Transaction outcome fails before second notification")
+    {
+    }
+
+    void DoRun() override
+    {
+        const int status = RunInChildProcess([]() {
+            Config::Reset();
+            LocalTpTopology topo = BuildLocalTpTopology();
+            InstallStaticTpPair(topo);
+            Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+            Ptr<UbFunction> function = controller->GetUbFunction();
+            Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+            function->CreateJetty(topo.sender->GetId(),
+                                  topo.receiver->GetId(),
+                                  kUrmaWriteRegressionJettyNum);
+            if (!transaction->JettyBindTp(topo.sender->GetId(),
+                                          topo.receiver->GetId(),
+                                          kUrmaWriteRegressionJettyNum,
+                                          false,
+                                          {kUrmaWriteRegressionSenderTpn}))
+            {
+                std::_Exit(2);
+            }
+            Ptr<UbWqe> wqe = function->CreateWqe(topo.sender->GetId(),
+                                                 topo.receiver->GetId(),
+                                                 64,
+                                                 kUrmaWriteRegressionTaskId,
+                                                 TaOpcode::TA_OPCODE_WRITE);
+            if (function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status !=
+                UbWqeSubmissionStatus::ACCEPTED)
+            {
+                std::_Exit(3);
+            }
+            transaction->CompleteWqeOperation(kUrmaWriteRegressionJettyNum,
+                                              kUrmaWriteRegressionTaskId,
+                                              UbWorkOutcome::FAILED);
+            transaction->CompleteWqeOperation(kUrmaWriteRegressionJettyNum,
+                                              kUrmaWriteRegressionTaskId,
+                                              UbWorkOutcome::FAILED);
+            std::_Exit(4);
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status),
+                              1,
+                              "Duplicate Transaction outcome should fail-fast");
+        if (WIFSIGNALED(status))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status),
+                                  SIGABRT,
+                                  "Duplicate Transaction outcome should abort");
+        }
+
+        const int staleStatus = RunInChildProcess([]() {
+            Config::Reset();
+            LocalTpTopology topo = BuildLocalTpTopology();
+            InstallStaticTpPair(topo);
+            Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+            Ptr<UbFunction> function = controller->GetUbFunction();
+            Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+            function->CreateJetty(topo.sender->GetId(),
+                                  topo.receiver->GetId(),
+                                  kUrmaWriteRegressionJettyNum);
+            if (!transaction->JettyBindTp(topo.sender->GetId(),
+                                          topo.receiver->GetId(),
+                                          kUrmaWriteRegressionJettyNum,
+                                          false,
+                                          {kUrmaWriteRegressionSenderTpn}))
+            {
+                std::_Exit(5);
+            }
+            Ptr<UbWqe> first = function->CreateWqe(topo.sender->GetId(),
+                                                   topo.receiver->GetId(),
+                                                   64,
+                                                   kUrmaWriteRegressionTaskId,
+                                                   TaOpcode::TA_OPCODE_WRITE);
+            const UbWqeSubmissionResult oldSubmission =
+                function->SubmitWqe(first, kUrmaWriteRegressionJettyNum);
+            if (oldSubmission.status != UbWqeSubmissionStatus::ACCEPTED ||
+                function->DestroyJetty(kUrmaWriteRegressionJettyNum,
+                                       UbDestroyReason::SIMULATION_STOP) !=
+                    UbDestroyStatus::COMPLETED)
+            {
+                std::_Exit(6);
+            }
+            function->CreateJetty(topo.sender->GetId(),
+                                  topo.receiver->GetId(),
+                                  kUrmaWriteRegressionJettyNum);
+            if (!transaction->JettyBindTp(topo.sender->GetId(),
+                                          topo.receiver->GetId(),
+                                          kUrmaWriteRegressionJettyNum,
+                                          false,
+                                          {kUrmaWriteRegressionSenderTpn}))
+            {
+                std::_Exit(7);
+            }
+            Ptr<UbWqe> second = function->CreateWqe(topo.sender->GetId(),
+                                                    topo.receiver->GetId(),
+                                                    64,
+                                                    kUrmaWriteRegressionTaskId,
+                                                    TaOpcode::TA_OPCODE_WRITE);
+            if (function->SubmitWqe(second, kUrmaWriteRegressionJettyNum).status !=
+                UbWqeSubmissionStatus::ACCEPTED)
+            {
+                std::_Exit(8);
+            }
+            function->ApplyWqeOutcomeFromTransaction(kUrmaWriteRegressionJettyNum,
+                                                     kUrmaWriteRegressionTaskId,
+                                                     oldSubmission.wqeIdentity,
+                                                     UbWorkOutcome::FAILED);
+            std::_Exit(9);
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(staleStatus),
+                              1,
+                              "Stale Transaction outcome should fail-fast");
+        if (WIFSIGNALED(staleStatus))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WTERMSIG(staleStatus),
+                                  SIGABRT,
+                                  "Stale Transaction outcome should abort");
+        }
+    }
+};
+#endif
 
 class UbLifecyclePacketMetadataTransferTest : public TestCase
 {
@@ -13704,6 +14521,17 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
     AddTestCase(new UbLifecycleSchedulerRaceBackpressureTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleDirectWriteCompletionTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleFailedWqeOutcomeTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleCancelFlushOutcomeTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleIdleJettyDestroyTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleCtpBindingDestroyTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleForcedJettyDisposalTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecyclePendingJettyDestroyTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleResponseDrainsPendingDestroyTest(),
+                TestCase::Duration::QUICK);
+#ifndef _WIN32
+    AddTestCase(new UbLifecycleDuplicateOutcomeFailFastTest(), TestCase::Duration::QUICK);
+#endif
     AddTestCase(new UbLifecyclePacketMetadataTransferTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleRtpEndpointConsumeIntegrationTest(),
                 TestCase::Duration::QUICK);

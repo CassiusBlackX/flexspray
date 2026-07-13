@@ -46,7 +46,8 @@ namespace ns3 {
         UbTransaction(Ptr<Node> node);
         virtual ~UbTransaction();
 
-        Ptr<UbFunction> GetFunction();
+        UbFunction* GetFunction();
+        void SetFunction(UbFunction* function);
 
         Ptr<UbJetty> GetJetty(uint32_t jettyNum);
 
@@ -97,6 +98,7 @@ namespace ns3 {
                                Ptr<UbWqe> wqe,
                                const UbLifecycleResourceIdentity& wqeIdentity);
         bool HasWqeOperation(uint32_t jettyNum, uint32_t wqeId) const;
+        bool HasLifecycleOperationForJetty(uint32_t jettyNum) const;
         uint32_t GetActiveOperationCount() const;
         bool TryGetOperationSnapshot(uint32_t jettyNum,
                                      uint32_t wqeId,
@@ -104,7 +106,12 @@ namespace ns3 {
         uint32_t GetTpRoundRobinIndexForTest(uint32_t tpn) const;
 
         // 某个wqe完成，刷新状态
-        void WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe);
+        void WqeFinish(uint32_t jettyNum,
+                       Ptr<UbWqe> wqe,
+                       UbWorkOutcome outcome = UbWorkOutcome::COMPLETED);
+        void CompleteWqeOperation(uint32_t jettyNum,
+                                  uint32_t wqeId,
+                                  UbWorkOutcome outcome);
 
         // 判断本地tp是否处于使用状态
         bool IsTpInUse(uint32_t tpn);
@@ -118,12 +125,19 @@ namespace ns3 {
         void DoDispose() override;
 
         void ScheduleWqeSegment(Ptr<UbTransportChannel> tp);
+        void RunTrackedScheduleWqeSegment(uint32_t jettyNum,
+                                          Ptr<UbTransportChannel> tp,
+                                          uint64_t eventToken);
 
         void OnScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment,
                                         uint32_t nextRrIndex,
                                         bool localSegment,
                                         bool lifecycleOperation);
-        bool HasLifecycleOperationForJetty(uint32_t jettyNum) const;
+        void RunTrackedScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment,
+                                                uint32_t nextRrIndex,
+                                                bool localSegment,
+                                                bool lifecycleOperation,
+                                                uint64_t eventToken);
         void RecordSegmentAdmission(Ptr<UbWqeSegment> segment);
         bool RecordSegmentSuccess(uint32_t jettyNum, uint32_t wqeId, uint32_t taSsn);
 
@@ -138,6 +152,8 @@ namespace ns3 {
         uint64_t DeriveRemoteAddress(const Ptr<UbWqeSegment>& request) const;
 
         uint32_t m_nodeId;
+        UbFunction* m_function{nullptr};
+        Ptr<UbLifecycleCoordinator> m_coordinator;
 
         // Tpn和Tp的对应map
         std::map<uint32_t, Ptr<UbTransportChannel>> m_tpnMap;

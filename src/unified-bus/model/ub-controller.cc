@@ -38,6 +38,10 @@ void UbController::CreateUbFunction()
 void UbController::CreateUbTransaction()
 {
     m_transaction = CreateObject<UbTransaction>(GetObject<Node>());
+    NS_ABORT_MSG_IF(m_function == nullptr,
+                    "UbFunction must be created before UbTransaction binding");
+    m_transaction->SetFunction(PeekPointer(m_function));
+    m_function->BindTransaction(m_transaction);
 }
 
 UbController::~UbController()
