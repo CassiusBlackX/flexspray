@@ -22,6 +22,8 @@ namespace ns3 {
         JETTY_NOT_FOUND = 1,
         JETTY_BINDING_MISMATCH = 2,
         NO_DIRECT_TRANSPORT = 3,
+        DUPLICATE_OPERATION = 4,
+        LEGACY_MULTI_TRANSPORT = 5,
     };
 
     struct UbWqeSubmissionResult
@@ -87,6 +89,7 @@ namespace ns3 {
     private:
         void DoDispose() override;
         Ptr<UbTransaction> GetTransaction();
+        void PushLegacyWqeToJetty(Ptr<UbWqe> wqe, uint32_t jettyNum);
         Ptr<UbLdstApi> m_ldstApi;
         std::vector<Ptr<UbJetty>> m_jettyVector;
         uint32_t m_nodeId;
