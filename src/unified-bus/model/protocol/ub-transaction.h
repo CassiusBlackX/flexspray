@@ -60,7 +60,9 @@ namespace ns3 {
         std::vector<Ptr<UbJetty>> GetTpRelatedJettyVec(uint32_t tpn);
 
         // function层调用
-        void TriggerScheduleWqeSegment(uint32_t jettyNum);
+        void TriggerScheduleWqeSegment(uint32_t jettyNum,
+                                       uint32_t wqeId,
+                                       bool lifecycleOperation);
 
         // tp调用
         void ApplyScheduleWqeSegment(Ptr<UbTransportChannel> tp);
@@ -126,6 +128,8 @@ namespace ns3 {
 
         void ScheduleWqeSegment(Ptr<UbTransportChannel> tp);
         void RunTrackedScheduleWqeSegment(uint32_t jettyNum,
+                                          uint32_t wqeId,
+                                          bool lifecycleOperation,
                                           Ptr<UbTransportChannel> tp,
                                           uint64_t eventToken);
 

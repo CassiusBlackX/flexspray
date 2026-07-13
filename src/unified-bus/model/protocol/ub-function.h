@@ -2,6 +2,7 @@
 #ifndef UB_FUNCTION_H
 #define UB_FUNCTION_H
 
+#include <ns3/event-id.h>
 #include <ns3/node.h>
 #include <set>
 #include <unordered_map>
@@ -105,7 +106,10 @@ namespace ns3 {
                                             const UbLifecycleResourceIdentity& wqeIdentity,
                                             UbWorkOutcome outcome);
         void NotifyJettyProgress(uint32_t jettyNum);
+        bool IsJettyAcceptingWqes(uint32_t jettyNum) const;
         uint64_t TrackJettyEvent(uint32_t jettyNum);
+        void AttachJettyEvent(uint32_t jettyNum, uint64_t token, EventId event);
+        bool IsJettyEventActive(uint32_t jettyNum, uint64_t token) const;
         void ResolveJettyEvent(uint32_t jettyNum, uint64_t token);
         bool TryGetJettyLifecycleIdentity(uint32_t jettyNum,
                                           UbLifecycleResourceIdentity& identity) const;
@@ -159,6 +163,8 @@ namespace ns3 {
         void NotifyProgress(uint32_t jettyNum);
         bool IsDrainReady(uint32_t jettyNum) const;
         uint64_t TrackEvent(uint32_t jettyNum);
+        void AttachEvent(uint32_t jettyNum, uint64_t token, EventId event);
+        bool IsEventActive(uint32_t jettyNum, uint64_t token) const;
         void ResolveEvent(uint32_t jettyNum, uint64_t token);
         bool TryGetIdentity(uint32_t jettyNum, UbLifecycleResourceIdentity& identity) const;
         void ReplaceRtpBinding(
@@ -168,6 +174,12 @@ namespace ns3 {
         void DisposeAll();
 
       private:
+        struct TrackedEventRecord
+        {
+            UbLifecycleLeaseIdentity lease;
+            EventId event;
+        };
+
         struct JettyRecord
         {
             Ptr<UbJetty> jetty;
@@ -175,8 +187,7 @@ namespace ns3 {
             UbJettyLifecycleState state{UbJettyLifecycleState::ACTIVE};
             UbDestroyReason reason{UbDestroyReason::EXPLICIT};
             std::map<uint32_t, UbLifecycleResourceIdentity> wqes;
-            uint64_t nextEventToken{0};
-            std::map<uint64_t, UbLifecycleLeaseIdentity> trackedEvents;
+            std::map<uint64_t, TrackedEventRecord> trackedEvents;
             std::vector<UbLifecycleLeaseIdentity> bindingLeases;
             bool hasCtpBinding{false};
             std::vector<UbDestroyCallback> callbacks;
@@ -191,6 +202,8 @@ namespace ns3 {
         Ptr<UbLifecycleCoordinator> m_coordinator;
         Ptr<UbTransaction> m_transaction;
         Ptr<UbCtpTransportService> m_ctpService;
+        uint64_t m_nextEventToken{0};
+        std::set<uint64_t> m_canceledEventTokens;
         std::map<uint32_t, JettyRecord> m_records;
     };
 

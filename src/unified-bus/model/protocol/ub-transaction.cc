@@ -182,7 +182,10 @@ std::vector<Ptr<UbJetty>> UbTransaction::GetTpRelatedJettyVec(uint32_t tpn)
     return {};
 }
 
-void UbTransaction::TriggerScheduleWqeSegment(uint32_t jettyNum)
+void
+UbTransaction::TriggerScheduleWqeSegment(uint32_t jettyNum,
+                                         uint32_t wqeId,
+                                         bool lifecycleOperation)
 {
     // 遍历与该jetty绑定的tp，按轮转起点调度，避免短 WQE 总落到第一个 TP。
     auto tpVec = GetJettyRelatedTpVec(jettyNum);
@@ -194,11 +197,15 @@ void UbTransaction::TriggerScheduleWqeSegment(uint32_t jettyNum)
         for (uint32_t i = 0; i < tpVec.size(); i++) {
             uint32_t idx = (nextIndex + i) % tpVec.size();
             const uint64_t eventToken = GetFunction()->TrackJettyEvent(jettyNum);
-            Simulator::ScheduleNow(&UbTransaction::RunTrackedScheduleWqeSegment,
-                                   this,
-                                   jettyNum,
-                                   tpVec[idx],
-                                   eventToken);
+            const EventId event = Simulator::ScheduleNow(
+                &UbTransaction::RunTrackedScheduleWqeSegment,
+                this,
+                jettyNum,
+                wqeId,
+                lifecycleOperation,
+                tpVec[idx],
+                eventToken);
+            GetFunction()->AttachJettyEvent(jettyNum, eventToken, event);
         }
         nextIndex = (nextIndex + 1) % tpVec.size();
     }
@@ -206,11 +213,17 @@ void UbTransaction::TriggerScheduleWqeSegment(uint32_t jettyNum)
 
 void
 UbTransaction::RunTrackedScheduleWqeSegment(uint32_t jettyNum,
+                                            uint32_t wqeId,
+                                            bool lifecycleOperation,
                                             Ptr<UbTransportChannel> tp,
                                             uint64_t eventToken)
 {
+    if (GetFunction()->IsJettyEventActive(jettyNum, eventToken) &&
+        (!lifecycleOperation || HasWqeOperation(jettyNum, wqeId)))
+    {
+        ScheduleWqeSegment(tp);
+    }
     GetFunction()->ResolveJettyEvent(jettyNum, eventToken);
-    ScheduleWqeSegment(tp);
 }
 
 void UbTransaction::ApplyScheduleWqeSegment(Ptr<UbTransportChannel> tp)
@@ -356,13 +369,15 @@ void UbTransaction::ScheduleWqeSegment(Ptr<UbTransportChannel> tp)
         {
             const uint64_t eventToken =
                 GetFunction()->TrackJettyEvent(wqeSegment->GetJettyNum());
-            Simulator::ScheduleNow(&UbTransaction::RunTrackedScheduleWqeSegmentFinish,
-                                   this,
-                                   wqeSegment,
-                                   nextRrIndex,
-                                   localSegment,
-                                   lifecycleOperation,
-                                   eventToken);
+            const EventId event = Simulator::ScheduleNow(
+                &UbTransaction::RunTrackedScheduleWqeSegmentFinish,
+                this,
+                wqeSegment,
+                nextRrIndex,
+                localSegment,
+                lifecycleOperation,
+                eventToken);
+            GetFunction()->AttachJettyEvent(wqeSegment->GetJettyNum(), eventToken, event);
         }
         else
         {
@@ -386,8 +401,13 @@ UbTransaction::RunTrackedScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment,
                                                   bool lifecycleOperation,
                                                   uint64_t eventToken)
 {
-    GetFunction()->ResolveJettyEvent(segment->GetJettyNum(), eventToken);
-    OnScheduleWqeSegmentFinish(segment, nextRrIndex, localSegment, lifecycleOperation);
+    const uint32_t jettyNum = segment->GetJettyNum();
+    if (GetFunction()->IsJettyEventActive(jettyNum, eventToken) &&
+        HasWqeOperation(jettyNum, segment->GetTaskId()))
+    {
+        OnScheduleWqeSegmentFinish(segment, nextRrIndex, localSegment, lifecycleOperation);
+    }
+    GetFunction()->ResolveJettyEvent(jettyNum, eventToken);
 }
 
 void UbTransaction::OnScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment,
@@ -792,6 +812,7 @@ UbTransaction::TryAdmitDirectWqe(uint32_t jettyNum,
                                                             UbLifecycleLeaseKind::TRANSPORT_USE,
                                                             tp->GetLifecycleOwner());
     m_operations.emplace(key, operation);
+    wqe->MarkLifecycleManaged();
     return true;
 }
 
@@ -835,7 +856,12 @@ UbTransaction::GetTpRoundRobinIndexForTest(uint32_t tpn) const
 
 void UbTransaction::WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe, UbWorkOutcome outcome)
 {
+    NS_ABORT_MSG_IF(wqe == nullptr, "WqeFinish requires a WQE");
     const auto operation = m_operations.find({jettyNum, wqe->GetWqeId()});
+    NS_ABORT_MSG_IF(operation != m_operations.end() && operation->second.wqe != wqe,
+                    "WqeFinish references a stale WQE instance");
+    NS_ABORT_MSG_IF(operation == m_operations.end() && wqe->IsLifecycleManaged(),
+                    "WqeFinish references an unknown, duplicate, or stale direct WQE");
     bool hadLifecycleOperation = false;
     UbLifecycleResourceIdentity wqeIdentity;
     if (operation != m_operations.end())
