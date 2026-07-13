@@ -2,6 +2,8 @@
 #include "ub-controller.h"
 #include <ns3/log.h>
 #include <algorithm>
+#include <limits>
+#include <set>
 #include "protocol/ub-transport.h"
 #include "protocol/ub-datalink.h"
 #include "protocol/ub-transaction.h"
@@ -49,6 +51,7 @@ UbController::~UbController()
     NS_LOG_FUNCTION(this);
     m_numToTp.clear();
     m_tpGroups.clear();
+    m_rtpTpGroups.clear();
     m_ports.clear();
     m_destinationToPortsMap.clear();
     m_portPairsToIter.clear();
@@ -278,6 +281,57 @@ void UbController::DestroyTpGroup(TpgTag tpgTag)
     } else {
         NS_LOG_WARN("Transport group with tag not found for destruction");
     }
+}
+
+Ptr<UbTransportGroup>
+UbController::CreateRtpTpGroup(const std::vector<Ptr<UbTransportChannel>>& members)
+{
+    NS_ABORT_MSG_IF(members.empty(), "Cannot create an empty RTP TPG");
+    NS_ABORT_MSG_IF(m_nextRtpTpGroupId == std::numeric_limits<uint64_t>::max(),
+                    "RTP TPG identity exhausted");
+
+    std::vector<UbTransportGroupMember> records;
+    records.reserve(members.size());
+    std::set<uint32_t> seenTpns;
+    for (const Ptr<UbTransportChannel>& member : members)
+    {
+        NS_ABORT_MSG_IF(member == nullptr, "Cannot add a null TP to an RTP TPG");
+        NS_ABORT_MSG_IF(!seenTpns.insert(member->GetTpn()).second,
+                        "Cannot add the same TP to an RTP TPG twice");
+        records.push_back({member->GetTpn(), member->GetLifecycleOwner()});
+    }
+
+    const uint64_t localId = ++m_nextRtpTpGroupId;
+    Ptr<UbLifecycleCoordinator> coordinator =
+        UbLifecycleCoordinator::GetOrCreate(GetObject<Node>());
+    const UbLifecycleResourceIdentity identity =
+        coordinator->OpenResource(UbLifecycleResourceKind::RTP_TPG, localId);
+    Ptr<UbTransportGroup> group = CreateObject<UbTransportGroup>();
+    group->Init(identity, records);
+    const bool inserted = m_rtpTpGroups.emplace(localId, group).second;
+    NS_ABORT_MSG_IF(!inserted, "Duplicate RTP TPG collection identity");
+    return group;
+}
+
+Ptr<UbTransportGroup>
+UbController::ResolveRtpTpGroup(const UbLifecycleResourceIdentity& identity) const
+{
+    Ptr<Node> node = GetObject<Node>();
+    Ptr<UbLifecycleCoordinator> coordinator =
+        node == nullptr ? nullptr : node->GetObject<UbLifecycleCoordinator>();
+    if (identity.kind != UbLifecycleResourceKind::RTP_TPG || node == nullptr ||
+        identity.ownerNodeId != node->GetId() || coordinator == nullptr ||
+        !coordinator->IsResourceActive(identity))
+    {
+        return nullptr;
+    }
+    const auto group = m_rtpTpGroups.find(identity.localId);
+    if (group == m_rtpTpGroups.end() || group->second == nullptr ||
+        group->second->GetLifecycleIdentity() != identity)
+    {
+        return nullptr;
+    }
+    return group->second;
 }
 
 // Port management

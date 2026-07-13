@@ -32,6 +32,12 @@ class UbWqe;
 class UbWqeSegment;
 class UbJetty;
 
+struct UbTransportGroupMember
+{
+    uint32_t tpn{UINT32_MAX};
+    UbLifecycleResourceIdentity tpIdentity;
+};
+
 const uint32_t UB_TP_PSN_OOO_THRESHOLD = 2048;   // Jetty分段乱序阈值（用于乱序缓存等）
 
 /**
@@ -271,6 +277,7 @@ public:
     }
 
     bool TryAdmitWqeSegment(Ptr<UbWqeSegment> segment);
+    bool CanAdmitWqeSegment(Ptr<const UbWqeSegment> segment) const;
 
     uint32_t GetWqeSegmentVecSize() { return m_wqeSegmentVector.size(); }
     uint32_t GetActiveSendSegmentCount() const;
@@ -572,6 +579,20 @@ public:
 
     UbTransportGroup();
     virtual ~UbTransportGroup();
+
+    void Init(const UbLifecycleResourceIdentity& identity,
+              const std::vector<UbTransportGroupMember>& members);
+    const UbLifecycleResourceIdentity& GetLifecycleIdentity() const;
+    uint32_t GetMemberCount() const;
+    uint32_t GetSelectionCursor() const;
+    uint32_t GetMemberIndexAtOffset(uint32_t offset) const;
+    const UbTransportGroupMember& GetMember(uint32_t index) const;
+    void CommitSelection(uint32_t selectedIndex);
+
+private:
+    UbLifecycleResourceIdentity m_identity;
+    std::vector<UbTransportGroupMember> m_members;
+    uint32_t m_selectionCursor{0};
 };
 
 } // namespace ns3

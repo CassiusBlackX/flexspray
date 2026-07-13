@@ -991,6 +991,7 @@ Ptr<UbWqeSegment> UbTransportChannel::TrackInboundTaPacket(const UbTransportHead
         state.segment->SetTaSsn(logicalTaSsn);
         state.segment->SetOriginJettyNum(taHeader.GetIniRcId());
         state.segment->SetRequestTassn(logicalTaSsn);
+        state.segment->SetResolvedTpIdentity(m_packetLifecycleOwner);
         state.segment->SetTpMsn(logicalTpMsn);
         state.segment->SetTpn(m_tpn);
     }
@@ -1949,18 +1950,25 @@ uint32_t UbTransportChannel::GetCurrentSqSize() const
 bool
 UbTransportChannel::TryAdmitWqeSegment(Ptr<UbWqeSegment> segment)
 {
-    if (segment == nullptr || IsWqeSegmentLimited() || !CanScheduleAnotherSegment())
+    if (!CanAdmitWqeSegment(segment))
     {
         return false;
     }
 
     segment->SetTpn(m_tpn);
+    segment->SetResolvedTpIdentity(m_packetLifecycleOwner);
     segment->SetTpMsn(GetMsnCnt());
     segment->SetPsnStart(GetPsnCnt());
     UpdatePsnCnt(segment->GetPsnSize());
     UpDateMsnCnt(1);
     PushWqeSegment(segment);
     return true;
+}
+
+bool
+UbTransportChannel::CanAdmitWqeSegment(Ptr<const UbWqeSegment> segment) const
+{
+    return segment != nullptr && !IsWqeSegmentLimited() && CanScheduleAnotherSegment();
 }
 
 uint32_t UbTransportChannel::GetActiveSendSegmentCount() const
@@ -2175,6 +2183,58 @@ UbTransportGroup::UbTransportGroup()
 
 UbTransportGroup::~UbTransportGroup()
 {
+}
+
+void
+UbTransportGroup::Init(const UbLifecycleResourceIdentity& identity,
+                       const std::vector<UbTransportGroupMember>& members)
+{
+    NS_ABORT_MSG_IF(identity.kind != UbLifecycleResourceKind::RTP_TPG || identity.generation == 0,
+                    "TPG requires a live lifecycle identity");
+    NS_ABORT_MSG_IF(members.empty(), "TPG requires at least one member");
+    m_identity = identity;
+    m_members = members;
+    m_selectionCursor = 0;
+}
+
+const UbLifecycleResourceIdentity&
+UbTransportGroup::GetLifecycleIdentity() const
+{
+    return m_identity;
+}
+
+uint32_t
+UbTransportGroup::GetMemberCount() const
+{
+    return static_cast<uint32_t>(m_members.size());
+}
+
+uint32_t
+UbTransportGroup::GetSelectionCursor() const
+{
+    return m_selectionCursor;
+}
+
+uint32_t
+UbTransportGroup::GetMemberIndexAtOffset(uint32_t offset) const
+{
+    NS_ABORT_MSG_IF(m_members.empty(), "Cannot select from an empty TPG");
+    NS_ABORT_MSG_IF(offset >= m_members.size(), "TPG selection offset is out of range");
+    return (m_selectionCursor + offset) % m_members.size();
+}
+
+const UbTransportGroupMember&
+UbTransportGroup::GetMember(uint32_t index) const
+{
+    NS_ABORT_MSG_IF(index >= m_members.size(), "TPG member index is out of range");
+    return m_members[index];
+}
+
+void
+UbTransportGroup::CommitSelection(uint32_t selectedIndex)
+{
+    NS_ABORT_MSG_IF(selectedIndex >= m_members.size(), "Cannot commit an unknown TPG member");
+    m_selectionCursor = (selectedIndex + 1) % m_members.size();
 }
 
 } // namespace ns3

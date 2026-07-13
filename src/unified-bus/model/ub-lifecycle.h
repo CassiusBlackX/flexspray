@@ -24,6 +24,7 @@ enum class UbLifecycleResourceKind : uint8_t
     TRANSACTION_OPERATION = 3,
     TRANSACTION_SEGMENT = 4,
     JETTY = 5,
+    RTP_TPG = 6,
 };
 
 enum class UbLifecycleLeaseKind : uint8_t
@@ -33,6 +34,7 @@ enum class UbLifecycleLeaseKind : uint8_t
     TRANSPORT_USE = 3,
     BINDING = 4,
     TRACKED_EVENT = 5,
+    TRANSPORT_WORK = 6,
 };
 
 enum class UbWorkOutcome : uint8_t
@@ -138,6 +140,7 @@ struct UbLifecycleResourceSnapshot
     uint64_t activeTransportUseLeases{0};
     uint64_t activeBindingLeases{0};
     uint64_t activeTrackedEventLeases{0};
+    uint64_t activeTransportWorkLeases{0};
     uint64_t successfulTerminals{0};
     uint64_t completedTerminals{0};
     uint64_t failedTerminals{0};
@@ -161,6 +164,7 @@ class UbLifecycleCoordinator : public Object
     void ReleaseLease(const UbLifecycleLeaseIdentity& lease);
     void RecordSuccessfulTerminal(const UbLifecycleResourceIdentity& identity);
     void RecordWorkTerminal(const UbLifecycleResourceIdentity& identity, UbWorkOutcome outcome);
+    bool IsResourceActive(const UbLifecycleResourceIdentity& identity) const;
 
     UbLifecycleResourceIdentity OpenPacketOwner(UbLifecycleResourceKind kind, uint64_t localId);
     void RetirePacketOwner(const UbLifecycleResourceIdentity& identity);

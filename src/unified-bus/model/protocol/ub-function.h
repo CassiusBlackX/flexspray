@@ -28,6 +28,7 @@ namespace ns3 {
         DUPLICATE_OPERATION = 4,
         LEGACY_MULTI_TRANSPORT = 5,
         JETTY_DESTROYING = 6,
+        STALE_TRANSPORT_REFERENCE = 7,
     };
 
     struct UbWqeSubmissionResult
@@ -125,7 +126,6 @@ namespace ns3 {
     private:
         void DoDispose() override;
         Ptr<UbTransaction> GetTransaction();
-        void PushLegacyWqeToJetty(Ptr<UbWqe> wqe, uint32_t jettyNum);
         Ptr<UbLdstApi> m_ldstApi;
         uint32_t m_nodeId;
         Ptr<UbTransaction> m_transaction;
@@ -231,6 +231,8 @@ namespace ns3 {
         UbJetty();
         Ptr<UbWqeSegment> GetNextWqeSegment();
         Ptr<UbWqeSegment> PrepareNextWqeSegment();
+        bool CanCommitWqeSegmentAdmission(Ptr<UbWqeSegment> segment,
+                                          Ptr<UbWqe> expectedWqe) const;
         void CommitWqeSegmentAdmission(Ptr<UbWqeSegment> segment);
         bool ProcessWqeSegmentComplete(uint32_t taSsnFin);
         void RightShiftBitset(uint32_t shiftCount);

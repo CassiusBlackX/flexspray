@@ -154,13 +154,28 @@ UbLifecycleCoordinator::RetireResource(const UbLifecycleResourceIdentity& identi
     state.snapshot.retired = true;
 }
 
+bool
+UbLifecycleCoordinator::IsResourceActive(const UbLifecycleResourceIdentity& identity) const
+{
+    if (identity.ownerNodeId != m_ownerNodeId || identity.generation == 0)
+    {
+        return false;
+    }
+    const auto resource = m_resources.find({identity.kind, identity.localId});
+    return resource != m_resources.end() &&
+           resource->second.generation == identity.generation &&
+           !resource->second.snapshot.retired;
+}
+
 UbLifecycleLeaseIdentity
 UbLifecycleCoordinator::AcquireLease(const UbLifecycleResourceIdentity& owner,
                                      UbLifecycleLeaseKind kind,
                                      const UbLifecycleResourceIdentity& related)
 {
     ResourceState& state = ValidateMutable(owner);
-    Validate(related);
+    const ResourceState& relatedState = Validate(related);
+    NS_ABORT_MSG_IF(relatedState.snapshot.retired,
+                    "Lifecycle lease cannot reference a retired resource");
     NS_ABORT_MSG_IF(state.nextLease == std::numeric_limits<uint64_t>::max(),
                     "Lifecycle lease identity exhausted");
     UbLifecycleLeaseIdentity lease{owner, related, kind, ++state.nextLease};
@@ -182,6 +197,9 @@ UbLifecycleCoordinator::AcquireLease(const UbLifecycleResourceIdentity& owner,
         break;
     case UbLifecycleLeaseKind::TRACKED_EVENT:
         ++state.snapshot.activeTrackedEventLeases;
+        break;
+    case UbLifecycleLeaseKind::TRANSPORT_WORK:
+        ++state.snapshot.activeTransportWorkLeases;
         break;
     default:
         NS_ABORT_MSG("Unknown lifecycle lease kind");
@@ -223,6 +241,11 @@ UbLifecycleCoordinator::ReleaseLease(const UbLifecycleLeaseIdentity& lease)
         NS_ABORT_MSG_IF(state.snapshot.activeTrackedEventLeases == 0,
                         "Lifecycle tracked-event lease counter underflow");
         --state.snapshot.activeTrackedEventLeases;
+        break;
+    case UbLifecycleLeaseKind::TRANSPORT_WORK:
+        NS_ABORT_MSG_IF(state.snapshot.activeTransportWorkLeases == 0,
+                        "Lifecycle transport-work lease counter underflow");
+        --state.snapshot.activeTransportWorkLeases;
         break;
     default:
         NS_ABORT_MSG("Unknown lifecycle lease kind");

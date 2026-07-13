@@ -100,6 +100,15 @@ public:
      */
     void DestroyTpGroup(TpgTag tpgTag);
 
+    Ptr<UbTransportGroup> CreateRtpTpGroup(
+        const std::vector<Ptr<UbTransportChannel>>& members);
+    Ptr<UbTransportGroup> ResolveRtpTpGroup(
+        const UbLifecycleResourceIdentity& identity) const;
+    uint32_t GetRtpTpGroupCountForTest() const
+    {
+        return static_cast<uint32_t>(m_rtpTpGroups.size());
+    }
+
     // Port management
     /**
      * @brief Associates a port with a reachable destination.
@@ -218,6 +227,8 @@ private:
       m_numToTp{}; // 协议规定TPH中的TP number，在生成TP时，赋值为m_transports_count
   uint32_t m_transportsCount{0}; // increment only，用于标识tpn
   std::map<TpgTag, Ptr<UbTransportGroup>> m_tpGroups{};
+  uint64_t m_nextRtpTpGroupId{0};
+  std::map<uint64_t, Ptr<UbTransportGroup>> m_rtpTpGroups{};
   std::map<uint64_t, Ptr<UbPort>> m_ports{};
   Ptr<UbDataLink> m_datalink = nullptr;
 

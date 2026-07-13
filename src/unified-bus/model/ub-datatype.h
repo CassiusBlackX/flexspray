@@ -6,6 +6,7 @@
 #include "ns3/ipv4-address.h"
 #include "ns3/object.h"
 #include "ns3/core-module.h"
+#include "ns3/ub-lifecycle.h"
 
 #include <bitset>
 #include <cstdint>
@@ -1226,6 +1227,23 @@ public:
 
     uint32_t GetTpn() { return m_tpn; }
 
+    void SetResolvedTpIdentity(const UbLifecycleResourceIdentity& identity)
+    {
+        m_resolvedTpIdentity = identity;
+        m_hasResolvedTpIdentity = true;
+    }
+
+    bool HasResolvedTpIdentity() const
+    {
+        return m_hasResolvedTpIdentity;
+    }
+
+    const UbLifecycleResourceIdentity& GetResolvedTpIdentity() const
+    {
+        NS_ABORT_MSG_IF(!m_hasResolvedTpIdentity, "WQE segment has no resolved TP generation");
+        return m_resolvedTpIdentity;
+    }
+
     void SetSegmentKind(UbTransactionSegmentKind segmentKind)
     {
         m_segmentKind = segmentKind;
@@ -1355,7 +1373,9 @@ private:
     uint32_t m_taskId{0};                           // 流的任务ID
     uint32_t m_wqeSize{0};                          // 所属WQE的size
     OrderType m_orderType{OrderType::ORDER_NO};     // 所属WQE的order类型
-    uint32_t m_tpn; // 当前WqeSegment由哪一个TP进行传输
+    uint32_t m_tpn{UINT32_MAX}; // 当前WqeSegment由哪一个TP进行传输
+    bool m_hasResolvedTpIdentity{false};
+    UbLifecycleResourceIdentity m_resolvedTpIdentity;
 
     // ========== 网络层信息 ==========
     Ipv4Address m_sip; // 源IP地址
