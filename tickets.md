@@ -10,21 +10,22 @@ Work the **frontier**: a ticket may start only after every title listed under **
 
 The following contract applies to every ticket:
 
-- Before implementation, freeze exactly one current `main@ccf41b58` reference executable for each incompatible build configuration required by the acceptance matrix. Preserve each executable's SHA-256 digest, build configuration, compiler/runtime versions, linked-library facts, input hashes, and output manifest.
-- Reuse the exact matching frozen executable for every old-versus-new comparison in all later tickets. Never rebuild a frozen configuration per ticket or replace it with a different compile-time superset.
-- Prove reference self-reproducibility by running each accepted case at least twice before treating an output as byte-stable.
-- Use minimal targeted cases for implementation and debugging. Use separate medium-complexity, risk-focused cases for acceptance; do not use one large all-features scenario.
-- Require raw byte equality for every reference output proven byte-stable. If a raw output is not self-stable, retain it and compare a documented canonical representation byte-for-byte without deleting semantic events or values.
+- T00 freezes and protects exactly one current `main@ccf41b58` reference executable for each incompatible build configuration required by the acceptance matrix, together with hashes, build facts, inputs, complete output manifests, and the comparison harness. No ticket rebuilds a frozen configuration or substitutes a different compile-time superset.
+- An ordinary ticket follows the Matt SDD/TDD gate: focused RED/GREEN tests, a targeted build and module tests, and only the smallest necessary scenario. It does not run frozen baseline `verify`/`compare` by default, and byte equality is not a completion gate.
+- Byte-level milestone gates are T06, T08, T12, T13, T17, T19, T20, and T21. Before each milestone comparison, verify the frozen artifact root, select the exact runtime-matching variant, and compare the applicable acceptance profiles.
+- A non-milestone ticket escalates to the smallest applicable baseline comparison only when focused tests expose an unexplained user-visible output change or the ticket explicitly changes the artifact contract.
+- T00 proves reference self-reproducibility by running each accepted case at least twice. Whenever a milestone or escalated comparison runs, require raw byte equality for outputs proven stable; preserve unstable raw output and compare its documented canonical representation without deleting semantic events or values.
+- Use minimal targeted cases for implementation and debugging. Use separate medium-complexity, risk-focused cases at applicable milestones; do not use one large all-features scenario.
 - Validate new lifecycle-only output through schema, balance, generation, terminal-outcome, and causal-order invariants because no old counterpart exists.
-- Record every intentional output difference in an explicit exception manifest with old bytes, new bytes, Specification or characterization evidence, and approval. Any unexplained difference fails.
+- Any intentional output difference still requires an explicit exception manifest with old bytes, new bytes, Specification or characterization evidence, and approval. Any unexplained difference in a required or escalated comparison fails.
 
 ## Task 00: Freeze the current-main executable and two-tier acceptance corpus
 
-**What to build:** Create the immutable executable baseline, comparison harness, and bounded case corpus that every later slice reuses.
+**What to build:** Create the immutable executable baseline, comparison harness, and bounded case corpus reused by later milestones and escalated review investigations.
 
 **Blocked by:** None - can start immediately.
 
-- [x] Exactly one reference executable is frozen from `main@ccf41b58` for each incompatible accepted build configuration: local single-thread (`local-single`), local MTP (`local-mtp`), and MPI plus MTP (`parallel-all`). Every hash and complete build manifest is recorded, and all later tickets reuse these exact variants without rebuilding.
+- [x] Exactly one reference executable is frozen from `main@ccf41b58` for each incompatible accepted build configuration: local single-thread (`local-single`), local MTP (`local-mtp`), and MPI plus MTP (`parallel-all`). Every hash and complete build manifest is recorded for reuse by later milestones and escalated review investigations without rebuilding.
 - [x] All case inputs and comparison rules have recorded hashes and cannot silently drift between tickets.
 - [x] The minimal corpus contains a two-node, single-RTP-TP, single-operation case suitable for fast diagnosis.
 - [x] The medium corpus contains separate bounded cases for shared-TP concurrency, multi-TP plus deterministic loss/retransmission, CTP Entity/VL queue pressure, and a small cross-owner runtime.
@@ -41,7 +42,7 @@ The following contract applies to every ticket:
 - [ ] Queue and local-link transfer preserve the same packet accounting identity and do not change the in-flight count.
 - [ ] Endpoint consumption and one explicit drop each produce exactly one typed terminal outcome and return the generation balance to zero.
 - [ ] Underflow, stale generation, and mutation after retirement fail immediately.
-- [ ] The minimal case passes, and every byte-stable reference artifact is byte-identical to the frozen executable output.
+- [ ] Focused lifecycle tests and the minimal single-thread scenario cover endpoint consumption, explicit drop, generation balance, and the existing task result.
 
 ## Task 02: Make WQE submission and completion atomic
 
@@ -53,7 +54,7 @@ The following contract applies to every ticket:
 - [ ] Successful admission exposes the WQE, operation context, and transport-use lease atomically.
 - [ ] Segment creation remains lazy and advances its cursor only after transport admission succeeds.
 - [ ] The WQE receives one completion, its work and child counts return to zero, and existing completion timing is preserved.
-- [ ] Minimal WRITE output is byte-identical to the frozen baseline; the shared-TP acceptance case shows no unexplained difference.
+- [ ] Focused WQE/Transaction tests plus minimal WRITE and shared-TP targeted scenarios cover atomic admission, lazy progress, one completion, and preserved completion timing.
 
 ## Task 03: Complete WQE outcomes and explicit Jetty drain
 
@@ -66,7 +67,7 @@ The following contract applies to every ticket:
 - [ ] A destroy request rejects new WQEs while allowing already accepted response, error, cancel, and flush work to finish.
 - [ ] Transaction references, tracked events, and RTP/CTP bindings are released before the Jetty collection entry retires.
 - [ ] A pending destroy callback executes once after erase; synchronous completion does not invoke it.
-- [ ] Minimal cases remain diagnosable, and the medium shared-TP READ/WRITE outputs match the frozen baseline byte-for-byte where stable.
+- [ ] Focused outcome and drain tests cover WRITE, READ, response work, failure/cancel/flush, duplicate/stale outcomes, callback ordering, and accepted-work drain.
 
 ## Task 04: Resolve direct TP and TPG references through one RTP path
 
@@ -78,7 +79,7 @@ The following contract applies to every ticket:
 - [ ] A single-segment operation resolves one TP; a multi-segment operation can distribute segments across TPG members.
 - [ ] Every accepted segment, its packets, responses, and retransmissions stay on its resolved TP generation.
 - [ ] Generation validation, member selection, TP work-lease acquisition, and enqueue are atomic in the RTP owner context.
-- [ ] Existing implicit multi-TP result and task artifacts match the frozen medium-case baseline unless an approved exception documents a change.
+- [ ] Focused direct-TP/TPG tests and a targeted multi-TP scenario cover member selection, generation pinning, atomic admission, and segment distribution.
 
 ## Task 05: Preserve backpressure and TPG member lifecycle
 
@@ -91,7 +92,7 @@ The following contract applies to every ticket:
 - [ ] Shared direct and TPG-selected traffic use the same TP capacity, queue, PSN, retransmission, and congestion state.
 - [ ] Member retirement excludes new selection but never migrates an accepted segment or destroys the member TP.
 - [ ] Removing the last member cannot deadlock an operation that still holds a TPG-use lease.
-- [ ] Fairness, starvation, event-rate, throughput, and byte-stable outputs match the frozen shared/multi-TP baselines.
+- [ ] Focused backpressure and member-lifecycle tests plus targeted shared/multi-TP scenarios report fairness, starvation, event rate, and throughput without advancing state on deferred admission.
 
 ## Task 06: Introduce a descriptor-backed GBN transmit buffer
 
@@ -116,7 +117,7 @@ The following contract applies to every ticket:
 - [ ] Selective retransmission uses the common builder and creates a separately tracked physical attempt.
 - [ ] No active selective path retains a complete previously sent wire packet.
 - [ ] Existing selective, wire-wrap, congestion-accounting, queue-priority, and fault cases remain green.
-- [ ] Byte-stable artifacts match the frozen selective-loss acceptance baseline.
+- [ ] A targeted selective-loss scenario confirms rebuilt packet/header semantics, completion, and accounting after full-packet cache removal.
 
 ## Task 08: Close all RTP packet and tracked-event terminal paths
 
@@ -155,7 +156,7 @@ The following contract applies to every ticket:
 - [ ] New application work is rejected while old DATA, ACK/NAK/SACK/CNP, transaction response, and required error handling can drain.
 - [ ] Repeated, simultaneous two-sided, and stronger-mode destroy requests share one monotonic drain/finalize flow.
 - [ ] Reservation indexes and both TPNs are released only after both slots retire; reuse creates a new connection generation.
-- [ ] Single-thread teardown outputs and callback ordering meet the acceptance manifest without unexplained byte differences.
+- [ ] Focused paired-teardown tests cover idle/active work, repeated and simultaneous requests, late packets, TPN release, reuse, output outcomes, and callback ordering.
 
 ## Task 11: Move CTP transaction progress into the Transaction owner
 
@@ -168,7 +169,7 @@ The following contract applies to every ticket:
 - [ ] WRITE can use multiple one-packet segments; READ responses and single-packet operations obey their operation-specific limits.
 - [ ] Segment and WQE outcomes are emitted once and completed Transaction records are removed.
 - [ ] No CTP path creates an RTP TP reservation, TPN, PSN, transport ACK, retransmission context, or CTP root generation.
-- [ ] Stable CTP task and packet outputs match the frozen minimal and medium baselines.
+- [ ] Focused CTP transaction tests and a targeted READ/WRITE scenario cover segmentation constraints, task/packet outcomes, completion, and Transaction cleanup.
 
 ## Task 12: Make CTP keys, queues, events, and finite children retire independently
 
@@ -182,6 +183,7 @@ The following contract applies to every ticket:
 - [ ] DATA, ACK, and CNP priority, packet terminal accounting, queue registration, and tracked events balance independently.
 - [ ] Empty queue and completed Transaction state can retire while the CTP service and allowed cacheable policy state persist.
 - [ ] Loss without lower-layer recovery remains explicitly unresolved rather than being hidden by forced cleanup.
+- [ ] At the CTP milestone, the verified frozen baseline byte-matches all applicable CTP task, packet, queue, throughput, and canonical artifacts.
 
 ## Task 13: Close the LDST operation lifecycle
 
@@ -205,7 +207,7 @@ The following contract applies to every ticket:
 - [ ] Hash, spray, shortest/non-shortest, adaptive selection, ingress filtering, and tie-break results match current behavior.
 - [ ] The forwarding hot path does not allocate temporary route or best-port containers per packet.
 - [ ] Route failure still produces exactly one packet terminal outcome.
-- [ ] Existing routing tests, packet traces, and byte-stable medium-case outputs match the frozen baseline; allocation count and forwarding time are reported.
+- [ ] Focused routing characterization tests and targeted route-failure/medium-topology scenarios preserve selection and trace behavior; allocation count and forwarding time are reported.
 
 ## Task 15: Split Datalink flow control without changing control frames
 
@@ -217,7 +219,7 @@ The following contract applies to every ticket:
 - [ ] Credit, pause, resume, piggyback, and fallback control-frame behavior matches current tests.
 - [ ] Every Datalink control packet has one persistent port/VL accounting owner and one terminal outcome.
 - [ ] Switch allocator order and queue ownership do not move into the flow-control modules.
-- [ ] Minimal threshold cases pass and stable medium queue-pressure outputs match the frozen baseline.
+- [ ] Focused NONE/CBFC/PFC threshold and control-frame tests plus a targeted queue-pressure scenario preserve arbitration, credit, pause/resume, and trace behavior.
 
 ## Task 16: Balance VOQ ownership, allocator events, and queue disposal
 
@@ -230,7 +232,7 @@ The following contract applies to every ticket:
 - [ ] A VOQ cannot retire while a packet, in-port event, allocator token, flow-control occupancy, or algorithm lease remains.
 - [ ] Retaining an empty shell and destroying it use the same safe gate and are selected only by explicit teardown or measured storage policy.
 - [ ] Allocator and diagnostic events are saved, canceled, and resolved symmetrically; forced disposal records residue.
-- [ ] Sparse allocation, allocator order, queue traces, TypeId/attributes, and byte-stable acceptance outputs remain compatible.
+- [ ] Focused sparse-VOQ and allocator tests plus a targeted queue-pressure scenario preserve allocation order, queue traces, TypeId/attributes, and balanced occupancy.
 
 ## Task 17: Route lifecycle accounting through MTP, MPI, and hybrid owners
 
@@ -256,7 +258,7 @@ The following contract applies to every ticket:
 - [ ] Event/detail records use fixed fields, generation-aware identities, owner sequence, stable numeric enums, and one schema metadata source.
 - [ ] Detail filtering retains complete selected resource generations or packet identities and never randomly drops events from a retained chain.
 - [ ] Missing metadata, unknown version/enum, and inconsistent MPI-rank mappings are explicit parser errors.
-- [ ] Trace off, summary, event, and detail produce identical existing network artifacts under the acceptance protocol.
+- [ ] Focused OFF/SUMMARY/EVENT/DETAIL runs preserve task completion, throughput, and deterministic protocol outcomes while validating emitted schemas.
 
 ## Task 19: Bound trace writer memory, file descriptors, and write overhead
 
@@ -270,6 +272,7 @@ The following contract applies to every ticket:
 - [ ] File reopen uses append mode, and open/write/flush/close errors cannot silently lose enabled evidence.
 - [ ] Existing final filenames and parser inputs remain unchanged.
 - [ ] Benchmarks report 16/64/256 KiB results, wall time, syscall count, RSS, trace bytes, descriptor pressure, visibility behavior, and MTP scaling.
+- [ ] At the trace/writer milestone, the verified frozen baseline byte-matches every applicable existing network artifact while writer-specific outputs retain their filename and parser contracts.
 
 ## Task 20: Contract compatibility layers after all owners migrate
 
