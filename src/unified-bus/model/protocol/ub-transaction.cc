@@ -352,7 +352,17 @@ void UbTransaction::OnScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment,
         return;
     }
     Ptr<UbTransportChannel> tp = tpIt->second;
-    if (!tp->TryAdmitWqeSegment(segment))
+    if (localSegment && !lifecycleOperation)
+    {
+        // Legacy multi-TP scheduling eagerly commits the Jetty cursor during prepare. Preserve
+        // its old finish semantics because a second capacity rejection cannot be rolled back.
+        segment->SetTpMsn(tp->GetMsnCnt());
+        segment->SetPsnStart(tp->GetPsnCnt());
+        tp->UpdatePsnCnt(segment->GetPsnSize());
+        tp->UpDateMsnCnt(1);
+        tp->PushWqeSegment(segment);
+    }
+    else if (!tp->TryAdmitWqeSegment(segment))
     {
         if (!localSegment)
         {
