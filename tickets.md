@@ -75,11 +75,11 @@ The following contract applies to every ticket:
 
 **Blocked by:** T03 Complete WQE outcomes and explicit Jetty drain.
 
-- [ ] Direct TP references bypass member selection and use the same final admission path as selected TPG members.
-- [ ] A single-segment operation resolves one TP; a multi-segment operation can distribute segments across TPG members.
-- [ ] Every accepted segment, its packets, responses, and retransmissions stay on its resolved TP generation.
-- [ ] Generation validation, member selection, TP work-lease acquisition, and enqueue are atomic in the RTP owner context.
-- [ ] Focused direct-TP/TPG tests and a targeted multi-TP scenario cover member selection, generation pinning, atomic admission, and segment distribution.
+- [x] Direct TP references bypass member selection and use the same final admission path as selected TPG members.
+- [x] A single-segment operation resolves one TP; a multi-segment operation can distribute segments across TPG members.
+- [x] Every accepted segment, its packets, responses, and retransmissions stay on its resolved TP generation.
+- [x] Generation validation, member selection, TP work-lease acquisition, and enqueue are atomic in the RTP owner context.
+- [x] Focused direct-TP/TPG tests and a targeted multi-TP scenario cover member selection, generation pinning, atomic admission, and segment distribution.
 
 ## Task 05: Preserve backpressure and TPG member lifecycle
 
