@@ -38,11 +38,11 @@ The following contract applies to every ticket:
 
 **Blocked by:** T00 Freeze the current-main executable and two-tier acceptance corpus.
 
-- [ ] One RTP DATA attempt is registered exactly once before entering the packet pipeline.
-- [ ] Queue and local-link transfer preserve the same packet accounting identity and do not change the in-flight count.
-- [ ] Endpoint consumption and one explicit drop each produce exactly one typed terminal outcome and return the generation balance to zero.
-- [ ] Underflow, stale generation, and mutation after retirement fail immediately.
-- [ ] Focused lifecycle tests and the minimal single-thread scenario cover endpoint consumption, explicit drop, generation balance, and the existing task result.
+- [x] One RTP DATA attempt is registered exactly once before entering the packet pipeline.
+- [x] Queue and local-link transfer preserve the same packet accounting identity and do not change the in-flight count.
+- [x] Endpoint consumption and one explicit drop each produce exactly one typed terminal outcome and return the generation balance to zero.
+- [x] Underflow, stale generation, and mutation after retirement fail immediately.
+- [x] Focused lifecycle tests and the minimal single-thread scenario cover endpoint consumption, explicit drop, generation balance, and the existing task result.
 
 ## Task 02: Make WQE submission and completion atomic
 
