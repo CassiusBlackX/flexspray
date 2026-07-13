@@ -391,6 +391,10 @@ UbTransaction::RunTrackedAdmitRtpWqeSegment(Ptr<UbWqeSegment> segment,
         {
             TriggerScheduleWqeSegment(jettyNum, originatingWqe, true);
         }
+        else if (result == RtpSegmentAdmissionResult::DEFERRED)
+        {
+            DeferRtpSource(jettyNum, originatingWqe);
+        }
     }
     else
     {
@@ -419,6 +423,7 @@ UbTransaction::RunTrackedScheduleWqeSegment(uint32_t jettyNum,
 
 void UbTransaction::ApplyScheduleWqeSegment(Ptr<UbTransportChannel> tp)
 {
+    WakeDeferredDirectRtpSources(tp);
     Simulator::ScheduleNow(&UbTransaction::ScheduleWqeSegment, this, tp);
 }
 
@@ -764,7 +769,7 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
     {
         if (!resolution.directTp->CanAdmitWqeSegment(segment))
         {
-            return RtpSegmentAdmissionResult::REJECTED;
+            return RtpSegmentAdmissionResult::DEFERRED;
         }
         admittedTp = resolution.directTp;
     }
@@ -816,6 +821,89 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
         selectedGroup->CommitSelection(selectedGroupIndex);
     }
     return RtpSegmentAdmissionResult::ADMITTED;
+}
+
+UbTransaction::AdmissionDomainKey
+UbTransaction::MakeAdmissionDomainKey(const UbRtpTransportReference& reference)
+{
+    return {reference.GetKind(), reference.GetIdentity()};
+}
+
+void
+UbTransaction::DeferRtpSource(uint32_t jettyNum, Ptr<UbWqe> originatingWqe)
+{
+    if (originatingWqe == nullptr)
+    {
+        return;
+    }
+    const auto operation = m_operations.find({jettyNum, originatingWqe->GetWqeId()});
+    if (operation == m_operations.end() || operation->second.wqe != originatingWqe ||
+        operation->second.terminalPending)
+    {
+        return;
+    }
+
+    AdmissionDomainState& domain =
+        m_admissionDomains[MakeAdmissionDomainKey(operation->second.transportReference)];
+    if (!operation->second.readyQueued)
+    {
+        domain.readySources.push_front(
+            {jettyNum, originatingWqe->GetWqeId(), operation->second.operationIdentity});
+        operation->second.readyQueued = true;
+    }
+    domain.blocked = true;
+}
+
+void
+UbTransaction::WakeDeferredDirectRtpSources(Ptr<UbTransportChannel> tp)
+{
+    if (tp == nullptr || tp->IsWqeSegmentLimited() || !tp->CanScheduleAnotherSegment())
+    {
+        return;
+    }
+
+    const AdmissionDomainKey key{
+        UbRtpTransportReferenceKind::DIRECT_TP,
+        tp->GetLifecycleOwner()};
+    const auto domain = m_admissionDomains.find(key);
+    if (domain == m_admissionDomains.end() || !domain->second.blocked ||
+        domain->second.readySources.empty() || domain->second.eventPending)
+    {
+        return;
+    }
+
+    domain->second.blocked = false;
+    domain->second.eventPending = true;
+    Simulator::ScheduleNow(&UbTransaction::RunAdmissionDomainWake, this, key);
+}
+
+void
+UbTransaction::RunAdmissionDomainWake(AdmissionDomainKey domainKey)
+{
+    const auto domain = m_admissionDomains.find(domainKey);
+    if (domain == m_admissionDomains.end())
+    {
+        return;
+    }
+    domain->second.eventPending = false;
+
+    while (!domain->second.readySources.empty())
+    {
+        const ReadySourceKey source = domain->second.readySources.front();
+        domain->second.readySources.pop_front();
+        const auto operation = m_operations.find({source.jettyNum, source.wqeId});
+        if (operation == m_operations.end() ||
+            operation->second.operationIdentity != source.operationIdentity)
+        {
+            continue;
+        }
+        operation->second.readyQueued = false;
+        if (!operation->second.terminalPending)
+        {
+            TriggerScheduleWqeSegment(source.jettyNum, operation->second.wqe, true);
+        }
+        break;
+    }
 }
 
 bool
