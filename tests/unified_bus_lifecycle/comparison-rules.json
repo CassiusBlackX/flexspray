@@ -1,0 +1,232 @@
+{
+  "schema_version": 1,
+  "cases": {
+    "medium-cross-owner-runtime-hybrid": {
+      "artifacts": [
+        {
+          "path": "canonical-events.rank0.txt",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "canonical-events.rank1.txt",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "output/task_statistics.csv",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "output/throughput.csv",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "runlog/PacketTrace_node_0.tr",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "runlog/PacketTrace_node_1.tr",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "runlog/TaskTrace_node_0.tr",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "runlog/TaskTrace_node_1.tr",
+          "comparison": "raw-byte-equality"
+        }
+      ],
+      "canonical_only_artifacts": [],
+      "diagnostic_only_artifacts": [
+        "../stdout.txt",
+        "../stderr.txt"
+      ]
+    },
+    "medium-cross-owner-runtime-mpi": {
+      "artifacts": [
+        {
+          "path": "canonical-events.rank0.txt",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "canonical-events.rank1.txt",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "output/task_statistics.csv",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "output/throughput.csv",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "runlog/PacketTrace_node_0.tr",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "runlog/PacketTrace_node_1.tr",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "runlog/TaskTrace_node_0.tr",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "runlog/TaskTrace_node_1.tr",
+          "comparison": "raw-byte-equality"
+        }
+      ],
+      "canonical_only_artifacts": [],
+      "diagnostic_only_artifacts": [
+        "../stdout.txt",
+        "../stderr.txt"
+      ]
+    },
+    "medium-cross-owner-runtime-local": {
+      "artifacts": [
+        {
+          "path": "canonical-events.rank0.txt",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "output/task_statistics.csv",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "output/throughput.csv",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "runlog/PacketTrace_node_0.tr",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "runlog/TaskTrace_node_0.tr",
+          "comparison": "raw-byte-equality"
+        }
+      ],
+      "canonical_only_artifacts": [],
+      "diagnostic_only_artifacts": [
+        "../stdout.txt",
+        "../stderr.txt"
+      ]
+    },
+    "medium-ctp-entity-vl-pressure": {
+      "artifacts": [
+        {
+          "path": "canonical-events.rank0.txt",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "output/task_statistics.csv",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "output/throughput.csv",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "runlog/QueueTrace_node_2_port_1.tr",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "runlog/TaskTrace_node_0.tr",
+          "comparison": "raw-byte-equality"
+        }
+      ],
+      "canonical_only_artifacts": [],
+      "diagnostic_only_artifacts": [
+        "../stdout.txt",
+        "../stderr.txt"
+      ]
+    },
+    "medium-multi-tp-retransmission": {
+      "artifacts": [
+        {
+          "path": "canonical-events.rank0.txt",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "output/task_statistics.csv",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "output/throughput.csv",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "runlog/AllPacketTrace_PKT_node_0.tr",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "runlog/TaskTrace_node_0.tr",
+          "comparison": "raw-byte-equality"
+        }
+      ],
+      "canonical_only_artifacts": [],
+      "diagnostic_only_artifacts": [
+        "../stdout.txt",
+        "../stderr.txt"
+      ]
+    },
+    "medium-shared-tp-concurrency": {
+      "artifacts": [
+        {
+          "path": "canonical-events.rank0.txt",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "output/task_statistics.csv",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "output/throughput.csv",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "runlog/PacketTrace_node_0.tr",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "runlog/TaskTrace_node_0.tr",
+          "comparison": "raw-byte-equality"
+        }
+      ],
+      "canonical_only_artifacts": [],
+      "diagnostic_only_artifacts": [
+        "../stdout.txt",
+        "../stderr.txt"
+      ]
+    },
+    "minimal-single-rtp-write": {
+      "artifacts": [
+        {
+          "path": "canonical-events.rank0.txt",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "output/task_statistics.csv",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "output/throughput.csv",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "runlog/PacketTrace_node_0.tr",
+          "comparison": "raw-byte-equality"
+        },
+        {
+          "path": "runlog/TaskTrace_node_0.tr",
+          "comparison": "raw-byte-equality"
+        }
+      ],
+      "canonical_only_artifacts": [],
+      "diagnostic_only_artifacts": [
+        "../stdout.txt",
+        "../stderr.txt"
+      ]
+    }
+  }
+}

@@ -1,0 +1,699 @@
+{
+  "schema_version": 1,
+  "artifact_root_default": ".openusim/unified-bus-lifecycle/reference",
+  "reference": {
+    "commit": "ccf41b58b0ba3b9711efea595732a2908e3e07cf",
+    "submodules": {
+      "scratch/ns-3-ub-tools": "2afc7202f88c132b63c38e8c7dcfc08505b13bb2"
+    },
+    "toolchain": {
+      "architecture": "arm64",
+      "compiler": "AppleClang 21.0.0.21000101",
+      "cmake": "4.2.3",
+      "git": "2.50.1 (Apple Git-155)",
+      "ninja": "1.13.2",
+      "open_mpi": "5.0.9",
+      "operating_system": "macOS 26.5.1 (25F80), Darwin 25.5.0",
+      "python_launcher": "Python 3.12.12",
+      "parser_python": "Python 3.12.12"
+    },
+    "linked_library_facts": {
+      "inspection_commands": [
+        "otool -L <binary>",
+        "otool -l <binary>"
+      ],
+      "ns3_dylib_versions": {
+        "compatibility": "0.0.0",
+        "current": "0.0.0"
+      },
+      "system_dylib_versions": {
+        "/opt/homebrew/opt/open-mpi/lib/libmpi.40.dylib": {
+          "compatibility": "81.0.0",
+          "current": "81.7.0"
+        },
+        "/usr/lib/libSystem.B.dylib": {
+          "compatibility": "1.0.0",
+          "current": "1356.0.0"
+        },
+        "/usr/lib/libc++.1.dylib": {
+          "compatibility": "1.0.0",
+          "current": "2100.43.0"
+        },
+        "/usr/lib/libsqlite3.dylib": {
+          "compatibility": "9.0.0",
+          "current": "382.0.0"
+        },
+        "/usr/lib/libxml2.2.dylib": {
+          "compatibility": "10.0.0",
+          "current": "10.9.0"
+        }
+      }
+    },
+    "parser": {
+      "requirements": "scratch/ns-3-ub-tools/requirements.txt",
+      "venv": ".venv-parser",
+      "path_prepend": ".venv-parser/bin"
+    },
+    "runtime_variant_contract": {
+      "local-single": {
+        "binary_variant": "local-single",
+        "launch_prefix": [],
+        "arguments": [],
+        "compile_features": {
+          "mpi": false,
+          "mtp": false
+        }
+      },
+      "local-mtp": {
+        "binary_variant": "local-mtp",
+        "launch_prefix": [],
+        "arguments": [
+          "--mtp-threads=2"
+        ],
+        "compile_features": {
+          "mpi": false,
+          "mtp": true
+        }
+      },
+      "mpi-single": {
+        "binary_variant": "parallel-all",
+        "launch_prefix": [
+          "mpirun",
+          "-np",
+          "2"
+        ],
+        "arguments": [
+          "--mtp-threads=0"
+        ],
+        "compile_features": {
+          "mpi": true,
+          "mtp": true
+        }
+      },
+      "hybrid": {
+        "binary_variant": "parallel-all",
+        "launch_prefix": [
+          "mpirun",
+          "-np",
+          "2"
+        ],
+        "arguments": [
+          "--mtp-threads=2"
+        ],
+        "compile_features": {
+          "mpi": true,
+          "mtp": true
+        }
+      }
+    },
+    "variants": {
+      "local-single": {
+        "source_state": "clean detached worktree at reference.commit",
+        "configure_command": "python3.12 ./ns3 configure --enable-modules=unified-bus --disable-examples --disable-tests --disable-mpi --disable-mtp --disable-werror -d release -G Ninja",
+        "build_command": "python3.12 ./ns3 build -j 9 ub-quick-example",
+        "binary": {
+          "path": "variants/local-single/bin/ub-quick-example",
+          "sha256": "cf9deb34cc4efab04913dc44e43b1cfc46d6e69e20fa9dc5a3ac52ace4149740"
+        },
+        "embedded_rpath": "${REFERENCE_BUILD_ROOT}/build/lib",
+        "runtime_environment": {
+          "DYLD_LIBRARY_PATH": "variants/local-single/lib"
+        },
+        "linked_system_libraries": [
+          "/usr/lib/libxml2.2.dylib",
+          "/usr/lib/libsqlite3.dylib",
+          "/usr/lib/libc++.1.dylib",
+          "/usr/lib/libSystem.B.dylib"
+        ],
+        "runtime_libraries": [
+          {
+            "path": "variants/local-single/lib/libns3.44-applications.dylib",
+            "sha256": "dc662fb6aefd3fa9c39c9f1410a7282aca36d4169bb2308246c89ba38208e5a4"
+          },
+          {
+            "path": "variants/local-single/lib/libns3.44-bridge.dylib",
+            "sha256": "17076e37f17e088fbd68040c0eddfa33d8da9812ff96141704f9e4dd3fde1b87"
+          },
+          {
+            "path": "variants/local-single/lib/libns3.44-config-store.dylib",
+            "sha256": "95fd42260caafa387b2e804a34beac36dca90c5f307589b5b25bffa79c02b0e4"
+          },
+          {
+            "path": "variants/local-single/lib/libns3.44-core.dylib",
+            "sha256": "eabb79a4bcbe5d23daaafdb0dd551d0979aabec4d786db5b2a426cc3a512801d"
+          },
+          {
+            "path": "variants/local-single/lib/libns3.44-internet.dylib",
+            "sha256": "18e974b8304c052fdb88e5406e94c48892f299a0bbe2d44f42774b84aca1e84e"
+          },
+          {
+            "path": "variants/local-single/lib/libns3.44-network.dylib",
+            "sha256": "059575fd0ba84a8906349358d42cd495c03e3d2475f198205c97ff5e1219f34d"
+          },
+          {
+            "path": "variants/local-single/lib/libns3.44-point-to-point.dylib",
+            "sha256": "9b0018768bdedc79abd2139e264a3e430e520356747385af3d8d10c31cb05ee7"
+          },
+          {
+            "path": "variants/local-single/lib/libns3.44-stats.dylib",
+            "sha256": "d38c49c87353223a103245e95c4108292cbf5dc2af557d72fcbcf2a702a75006"
+          },
+          {
+            "path": "variants/local-single/lib/libns3.44-traffic-control.dylib",
+            "sha256": "1f25bef0bafb9cbbcbdc3ea582d02caabad8e0e7d9aade15ca4d1277ea7af665"
+          },
+          {
+            "path": "variants/local-single/lib/libns3.44-unified-bus.dylib",
+            "sha256": "cf05dd2d999218df9c2ed723b4682927f79ff509c2daaf55d983bd9dcea8ed98"
+          }
+        ]
+      },
+      "local-mtp": {
+        "source_state": "clean detached worktree at reference.commit",
+        "configure_command": "python3.12 ./ns3 configure --enable-modules=unified-bus --disable-examples --disable-tests --disable-mpi --enable-mtp --disable-werror -d release -G Ninja",
+        "build_command": "python3.12 ./ns3 build -j 9 ub-quick-example",
+        "binary": {
+          "path": "variants/local-mtp/bin/ub-quick-example",
+          "sha256": "ce1f5f431508312be8b6fe3cf272ed0887d1243cef53edd08f5e25a74f8d718a"
+        },
+        "embedded_rpath": "${REFERENCE_BUILD_ROOT}/build/lib",
+        "runtime_environment": {
+          "DYLD_LIBRARY_PATH": "variants/local-mtp/lib"
+        },
+        "linked_system_libraries": [
+          "/usr/lib/libxml2.2.dylib",
+          "/usr/lib/libsqlite3.dylib",
+          "/usr/lib/libc++.1.dylib",
+          "/usr/lib/libSystem.B.dylib"
+        ],
+        "runtime_libraries": [
+          {
+            "path": "variants/local-mtp/lib/libns3.44-applications.dylib",
+            "sha256": "da6875472c09191fce9a6ab1ec099af79648bcd1772b937ac008dc8e66cb58e8"
+          },
+          {
+            "path": "variants/local-mtp/lib/libns3.44-bridge.dylib",
+            "sha256": "de94c2dbc7919d1e716b7699e5a12441733006646d8906ecada7298383644e55"
+          },
+          {
+            "path": "variants/local-mtp/lib/libns3.44-config-store.dylib",
+            "sha256": "a97a3e2d7e9a529765e8de7c6a8cb7575837c6ce7e7f6d7b7e304ced107c6310"
+          },
+          {
+            "path": "variants/local-mtp/lib/libns3.44-core.dylib",
+            "sha256": "d6b3c4ec3d28874fd90d775533adb497afe16420743952b177762b5f5646cd7c"
+          },
+          {
+            "path": "variants/local-mtp/lib/libns3.44-internet.dylib",
+            "sha256": "c39f55c594328fb03edab52d5e71df1d181f2d70cf773ed0a091a68e485bd3c0"
+          },
+          {
+            "path": "variants/local-mtp/lib/libns3.44-mtp.dylib",
+            "sha256": "e59b29812f566d8945b5cb77cc6eb211106cd466862f6379358878a5cd32ebd4"
+          },
+          {
+            "path": "variants/local-mtp/lib/libns3.44-network.dylib",
+            "sha256": "10552334ac6d106a08208ef6c64e50652a6265a46e27a52c9f2a73890024de21"
+          },
+          {
+            "path": "variants/local-mtp/lib/libns3.44-point-to-point.dylib",
+            "sha256": "cb56e13cd596552d1fdcd4a68a6216413035f71434848f07aec5e36603b86caa"
+          },
+          {
+            "path": "variants/local-mtp/lib/libns3.44-stats.dylib",
+            "sha256": "52d81039de1aa34657065ae48adcf27ea45ef231a1927a5e169ef758e30ff447"
+          },
+          {
+            "path": "variants/local-mtp/lib/libns3.44-traffic-control.dylib",
+            "sha256": "85291550e810528db5a20bc0a5e88c49b0d4ad78fbeb689261ce9f15f4888747"
+          },
+          {
+            "path": "variants/local-mtp/lib/libns3.44-unified-bus.dylib",
+            "sha256": "f934782d346fbba84c8cecd30c23d2a0bacb4b9588780f63e66c1e5af76c614f"
+          }
+        ]
+      },
+      "parallel-all": {
+        "source_state": "clean detached worktree at reference.commit",
+        "configure_command": "python3.12 ./ns3 configure --enable-modules=unified-bus --disable-examples --disable-tests --enable-mpi --enable-mtp --disable-werror -d release -G Ninja",
+        "build_command": "python3.12 ./ns3 build -j 9 ub-quick-example",
+        "binary": {
+          "path": "variants/parallel-all/bin/ub-quick-example",
+          "sha256": "6c08b4702eea7c19fdc46679cb489962368b8546e5cd7d4d68ab80c4d4e16fc0"
+        },
+        "embedded_rpath": "${REFERENCE_BUILD_ROOT}/build/lib",
+        "runtime_environment": {
+          "DYLD_LIBRARY_PATH": "variants/parallel-all/lib"
+        },
+        "linked_system_libraries": [
+          "/usr/lib/libxml2.2.dylib",
+          "/usr/lib/libsqlite3.dylib",
+          "/opt/homebrew/opt/open-mpi/lib/libmpi.40.dylib",
+          "/usr/lib/libc++.1.dylib",
+          "/usr/lib/libSystem.B.dylib"
+        ],
+        "runtime_libraries": [
+          {
+            "path": "variants/parallel-all/lib/libns3.44-applications.dylib",
+            "sha256": "bb31ea7e53342c1d6a4a7993afe5ed7627eb7bcbbc5b9ecdbd37ac81144e3d9d"
+          },
+          {
+            "path": "variants/parallel-all/lib/libns3.44-bridge.dylib",
+            "sha256": "69e50a3c0fbd5df6c0f59ea3275c8b4f5ab2f0893b3080c2bb107248a9f1a110"
+          },
+          {
+            "path": "variants/parallel-all/lib/libns3.44-config-store.dylib",
+            "sha256": "ea2ba10f6a62d26dd417dcd894b67d4181743f5b3989bd51018fbec801aa0447"
+          },
+          {
+            "path": "variants/parallel-all/lib/libns3.44-core.dylib",
+            "sha256": "3a03066130afba4cfa58a8586c568bd5a82ccc54e237073497c895b0f02bf39a"
+          },
+          {
+            "path": "variants/parallel-all/lib/libns3.44-internet.dylib",
+            "sha256": "b8764acd74f8f9edc91e8352cff08d81ce26c2972f12d2b4a319e85044d2385e"
+          },
+          {
+            "path": "variants/parallel-all/lib/libns3.44-mpi.dylib",
+            "sha256": "2539bda9fb9be0ed61345c08b587f66ffdd265597d4efa53a6facc22943e7281"
+          },
+          {
+            "path": "variants/parallel-all/lib/libns3.44-mtp.dylib",
+            "sha256": "5f235a38c2b781373f1bfd8d2985e33c7fb2e2a3bbc791af5462c1adbdb6a23f"
+          },
+          {
+            "path": "variants/parallel-all/lib/libns3.44-network.dylib",
+            "sha256": "7cffa2236bacb81acb6a0bb819738b1c063b4f3e6b3aeae8d6cea63d691c0a8b"
+          },
+          {
+            "path": "variants/parallel-all/lib/libns3.44-point-to-point.dylib",
+            "sha256": "4a8299e1bd237757e24ae99309922ada54b2802e483144d3950e1f4b57b61fbd"
+          },
+          {
+            "path": "variants/parallel-all/lib/libns3.44-stats.dylib",
+            "sha256": "d882b65a6e46a5ee5bf3a1a3c751911020753f65427514c34a5e2626b140c4b5"
+          },
+          {
+            "path": "variants/parallel-all/lib/libns3.44-traffic-control.dylib",
+            "sha256": "31bbb2ea758ba73478d18ef5171698f88567102f12f9f19df228f81045af8bcb"
+          },
+          {
+            "path": "variants/parallel-all/lib/libns3.44-unified-bus.dylib",
+            "sha256": "c02d3434a1ccee2200c1484f5ba844307accb19e85c3dc8209efd76a71850296"
+          }
+        ]
+      }
+    }
+  },
+  "comparison_rules": {
+    "path": "tests/unified_bus_lifecycle/comparison-rules.json",
+    "sha256": "1478c015b3db6bab0e74e2b8e2c8be88d07d37e46925a47d57f04e7a7eca19a3"
+  },
+  "cases": [
+    {
+      "id": "minimal-single-rtp-write",
+      "tier": "minimal",
+      "intent": "Two directly connected nodes, one explicit RTP TP, and one URMA_WRITE operation.",
+      "runtime": "local-single",
+      "comparison_profiles": [
+        "minimal-single-rtp-write"
+      ],
+      "inputs": {
+        "tests/unified_bus_lifecycle/cases/minimal-single-rtp-write/network_attribute.txt": "bab3bd6b97cd4a29fee5d8aaa9260cd0b303831bf2cfee012ca657f17bde4b84",
+        "tests/unified_bus_lifecycle/cases/minimal-single-rtp-write/node.csv": "ebc3158be895c791c1ede66685498a07f42ae83cf7c6b99a46aca71a918d1de6",
+        "tests/unified_bus_lifecycle/cases/minimal-single-rtp-write/routing_table.csv": "ebac54c6bb8b6b08534c66c370ae23d57b18303a55d6686b81c7060dcc6802a6",
+        "tests/unified_bus_lifecycle/cases/minimal-single-rtp-write/topology.csv": "de1a5b97b8df05ab3f5ca18a15d048b48c33ecbab7e934440bd4b58529c56b43",
+        "tests/unified_bus_lifecycle/cases/minimal-single-rtp-write/traffic.csv": "8ef81e14026f1bedb6b4a944edd1bd0b632d2276ec27382b7765c262fc5b628f",
+        "tests/unified_bus_lifecycle/cases/minimal-single-rtp-write/transport_channel.csv": "ab42edd5c1c89031c6b19b7a86e64dbff0bec1642a99082cf71a640fe89bc69b"
+      },
+      "canonical_only_artifacts": [],
+      "reference_outputs": [
+        {
+          "artifact": "canonical-events.rank0.txt",
+          "paths": [
+            "runs/local-single/minimal-single-rtp-write/run-1/case/canonical-events.rank0.txt",
+            "runs/local-single/minimal-single-rtp-write/run-2/case/canonical-events.rank0.txt"
+          ],
+          "sha256": "10f54f22c7b3f8e935b08c87eb9ed1e8d8e6384fc8ece55c8b77b5a6e0b9dd64"
+        },
+        {
+          "artifact": "output/task_statistics.csv",
+          "paths": [
+            "runs/local-single/minimal-single-rtp-write/run-1/case/output/task_statistics.csv",
+            "runs/local-single/minimal-single-rtp-write/run-2/case/output/task_statistics.csv"
+          ],
+          "sha256": "f9e82bd87f3ae3054d2659299f2733feab2454ea936e77f509cff1a3185f5d62"
+        },
+        {
+          "artifact": "output/throughput.csv",
+          "paths": [
+            "runs/local-single/minimal-single-rtp-write/run-1/case/output/throughput.csv",
+            "runs/local-single/minimal-single-rtp-write/run-2/case/output/throughput.csv"
+          ],
+          "sha256": "6d880c37e2c171cb8af007f5c65e5d2af0a3521585100e4038a67694d0304c51"
+        },
+        {
+          "artifact": "runlog/PacketTrace_node_0.tr",
+          "paths": [
+            "runs/local-single/minimal-single-rtp-write/run-1/case/runlog/PacketTrace_node_0.tr",
+            "runs/local-single/minimal-single-rtp-write/run-2/case/runlog/PacketTrace_node_0.tr"
+          ],
+          "sha256": "7ee6f9424989cd5ef2dd9217b643b1651b3d0aa7b046befb8a21f6a568679309"
+        },
+        {
+          "artifact": "runlog/TaskTrace_node_0.tr",
+          "paths": [
+            "runs/local-single/minimal-single-rtp-write/run-1/case/runlog/TaskTrace_node_0.tr",
+            "runs/local-single/minimal-single-rtp-write/run-2/case/runlog/TaskTrace_node_0.tr"
+          ],
+          "sha256": "70b0dc49edb58597e57b5244ed899973476cd6e1da722f1999f58d6984f0f462"
+        }
+      ]
+    },
+    {
+      "id": "medium-shared-tp-concurrency",
+      "tier": "medium",
+      "intent": "Four concurrent bidirectional READ/WRITE operations share one explicit RTP TP.",
+      "runtime": "local-single",
+      "comparison_profiles": [
+        "medium-shared-tp-concurrency"
+      ],
+      "inputs": {
+        "tests/unified_bus_lifecycle/cases/medium-shared-tp-concurrency/network_attribute.txt": "bab3bd6b97cd4a29fee5d8aaa9260cd0b303831bf2cfee012ca657f17bde4b84",
+        "tests/unified_bus_lifecycle/cases/medium-shared-tp-concurrency/node.csv": "e06b20b821325fcaf22d1bf739adabeedbb4a44fddbe969b446513758954e049",
+        "tests/unified_bus_lifecycle/cases/medium-shared-tp-concurrency/routing_table.csv": "919351b0b9a9b55f8d277d803be313d0dea088535f80f9515e6cb0f9e3a719ca",
+        "tests/unified_bus_lifecycle/cases/medium-shared-tp-concurrency/topology.csv": "71c3f7392484a68f8f78b8ec5afeb15468ae1f853c8b7c9230166a50fdfb1ee7",
+        "tests/unified_bus_lifecycle/cases/medium-shared-tp-concurrency/traffic.csv": "59766a47f6c81db54a6b7d84f0ff86ee4e074a555c96f2ce04765e48c804b7aa",
+        "tests/unified_bus_lifecycle/cases/medium-shared-tp-concurrency/transport_channel.csv": "eea247e19892911b8aba9a057847099200100ddc6f24118daa6ade3e976d22f2"
+      },
+      "canonical_only_artifacts": [],
+      "reference_outputs": [
+        {
+          "artifact": "canonical-events.rank0.txt",
+          "paths": [
+            "runs/local-single/medium-shared-tp-concurrency/run-1/case/canonical-events.rank0.txt",
+            "runs/local-single/medium-shared-tp-concurrency/run-2/case/canonical-events.rank0.txt"
+          ],
+          "sha256": "d101cce5ff298758c0e16ae62b0f6ab9cd07e5054570893849949c571efe830d"
+        },
+        {
+          "artifact": "output/task_statistics.csv",
+          "paths": [
+            "runs/local-single/medium-shared-tp-concurrency/run-1/case/output/task_statistics.csv",
+            "runs/local-single/medium-shared-tp-concurrency/run-2/case/output/task_statistics.csv"
+          ],
+          "sha256": "6512e4fd9b2f7b13e5bb3bdb33db067e7d8ff751e692bd874ac6c8b7e83c8512"
+        },
+        {
+          "artifact": "output/throughput.csv",
+          "paths": [
+            "runs/local-single/medium-shared-tp-concurrency/run-1/case/output/throughput.csv",
+            "runs/local-single/medium-shared-tp-concurrency/run-2/case/output/throughput.csv"
+          ],
+          "sha256": "f89171335d16f78017cb6c8be3f31439c1529d0412d8f54e22d9d49519ea7b88"
+        },
+        {
+          "artifact": "runlog/PacketTrace_node_0.tr",
+          "paths": [
+            "runs/local-single/medium-shared-tp-concurrency/run-1/case/runlog/PacketTrace_node_0.tr",
+            "runs/local-single/medium-shared-tp-concurrency/run-2/case/runlog/PacketTrace_node_0.tr"
+          ],
+          "sha256": "a91f722926e15eef43794d5f72afb726d851c44a5b46eac80e99a4bbb116ca11"
+        },
+        {
+          "artifact": "runlog/TaskTrace_node_0.tr",
+          "paths": [
+            "runs/local-single/medium-shared-tp-concurrency/run-1/case/runlog/TaskTrace_node_0.tr",
+            "runs/local-single/medium-shared-tp-concurrency/run-2/case/runlog/TaskTrace_node_0.tr"
+          ],
+          "sha256": "cffc5fe21bb36a664bd37d947251e0076318c61e75192a29387f333d1cc8509a"
+        }
+      ]
+    },
+    {
+      "id": "medium-multi-tp-retransmission",
+      "tier": "medium",
+      "intent": "One four-segment operation stripes over three TPs while a deterministic PSN-1 loss requires GBN recovery.",
+      "runtime": "local-single",
+      "comparison_profiles": [
+        "medium-multi-tp-retransmission"
+      ],
+      "inputs": {
+        "tests/unified_bus_lifecycle/cases/medium-multi-tp-retransmission/fault.csv": "e8def2a40dd549b50acf307f307860cd9e97d121a60d580f251b56b9981f7b63",
+        "tests/unified_bus_lifecycle/cases/medium-multi-tp-retransmission/network_attribute.txt": "6199fe2b52655e65d7339bd84099f24d19065e7d3aaa7026d523cdcb061e44e0",
+        "tests/unified_bus_lifecycle/cases/medium-multi-tp-retransmission/node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+        "tests/unified_bus_lifecycle/cases/medium-multi-tp-retransmission/retrans_fault.csv": "98c74715bb7884c5f24f4f734f5063c6617f48a05634c595442fe86eea09015f",
+        "tests/unified_bus_lifecycle/cases/medium-multi-tp-retransmission/routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+        "tests/unified_bus_lifecycle/cases/medium-multi-tp-retransmission/topology.csv": "3a6733d6ca53dc7b2e6f4c0303f52715e4fb016c0e7ee72c087d838a812a0d71",
+        "tests/unified_bus_lifecycle/cases/medium-multi-tp-retransmission/traffic.csv": "a26652f940be2ed897d9c378bf1c717ede259afb9ae31bc2b5639376375f11d3",
+        "tests/unified_bus_lifecycle/cases/medium-multi-tp-retransmission/transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+      },
+      "canonical_only_artifacts": [],
+      "reference_outputs": [
+        {
+          "artifact": "canonical-events.rank0.txt",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/canonical-events.rank0.txt",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/canonical-events.rank0.txt"
+          ],
+          "sha256": "68ab18cc7e025e09049f1bcef576b8340acc53f8bf7e1fa3fb9c3444e461e9ea"
+        },
+        {
+          "artifact": "output/task_statistics.csv",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/output/task_statistics.csv",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/output/task_statistics.csv"
+          ],
+          "sha256": "3a428acc0242596cf0781bf2c83792a4cfd4de168426a6d998216c08a065ec14"
+        },
+        {
+          "artifact": "output/throughput.csv",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/output/throughput.csv",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/output/throughput.csv"
+          ],
+          "sha256": "3045f10eb87e4ece7fc186a88bb736a6e27956bf77988c2ef5f9af4e4db4392b"
+        },
+        {
+          "artifact": "runlog/AllPacketTrace_PKT_node_0.tr",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/AllPacketTrace_PKT_node_0.tr",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/runlog/AllPacketTrace_PKT_node_0.tr"
+          ],
+          "sha256": "f3abbbb0189ab9bf13ee06b888fe689b2654dedcfee39f0186d5197b035364f7"
+        },
+        {
+          "artifact": "runlog/TaskTrace_node_0.tr",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/TaskTrace_node_0.tr",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/runlog/TaskTrace_node_0.tr"
+          ],
+          "sha256": "d007ea503eb9ef335fc3ef1325db5c025ec92504dc5ed0e62c00d280300b9913"
+        }
+      ]
+    },
+    {
+      "id": "medium-ctp-entity-vl-pressure",
+      "tier": "medium",
+      "intent": "Four concurrent CTP READ/WRITE operations span two Entities and two VL priorities with queue sampling enabled.",
+      "runtime": "local-single",
+      "comparison_profiles": [
+        "medium-ctp-entity-vl-pressure"
+      ],
+      "inputs": {
+        "tests/unified_bus_lifecycle/cases/medium-ctp-entity-vl-pressure/network_attribute.txt": "dda32a47620127385c1d29776aa12124b6382337589722ae7abda7b3eccc02f0",
+        "tests/unified_bus_lifecycle/cases/medium-ctp-entity-vl-pressure/node.csv": "cd06746eacfe49c5727adeaf3110c60931df1063211d397dcc1f06367b559f60",
+        "tests/unified_bus_lifecycle/cases/medium-ctp-entity-vl-pressure/routing_table.csv": "d0b8280fece127140e7396393e6d61f1b357a07500d23104be4f78b704cae515",
+        "tests/unified_bus_lifecycle/cases/medium-ctp-entity-vl-pressure/topology.csv": "3733e8323d0d63f7cc86ccbc05e52282ff8e103a1cae828f0046668a2332defb",
+        "tests/unified_bus_lifecycle/cases/medium-ctp-entity-vl-pressure/traffic.csv": "e067f51d6e648e3e0b911e7666c84b3d5658703a5b4beb4ca64c78a353cb0b38"
+      },
+      "canonical_only_artifacts": [],
+      "reference_outputs": [
+        {
+          "artifact": "canonical-events.rank0.txt",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/canonical-events.rank0.txt",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/canonical-events.rank0.txt"
+          ],
+          "sha256": "a6ada98a62a3ddf5ec6a3691d4e0455c45e8a20475b4a6f6fb57f0572e9efd07"
+        },
+        {
+          "artifact": "output/task_statistics.csv",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/output/task_statistics.csv",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/output/task_statistics.csv"
+          ],
+          "sha256": "fb2e344822be06a8b8e8963581819d417d810bafa03b35b77023682c965e2c05"
+        },
+        {
+          "artifact": "output/throughput.csv",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/output/throughput.csv",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/output/throughput.csv"
+          ],
+          "sha256": "2313543a0419a50ca424e843f173bd228f2ca9888015315aff3accb25c18a183"
+        },
+        {
+          "artifact": "runlog/QueueTrace_node_2_port_1.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/QueueTrace_node_2_port_1.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/QueueTrace_node_2_port_1.tr"
+          ],
+          "sha256": "6b5ac6341eee4cee64e6007e2ff6e7cb020772d251ac92675c6eb1d99b64585a"
+        },
+        {
+          "artifact": "runlog/TaskTrace_node_0.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/TaskTrace_node_0.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/TaskTrace_node_0.tr"
+          ],
+          "sha256": "a285e73a279a55bb83a1eb459fb6bb4b0747d01c229dd2bfc01aeb8bdf542be1"
+        }
+      ]
+    },
+    {
+      "id": "medium-cross-owner-runtime",
+      "tier": "medium",
+      "intent": "A positive-delay two-node link crosses runtime owners under local MTP, MPI, and hybrid execution.",
+      "runtimes": [
+        "local-single",
+        "local-mtp",
+        "mpi-single",
+        "hybrid"
+      ],
+      "comparison_profiles": [
+        "medium-cross-owner-runtime-local",
+        "medium-cross-owner-runtime-mpi",
+        "medium-cross-owner-runtime-hybrid"
+      ],
+      "inputs": {
+        "tests/unified_bus_lifecycle/cases/medium-cross-owner-runtime/network_attribute.txt": "bab3bd6b97cd4a29fee5d8aaa9260cd0b303831bf2cfee012ca657f17bde4b84",
+        "tests/unified_bus_lifecycle/cases/medium-cross-owner-runtime/node.csv": "0d36cec15ef6189fadb7b643eaa4ebab0e034e76012944736ebef9e10009e4ca",
+        "tests/unified_bus_lifecycle/cases/medium-cross-owner-runtime/routing_table.csv": "ebac54c6bb8b6b08534c66c370ae23d57b18303a55d6686b81c7060dcc6802a6",
+        "tests/unified_bus_lifecycle/cases/medium-cross-owner-runtime/topology.csv": "de1a5b97b8df05ab3f5ca18a15d048b48c33ecbab7e934440bd4b58529c56b43",
+        "tests/unified_bus_lifecycle/cases/medium-cross-owner-runtime/traffic.csv": "8ef81e14026f1bedb6b4a944edd1bd0b632d2276ec27382b7765c262fc5b628f"
+      },
+      "canonical_only_artifacts": [],
+      "reference_outputs": [
+        {
+          "artifact": "local-single/canonical-events.rank0.txt",
+          "paths": [
+            "runs/local-single/medium-cross-owner-runtime/run-1/case/canonical-events.rank0.txt",
+            "runs/local-single/medium-cross-owner-runtime/run-2/case/canonical-events.rank0.txt"
+          ],
+          "sha256": "10f54f22c7b3f8e935b08c87eb9ed1e8d8e6384fc8ece55c8b77b5a6e0b9dd64"
+        },
+        {
+          "artifact": "local-mtp/canonical-events.rank0.txt",
+          "paths": [
+            "runs/local-mtp/medium-cross-owner-runtime/run-1/case/canonical-events.rank0.txt",
+            "runs/local-mtp/medium-cross-owner-runtime/run-2/case/canonical-events.rank0.txt"
+          ],
+          "sha256": "72a03b332b4fb144ad1a3ccc03d454f1c7e506ceafcb6274360b5ca96b7579f6"
+        },
+        {
+          "artifact": "mpi-single/canonical-events.rank0.txt",
+          "paths": [
+            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/canonical-events.rank0.txt",
+            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/canonical-events.rank0.txt",
+            "runs/hybrid/medium-cross-owner-runtime/run-1/case/canonical-events.rank0.txt",
+            "runs/hybrid/medium-cross-owner-runtime/run-2/case/canonical-events.rank0.txt"
+          ],
+          "sha256": "72a03b332b4fb144ad1a3ccc03d454f1c7e506ceafcb6274360b5ca96b7579f6"
+        },
+        {
+          "artifact": "parallel/canonical-events.rank1.txt",
+          "paths": [
+            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/canonical-events.rank1.txt",
+            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/canonical-events.rank1.txt",
+            "runs/hybrid/medium-cross-owner-runtime/run-1/case/canonical-events.rank1.txt",
+            "runs/hybrid/medium-cross-owner-runtime/run-2/case/canonical-events.rank1.txt"
+          ],
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "artifact": "all-runtimes/output/task_statistics.csv",
+          "paths": [
+            "runs/local-single/medium-cross-owner-runtime/run-1/case/output/task_statistics.csv",
+            "runs/local-single/medium-cross-owner-runtime/run-2/case/output/task_statistics.csv",
+            "runs/local-mtp/medium-cross-owner-runtime/run-1/case/output/task_statistics.csv",
+            "runs/local-mtp/medium-cross-owner-runtime/run-2/case/output/task_statistics.csv",
+            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/output/task_statistics.csv",
+            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/output/task_statistics.csv",
+            "runs/hybrid/medium-cross-owner-runtime/run-1/case/output/task_statistics.csv",
+            "runs/hybrid/medium-cross-owner-runtime/run-2/case/output/task_statistics.csv"
+          ],
+          "sha256": "f9e82bd87f3ae3054d2659299f2733feab2454ea936e77f509cff1a3185f5d62"
+        },
+        {
+          "artifact": "all-runtimes/output/throughput.csv",
+          "paths": [
+            "runs/local-single/medium-cross-owner-runtime/run-1/case/output/throughput.csv",
+            "runs/local-single/medium-cross-owner-runtime/run-2/case/output/throughput.csv",
+            "runs/local-mtp/medium-cross-owner-runtime/run-1/case/output/throughput.csv",
+            "runs/local-mtp/medium-cross-owner-runtime/run-2/case/output/throughput.csv",
+            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/output/throughput.csv",
+            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/output/throughput.csv",
+            "runs/hybrid/medium-cross-owner-runtime/run-1/case/output/throughput.csv",
+            "runs/hybrid/medium-cross-owner-runtime/run-2/case/output/throughput.csv"
+          ],
+          "sha256": "6d880c37e2c171cb8af007f5c65e5d2af0a3521585100e4038a67694d0304c51"
+        },
+        {
+          "artifact": "all-runtimes/runlog/PacketTrace_node_0.tr",
+          "paths": [
+            "runs/local-single/medium-cross-owner-runtime/run-1/case/runlog/PacketTrace_node_0.tr",
+            "runs/local-single/medium-cross-owner-runtime/run-2/case/runlog/PacketTrace_node_0.tr",
+            "runs/local-mtp/medium-cross-owner-runtime/run-1/case/runlog/PacketTrace_node_0.tr",
+            "runs/local-mtp/medium-cross-owner-runtime/run-2/case/runlog/PacketTrace_node_0.tr",
+            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/runlog/PacketTrace_node_0.tr",
+            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/runlog/PacketTrace_node_0.tr",
+            "runs/hybrid/medium-cross-owner-runtime/run-1/case/runlog/PacketTrace_node_0.tr",
+            "runs/hybrid/medium-cross-owner-runtime/run-2/case/runlog/PacketTrace_node_0.tr"
+          ],
+          "sha256": "3a190e5cb697931909f9d4b5c40fd44dfdfd7a36640e527c7373b5d07a699267"
+        },
+        {
+          "artifact": "all-runtimes/runlog/TaskTrace_node_0.tr",
+          "paths": [
+            "runs/local-single/medium-cross-owner-runtime/run-1/case/runlog/TaskTrace_node_0.tr",
+            "runs/local-single/medium-cross-owner-runtime/run-2/case/runlog/TaskTrace_node_0.tr",
+            "runs/local-mtp/medium-cross-owner-runtime/run-1/case/runlog/TaskTrace_node_0.tr",
+            "runs/local-mtp/medium-cross-owner-runtime/run-2/case/runlog/TaskTrace_node_0.tr",
+            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/runlog/TaskTrace_node_0.tr",
+            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/runlog/TaskTrace_node_0.tr",
+            "runs/hybrid/medium-cross-owner-runtime/run-1/case/runlog/TaskTrace_node_0.tr",
+            "runs/hybrid/medium-cross-owner-runtime/run-2/case/runlog/TaskTrace_node_0.tr"
+          ],
+          "sha256": "e940530fe9a527526a3c19bd0c899b0b001563f9feeb051ac580624729a55f01"
+        },
+        {
+          "artifact": "parallel/runlog/PacketTrace_node_1.tr",
+          "paths": [
+            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/runlog/PacketTrace_node_1.tr",
+            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/runlog/PacketTrace_node_1.tr",
+            "runs/hybrid/medium-cross-owner-runtime/run-1/case/runlog/PacketTrace_node_1.tr",
+            "runs/hybrid/medium-cross-owner-runtime/run-2/case/runlog/PacketTrace_node_1.tr"
+          ],
+          "sha256": "159619521a5195f213e938a492cbb5d9beefa32adc350890bb811dd260ed84c8"
+        },
+        {
+          "artifact": "parallel/runlog/TaskTrace_node_1.tr",
+          "paths": [
+            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/runlog/TaskTrace_node_1.tr",
+            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/runlog/TaskTrace_node_1.tr",
+            "runs/hybrid/medium-cross-owner-runtime/run-1/case/runlog/TaskTrace_node_1.tr",
+            "runs/hybrid/medium-cross-owner-runtime/run-2/case/runlog/TaskTrace_node_1.tr"
+          ],
+          "sha256": "fb6d7333dd337bc0ae65e64d8628390ee59431803ba7d3477cafd60d2a57494b"
+        }
+      ],
+      "characterized_runtime_difference": {
+        "artifact": "canonical-events.rank0.txt",
+        "local_single_complete_visible_ns": 138,
+        "parallel_complete_visible_ns": 158,
+        "reason": "Parallel paths apply the positive 20 ns link delay as dependency-visibility lookahead; each runtime is compared to its own frozen hash. Task statistics, throughput, and selected traces remain byte-identical across runtimes."
+      }
+    }
+  ]
+}

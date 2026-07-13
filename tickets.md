@@ -24,12 +24,12 @@ The following contract applies to every ticket:
 
 **Blocked by:** None - can start immediately.
 
-- [ ] The reference executable is built from `main@ccf41b58`; its executable hash and complete build manifest are recorded.
-- [ ] All case inputs and comparison rules have recorded hashes and cannot silently drift between tickets.
-- [ ] The minimal corpus contains a two-node, single-RTP-TP, single-operation case suitable for fast diagnosis.
-- [ ] The medium corpus contains separate bounded cases for shared-TP concurrency, multi-TP plus deterministic loss/retransmission, CTP Entity/VL queue pressure, and a small cross-owner runtime.
-- [ ] Every selected reference artifact is generated twice; raw byte-stable artifacts and canonical-only artifacts are listed explicitly.
-- [ ] The harness reports the first differing artifact and byte offset and preserves both old and new outputs for diagnosis.
+- [x] The reference executable is built from `main@ccf41b58`; its executable hash and complete build manifest are recorded.
+- [x] All case inputs and comparison rules have recorded hashes and cannot silently drift between tickets.
+- [x] The minimal corpus contains a two-node, single-RTP-TP, single-operation case suitable for fast diagnosis.
+- [x] The medium corpus contains separate bounded cases for shared-TP concurrency, multi-TP plus deterministic loss/retransmission, CTP Entity/VL queue pressure, and a small cross-owner runtime.
+- [x] Every selected reference artifact is generated twice; raw byte-stable artifacts and canonical-only artifacts are listed explicitly.
+- [x] The harness reports the first differing artifact and byte offset and preserves both old and new outputs for diagnosis.
 
 ## Task 01: Establish a single-TP packet lifecycle tracer bullet
 
