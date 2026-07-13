@@ -8227,6 +8227,7 @@ class UbLifecycleStrongOrderTerminalWakesSuccessorTest : public TestCase
         Simulator::ScheduleNow(
             &UbLifecycleStrongOrderTerminalWakesSuccessorTest::TerminalizeFront,
             this);
+        m_reservedSuccessorTassn = m_successorWqe->GetTaSsnStart();
         Simulator::Stop(MilliSeconds(1));
         Simulator::Run();
 
@@ -8282,8 +8283,17 @@ class UbLifecycleStrongOrderTerminalWakesSuccessorTest : public TestCase
                               "operations");
         NS_TEST_ASSERT_MSG_EQ(m_successorAdmissionPinned,
                               true,
-                              "Direct completion seam should observe one admitted successor "
+                              "Natural completion path should observe one admitted successor "
                               "segment");
+        NS_TEST_ASSERT_MSG_NE(m_reservedSuccessorTassn,
+                              m_successorAdmittedTassn,
+                              "Fixture should expose a push-time TASSN reservation gap");
+        NS_TEST_ASSERT_MSG_EQ(m_successorWqe->GetTaSsnStart(),
+                              m_successorAdmittedTassn,
+                              "First admission should rebase WQE start to the actual TASSN");
+        NS_TEST_ASSERT_MSG_EQ(m_successorWqe->GetRequestTassn(),
+                              m_successorAdmittedTassn,
+                              "First admission should rebase WQE request identity");
 
         Simulator::Destroy();
         Config::Reset();
@@ -8308,31 +8318,21 @@ class UbLifecycleStrongOrderTerminalWakesSuccessorTest : public TestCase
                                             m_frontOutcome);
     }
 
-    void OnAdmitted(uint32_t, uint32_t taskId, uint32_t)
+    void OnAdmitted(uint32_t, uint32_t taskId, uint32_t taSsn)
     {
         m_admittedTasks.push_back(taskId);
         m_progress.push_back(taskId);
         if (taskId == kUrmaWriteRegressionTaskId + 1)
         {
-            Simulator::ScheduleNow(
-                &UbLifecycleStrongOrderTerminalWakesSuccessorTest::CompleteSuccessor,
-                this);
+            UbTransactionOperationSnapshot successor;
+            m_successorAdmissionPinned =
+                m_transaction->TryGetOperationSnapshot(kUrmaWriteRegressionJettyNum,
+                                                       kUrmaWriteRegressionTaskId + 1,
+                                                       successor) &&
+                successor.activeSegments == 1 &&
+                successor.activeTransportWorkLeases == 1;
+            m_successorAdmittedTassn = taSsn;
         }
-    }
-
-    void CompleteSuccessor()
-    {
-        UbTransactionOperationSnapshot successor;
-        m_successorAdmissionPinned =
-            m_transaction->TryGetOperationSnapshot(kUrmaWriteRegressionJettyNum,
-                                                   kUrmaWriteRegressionTaskId + 1,
-                                                   successor) &&
-            successor.activeSegments == 1 &&
-            successor.activeTransportWorkLeases == 1;
-        m_transaction->WqeFinish(kUrmaWriteRegressionJettyNum,
-                                 m_successorWqe,
-                                 UbWorkOutcome::COMPLETED);
-        Simulator::Stop();
     }
 
     void OnTerminal(UbWqeCompletion completion)
@@ -8346,6 +8346,8 @@ class UbLifecycleStrongOrderTerminalWakesSuccessorTest : public TestCase
     Ptr<UbWqe> m_successorWqe;
     bool m_blockedSuccessorObserved{false};
     bool m_successorAdmissionPinned{false};
+    uint32_t m_reservedSuccessorTassn{UINT32_MAX};
+    uint32_t m_successorAdmittedTassn{UINT32_MAX};
     std::vector<uint32_t> m_admittedTasks;
     std::vector<UbWqeCompletion> m_terminals;
     std::vector<uint64_t> m_progress;
