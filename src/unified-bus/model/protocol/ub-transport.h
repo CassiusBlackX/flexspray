@@ -43,6 +43,7 @@ enum class UbWqeSegmentTerminalDisposition : uint8_t
     CANCELED_UNSENT,
     RETAINED,
     TRANSPORT_CLEANED,
+    FORCE_REMOVED,
 };
 
 const uint32_t UB_TP_PSN_OOO_THRESHOLD = 2048;   // Jetty分段乱序阈值（用于乱序缓存等）
@@ -289,7 +290,7 @@ public:
         Ptr<UbWqeSegment> segment,
         const UbTransactionCorrelationIdentity& expectedCorrelation,
         const UbLifecycleResourceIdentity& expectedTpIdentity);
-    bool ForceRemoveRetainedWqeSegment(
+    UbWqeSegmentTerminalDisposition ForceRemoveRetainedWqeSegment(
         Ptr<UbWqeSegment> segment,
         const UbTransactionCorrelationIdentity& expectedCorrelation,
         const UbLifecycleResourceIdentity& expectedTpIdentity);

@@ -2064,7 +2064,7 @@ UbTransportChannel::TryCancelUnsentWqeSegment(
     return UbWqeSegmentTerminalDisposition::CANCELED_UNSENT;
 }
 
-bool
+UbWqeSegmentTerminalDisposition
 UbTransportChannel::ForceRemoveRetainedWqeSegment(
     Ptr<UbWqeSegment> segment,
     const UbTransactionCorrelationIdentity& expectedCorrelation,
@@ -2084,7 +2084,10 @@ UbTransportChannel::ForceRemoveRetainedWqeSegment(
                                     segment);
     if (retained == m_wqeSegmentVector.end())
     {
-        return false;
+        const uint64_t segmentEnd = segment->GetPsnStart() + segment->GetPsnSize();
+        NS_ABORT_MSG_IF(m_psnSndUna < segmentEnd,
+                        "Forced segment removal lost unacknowledged TP work");
+        return UbWqeSegmentTerminalDisposition::TRANSPORT_CLEANED;
     }
     m_wqeSegmentVector.erase(retained);
     if (m_wqeSegmentVector.empty() && m_retrans != nullptr)
@@ -2092,7 +2095,7 @@ UbTransportChannel::ForceRemoveRetainedWqeSegment(
         m_retrans->CancelTimer();
         m_retrans->ClearRetainedState();
     }
-    return true;
+    return UbWqeSegmentTerminalDisposition::FORCE_REMOVED;
 }
 
 uint32_t UbTransportChannel::GetActiveSendSegmentCount() const

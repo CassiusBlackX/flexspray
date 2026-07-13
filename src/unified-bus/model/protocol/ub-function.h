@@ -183,6 +183,13 @@ namespace ns3 {
         void DisposeAll();
 
       private:
+        enum class CleanupMode : uint8_t
+        {
+            GRACEFUL = 0,
+            ABORT = 1,
+            FORCE = 2,
+        };
+
         enum class TrackedEventPhase : uint8_t
         {
             PENDING = 0,
@@ -203,6 +210,7 @@ namespace ns3 {
             UbLifecycleResourceIdentity identity;
             UbJettyLifecycleState state{UbJettyLifecycleState::ACTIVE};
             UbDestroyReason reason{UbDestroyReason::EXPLICIT};
+            CleanupMode cleanupMode{CleanupMode::GRACEFUL};
             std::map<uint32_t, UbLifecycleResourceIdentity> wqes;
             std::map<uint64_t, TrackedEventRecord> trackedEvents;
             std::vector<UbLifecycleLeaseIdentity> bindingLeases;
@@ -211,6 +219,7 @@ namespace ns3 {
         };
 
         Ptr<UbTransaction> GetTransaction() const;
+        static CleanupMode GetCleanupMode(UbDestroyReason reason);
         bool IsDrainReady(const JettyRecord& record) const;
         void FinalizeDestroy(uint32_t jettyNum);
         void DoDispose() override;

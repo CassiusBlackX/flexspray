@@ -204,6 +204,7 @@ namespace ns3 {
                                                 bool lifecycleOperation,
                                                 uint64_t eventToken);
         void CancelPendingScheduleWqeSegmentFinish(uint32_t tpn);
+        void ClearRtpScheduleChain(uint32_t jettyNum, Ptr<UbWqe> originatingWqe);
         bool IsCurrentWqeOperation(uint32_t jettyNum, Ptr<UbWqe> wqe) const;
         bool RecordSegmentSuccess(uint32_t jettyNum,
                                   uint32_t wqeId,
@@ -272,6 +273,7 @@ namespace ns3 {
             uint32_t directTpn{UINT32_MAX};
             UbLifecycleLeaseIdentity workLease;
             UbLifecycleLeaseIdentity transportUseLease;
+            bool rtpScheduleChainActive{false};
             bool terminalPending{false};
             struct SegmentRecord
             {
