@@ -595,18 +595,12 @@ UbJettyManager::DestroyJetty(uint32_t jettyNum,
     it->second.state = UbJettyLifecycleState::DRAINING;
     if (reason == UbDestroyReason::ERROR || reason == UbDestroyReason::SIMULATION_STOP)
     {
-        std::vector<uint32_t> activeWqes;
-        activeWqes.reserve(it->second.wqes.size());
-        for (const auto& [wqeId, identity] : it->second.wqes)
-        {
-            (void)identity;
-            activeWqes.push_back(wqeId);
-        }
         const UbWorkOutcome outcome = reason == UbDestroyReason::ERROR
                                           ? UbWorkOutcome::FAILED
                                           : UbWorkOutcome::FLUSHED;
-        for (uint32_t wqeId : activeWqes)
+        while (!it->second.wqes.empty())
         {
+            const uint32_t wqeId = it->second.wqes.begin()->first;
             GetTransaction()->CompleteWqeOperation(jettyNum, wqeId, outcome);
             it = findOriginalRecord();
             if (it == m_records.end())
@@ -617,7 +611,8 @@ UbJettyManager::DestroyJetty(uint32_t jettyNum,
         if (reason == UbDestroyReason::SIMULATION_STOP &&
             it->second.jetty->GetActiveWqeCount() != 0)
         {
-            it->second.jetty->FlushLegacyWqesForDisposal();
+            Ptr<UbJetty> keepAlive = it->second.jetty;
+            keepAlive->FlushLegacyWqesForDisposal();
             it = findOriginalRecord();
             if (it == m_records.end())
             {
@@ -653,11 +648,6 @@ UbJettyManager::DestroyJetty(uint32_t jettyNum,
         for (const Callback<void>& cancelCleanup : cancelCleanups)
         {
             cancelCleanup();
-            it = findOriginalRecord();
-            if (it == m_records.end())
-            {
-                return UbDestroyStatus::COMPLETED;
-            }
         }
         it = findOriginalRecord();
         if (it == m_records.end())
@@ -1185,11 +1175,21 @@ UbJetty::ApplyWqeTerminal(uint32_t wqeId, UbWorkOutcome outcome)
 void
 UbJetty::FlushLegacyWqesForDisposal()
 {
-    std::vector<Ptr<UbWqe>> wqes = m_wqeVector;
-    for (const Ptr<UbWqe>& wqe : wqes)
+    Ptr<UbJetty> keepAlive(this);
+    while (!m_wqeVector.empty())
     {
+        const auto current = std::find_if(m_wqeVector.begin(),
+                                          m_wqeVector.end(),
+                                          [](const Ptr<UbWqe>& wqe) { return wqe != nullptr; });
+        if (current == m_wqeVector.end())
+        {
+            m_wqeVector.clear();
+            break;
+        }
+        Ptr<UbWqe> wqe = *current;
         if (wqe == nullptr)
         {
+            m_wqeVector.erase(current);
             continue;
         }
         GetTransaction()->WqeFinish(m_jettyNum, wqe, UbWorkOutcome::FLUSHED);

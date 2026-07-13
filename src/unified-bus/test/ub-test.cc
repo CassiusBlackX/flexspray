@@ -8614,9 +8614,9 @@ class UbLifecycleReentrantForcedStopDefersRunningFinishTest : public TestCase
 class UbLifecycleReentrantPendingCleanupObserver
 {
   public:
-    void OnCancelCleanup()
+    void OnFirstCancelCleanup()
     {
-        ++cleanupCount;
+        ++firstCleanupCount;
         innerStatus = function->DestroyJetty(jettyNum, UbDestroyReason::SIMULATION_STOP);
         if (innerStatus != UbDestroyStatus::COMPLETED)
         {
@@ -8626,14 +8626,22 @@ class UbLifecycleReentrantPendingCleanupObserver
         recreated = function->TryGetJettyLifecycleIdentity(jettyNum, newIdentity);
     }
 
+    void OnSecondCancelCleanup()
+    {
+        ++secondCleanupCount;
+        secondOwnerPending = false;
+    }
+
     Ptr<UbFunction> function;
     uint32_t srcNodeId{0};
     uint32_t dstNodeId{0};
     uint32_t jettyNum{0};
     UbDestroyStatus innerStatus{UbDestroyStatus::REJECTED};
     UbLifecycleResourceIdentity newIdentity;
-    uint32_t cleanupCount{0};
+    uint32_t firstCleanupCount{0};
+    uint32_t secondCleanupCount{0};
     bool recreated{false};
+    bool secondOwnerPending{true};
 };
 
 class UbLifecycleReentrantPendingCleanupPreservesNewGenerationTest : public TestCase
@@ -8665,13 +8673,23 @@ class UbLifecycleReentrantPendingCleanupPreservesNewGenerationTest : public Test
             observer.srcNodeId = topo.sender->GetId();
             observer.dstNodeId = topo.receiver->GetId();
             observer.jettyNum = kUrmaWriteRegressionJettyNum;
-            const uint64_t token = function->TrackJettyEvent(kUrmaWriteRegressionJettyNum);
-            const EventId event = Simulator::Schedule(MilliSeconds(1), []() {});
+            const uint64_t firstToken =
+                function->TrackJettyEvent(kUrmaWriteRegressionJettyNum);
+            const EventId firstEvent = Simulator::Schedule(MilliSeconds(1), []() {});
             function->AttachJettyEvent(
                 kUrmaWriteRegressionJettyNum,
-                token,
-                event,
-                MakeCallback(&UbLifecycleReentrantPendingCleanupObserver::OnCancelCleanup,
+                firstToken,
+                firstEvent,
+                MakeCallback(&UbLifecycleReentrantPendingCleanupObserver::OnFirstCancelCleanup,
+                             &observer));
+            const uint64_t secondToken =
+                function->TrackJettyEvent(kUrmaWriteRegressionJettyNum);
+            const EventId secondEvent = Simulator::Schedule(MilliSeconds(1), []() {});
+            function->AttachJettyEvent(
+                kUrmaWriteRegressionJettyNum,
+                secondToken,
+                secondEvent,
+                MakeCallback(&UbLifecycleReentrantPendingCleanupObserver::OnSecondCancelCleanup,
                              &observer));
 
             const UbDestroyStatus outerStatus = function->DestroyJetty(
@@ -8679,7 +8697,8 @@ class UbLifecycleReentrantPendingCleanupPreservesNewGenerationTest : public Test
                 UbDestroyReason::SIMULATION_STOP);
             if (outerStatus != UbDestroyStatus::COMPLETED ||
                 observer.innerStatus != UbDestroyStatus::COMPLETED ||
-                observer.cleanupCount != 1 || !observer.recreated ||
+                observer.firstCleanupCount != 1 || observer.secondCleanupCount != 1 ||
+                observer.secondOwnerPending || !observer.recreated ||
                 observer.newIdentity == oldIdentity ||
                 function->GetJetty(kUrmaWriteRegressionJettyNum) == nullptr)
             {
@@ -8703,6 +8722,263 @@ class UbLifecycleReentrantPendingCleanupPreservesNewGenerationTest : public Test
             NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(status),
                                   0,
                                   "Outer destroy must preserve a replacement Jetty generation");
+        }
+    }
+};
+
+class UbLifecycleReentrantDirectDrainObserver
+{
+  public:
+    void OnWqeCompleted(UbWqeCompletion completion)
+    {
+        if (completion.wqeId == firstWqeId)
+        {
+            ++firstCompletionCount;
+            if (!reentered)
+            {
+                reentered = true;
+                innerStatus = function->DestroyJetty(jettyNum,
+                                                     UbDestroyReason::SIMULATION_STOP);
+            }
+        }
+        else if (completion.wqeId == secondWqeId)
+        {
+            ++secondCompletionCount;
+        }
+    }
+
+    Ptr<UbFunction> function;
+    uint32_t jettyNum{0};
+    uint32_t firstWqeId{0};
+    uint32_t secondWqeId{0};
+    UbDestroyStatus innerStatus{UbDestroyStatus::REJECTED};
+    uint32_t firstCompletionCount{0};
+    uint32_t secondCompletionCount{0};
+    bool reentered{false};
+};
+
+class UbLifecycleReentrantDirectForcedDrainRefreshesManagerStateTest : public TestCase
+{
+  public:
+    UbLifecycleReentrantDirectForcedDrainRefreshesManagerStateTest()
+        : TestCase("UnifiedBus - reentrant direct forced drain refreshes manager WQE state")
+    {
+    }
+
+    void DoRun() override
+    {
+        const int status = RunInChildProcess([]() {
+            Config::Reset();
+            LocalTpTopology topo = BuildLocalTpTopology();
+            InstallStaticTpPair(topo);
+            Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+            Ptr<UbFunction> function = controller->GetUbFunction();
+            Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+            function->CreateJetty(topo.sender->GetId(),
+                                  topo.receiver->GetId(),
+                                  kUrmaWriteRegressionJettyNum);
+            if (!transaction->JettyBindTp(topo.sender->GetId(),
+                                          topo.receiver->GetId(),
+                                          kUrmaWriteRegressionJettyNum,
+                                          false,
+                                          {kUrmaWriteRegressionSenderTpn}))
+            {
+                std::_Exit(2);
+            }
+
+            UbLifecycleReentrantDirectDrainObserver observer;
+            observer.function = function;
+            observer.jettyNum = kUrmaWriteRegressionJettyNum;
+            observer.firstWqeId = kUrmaWriteRegressionTaskId;
+            observer.secondWqeId = kUrmaWriteRegressionTaskId + 1;
+            function->GetJetty(kUrmaWriteRegressionJettyNum)
+                ->SetWqeCompletionCallback(
+                    MakeCallback(&UbLifecycleReentrantDirectDrainObserver::OnWqeCompleted,
+                                 &observer));
+            Ptr<UbWqe> first = function->CreateWqe(topo.sender->GetId(),
+                                                   topo.receiver->GetId(),
+                                                   64,
+                                                   observer.firstWqeId,
+                                                   TaOpcode::TA_OPCODE_WRITE);
+            Ptr<UbWqe> second = function->CreateWqe(topo.sender->GetId(),
+                                                    topo.receiver->GetId(),
+                                                    64,
+                                                    observer.secondWqeId,
+                                                    TaOpcode::TA_OPCODE_WRITE);
+            if (function->SubmitWqe(first, kUrmaWriteRegressionJettyNum).status !=
+                    UbWqeSubmissionStatus::ACCEPTED ||
+                function->SubmitWqe(second, kUrmaWriteRegressionJettyNum).status !=
+                    UbWqeSubmissionStatus::ACCEPTED)
+            {
+                std::_Exit(3);
+            }
+
+            const uint64_t token = function->TrackJettyEvent(kUrmaWriteRegressionJettyNum);
+            EventId runningEvent = Simulator::Schedule(MilliSeconds(1), []() {});
+            function->AttachJettyEvent(kUrmaWriteRegressionJettyNum, token, runningEvent);
+            if (!function->BeginJettyEvent(kUrmaWriteRegressionJettyNum, token))
+            {
+                std::_Exit(4);
+            }
+
+            const UbDestroyStatus outerStatus = function->DestroyJetty(
+                kUrmaWriteRegressionJettyNum,
+                UbDestroyReason::SIMULATION_STOP);
+            if (outerStatus != UbDestroyStatus::PENDING ||
+                observer.innerStatus != UbDestroyStatus::PENDING || !observer.reentered ||
+                observer.firstCompletionCount != 1 || observer.secondCompletionCount != 1 ||
+                transaction->GetActiveOperationCount() != 0)
+            {
+                std::_Exit(5);
+            }
+            runningEvent.Cancel();
+            function->ResolveJettyEvent(kUrmaWriteRegressionJettyNum, token);
+            if (function->GetJetty(kUrmaWriteRegressionJettyNum) != nullptr)
+            {
+                std::_Exit(6);
+            }
+            Simulator::Destroy();
+            Config::Reset();
+        });
+
+        NS_TEST_ASSERT_MSG_EQ(WIFEXITED(status),
+                              1,
+                              "Reentrant direct forced drain must not consume a stale WQE snapshot");
+        if (WIFEXITED(status))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(status),
+                                  0,
+                                  "Each direct WQE must complete exactly once across nested drain");
+        }
+    }
+};
+
+class UbLifecycleReentrantLegacyFlushObserver
+{
+  public:
+    void OnWqeCompleted(UbWqeCompletion completion)
+    {
+        if (completion.outcome != UbWorkOutcome::FLUSHED)
+        {
+            return;
+        }
+        if (completion.wqeId == firstWqeId)
+        {
+            ++firstCompletionCount;
+            if (!reentered)
+            {
+                reentered = true;
+                innerStatus = function->DestroyJetty(jettyNum,
+                                                     UbDestroyReason::SIMULATION_STOP);
+            }
+        }
+        else if (completion.wqeId == secondWqeId)
+        {
+            ++secondCompletionCount;
+        }
+    }
+
+    Ptr<UbFunction> function;
+    uint32_t jettyNum{0};
+    uint32_t firstWqeId{0};
+    uint32_t secondWqeId{0};
+    UbDestroyStatus innerStatus{UbDestroyStatus::REJECTED};
+    uint32_t firstCompletionCount{0};
+    uint32_t secondCompletionCount{0};
+    bool reentered{false};
+};
+
+class UbLifecycleReentrantLegacyForcedFlushRefreshesJettyStateTest : public TestCase
+{
+  public:
+    UbLifecycleReentrantLegacyForcedFlushRefreshesJettyStateTest()
+        : TestCase("UnifiedBus - reentrant legacy forced flush refreshes Jetty WQE state")
+    {
+    }
+
+    void DoRun() override
+    {
+        const int status = RunInChildProcess([]() {
+            Config::Reset();
+            LocalTpTopology topo = BuildLocalTpTopology();
+            InstallStaticTpPair(topo);
+            Ptr<UbController> senderController = topo.sender->GetObject<UbController>();
+            Ptr<UbController> receiverController = topo.receiver->GetObject<UbController>();
+            senderController->CreateTp(topo.sender->GetId(),
+                                       topo.receiver->GetId(),
+                                       topo.senderPort->GetIfIndex(),
+                                       topo.receiverPort->GetIfIndex(),
+                                       kUrmaWriteRegressionPriority,
+                                       303,
+                                       404,
+                                       UbCongestionControl::Create(UB_DEVICE));
+            receiverController->CreateTp(topo.receiver->GetId(),
+                                         topo.sender->GetId(),
+                                         topo.receiverPort->GetIfIndex(),
+                                         topo.senderPort->GetIfIndex(),
+                                         kUrmaWriteRegressionPriority,
+                                         404,
+                                         303,
+                                         UbCongestionControl::Create(UB_DEVICE));
+
+            Ptr<UbFunction> function = senderController->GetUbFunction();
+            Ptr<UbTransaction> transaction = senderController->GetUbTransaction();
+            function->CreateJetty(topo.sender->GetId(),
+                                  topo.receiver->GetId(),
+                                  kUrmaWriteRegressionJettyNum);
+            if (!transaction->JettyBindTp(topo.sender->GetId(),
+                                          topo.receiver->GetId(),
+                                          kUrmaWriteRegressionJettyNum,
+                                          true,
+                                          {kUrmaWriteRegressionSenderTpn, 303}))
+            {
+                std::_Exit(2);
+            }
+
+            UbLifecycleReentrantLegacyFlushObserver observer;
+            observer.function = function;
+            observer.jettyNum = kUrmaWriteRegressionJettyNum;
+            observer.firstWqeId = kUrmaWriteRegressionTaskId;
+            observer.secondWqeId = kUrmaWriteRegressionTaskId + 1;
+            function->GetJetty(kUrmaWriteRegressionJettyNum)
+                ->SetWqeCompletionCallback(
+                    MakeCallback(&UbLifecycleReentrantLegacyFlushObserver::OnWqeCompleted,
+                                 &observer));
+            Ptr<UbWqe> first = function->CreateWqe(topo.sender->GetId(),
+                                                   topo.receiver->GetId(),
+                                                   64,
+                                                   observer.firstWqeId,
+                                                   TaOpcode::TA_OPCODE_WRITE);
+            Ptr<UbWqe> second = function->CreateWqe(topo.sender->GetId(),
+                                                    topo.receiver->GetId(),
+                                                    64,
+                                                    observer.secondWqeId,
+                                                    TaOpcode::TA_OPCODE_WRITE);
+            function->PushWqeToJetty(first, kUrmaWriteRegressionJettyNum);
+            function->PushWqeToJetty(second, kUrmaWriteRegressionJettyNum);
+
+            const UbDestroyStatus outerStatus = function->DestroyJetty(
+                kUrmaWriteRegressionJettyNum,
+                UbDestroyReason::SIMULATION_STOP);
+            if (outerStatus != UbDestroyStatus::COMPLETED ||
+                observer.innerStatus != UbDestroyStatus::COMPLETED || !observer.reentered ||
+                observer.firstCompletionCount != 1 || observer.secondCompletionCount != 1 ||
+                function->GetJetty(kUrmaWriteRegressionJettyNum) != nullptr)
+            {
+                std::_Exit(3);
+            }
+            Simulator::Destroy();
+            Config::Reset();
+        });
+
+        NS_TEST_ASSERT_MSG_EQ(WIFEXITED(status),
+                              1,
+                              "Reentrant legacy forced flush must not consume a stale WQE copy");
+        if (WIFEXITED(status))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(status),
+                                  0,
+                                  "Each legacy WQE must report FLUSHED exactly once");
         }
     }
 };
@@ -15334,6 +15610,10 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
     AddTestCase(new UbLifecycleReentrantForcedStopDefersRunningFinishTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleReentrantPendingCleanupPreservesNewGenerationTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleReentrantDirectForcedDrainRefreshesManagerStateTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleReentrantLegacyForcedFlushRefreshesJettyStateTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleForcedStopPendingFinishReleasesSchedulerTest(),
                 TestCase::Duration::QUICK);
