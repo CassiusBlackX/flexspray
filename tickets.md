@@ -50,11 +50,11 @@ The following contract applies to every ticket:
 
 **Blocked by:** T01 Establish a single-TP packet lifecycle tracer bullet.
 
-- [ ] Failed admission changes neither the Jetty WQE collection nor the Transaction operation collection.
-- [ ] Successful admission exposes the WQE, operation context, and transport-use lease atomically.
-- [ ] Segment creation remains lazy and advances its cursor only after transport admission succeeds.
-- [ ] The WQE receives one completion, its work and child counts return to zero, and existing completion timing is preserved.
-- [ ] Focused WQE/Transaction tests plus minimal WRITE and shared-TP targeted scenarios cover atomic admission, lazy progress, one completion, and preserved completion timing.
+- [x] Failed admission changes neither the Jetty WQE collection nor the Transaction operation collection.
+- [x] Successful admission exposes the WQE, operation context, and transport-use lease atomically.
+- [x] Segment creation remains lazy and advances its cursor only after transport admission succeeds.
+- [x] The WQE receives one completion, its work and child counts return to zero, and existing completion timing is preserved.
+- [x] Focused WQE/Transaction tests plus minimal WRITE and shared-TP targeted scenarios cover atomic admission, lazy progress, one completion, and preserved completion timing.
 
 ## Task 03: Complete WQE outcomes and explicit Jetty drain
 
