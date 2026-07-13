@@ -62,12 +62,12 @@ The following contract applies to every ticket:
 
 **Blocked by:** T02 Make WQE submission and completion atomic.
 
-- [ ] WRITE, READ, and response-bearing operations each produce exactly one typed WQE terminal outcome.
-- [ ] Duplicate and stale Transaction outcomes fail without notifying the application twice.
-- [ ] A destroy request rejects new WQEs while allowing already accepted response, error, cancel, and flush work to finish.
-- [ ] Transaction references, tracked events, and RTP/CTP bindings are released before the Jetty collection entry retires.
-- [ ] A pending destroy callback executes once after erase; synchronous completion does not invoke it.
-- [ ] Focused outcome and drain tests cover WRITE, READ, response work, failure/cancel/flush, duplicate/stale outcomes, callback ordering, and accepted-work drain.
+- [x] WRITE, READ, and response-bearing operations each produce exactly one typed WQE terminal outcome.
+- [x] Duplicate and stale Transaction outcomes fail without notifying the application twice.
+- [x] A destroy request rejects new WQEs while allowing already accepted response, error, cancel, and flush work to finish.
+- [x] Transaction references, tracked events, and RTP/CTP bindings are released before the Jetty collection entry retires.
+- [x] A pending destroy callback executes once after erase; synchronous completion does not invoke it.
+- [x] Focused outcome and drain tests cover WRITE, READ, response work, failure/cancel/flush, duplicate/stale outcomes, callback ordering, and accepted-work drain.
 
 ## Task 04: Resolve direct TP and TPG references through one RTP path
 
