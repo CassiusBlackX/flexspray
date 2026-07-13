@@ -169,6 +169,11 @@ public:
      */
     uint32_t GetTpn() const { return m_tpn; }
 
+    const UbLifecycleResourceIdentity& GetLifecycleOwner() const
+    {
+        return m_packetLifecycleOwner;
+    }
+
     /**
      * @brief Get the destination transport path number.
      * @return Destination TPN carried by this transport endpoint.
@@ -264,6 +269,8 @@ public:
         }
         m_wqeSegmentVector.push_back(segment);
     }
+
+    bool TryAdmitWqeSegment(Ptr<UbWqeSegment> segment);
 
     uint32_t GetWqeSegmentVecSize() { return m_wqeSegmentVector.size(); }
     uint32_t GetActiveSendSegmentCount() const;

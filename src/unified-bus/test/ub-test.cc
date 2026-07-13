@@ -5133,20 +5133,29 @@ class UbUrmaReadWqeMetadataPropagationTest : public TestCase
 
     void DoRun() override
     {
-        Ptr<Node> node = CreateObject<Node>();
-        Ptr<UbController> controller = CreateObject<UbController>();
-        node->AggregateObject(controller);
-        controller->CreateUbFunction();
-        controller->CreateUbTransaction();
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
 
+        Ptr<Node> node = topo.sender;
+        Ptr<UbController> controller = node->GetObject<UbController>();
         Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
         const uint32_t jettyNum = 7;
         const uint32_t taskId = 1234;
         const uint32_t payloadBytes = 4096;
-        function->CreateJetty(node->GetId(), node->GetId() + 1, jettyNum);
+        function->CreateJetty(node->GetId(), topo.receiver->GetId(), jettyNum);
+        const std::vector<uint32_t> tpns = {kUrmaWriteRegressionSenderTpn};
+        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(node->GetId(),
+                                                       topo.receiver->GetId(),
+                                                       jettyNum,
+                                                       false,
+                                                       tpns),
+                              true,
+                              "Metadata characterization requires one direct TP binding");
 
         Ptr<UbWqe> wqe = function->CreateWqe(node->GetId(),
-                                             node->GetId() + 1,
+                                             topo.receiver->GetId(),
                                              payloadBytes,
                                              taskId,
                                              TaOpcode::TA_OPCODE_READ);
@@ -5224,6 +5233,9 @@ class UbUrmaReadWqeMetadataPropagationTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(segment->NeedsTransactionResponse(),
                               true,
                               "Segment should preserve response-required flag");
+
+        Simulator::Destroy();
+        Config::Reset();
     }
 };
 
@@ -6779,6 +6791,430 @@ class UbLifecyclePacketAccountingTest : public TestCase
 
         Simulator::Destroy();
     }
+};
+
+class UbLifecycleAtomicWqeSubmissionTest : public TestCase
+{
+  public:
+    UbLifecycleAtomicWqeSubmissionTest()
+        : TestCase("UnifiedBus - direct TP WQE submission is atomic")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              kUrmaWriteRegressionJettyNum);
+        Ptr<UbJetty> jetty = function->GetJetty(kUrmaWriteRegressionJettyNum);
+
+        Ptr<UbWqe> unboundWqe = function->CreateWqe(topo.sender->GetId(),
+                                                    topo.receiver->GetId(),
+                                                    64,
+                                                    kUrmaWriteRegressionTaskId,
+                                                    TaOpcode::TA_OPCODE_WRITE);
+        const UbWqeSubmissionResult noTransport =
+            function->SubmitWqe(unboundWqe, kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(noTransport.status),
+                              static_cast<uint32_t>(UbWqeSubmissionStatus::NO_DIRECT_TRANSPORT),
+                              "Submission without a direct TP binding should be rejected");
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetActiveWqeCount(),
+                              0u,
+                              "Rejected submission must not expose a Jetty WQE");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
+                              0u,
+                              "Rejected submission must not expose an operation context");
+
+        Ptr<UbWqe> mismatchedWqe = function->CreateWqe(topo.sender->GetId(),
+                                                       topo.switch0->GetId(),
+                                                       64,
+                                                       kUrmaWriteRegressionTaskId + 1,
+                                                       TaOpcode::TA_OPCODE_WRITE);
+        const UbWqeSubmissionResult mismatch =
+            function->SubmitWqe(mismatchedWqe, kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(mismatch.status),
+                              static_cast<uint32_t>(
+                                  UbWqeSubmissionStatus::JETTY_BINDING_MISMATCH),
+                              "Submission with an incompatible destination should be rejected");
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetActiveWqeCount(),
+                              0u,
+                              "Binding rejection must leave the Jetty unchanged");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
+                              0u,
+                              "Binding rejection must leave Transaction unchanged");
+
+        const std::vector<uint32_t> tpns = {kUrmaWriteRegressionSenderTpn};
+        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
+                                                       topo.receiver->GetId(),
+                                                       kUrmaWriteRegressionJettyNum,
+                                                       false,
+                                                       tpns),
+                              true,
+                              "Direct TP binding should succeed");
+
+        const UbWqeSubmissionResult accepted =
+            function->SubmitWqe(unboundWqe, kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(accepted.status),
+                              static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+                              "Compatible direct-TP WQE should be admitted");
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetActiveWqeCount(),
+                              1u,
+                              "Accepted submission should expose the WQE before scheduling");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
+                              1u,
+                              "Accepted submission should expose one operation context");
+
+        UbTransactionOperationSnapshot operation;
+        NS_TEST_ASSERT_MSG_EQ(transaction->TryGetOperationSnapshot(
+                                  kUrmaWriteRegressionJettyNum,
+                                  kUrmaWriteRegressionTaskId,
+                                  operation),
+                              true,
+                              "Accepted operation should be manager-visible");
+        NS_TEST_ASSERT_MSG_EQ(operation.wqeIdentity,
+                              accepted.wqeIdentity,
+                              "Function and Transaction should expose one WQE generation");
+        NS_TEST_ASSERT_MSG_EQ(operation.directTpn,
+                              kUrmaWriteRegressionSenderTpn,
+                              "Operation should retain its direct TP admission binding");
+
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(topo.sender);
+        const UbLifecycleResourceSnapshot snapshot =
+            coordinator->GetSnapshot(accepted.wqeIdentity);
+        NS_TEST_ASSERT_MSG_EQ(snapshot.activeWorkLeases,
+                              1u,
+                              "Accepted WQE should expose one Transaction work lease");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.activeChildLeases,
+                              0u,
+                              "Submission should remain lazily unsegmented");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.activeTransportUseLeases,
+                              1u,
+                              "Accepted WQE should expose one direct-TP use lease");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbLifecycleRejectedTpAdmissionPreservesLazyCursorTest : public TestCase
+{
+  public:
+    UbLifecycleRejectedTpAdmissionPreservesLazyCursorTest()
+        : TestCase("UnifiedBus - rejected direct TP admission preserves lazy segment cursor")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        Config::SetDefault("ns3::UbTransportChannel::DefaultMaxWqeSegNum",
+                           UintegerValue(0));
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              kUrmaWriteRegressionJettyNum);
+        const std::vector<uint32_t> tpns = {kUrmaWriteRegressionSenderTpn};
+        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
+                                                       topo.receiver->GetId(),
+                                                       kUrmaWriteRegressionJettyNum,
+                                                       false,
+                                                       tpns),
+                              true,
+                              "Direct TP binding should succeed");
+
+        Ptr<UbWqe> wqe = function->CreateWqe(topo.sender->GetId(),
+                                             topo.receiver->GetId(),
+                                             64,
+                                             kUrmaWriteRegressionTaskId,
+                                             TaOpcode::TA_OPCODE_WRITE);
+        const UbWqeSubmissionResult submitted =
+            function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(submitted.status),
+                              static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+                              "WQE submission should succeed before TP capacity admission");
+
+        Ptr<UbJetty> jetty = function->GetJetty(kUrmaWriteRegressionJettyNum);
+        Ptr<UbTransportChannel> tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        const uint64_t bytesBefore = wqe->GetBytesLeft();
+        const uint32_t tassnBefore = jetty->GetTaSsnSndNxtForTest();
+        Ptr<UbWqeSegment> prepared = jetty->PrepareNextWqeSegment();
+        NS_TEST_ASSERT_MSG_NE(prepared,
+                              nullptr,
+                              "Lazy preparation should materialize a candidate segment");
+        NS_TEST_ASSERT_MSG_EQ(wqe->GetBytesLeft(),
+                              bytesBefore,
+                              "Preparing a segment must not advance WQE offset");
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndNxtForTest(),
+                              tassnBefore,
+                              "Preparing a segment must not advance TASSN");
+
+        NS_TEST_ASSERT_MSG_EQ(tp->TryAdmitWqeSegment(prepared),
+                              false,
+                              "Full direct TP should reject the prepared segment");
+        NS_TEST_ASSERT_MSG_EQ(wqe->GetBytesLeft(),
+                              bytesBefore,
+                              "Rejected TP admission must not advance WQE offset");
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndNxtForTest(),
+                              tassnBefore,
+                              "Rejected TP admission must not advance TASSN");
+        NS_TEST_ASSERT_MSG_EQ(tp->GetWqeSegmentVecSize(),
+                              0u,
+                              "Rejected TP admission must not expose a transport segment");
+
+        UbTransactionOperationSnapshot operation;
+        NS_TEST_ASSERT_MSG_EQ(transaction->TryGetOperationSnapshot(
+                                  kUrmaWriteRegressionJettyNum,
+                                  kUrmaWriteRegressionTaskId,
+                                  operation),
+                              true,
+                              "Rejected segment admission must preserve the operation");
+        NS_TEST_ASSERT_MSG_EQ(operation.activeSegments,
+                              0u,
+                              "Rejected segment admission must not expose an operation child");
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(topo.sender);
+        NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(submitted.wqeIdentity).activeChildLeases,
+                              0u,
+                              "Rejected segment admission must not leak a child lease");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbLifecycleDirectWriteCompletionTest : public TestCase
+{
+  public:
+    UbLifecycleDirectWriteCompletionTest()
+        : TestCase("UnifiedBus - direct TP WRITE retires one atomic ownership chain")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        m_transaction = controller->GetUbTransaction();
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              kUrmaWriteRegressionJettyNum);
+        const std::vector<uint32_t> tpns = {kUrmaWriteRegressionSenderTpn};
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->JettyBindTp(topo.sender->GetId(),
+                                                         topo.receiver->GetId(),
+                                                         kUrmaWriteRegressionJettyNum,
+                                                         false,
+                                                         tpns),
+                              true,
+                              "Direct TP binding should succeed");
+
+        m_jetty = function->GetJetty(kUrmaWriteRegressionJettyNum);
+        m_jetty->SetClientCallback(
+            MakeCallback(&UbLifecycleDirectWriteCompletionTest::OnTaskCompleted, this));
+        m_tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        m_tp->TraceConnectWithoutContext(
+            "WqeSegmentSendsNotify",
+            MakeCallback(&UbLifecycleDirectWriteCompletionTest::ObserveSegmentAdmission, this));
+        m_tp->TraceConnectWithoutContext(
+            "LastPacketACKsNotify",
+            MakeCallback(&UbLifecycleDirectWriteCompletionTest::ObserveRequestTpAck, this));
+        m_tp->TraceConnectWithoutContext(
+            "LastPacketReceivesNotify",
+            MakeCallback(&UbLifecycleDirectWriteCompletionTest::ObserveTransactionResponse,
+                         this));
+
+        Ptr<UbWqe> wqe = function->CreateWqe(topo.sender->GetId(),
+                                             topo.receiver->GetId(),
+                                             64,
+                                             kUrmaWriteRegressionTaskId,
+                                             TaOpcode::TA_OPCODE_WRITE);
+        const UbWqeSubmissionResult submitted =
+            function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(submitted.status),
+                              static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+                              "Direct WRITE should enter the atomic ownership chain");
+        m_wqeIdentity = submitted.wqeIdentity;
+        m_coordinator = UbLifecycleCoordinator::GetOrCreate(topo.sender);
+        UbTransactionOperationSnapshot operation;
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->TryGetOperationSnapshot(
+                                  kUrmaWriteRegressionJettyNum,
+                                  kUrmaWriteRegressionTaskId,
+                                  operation),
+                              true,
+                              "Accepted WRITE should expose its operation generation");
+        m_operationIdentity = operation.operationIdentity;
+
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
+
+        NS_TEST_ASSERT_MSG_EQ(m_segmentAdmissionObserved,
+                              true,
+                              "WRITE should expose one admitted transaction segment");
+        NS_TEST_ASSERT_MSG_EQ(m_activeSegmentsAtAdmission,
+                              1u,
+                              "Successful TP admission should expose one operation child");
+        NS_TEST_ASSERT_MSG_EQ(m_childLeasesAtAdmission,
+                              1u,
+                              "Successful TP admission should expose one typed child lease");
+        NS_TEST_ASSERT_MSG_EQ(m_requestTpAckObserved,
+                              true,
+                              "Sender should observe the request TP ACK");
+        NS_TEST_ASSERT_MSG_EQ(m_completedImmediatelyAfterRequestTpAck,
+                              false,
+                              "WRITE completion timing must remain after the transaction response");
+        NS_TEST_ASSERT_MSG_EQ(m_transactionResponseObserved,
+                              true,
+                              "Sender should observe the transaction response");
+        NS_TEST_ASSERT_MSG_EQ(m_completionCount,
+                              1u,
+                              "Direct WRITE should notify the upper layer exactly once");
+        const bool completionAfterResponse = m_completionTime >= m_transactionResponseTime;
+        NS_TEST_ASSERT_MSG_EQ(completionAfterResponse,
+                              true,
+                              "Completion must not precede transaction response arrival");
+
+        NS_TEST_ASSERT_MSG_EQ(m_jetty->GetActiveWqeCount(),
+                              0u,
+                              "Completed WQE should be removed from its Jetty");
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->GetActiveOperationCount(),
+                              0u,
+                              "Completed WQE should remove its operation context");
+        NS_TEST_ASSERT_MSG_EQ(m_tp->GetWqeSegmentVecSize(),
+                              0u,
+                              "Completed WRITE should leave no TP segment");
+
+        const UbLifecycleResourceSnapshot wqeSnapshot =
+            m_coordinator->GetSnapshot(m_wqeIdentity);
+        NS_TEST_ASSERT_MSG_EQ(wqeSnapshot.activeWorkLeases,
+                              0u,
+                              "Completion should release the Transaction work lease");
+        NS_TEST_ASSERT_MSG_EQ(wqeSnapshot.activeChildLeases,
+                              0u,
+                              "Completion should release all segment child leases");
+        NS_TEST_ASSERT_MSG_EQ(wqeSnapshot.activeTransportUseLeases,
+                              0u,
+                              "Completion should release the direct-TP use lease");
+        NS_TEST_ASSERT_MSG_EQ(wqeSnapshot.successfulTerminals,
+                              1u,
+                              "WQE should receive one typed success terminal");
+        NS_TEST_ASSERT_MSG_EQ(wqeSnapshot.retired,
+                              true,
+                              "Successful WQE generation should retire");
+
+        const UbLifecycleResourceSnapshot operationSnapshot =
+            m_coordinator->GetSnapshot(m_operationIdentity);
+        NS_TEST_ASSERT_MSG_EQ(operationSnapshot.successfulTerminals,
+                              1u,
+                              "Transaction operation should receive one typed success terminal");
+        NS_TEST_ASSERT_MSG_EQ(operationSnapshot.retired,
+                              true,
+                              "Successful operation generation should retire");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    void ObserveSegmentAdmission(uint32_t, uint32_t taskId, uint32_t)
+    {
+        if (taskId != kUrmaWriteRegressionTaskId || m_segmentAdmissionObserved)
+        {
+            return;
+        }
+        m_segmentAdmissionObserved = true;
+        UbTransactionOperationSnapshot operation;
+        if (m_transaction->TryGetOperationSnapshot(kUrmaWriteRegressionJettyNum,
+                                                   kUrmaWriteRegressionTaskId,
+                                                   operation))
+        {
+            m_activeSegmentsAtAdmission = operation.activeSegments;
+        }
+        m_childLeasesAtAdmission =
+            m_coordinator->GetSnapshot(m_wqeIdentity).activeChildLeases;
+    }
+
+    void ObserveRequestTpAck(uint32_t,
+                             uint32_t taskId,
+                             uint32_t srcTpn,
+                             uint32_t dstTpn,
+                             uint32_t,
+                             uint32_t,
+                             uint32_t)
+    {
+        if (taskId != kUrmaWriteRegressionTaskId ||
+            srcTpn != kUrmaWriteRegressionSenderTpn ||
+            dstTpn != kUrmaWriteRegressionReceiverTpn || m_requestTpAckObserved)
+        {
+            return;
+        }
+        m_requestTpAckObserved = true;
+        Simulator::ScheduleNow(
+            &UbLifecycleDirectWriteCompletionTest::CheckCompletionAfterRequestTpAck,
+            this);
+    }
+
+    void ObserveTransactionResponse(uint32_t,
+                                    uint32_t srcTpn,
+                                    uint32_t dstTpn,
+                                    uint32_t,
+                                    uint32_t,
+                                    uint32_t)
+    {
+        if (srcTpn != kUrmaWriteRegressionReceiverTpn ||
+            dstTpn != kUrmaWriteRegressionSenderTpn || m_transactionResponseObserved)
+        {
+            return;
+        }
+        m_transactionResponseObserved = true;
+        m_transactionResponseTime = Simulator::Now();
+    }
+
+    void CheckCompletionAfterRequestTpAck()
+    {
+        m_completedImmediatelyAfterRequestTpAck = m_completionCount != 0;
+    }
+
+    void OnTaskCompleted(uint32_t taskId, uint32_t jettyNum)
+    {
+        if (taskId == kUrmaWriteRegressionTaskId &&
+            jettyNum == kUrmaWriteRegressionJettyNum)
+        {
+            ++m_completionCount;
+            m_completionTime = Simulator::Now();
+        }
+    }
+
+    Ptr<UbTransaction> m_transaction;
+    Ptr<UbJetty> m_jetty;
+    Ptr<UbTransportChannel> m_tp;
+    Ptr<UbLifecycleCoordinator> m_coordinator;
+    UbLifecycleResourceIdentity m_wqeIdentity;
+    UbLifecycleResourceIdentity m_operationIdentity;
+    bool m_segmentAdmissionObserved{false};
+    bool m_requestTpAckObserved{false};
+    bool m_transactionResponseObserved{false};
+    bool m_completedImmediatelyAfterRequestTpAck{false};
+    uint32_t m_activeSegmentsAtAdmission{0};
+    uint32_t m_childLeasesAtAdmission{0};
+    uint32_t m_completionCount{0};
+    Time m_transactionResponseTime{Seconds(0)};
+    Time m_completionTime{Seconds(0)};
 };
 
 class UbLifecyclePacketMetadataTransferTest : public TestCase
@@ -12792,6 +13228,10 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
     : TestSuite("unified-bus-lifecycle", Type::UNIT)
 {
     AddTestCase(new UbLifecyclePacketAccountingTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleAtomicWqeSubmissionTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleRejectedTpAdmissionPreservesLazyCursorTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleDirectWriteCompletionTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbLifecyclePacketMetadataTransferTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleRtpEndpointConsumeIntegrationTest(),
                 TestCase::Duration::QUICK);

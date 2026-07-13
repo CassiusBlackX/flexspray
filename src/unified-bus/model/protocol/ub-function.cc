@@ -150,17 +150,37 @@ Ptr<UbWqe> UbFunction::CreateWqe(uint32_t src, uint32_t dest, uint32_t size, uin
 
 void UbFunction::PushWqeToJetty(Ptr<UbWqe> wqe, uint32_t jettyNum)
 {
+    const UbWqeSubmissionResult result = SubmitWqe(wqe, jettyNum);
+    if (result.status != UbWqeSubmissionStatus::ACCEPTED) {
+        NS_LOG_WARN("WQE submission rejected with status " << static_cast<uint32_t>(result.status));
+    }
+}
+
+UbWqeSubmissionResult UbFunction::SubmitWqe(Ptr<UbWqe> wqe, uint32_t jettyNum)
+{
     NS_LOG_DEBUG(this);
     Ptr<UbJetty> ubJetty = GetJetty(jettyNum);
     if (ubJetty == nullptr) {
-        NS_LOG_WARN("Get jetty failed");
-        return;
+        return {UbWqeSubmissionStatus::JETTY_NOT_FOUND, {}};
     }
+    if (!ubJetty->CanAcceptWqe(wqe)) {
+        return {UbWqeSubmissionStatus::JETTY_BINDING_MISMATCH, {}};
+    }
+
+    Ptr<UbLifecycleCoordinator> coordinator =
+        UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId));
+    const UbLifecycleResourceIdentity wqeIdentity =
+        coordinator->OpenResource(UbLifecycleResourceKind::WQE, wqe->GetWqeId());
+    if (!GetTransaction()->TryAdmitDirectWqe(jettyNum, wqe, wqeIdentity)) {
+        coordinator->RetireResource(wqeIdentity);
+        return {UbWqeSubmissionStatus::NO_DIRECT_TRANSPORT, {}};
+    }
+
     ubJetty->SetNodeId(m_nodeId);
-    // 将 WQE 添加到 Jetty
     ubJetty->PushWqe(wqe);
     GetTransaction()->AddWqe(jettyNum, wqe);
     GetTransaction()->TriggerScheduleWqeSegment(jettyNum);
+    return {UbWqeSubmissionStatus::ACCEPTED, wqeIdentity};
 }
 
 void UbFunction::DoDispose()
@@ -261,6 +281,16 @@ Ptr<UbTransaction> UbJetty::GetTransaction()
 
 Ptr<UbWqeSegment> UbJetty::GetNextWqeSegment()
 {
+    Ptr<UbWqeSegment> segment = PrepareNextWqeSegment();
+    if (segment != nullptr)
+    {
+        CommitWqeSegmentAdmission(segment);
+    }
+    return segment;
+}
+
+Ptr<UbWqeSegment> UbJetty::PrepareNextWqeSegment()
+{
     NS_LOG_FUNCTION(this);
 
     if (IsLimited()) {
@@ -310,10 +340,29 @@ Ptr<UbWqeSegment> UbJetty::GetNextWqeSegment()
     Ptr<UbWqeSegment> segment = GenWqeSegment(currentWqe, segmentSize);
     segment->SetTaskId(currentWqe->GetWqeId());
     segment->SetWqeSize(currentWqe->GetSize());
-    currentWqe->UpdateSentBytes(segmentSize);
-    IncreaseTaSsnSndNxt(); // 更新下一个待发送的分段序号
-
     return segment;
+}
+
+void UbJetty::CommitWqeSegmentAdmission(Ptr<UbWqeSegment> segment)
+{
+    NS_ABORT_MSG_IF(segment == nullptr, "Cannot commit a null WQE segment");
+    NS_ABORT_MSG_IF(segment->GetTaSsn() != m_taSsnSndNxt,
+                    "WQE segment admission references a stale TASSN cursor");
+
+    Ptr<UbWqe> wqe;
+    for (const Ptr<UbWqe>& candidate : m_wqeVector)
+    {
+        if (candidate != nullptr && candidate->GetWqeId() == segment->GetTaskId())
+        {
+            wqe = candidate;
+            break;
+        }
+    }
+    NS_ABORT_MSG_IF(wqe == nullptr, "WQE segment admission references an unknown WQE");
+    NS_ABORT_MSG_IF(wqe->GetBytesLeft() < segment->GetSize(),
+                    "WQE segment admission would overrun the remaining WQE bytes");
+    wqe->UpdateSentBytes(segment->GetSize());
+    IncreaseTaSsnSndNxt();
 }
 
 Ptr<UbWqeSegment> UbJetty::GenWqeSegment(Ptr<UbWqe> wqe, uint32_t segmentSize)

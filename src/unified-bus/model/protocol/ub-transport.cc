@@ -1946,6 +1946,23 @@ uint32_t UbTransportChannel::GetCurrentSqSize() const
     return m_wqeSegmentVector.size();
 }
 
+bool
+UbTransportChannel::TryAdmitWqeSegment(Ptr<UbWqeSegment> segment)
+{
+    if (segment == nullptr || IsWqeSegmentLimited() || !CanScheduleAnotherSegment())
+    {
+        return false;
+    }
+
+    segment->SetTpn(m_tpn);
+    segment->SetTpMsn(GetMsnCnt());
+    segment->SetPsnStart(GetPsnCnt());
+    UpdatePsnCnt(segment->GetPsnSize());
+    UpDateMsnCnt(1);
+    PushWqeSegment(segment);
+    return true;
+}
+
 uint32_t UbTransportChannel::GetActiveSendSegmentCount() const
 {
     uint32_t activeCount = 0;

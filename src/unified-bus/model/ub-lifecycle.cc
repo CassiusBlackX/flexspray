@@ -122,7 +122,7 @@ UbLifecycleCoordinator::ResourceKey::operator<(const ResourceKey& other) const
 }
 
 UbLifecycleResourceIdentity
-UbLifecycleCoordinator::OpenPacketOwner(UbLifecycleResourceKind kind, uint64_t localId)
+UbLifecycleCoordinator::OpenResource(UbLifecycleResourceKind kind, uint64_t localId)
 {
     const ResourceKey key{kind, localId};
     ResourceState& state = m_resources[key];
@@ -135,19 +135,104 @@ UbLifecycleCoordinator::OpenPacketOwner(UbLifecycleResourceKind kind, uint64_t l
                     "Lifecycle generation exhausted");
     ++state.generation;
     state.nextAttempt = 0;
+    state.nextLease = 0;
     state.sequence = 0;
     state.snapshot = {};
     state.activeAttempts.clear();
+    state.activeLeases.clear();
     return {m_ownerNodeId, kind, localId, state.generation};
+}
+
+void
+UbLifecycleCoordinator::RetireResource(const UbLifecycleResourceIdentity& identity)
+{
+    ResourceState& state = ValidateMutable(identity);
+    NS_ABORT_MSG_IF(state.snapshot.inFlightPackets != 0,
+                    "Cannot retire lifecycle generation with in-flight packets");
+    NS_ABORT_MSG_IF(!state.activeLeases.empty(),
+                    "Cannot retire lifecycle generation with active leases");
+    state.snapshot.retired = true;
+}
+
+UbLifecycleLeaseIdentity
+UbLifecycleCoordinator::AcquireLease(const UbLifecycleResourceIdentity& owner,
+                                     UbLifecycleLeaseKind kind,
+                                     const UbLifecycleResourceIdentity& related)
+{
+    ResourceState& state = ValidateMutable(owner);
+    Validate(related);
+    NS_ABORT_MSG_IF(state.nextLease == std::numeric_limits<uint64_t>::max(),
+                    "Lifecycle lease identity exhausted");
+    UbLifecycleLeaseIdentity lease{owner, related, kind, ++state.nextLease};
+    const bool inserted = state.activeLeases.emplace(lease.lease, lease).second;
+    NS_ABORT_MSG_IF(!inserted, "Duplicate lifecycle lease identity");
+    switch (kind)
+    {
+    case UbLifecycleLeaseKind::WORK:
+        ++state.snapshot.activeWorkLeases;
+        break;
+    case UbLifecycleLeaseKind::CHILD:
+        ++state.snapshot.activeChildLeases;
+        break;
+    case UbLifecycleLeaseKind::TRANSPORT_USE:
+        ++state.snapshot.activeTransportUseLeases;
+        break;
+    default:
+        NS_ABORT_MSG("Unknown lifecycle lease kind");
+    }
+    return lease;
+}
+
+void
+UbLifecycleCoordinator::ReleaseLease(const UbLifecycleLeaseIdentity& lease)
+{
+    ResourceState& state = ValidateMutable(lease.owner);
+    const auto it = state.activeLeases.find(lease.lease);
+    NS_ABORT_MSG_IF(it == state.activeLeases.end(),
+                    "Lifecycle lease release would underflow the active balance");
+    NS_ABORT_MSG_IF(it->second != lease, "Lifecycle lease identity mismatch");
+    switch (lease.kind)
+    {
+    case UbLifecycleLeaseKind::WORK:
+        NS_ABORT_MSG_IF(state.snapshot.activeWorkLeases == 0,
+                        "Lifecycle work lease counter underflow");
+        --state.snapshot.activeWorkLeases;
+        break;
+    case UbLifecycleLeaseKind::CHILD:
+        NS_ABORT_MSG_IF(state.snapshot.activeChildLeases == 0,
+                        "Lifecycle child lease counter underflow");
+        --state.snapshot.activeChildLeases;
+        break;
+    case UbLifecycleLeaseKind::TRANSPORT_USE:
+        NS_ABORT_MSG_IF(state.snapshot.activeTransportUseLeases == 0,
+                        "Lifecycle transport-use lease counter underflow");
+        --state.snapshot.activeTransportUseLeases;
+        break;
+    default:
+        NS_ABORT_MSG("Unknown lifecycle lease kind");
+    }
+    state.activeLeases.erase(it);
+}
+
+void
+UbLifecycleCoordinator::RecordSuccessfulTerminal(const UbLifecycleResourceIdentity& identity)
+{
+    ResourceState& state = ValidateMutable(identity);
+    NS_ABORT_MSG_IF(state.snapshot.successfulTerminals != 0,
+                    "Lifecycle resource already has a terminal outcome");
+    ++state.snapshot.successfulTerminals;
+}
+
+UbLifecycleResourceIdentity
+UbLifecycleCoordinator::OpenPacketOwner(UbLifecycleResourceKind kind, uint64_t localId)
+{
+    return OpenResource(kind, localId);
 }
 
 void
 UbLifecycleCoordinator::RetirePacketOwner(const UbLifecycleResourceIdentity& identity)
 {
-    ResourceState& state = ValidateMutable(identity);
-    NS_ABORT_MSG_IF(state.snapshot.inFlightPackets != 0,
-                    "Cannot retire lifecycle generation with in-flight packets");
-    state.snapshot.retired = true;
+    RetireResource(identity);
 }
 
 UbPacketAttemptIdentity

@@ -9,6 +9,7 @@
 #include "ns3/ub-network-address.h"
 #include "ns3/random-variable-stream.h"
 #include "ns3/callback.h"
+#include "ns3/ub-lifecycle.h"
 
 namespace ns3 {
     /**
@@ -25,6 +26,14 @@ namespace ns3 {
     class UbJetty;
     class UbFunction;
     class UbTransportChannel;
+
+    struct UbTransactionOperationSnapshot
+    {
+        UbLifecycleResourceIdentity wqeIdentity;
+        UbLifecycleResourceIdentity operationIdentity;
+        uint32_t directTpn{UINT32_MAX};
+        uint32_t activeSegments{0};
+    };
     /**
     * @brief
     */
@@ -84,6 +93,14 @@ namespace ns3 {
         // 新增wqe任务
         void AddWqe(uint32_t jettyNum, Ptr<UbWqe> wqe);
 
+        bool TryAdmitDirectWqe(uint32_t jettyNum,
+                               Ptr<UbWqe> wqe,
+                               const UbLifecycleResourceIdentity& wqeIdentity);
+        uint32_t GetActiveOperationCount() const;
+        bool TryGetOperationSnapshot(uint32_t jettyNum,
+                                     uint32_t wqeId,
+                                     UbTransactionOperationSnapshot& snapshot) const;
+
         // 某个wqe完成，刷新状态
         void WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe);
 
@@ -100,7 +117,11 @@ namespace ns3 {
 
         void ScheduleWqeSegment(Ptr<UbTransportChannel> tp);
 
-        void OnScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment);
+        void OnScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment,
+                                        uint32_t nextRrIndex,
+                                        bool localOperation);
+        void RecordSegmentAdmission(Ptr<UbWqeSegment> segment);
+        bool RecordSegmentSuccess(uint32_t jettyNum, uint32_t wqeId, uint32_t taSsn);
 
         bool IsUrmaReadWriteRequest(const Ptr<UbWqeSegment>& segment);
 
@@ -137,12 +158,29 @@ namespace ns3 {
         std::map<uint32_t, bool> m_tpSchedulingStatus;
         Ptr<UniformRandomVariable> m_random;        //随机数产生工具，伪随机，多次仿真可复现
 
-        Callback<void, Ptr<UbWqeSegment>> m_pushWqeSegmentToTpCb;
         // 记录每个jetty对应的serviceMode
         std::map<uint32_t, TransactionServiceMode> m_serviceMode;
         // 每个jetty存储wqe的id顺序
         std::map<uint32_t, std::vector<uint32_t>> m_jettyOrderedWqe;
         std::map<std::pair<uint32_t, uint64_t>, uint32_t> m_memoryStore;
+
+        struct OperationRecord
+        {
+            Ptr<UbWqe> wqe;
+            UbLifecycleResourceIdentity wqeIdentity;
+            UbLifecycleResourceIdentity operationIdentity;
+            uint32_t directTpn{UINT32_MAX};
+            UbLifecycleLeaseIdentity workLease;
+            UbLifecycleLeaseIdentity transportUseLease;
+            struct SegmentRecord
+            {
+                UbLifecycleResourceIdentity identity;
+                UbLifecycleLeaseIdentity childLease;
+            };
+            std::map<uint32_t, SegmentRecord> segments;
+        };
+
+        std::map<std::pair<uint32_t, uint32_t>, OperationRecord> m_operations;
     };
 
 } // namespace ns3
