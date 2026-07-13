@@ -113,6 +113,63 @@ class BaselineHarnessCliTest(unittest.TestCase):
         self.assertIn("hash mismatch", drifted.stderr)
         self.assertIn("cases/minimal/traffic.csv", drifted.stderr)
 
+    def test_verify_rejects_unregistered_case_input(self):
+        repo_root = self.work_dir / "repo"
+        artifact_root = self.work_dir / "artifacts"
+        case_root = repo_root / "cases" / "minimal"
+        rules_root = repo_root / "rules"
+        case_root.mkdir(parents=True)
+        rules_root.mkdir()
+
+        case_input = case_root / "traffic.csv"
+        rules = rules_root / "comparison-rules.json"
+        case_input.write_bytes(b"taskId,dataSize\n0,64\n")
+        rules.write_text('{"cases": {}}\n', encoding="utf-8")
+        manifest = {
+            "schema_version": 1,
+            "reference": {"variants": {}},
+            "comparison_rules": {
+                "path": "rules/comparison-rules.json",
+                "sha256": self.sha256(rules),
+            },
+            "cases": [
+                {
+                    "id": "minimal",
+                    "inputs": {
+                        "cases/minimal/traffic.csv": self.sha256(case_input),
+                    },
+                    "reference_outputs": [],
+                }
+            ],
+        }
+        manifest_path = self.work_dir / "reference-manifest.json"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        verified = self.run_harness(
+            "verify",
+            "--manifest",
+            manifest_path,
+            "--repo-root",
+            repo_root,
+            "--artifact-root",
+            artifact_root,
+        )
+        self.assertEqual(verified.returncode, 0, verified.stderr)
+
+        (case_root / "fault.csv").write_bytes(b"faultId\n0\n")
+        unregistered = self.run_harness(
+            "verify",
+            "--manifest",
+            manifest_path,
+            "--repo-root",
+            repo_root,
+            "--artifact-root",
+            artifact_root,
+        )
+        self.assertEqual(unregistered.returncode, 1)
+        self.assertIn("unregistered case input", unregistered.stderr)
+        self.assertIn("cases/minimal/fault.csv", unregistered.stderr)
+
     def test_compare_reports_first_difference_and_preserves_both_outputs(self):
         reference = self.work_dir / "reference"
         candidate = self.work_dir / "candidate"
@@ -133,6 +190,7 @@ class BaselineHarnessCliTest(unittest.TestCase):
                     "artifacts": [
                         {"path": "a.txt", "comparison": "raw-byte-equality"},
                         {"path": "b.txt", "comparison": "raw-byte-equality"},
+                        {"path": "context.txt", "comparison": "raw-byte-equality"},
                     ],
                     "canonical_only_artifacts": [],
                 }
@@ -160,6 +218,130 @@ class BaselineHarnessCliTest(unittest.TestCase):
         self.assertIn("first_byte_offset=3", result.stderr)
         self.assertEqual((diagnostics / "reference" / "context.txt").read_bytes(), b"old context")
         self.assertEqual((diagnostics / "candidate" / "context.txt").read_bytes(), b"new context")
+
+    def test_compare_rejects_missing_managed_artifact(self):
+        reference = self.work_dir / "reference"
+        candidate = self.work_dir / "candidate"
+        diagnostics = self.work_dir / "diagnostics"
+        reference.mkdir()
+        candidate.mkdir()
+        (reference / "required.txt").write_bytes(b"stable")
+
+        rules = {
+            "schema_version": 1,
+            "cases": {
+                "minimal": {
+                    "artifacts": [
+                        {"path": "required.txt", "comparison": "raw-byte-equality"},
+                    ],
+                    "canonical_only_artifacts": [],
+                }
+            },
+        }
+        rules_path = self.work_dir / "comparison-rules.json"
+        rules_path.write_text(json.dumps(rules), encoding="utf-8")
+
+        result = self.run_harness(
+            "compare",
+            "--rules",
+            rules_path,
+            "--case",
+            "minimal",
+            "--reference",
+            reference,
+            "--candidate",
+            candidate,
+            "--diagnostics",
+            diagnostics,
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("first_differing_artifact=required.txt", result.stderr)
+        self.assertIn("first_byte_offset=0", result.stderr)
+
+    def test_compare_rejects_unclassified_reference_artifact(self):
+        reference = self.work_dir / "reference"
+        candidate = self.work_dir / "candidate"
+        diagnostics = self.work_dir / "diagnostics"
+        reference.mkdir()
+        candidate.mkdir()
+        (reference / "stable.txt").write_bytes(b"stable")
+        (candidate / "stable.txt").write_bytes(b"stable")
+        (reference / "new-output.txt").write_bytes(b"unexpected")
+
+        rules = {
+            "schema_version": 1,
+            "cases": {
+                "minimal": {
+                    "artifacts": [
+                        {"path": "stable.txt", "comparison": "raw-byte-equality"},
+                    ],
+                    "canonical_only_artifacts": [],
+                }
+            },
+        }
+        rules_path = self.work_dir / "comparison-rules.json"
+        rules_path.write_text(json.dumps(rules), encoding="utf-8")
+
+        result = self.run_harness(
+            "compare",
+            "--rules",
+            rules_path,
+            "--case",
+            "minimal",
+            "--reference",
+            reference,
+            "--candidate",
+            candidate,
+            "--diagnostics",
+            diagnostics,
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("first_differing_artifact=new-output.txt", result.stderr)
+        self.assertIn("first_byte_offset=0", result.stderr)
+
+    def test_compare_rejects_unclassified_candidate_artifact(self):
+        reference = self.work_dir / "reference"
+        candidate = self.work_dir / "candidate"
+        diagnostics = self.work_dir / "diagnostics"
+        reference.mkdir()
+        candidate.mkdir()
+        (reference / "stable.txt").write_bytes(b"stable")
+        (candidate / "stable.txt").write_bytes(b"stable")
+        (candidate / "new-output.txt").write_bytes(b"unexpected")
+
+        rules = {
+            "schema_version": 1,
+            "cases": {
+                "minimal": {
+                    "artifacts": [
+                        {"path": "stable.txt", "comparison": "raw-byte-equality"},
+                    ],
+                    "canonical_only_artifacts": [],
+                }
+            },
+        }
+        rules_path = self.work_dir / "comparison-rules.json"
+        rules_path.write_text(json.dumps(rules), encoding="utf-8")
+
+        result = self.run_harness(
+            "compare",
+            "--rules",
+            rules_path,
+            "--case",
+            "minimal",
+            "--reference",
+            reference,
+            "--candidate",
+            candidate,
+            "--diagnostics",
+            diagnostics,
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("first_differing_artifact=new-output.txt", result.stderr)
+        self.assertIn("first_byte_offset=0", result.stderr)
 
     def test_repository_manifest_is_path_independent_and_complete(self):
         manifest_path = (
@@ -193,6 +375,50 @@ class BaselineHarnessCliTest(unittest.TestCase):
             self.assertEqual(case["canonical_only_artifacts"], [], case["id"])
         for profile, case_rules in rules["cases"].items():
             self.assertEqual(case_rules["canonical_only_artifacts"], [], profile)
+            self.assertTrue(case_rules["artifacts"], profile)
+            self.assertEqual(
+                {artifact["comparison"] for artifact in case_rules["artifacts"]},
+                {"raw-byte-equality"},
+                profile,
+            )
+
+        runtime_profiles = {
+            ("minimal-single-rtp-write", "local-single"): "minimal-single-rtp-write",
+            ("medium-shared-tp-concurrency", "local-single"): "medium-shared-tp-concurrency",
+            ("medium-multi-tp-retransmission", "local-single"): (
+                "medium-multi-tp-retransmission"
+            ),
+            ("medium-ctp-entity-vl-pressure", "local-single"): (
+                "medium-ctp-entity-vl-pressure"
+            ),
+            ("medium-cross-owner-runtime", "local-single"): (
+                "medium-cross-owner-runtime-local"
+            ),
+            ("medium-cross-owner-runtime", "local-mtp"): (
+                "medium-cross-owner-runtime-local"
+            ),
+            ("medium-cross-owner-runtime", "mpi-single"): (
+                "medium-cross-owner-runtime-mpi"
+            ),
+            ("medium-cross-owner-runtime", "hybrid"): (
+                "medium-cross-owner-runtime-hybrid"
+            ),
+        }
+        for case in manifest["cases"]:
+            input_names = {Path(relative).name for relative in case["inputs"]}
+            runtimes = case.get("runtimes")
+            if runtimes is None:
+                runtimes = [case["runtime"]]
+            for runtime in runtimes:
+                profile = runtime_profiles[(case["id"], runtime)]
+                managed = {artifact["path"] for artifact in rules["cases"][profile]["artifacts"]}
+                expected_outputs = managed - input_names
+                recorded_outputs = {
+                    output["artifact"]
+                    for output in case["reference_outputs"]
+                    if output["runtime"] == runtime
+                }
+                self.assertEqual(recorded_outputs, expected_outputs, (case["id"], runtime))
 
 
 

@@ -3,6 +3,19 @@
   "artifact_root_default": ".openusim/unified-bus-lifecycle/reference",
   "reference": {
     "commit": "ccf41b58b0ba3b9711efea595732a2908e3e07cf",
+    "executable_freeze_contract": {
+      "rule": "Freeze exactly one executable for each incompatible accepted build configuration in T00, then reuse those exact executables for every later ticket without rebuilding or compile-time-superset substitution.",
+      "frozen_configurations": {
+        "local-single": "MPI disabled, MTP disabled",
+        "local-mtp": "MPI disabled, MTP enabled",
+        "parallel-all": "MPI enabled, MTP enabled"
+      },
+      "superset_probe": {
+        "local_single": "parallel-all runs medium-cross-owner-runtime directly and its selected outputs match local-single.",
+        "local_mtp": "parallel-all run directly with --mtp-threads=2 on medium-cross-owner-runtime terminates with SIGSEGV in ns3::UbRemoteLink::TransmitStart().",
+        "conclusion": "A single superset binary cannot cover all four accepted runtime modes; retain all three exact frozen variants."
+      }
+    },
     "submodules": {
       "scratch/ns-3-ub-tools": "2afc7202f88c132b63c38e8c7dcfc08505b13bb2"
     },
@@ -307,7 +320,7 @@
   },
   "comparison_rules": {
     "path": "tests/unified_bus_lifecycle/comparison-rules.json",
-    "sha256": "1478c015b3db6bab0e74e2b8e2c8be88d07d37e46925a47d57f04e7a7eca19a3"
+    "sha256": "ad91bb60cdf92f8ca2706c0a0cc631628df3213bce3bbdaf9ce4539265eef93b"
   },
   "cases": [
     {
@@ -329,6 +342,7 @@
       "canonical_only_artifacts": [],
       "reference_outputs": [
         {
+          "runtime": "local-single",
           "artifact": "canonical-events.rank0.txt",
           "paths": [
             "runs/local-single/minimal-single-rtp-write/run-1/case/canonical-events.rank0.txt",
@@ -337,6 +351,7 @@
           "sha256": "10f54f22c7b3f8e935b08c87eb9ed1e8d8e6384fc8ece55c8b77b5a6e0b9dd64"
         },
         {
+          "runtime": "local-single",
           "artifact": "output/task_statistics.csv",
           "paths": [
             "runs/local-single/minimal-single-rtp-write/run-1/case/output/task_statistics.csv",
@@ -345,6 +360,7 @@
           "sha256": "f9e82bd87f3ae3054d2659299f2733feab2454ea936e77f509cff1a3185f5d62"
         },
         {
+          "runtime": "local-single",
           "artifact": "output/throughput.csv",
           "paths": [
             "runs/local-single/minimal-single-rtp-write/run-1/case/output/throughput.csv",
@@ -353,6 +369,43 @@
           "sha256": "6d880c37e2c171cb8af007f5c65e5d2af0a3521585100e4038a67694d0304c51"
         },
         {
+          "runtime": "local-single",
+          "artifact": "runlog/AllPacketTrace_ACK_node_0.tr",
+          "paths": [
+            "runs/local-single/minimal-single-rtp-write/run-1/case/runlog/AllPacketTrace_ACK_node_0.tr",
+            "runs/local-single/minimal-single-rtp-write/run-2/case/runlog/AllPacketTrace_ACK_node_0.tr"
+          ],
+          "sha256": "cb57924471b31cb7321c5f6c4b378ebac4c496eb7bef3a136f45ab67f482ebf2"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/AllPacketTrace_ACK_node_1.tr",
+          "paths": [
+            "runs/local-single/minimal-single-rtp-write/run-1/case/runlog/AllPacketTrace_ACK_node_1.tr",
+            "runs/local-single/minimal-single-rtp-write/run-2/case/runlog/AllPacketTrace_ACK_node_1.tr"
+          ],
+          "sha256": "bc6de9b98c75672c29177baaf0a9aeb3211512c9eb32a2a8b69057ad25484160"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/AllPacketTrace_PKT_node_0.tr",
+          "paths": [
+            "runs/local-single/minimal-single-rtp-write/run-1/case/runlog/AllPacketTrace_PKT_node_0.tr",
+            "runs/local-single/minimal-single-rtp-write/run-2/case/runlog/AllPacketTrace_PKT_node_0.tr"
+          ],
+          "sha256": "867fed5dd0574ebb7a839a2bcb0c244779f1f6f79598867f50c14b5ba2f1e3a6"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/AllPacketTrace_PKT_node_1.tr",
+          "paths": [
+            "runs/local-single/minimal-single-rtp-write/run-1/case/runlog/AllPacketTrace_PKT_node_1.tr",
+            "runs/local-single/minimal-single-rtp-write/run-2/case/runlog/AllPacketTrace_PKT_node_1.tr"
+          ],
+          "sha256": "81352de5972bcb4a9b9e9c5f36fd6684b789017d959d108378bb7414ea3fdb3a"
+        },
+        {
+          "runtime": "local-single",
           "artifact": "runlog/PacketTrace_node_0.tr",
           "paths": [
             "runs/local-single/minimal-single-rtp-write/run-1/case/runlog/PacketTrace_node_0.tr",
@@ -361,12 +414,49 @@
           "sha256": "7ee6f9424989cd5ef2dd9217b643b1651b3d0aa7b046befb8a21f6a568679309"
         },
         {
+          "runtime": "local-single",
+          "artifact": "runlog/PacketTrace_node_1.tr",
+          "paths": [
+            "runs/local-single/minimal-single-rtp-write/run-1/case/runlog/PacketTrace_node_1.tr",
+            "runs/local-single/minimal-single-rtp-write/run-2/case/runlog/PacketTrace_node_1.tr"
+          ],
+          "sha256": "b4bd9d1d643d4e8edeed2bf0a848093eac0c7fd6e6dbc75864ac30726dac5cf2"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_0_port_0.tr",
+          "paths": [
+            "runs/local-single/minimal-single-rtp-write/run-1/case/runlog/PortTrace_node_0_port_0.tr",
+            "runs/local-single/minimal-single-rtp-write/run-2/case/runlog/PortTrace_node_0_port_0.tr"
+          ],
+          "sha256": "f1a35a1d7d9aa7ec0288f83a9b0706889e3f6b94381f6dc51f8350be802c3941"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_1_port_0.tr",
+          "paths": [
+            "runs/local-single/minimal-single-rtp-write/run-1/case/runlog/PortTrace_node_1_port_0.tr",
+            "runs/local-single/minimal-single-rtp-write/run-2/case/runlog/PortTrace_node_1_port_0.tr"
+          ],
+          "sha256": "048ef75c8abd92ec2409395eaf7b85601ae48bbd3ebb58d9c9862a8e45728ed0"
+        },
+        {
+          "runtime": "local-single",
           "artifact": "runlog/TaskTrace_node_0.tr",
           "paths": [
             "runs/local-single/minimal-single-rtp-write/run-1/case/runlog/TaskTrace_node_0.tr",
             "runs/local-single/minimal-single-rtp-write/run-2/case/runlog/TaskTrace_node_0.tr"
           ],
           "sha256": "70b0dc49edb58597e57b5244ed899973476cd6e1da722f1999f58d6984f0f462"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/TaskTrace_node_1.tr",
+          "paths": [
+            "runs/local-single/minimal-single-rtp-write/run-1/case/runlog/TaskTrace_node_1.tr",
+            "runs/local-single/minimal-single-rtp-write/run-2/case/runlog/TaskTrace_node_1.tr"
+          ],
+          "sha256": "4587206d5c5781545c8b6080b47c10ea4b496443027e14026388ba51551df447"
         }
       ]
     },
@@ -389,6 +479,7 @@
       "canonical_only_artifacts": [],
       "reference_outputs": [
         {
+          "runtime": "local-single",
           "artifact": "canonical-events.rank0.txt",
           "paths": [
             "runs/local-single/medium-shared-tp-concurrency/run-1/case/canonical-events.rank0.txt",
@@ -397,6 +488,7 @@
           "sha256": "d101cce5ff298758c0e16ae62b0f6ab9cd07e5054570893849949c571efe830d"
         },
         {
+          "runtime": "local-single",
           "artifact": "output/task_statistics.csv",
           "paths": [
             "runs/local-single/medium-shared-tp-concurrency/run-1/case/output/task_statistics.csv",
@@ -405,6 +497,7 @@
           "sha256": "6512e4fd9b2f7b13e5bb3bdb33db067e7d8ff751e692bd874ac6c8b7e83c8512"
         },
         {
+          "runtime": "local-single",
           "artifact": "output/throughput.csv",
           "paths": [
             "runs/local-single/medium-shared-tp-concurrency/run-1/case/output/throughput.csv",
@@ -413,6 +506,43 @@
           "sha256": "f89171335d16f78017cb6c8be3f31439c1529d0412d8f54e22d9d49519ea7b88"
         },
         {
+          "runtime": "local-single",
+          "artifact": "runlog/AllPacketTrace_ACK_node_0.tr",
+          "paths": [
+            "runs/local-single/medium-shared-tp-concurrency/run-1/case/runlog/AllPacketTrace_ACK_node_0.tr",
+            "runs/local-single/medium-shared-tp-concurrency/run-2/case/runlog/AllPacketTrace_ACK_node_0.tr"
+          ],
+          "sha256": "ff826d9e5237e5497aa444838073db18b5a21028f1c1c01a3fbf2fd4f3697143"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/AllPacketTrace_ACK_node_1.tr",
+          "paths": [
+            "runs/local-single/medium-shared-tp-concurrency/run-1/case/runlog/AllPacketTrace_ACK_node_1.tr",
+            "runs/local-single/medium-shared-tp-concurrency/run-2/case/runlog/AllPacketTrace_ACK_node_1.tr"
+          ],
+          "sha256": "715a0dd69552ce215236431ba6bf74a12d1fd63d197ccfb880f1be0019101b61"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/AllPacketTrace_PKT_node_0.tr",
+          "paths": [
+            "runs/local-single/medium-shared-tp-concurrency/run-1/case/runlog/AllPacketTrace_PKT_node_0.tr",
+            "runs/local-single/medium-shared-tp-concurrency/run-2/case/runlog/AllPacketTrace_PKT_node_0.tr"
+          ],
+          "sha256": "3898244aff4d370f3685d03519326f995123894da155c1c194dc6d09f9c43ac2"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/AllPacketTrace_PKT_node_1.tr",
+          "paths": [
+            "runs/local-single/medium-shared-tp-concurrency/run-1/case/runlog/AllPacketTrace_PKT_node_1.tr",
+            "runs/local-single/medium-shared-tp-concurrency/run-2/case/runlog/AllPacketTrace_PKT_node_1.tr"
+          ],
+          "sha256": "a408c37aa78e853618ef999bc274c690920393cb9815efca396dffe8ca32deb9"
+        },
+        {
+          "runtime": "local-single",
           "artifact": "runlog/PacketTrace_node_0.tr",
           "paths": [
             "runs/local-single/medium-shared-tp-concurrency/run-1/case/runlog/PacketTrace_node_0.tr",
@@ -421,12 +551,103 @@
           "sha256": "a91f722926e15eef43794d5f72afb726d851c44a5b46eac80e99a4bbb116ca11"
         },
         {
+          "runtime": "local-single",
+          "artifact": "runlog/PacketTrace_node_1.tr",
+          "paths": [
+            "runs/local-single/medium-shared-tp-concurrency/run-1/case/runlog/PacketTrace_node_1.tr",
+            "runs/local-single/medium-shared-tp-concurrency/run-2/case/runlog/PacketTrace_node_1.tr"
+          ],
+          "sha256": "e7c7551f28ec043492f8d7423bdf0e0bcf3c291abc4541735785131b33f27cb9"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PacketTrace_node_2.tr",
+          "paths": [
+            "runs/local-single/medium-shared-tp-concurrency/run-1/case/runlog/PacketTrace_node_2.tr",
+            "runs/local-single/medium-shared-tp-concurrency/run-2/case/runlog/PacketTrace_node_2.tr"
+          ],
+          "sha256": "44d3e5b8b1009f6b2bcbd5370bbe32a440f333f250d434d027ebded8b18f0619"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PacketTrace_node_3.tr",
+          "paths": [
+            "runs/local-single/medium-shared-tp-concurrency/run-1/case/runlog/PacketTrace_node_3.tr",
+            "runs/local-single/medium-shared-tp-concurrency/run-2/case/runlog/PacketTrace_node_3.tr"
+          ],
+          "sha256": "3c2f9a5b44cd82eb5022f18c132c51dbd81ce2682415be810b8a9a5ce3369b71"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_0_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-shared-tp-concurrency/run-1/case/runlog/PortTrace_node_0_port_0.tr",
+            "runs/local-single/medium-shared-tp-concurrency/run-2/case/runlog/PortTrace_node_0_port_0.tr"
+          ],
+          "sha256": "18905b16df34ea946cdac0a329b49ee0fde9d877fb5294e2b3cbfd3d8e942426"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_1_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-shared-tp-concurrency/run-1/case/runlog/PortTrace_node_1_port_0.tr",
+            "runs/local-single/medium-shared-tp-concurrency/run-2/case/runlog/PortTrace_node_1_port_0.tr"
+          ],
+          "sha256": "fbe3f64e2db1136ea43692bfc4a717ed1fc128ba012865408b4758148baa3b19"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_2_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-shared-tp-concurrency/run-1/case/runlog/PortTrace_node_2_port_0.tr",
+            "runs/local-single/medium-shared-tp-concurrency/run-2/case/runlog/PortTrace_node_2_port_0.tr"
+          ],
+          "sha256": "208eee5d7ebaa4cbe8d39d808c395fece733cf5217cb98cd359a280526fb3529"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_2_port_1.tr",
+          "paths": [
+            "runs/local-single/medium-shared-tp-concurrency/run-1/case/runlog/PortTrace_node_2_port_1.tr",
+            "runs/local-single/medium-shared-tp-concurrency/run-2/case/runlog/PortTrace_node_2_port_1.tr"
+          ],
+          "sha256": "fdd13a4e433019ee5d0c70646b6f6fa30ea0bb52d4896c4387c4e3f793a927f8"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_3_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-shared-tp-concurrency/run-1/case/runlog/PortTrace_node_3_port_0.tr",
+            "runs/local-single/medium-shared-tp-concurrency/run-2/case/runlog/PortTrace_node_3_port_0.tr"
+          ],
+          "sha256": "feb3ea645e166c69134e30b093f99e2cafd4db111642e355aae58fcacbc3a35d"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_3_port_1.tr",
+          "paths": [
+            "runs/local-single/medium-shared-tp-concurrency/run-1/case/runlog/PortTrace_node_3_port_1.tr",
+            "runs/local-single/medium-shared-tp-concurrency/run-2/case/runlog/PortTrace_node_3_port_1.tr"
+          ],
+          "sha256": "8955795792a515b7ae3e25bbe13d28c32361003a3c94db0163b59501c9a077fc"
+        },
+        {
+          "runtime": "local-single",
           "artifact": "runlog/TaskTrace_node_0.tr",
           "paths": [
             "runs/local-single/medium-shared-tp-concurrency/run-1/case/runlog/TaskTrace_node_0.tr",
             "runs/local-single/medium-shared-tp-concurrency/run-2/case/runlog/TaskTrace_node_0.tr"
           ],
           "sha256": "cffc5fe21bb36a664bd37d947251e0076318c61e75192a29387f333d1cc8509a"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/TaskTrace_node_1.tr",
+          "paths": [
+            "runs/local-single/medium-shared-tp-concurrency/run-1/case/runlog/TaskTrace_node_1.tr",
+            "runs/local-single/medium-shared-tp-concurrency/run-2/case/runlog/TaskTrace_node_1.tr"
+          ],
+          "sha256": "e51d83596b52d826fe5df8fe3c7af47dfa1a7c5bd91a57f8a2b1539322c96526"
         }
       ]
     },
@@ -451,6 +672,7 @@
       "canonical_only_artifacts": [],
       "reference_outputs": [
         {
+          "runtime": "local-single",
           "artifact": "canonical-events.rank0.txt",
           "paths": [
             "runs/local-single/medium-multi-tp-retransmission/run-1/case/canonical-events.rank0.txt",
@@ -459,6 +681,7 @@
           "sha256": "68ab18cc7e025e09049f1bcef576b8340acc53f8bf7e1fa3fb9c3444e461e9ea"
         },
         {
+          "runtime": "local-single",
           "artifact": "output/task_statistics.csv",
           "paths": [
             "runs/local-single/medium-multi-tp-retransmission/run-1/case/output/task_statistics.csv",
@@ -467,6 +690,7 @@
           "sha256": "3a428acc0242596cf0781bf2c83792a4cfd4de168426a6d998216c08a065ec14"
         },
         {
+          "runtime": "local-single",
           "artifact": "output/throughput.csv",
           "paths": [
             "runs/local-single/medium-multi-tp-retransmission/run-1/case/output/throughput.csv",
@@ -475,6 +699,25 @@
           "sha256": "3045f10eb87e4ece7fc186a88bb736a6e27956bf77988c2ef5f9af4e4db4392b"
         },
         {
+          "runtime": "local-single",
+          "artifact": "runlog/AllPacketTrace_ACK_node_0.tr",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/AllPacketTrace_ACK_node_0.tr",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/runlog/AllPacketTrace_ACK_node_0.tr"
+          ],
+          "sha256": "53055f8d14d8c059f036ed6873f21c7643eb252ef4d60f57d3db65b8bb749481"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/AllPacketTrace_ACK_node_1.tr",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/AllPacketTrace_ACK_node_1.tr",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/runlog/AllPacketTrace_ACK_node_1.tr"
+          ],
+          "sha256": "16fa8cdbf17d59589092e4e4b20d1a5ed43b8ebeb3e86eebda8d87f6f624ae96"
+        },
+        {
+          "runtime": "local-single",
           "artifact": "runlog/AllPacketTrace_PKT_node_0.tr",
           "paths": [
             "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/AllPacketTrace_PKT_node_0.tr",
@@ -483,12 +726,184 @@
           "sha256": "f3abbbb0189ab9bf13ee06b888fe689b2654dedcfee39f0186d5197b035364f7"
         },
         {
+          "runtime": "local-single",
+          "artifact": "runlog/AllPacketTrace_PKT_node_1.tr",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/AllPacketTrace_PKT_node_1.tr",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/runlog/AllPacketTrace_PKT_node_1.tr"
+          ],
+          "sha256": "5d834cb8d547f7525647cf11712b0e9bfcaa1723775ca89193734a18f10539d5"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PacketTrace_node_0.tr",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/PacketTrace_node_0.tr",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/runlog/PacketTrace_node_0.tr"
+          ],
+          "sha256": "44c86407873022f0d6c70c425bdf520f78db12149e1211b90eed44091e672fb0"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PacketTrace_node_1.tr",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/PacketTrace_node_1.tr",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/runlog/PacketTrace_node_1.tr"
+          ],
+          "sha256": "3bdca345ecd8b53359c7d100efeaa98d893415d87fa255085fd627080f3a3593"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PacketTrace_node_2.tr",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/PacketTrace_node_2.tr",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/runlog/PacketTrace_node_2.tr"
+          ],
+          "sha256": "a1db049c71e475b98a32e921970b4021112ad066a6a6050cf6e42c295ddd8dc0"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PacketTrace_node_3.tr",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/PacketTrace_node_3.tr",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/runlog/PacketTrace_node_3.tr"
+          ],
+          "sha256": "e5ddaffe581c4cfdcaa2318753636a28f8d7778745bbb0a3fd827a3dbebbc6d6"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PacketTrace_node_4.tr",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/PacketTrace_node_4.tr",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/runlog/PacketTrace_node_4.tr"
+          ],
+          "sha256": "aeaccb962eaddb5427c77a7fb29eb9ac1dc43dd3da354f01b3d3a5dfc4dd05e7"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_0_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/PortTrace_node_0_port_0.tr",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/runlog/PortTrace_node_0_port_0.tr"
+          ],
+          "sha256": "9cfaec6368ec3f2075dd23273ff75234239a0c6e704fe2a843364a1208bee422"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_0_port_1.tr",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/PortTrace_node_0_port_1.tr",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/runlog/PortTrace_node_0_port_1.tr"
+          ],
+          "sha256": "18135f5e45af2e67ec08f0469d2d712c8cc7483dd6ddfa277d5bbdfc54c8580b"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_0_port_2.tr",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/PortTrace_node_0_port_2.tr",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/runlog/PortTrace_node_0_port_2.tr"
+          ],
+          "sha256": "7134ffc6888b99b3dbd5d2cda5ab5b336d04c2a6a05b7d6c8e301274e0e23d10"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_1_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/PortTrace_node_1_port_0.tr",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/runlog/PortTrace_node_1_port_0.tr"
+          ],
+          "sha256": "af3f95de832aed3cb7554deee0226abdf799d275aebdefe920efe5985f216e71"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_1_port_1.tr",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/PortTrace_node_1_port_1.tr",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/runlog/PortTrace_node_1_port_1.tr"
+          ],
+          "sha256": "e63ccadffbc571e9a19e92b7cfede4e0c8d1f9c1c9b6ba47db59069b38f3e770"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_1_port_2.tr",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/PortTrace_node_1_port_2.tr",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/runlog/PortTrace_node_1_port_2.tr"
+          ],
+          "sha256": "5b4ffdfe86ca8cec6d5bd79f80c4e6bd98f97f49ad5f06ccf6c9062459168dde"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_2_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/PortTrace_node_2_port_0.tr",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/runlog/PortTrace_node_2_port_0.tr"
+          ],
+          "sha256": "be9497e9a8093c0aa16a1d4a71d186943e974ccec776edcca157dddcfc9d6ba1"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_2_port_1.tr",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/PortTrace_node_2_port_1.tr",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/runlog/PortTrace_node_2_port_1.tr"
+          ],
+          "sha256": "e2f85cd84167a6d254119e75e14b241372f32f48faa8eb78f9399c7d7006650f"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_3_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/PortTrace_node_3_port_0.tr",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/runlog/PortTrace_node_3_port_0.tr"
+          ],
+          "sha256": "87025f6e8f1dbd3cc9c77e568b27b4545d935849546eb4b2babf14aa1bafe0ed"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_3_port_1.tr",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/PortTrace_node_3_port_1.tr",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/runlog/PortTrace_node_3_port_1.tr"
+          ],
+          "sha256": "b0d9b7eba05c989490d73cf4047092d7e04818d6d5d3d09b9b58f22ebc5c7927"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_4_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/PortTrace_node_4_port_0.tr",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/runlog/PortTrace_node_4_port_0.tr"
+          ],
+          "sha256": "87025f6e8f1dbd3cc9c77e568b27b4545d935849546eb4b2babf14aa1bafe0ed"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_4_port_1.tr",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/PortTrace_node_4_port_1.tr",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/runlog/PortTrace_node_4_port_1.tr"
+          ],
+          "sha256": "b0d9b7eba05c989490d73cf4047092d7e04818d6d5d3d09b9b58f22ebc5c7927"
+        },
+        {
+          "runtime": "local-single",
           "artifact": "runlog/TaskTrace_node_0.tr",
           "paths": [
             "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/TaskTrace_node_0.tr",
             "runs/local-single/medium-multi-tp-retransmission/run-2/case/runlog/TaskTrace_node_0.tr"
           ],
           "sha256": "d007ea503eb9ef335fc3ef1325db5c025ec92504dc5ed0e62c00d280300b9913"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/TaskTrace_node_1.tr",
+          "paths": [
+            "runs/local-single/medium-multi-tp-retransmission/run-1/case/runlog/TaskTrace_node_1.tr",
+            "runs/local-single/medium-multi-tp-retransmission/run-2/case/runlog/TaskTrace_node_1.tr"
+          ],
+          "sha256": "503ea0ea05b24e8e9ceda1381d594baa1e55d78b76044bd5437be9ff66168055"
         }
       ]
     },
@@ -510,6 +925,7 @@
       "canonical_only_artifacts": [],
       "reference_outputs": [
         {
+          "runtime": "local-single",
           "artifact": "canonical-events.rank0.txt",
           "paths": [
             "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/canonical-events.rank0.txt",
@@ -518,6 +934,7 @@
           "sha256": "a6ada98a62a3ddf5ec6a3691d4e0455c45e8a20475b4a6f6fb57f0572e9efd07"
         },
         {
+          "runtime": "local-single",
           "artifact": "output/task_statistics.csv",
           "paths": [
             "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/output/task_statistics.csv",
@@ -526,6 +943,7 @@
           "sha256": "fb2e344822be06a8b8e8963581819d417d810bafa03b35b77023682c965e2c05"
         },
         {
+          "runtime": "local-single",
           "artifact": "output/throughput.csv",
           "paths": [
             "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/output/throughput.csv",
@@ -534,6 +952,196 @@
           "sha256": "2313543a0419a50ca424e843f173bd228f2ca9888015315aff3accb25c18a183"
         },
         {
+          "runtime": "local-single",
+          "artifact": "runlog/PacketTrace_node_0.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/PacketTrace_node_0.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/PacketTrace_node_0.tr"
+          ],
+          "sha256": "061c4e0e2f53321511736012fad68b8af7162597d38f7b5a4c812cdf2409fc73"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PacketTrace_node_1.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/PacketTrace_node_1.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/PacketTrace_node_1.tr"
+          ],
+          "sha256": "cd9d7c90117344533aa73617c8e3b3a31e762e1faf2a34739028956abc6a214b"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_0_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/PortTrace_node_0_port_0.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/PortTrace_node_0_port_0.tr"
+          ],
+          "sha256": "fec8369b298e73bb14677c90b5fb2950515d058668110361c8d33137185d2429"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_1_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/PortTrace_node_1_port_0.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/PortTrace_node_1_port_0.tr"
+          ],
+          "sha256": "cae76eabc38b6258a16e8ab684978cf107a6f96cff74bf2fda6fcbaf26b365a4"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_2_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/PortTrace_node_2_port_0.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/PortTrace_node_2_port_0.tr"
+          ],
+          "sha256": "0b6e1705a9064a7c820e716e30859dbf08cc0835670239c026f6fde9701b6ff0"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_2_port_1.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/PortTrace_node_2_port_1.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/PortTrace_node_2_port_1.tr"
+          ],
+          "sha256": "52b1d5dc354046a5c9a285aea12ce33d297dc3dcafb363561d4d846b69ca9e2b"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_2_port_2.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/PortTrace_node_2_port_2.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/PortTrace_node_2_port_2.tr"
+          ],
+          "sha256": "287782c6cabb01cfd9faf669ba1667e3630c9e317bc17fd9c8dd283ac15b2434"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_2_port_3.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/PortTrace_node_2_port_3.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/PortTrace_node_2_port_3.tr"
+          ],
+          "sha256": "92cef0488817cbe1dfa23a5c199f719fc6ad79a3a3c0cbf7158cb70b7cc5f139"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_3_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/PortTrace_node_3_port_0.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/PortTrace_node_3_port_0.tr"
+          ],
+          "sha256": "ab88e561ffee93063bf5e147ae0a2649c1987873c252a65dcd18f6b7c8b1ee92"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_3_port_1.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/PortTrace_node_3_port_1.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/PortTrace_node_3_port_1.tr"
+          ],
+          "sha256": "9b6f8cdc4097a3fbb5f0e94b0147c1c71c3c21abb5929fcd379d1bd7c8127a82"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_3_port_2.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/PortTrace_node_3_port_2.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/PortTrace_node_3_port_2.tr"
+          ],
+          "sha256": "48719becb5f3403a17e61364f1d7440dc61f26e6b99481647a59395d19d96bb5"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_3_port_3.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/PortTrace_node_3_port_3.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/PortTrace_node_3_port_3.tr"
+          ],
+          "sha256": "4e69e6cd8e2917ddf9e3458c5100577be2d0b4cc61e10eca80147ab4f12be20d"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_4_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/PortTrace_node_4_port_0.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/PortTrace_node_4_port_0.tr"
+          ],
+          "sha256": "8a8cfc79476f2d62a080fa88e0bf88c6a00a292b7c3e43e9ee89c3647abe2053"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_4_port_1.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/PortTrace_node_4_port_1.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/PortTrace_node_4_port_1.tr"
+          ],
+          "sha256": "c2c2874135b7a7970ae594d47cec6fa23a409382808cdbb3f654109dcdf7bab9"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_5_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/PortTrace_node_5_port_0.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/PortTrace_node_5_port_0.tr"
+          ],
+          "sha256": "431076b189b97ffdf7b4f921486a32239f7ffd240f64284b34153d6dcc86e936"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_5_port_1.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/PortTrace_node_5_port_1.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/PortTrace_node_5_port_1.tr"
+          ],
+          "sha256": "9fbc45fa6266c0dcbac01415edd138e3c24a0182267e6c1e5da61d236f1f598a"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_6_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/PortTrace_node_6_port_0.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/PortTrace_node_6_port_0.tr"
+          ],
+          "sha256": "99b4ce4123166f512d8a4641b009b9448dca0b87e170e9d0f1f10d93d3a85b48"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_6_port_1.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/PortTrace_node_6_port_1.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/PortTrace_node_6_port_1.tr"
+          ],
+          "sha256": "2421f7735afde3d31768d5d11be1179bd9266380aa54aedb8cea54961c2b8a95"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/QueueTrace_node_0_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/QueueTrace_node_0_port_0.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/QueueTrace_node_0_port_0.tr"
+          ],
+          "sha256": "da91b72b8614fe3a0b6eae62d7e24c29f6cf0773f4b58a6071e41d4477ecc8ad"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/QueueTrace_node_1_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/QueueTrace_node_1_port_0.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/QueueTrace_node_1_port_0.tr"
+          ],
+          "sha256": "365c1475590f364d12c0f0ddf9895d4dd1d5efa8f7954f2f8d40fa2bbd5aeaae"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/QueueTrace_node_2_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/QueueTrace_node_2_port_0.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/QueueTrace_node_2_port_0.tr"
+          ],
+          "sha256": "78c3eb0cda73f5200056a588c50250c6cbcc6f7faf80a75eda2cc3ab620332e1"
+        },
+        {
+          "runtime": "local-single",
           "artifact": "runlog/QueueTrace_node_2_port_1.tr",
           "paths": [
             "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/QueueTrace_node_2_port_1.tr",
@@ -542,12 +1150,130 @@
           "sha256": "6b5ac6341eee4cee64e6007e2ff6e7cb020772d251ac92675c6eb1d99b64585a"
         },
         {
+          "runtime": "local-single",
+          "artifact": "runlog/QueueTrace_node_2_port_2.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/QueueTrace_node_2_port_2.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/QueueTrace_node_2_port_2.tr"
+          ],
+          "sha256": "9036fd3a00ecbbbeba475e354333f353a4418c868feae2746a25851ea61809d7"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/QueueTrace_node_2_port_3.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/QueueTrace_node_2_port_3.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/QueueTrace_node_2_port_3.tr"
+          ],
+          "sha256": "eab55a78c737de4db632b196844db468ff2ebfc43917740f5a11570edd77788b"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/QueueTrace_node_3_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/QueueTrace_node_3_port_0.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/QueueTrace_node_3_port_0.tr"
+          ],
+          "sha256": "b98db94c530740d74c7b5b2ff350a44b0dd481695428a39248dacc97150a6ce4"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/QueueTrace_node_3_port_1.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/QueueTrace_node_3_port_1.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/QueueTrace_node_3_port_1.tr"
+          ],
+          "sha256": "1f13562e4305f87fc1e9ad7b82afab0791ae65a2d4da985ccfb9d7e99b6bf9f0"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/QueueTrace_node_3_port_2.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/QueueTrace_node_3_port_2.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/QueueTrace_node_3_port_2.tr"
+          ],
+          "sha256": "ba827bce51b4fa7619f89fa28bdf6768da9d622e780eb3eb034f5a8ffc20d647"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/QueueTrace_node_3_port_3.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/QueueTrace_node_3_port_3.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/QueueTrace_node_3_port_3.tr"
+          ],
+          "sha256": "eef3d6dca4caa9a6c0945070490cb8b8af117c35d78d3d58dae018a23941d0df"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/QueueTrace_node_4_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/QueueTrace_node_4_port_0.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/QueueTrace_node_4_port_0.tr"
+          ],
+          "sha256": "607a66295be98355a33f44966c7ab3f7ff4236be10d4c56d223fbea388115c61"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/QueueTrace_node_4_port_1.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/QueueTrace_node_4_port_1.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/QueueTrace_node_4_port_1.tr"
+          ],
+          "sha256": "e3caf9c49d5c54d9ea2ff6bf1997d37cc74fab6928d00f37550356e37b314cf0"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/QueueTrace_node_5_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/QueueTrace_node_5_port_0.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/QueueTrace_node_5_port_0.tr"
+          ],
+          "sha256": "1cb103528e18333ebcf89c625b961efcf042e144c50462a086bb3a69f318aa6e"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/QueueTrace_node_5_port_1.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/QueueTrace_node_5_port_1.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/QueueTrace_node_5_port_1.tr"
+          ],
+          "sha256": "d12eb213c82ac110e383fac218ea2223ff354699c5ccdbff3850fbedf4486ae0"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/QueueTrace_node_6_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/QueueTrace_node_6_port_0.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/QueueTrace_node_6_port_0.tr"
+          ],
+          "sha256": "641bc73366698e96016959168db388d1dc82ff84d6cfd64bb7b891f674047a00"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/QueueTrace_node_6_port_1.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/QueueTrace_node_6_port_1.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/QueueTrace_node_6_port_1.tr"
+          ],
+          "sha256": "fa21277cec3a83737275ac48cc0e0cfb8c473ab16bf11451c54bdfc5f90bf664"
+        },
+        {
+          "runtime": "local-single",
           "artifact": "runlog/TaskTrace_node_0.tr",
           "paths": [
             "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/TaskTrace_node_0.tr",
             "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/TaskTrace_node_0.tr"
           ],
           "sha256": "a285e73a279a55bb83a1eb459fb6bb4b0747d01c229dd2bfc01aeb8bdf542be1"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/TaskTrace_node_1.tr",
+          "paths": [
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-1/case/runlog/TaskTrace_node_1.tr",
+            "runs/local-single/medium-ctp-entity-vl-pressure/run-2/case/runlog/TaskTrace_node_1.tr"
+          ],
+          "sha256": "b3ec1ea8a461974376b536788f795d758848b32a5c42549e4f5288ecd03c6fde"
         }
       ]
     },
@@ -576,7 +1302,8 @@
       "canonical_only_artifacts": [],
       "reference_outputs": [
         {
-          "artifact": "local-single/canonical-events.rank0.txt",
+          "runtime": "local-single",
+          "artifact": "canonical-events.rank0.txt",
           "paths": [
             "runs/local-single/medium-cross-owner-runtime/run-1/case/canonical-events.rank0.txt",
             "runs/local-single/medium-cross-owner-runtime/run-2/case/canonical-events.rank0.txt"
@@ -584,7 +1311,116 @@
           "sha256": "10f54f22c7b3f8e935b08c87eb9ed1e8d8e6384fc8ece55c8b77b5a6e0b9dd64"
         },
         {
-          "artifact": "local-mtp/canonical-events.rank0.txt",
+          "runtime": "local-single",
+          "artifact": "output/task_statistics.csv",
+          "paths": [
+            "runs/local-single/medium-cross-owner-runtime/run-1/case/output/task_statistics.csv",
+            "runs/local-single/medium-cross-owner-runtime/run-2/case/output/task_statistics.csv"
+          ],
+          "sha256": "f9e82bd87f3ae3054d2659299f2733feab2454ea936e77f509cff1a3185f5d62"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "output/throughput.csv",
+          "paths": [
+            "runs/local-single/medium-cross-owner-runtime/run-1/case/output/throughput.csv",
+            "runs/local-single/medium-cross-owner-runtime/run-2/case/output/throughput.csv"
+          ],
+          "sha256": "6d880c37e2c171cb8af007f5c65e5d2af0a3521585100e4038a67694d0304c51"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/AllPacketTrace_ACK_node_0.tr",
+          "paths": [
+            "runs/local-single/medium-cross-owner-runtime/run-1/case/runlog/AllPacketTrace_ACK_node_0.tr",
+            "runs/local-single/medium-cross-owner-runtime/run-2/case/runlog/AllPacketTrace_ACK_node_0.tr"
+          ],
+          "sha256": "5286295cc22d7e06e0dedb53a480fa657cd3f5acb448d43f0f4d1a6a5dde55a3"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/AllPacketTrace_ACK_node_1.tr",
+          "paths": [
+            "runs/local-single/medium-cross-owner-runtime/run-1/case/runlog/AllPacketTrace_ACK_node_1.tr",
+            "runs/local-single/medium-cross-owner-runtime/run-2/case/runlog/AllPacketTrace_ACK_node_1.tr"
+          ],
+          "sha256": "99b6d8a6afbf55b5f4e51b21a8d1bce9440ad2c49bf6fdd95912c20a44a4c42c"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/AllPacketTrace_PKT_node_0.tr",
+          "paths": [
+            "runs/local-single/medium-cross-owner-runtime/run-1/case/runlog/AllPacketTrace_PKT_node_0.tr",
+            "runs/local-single/medium-cross-owner-runtime/run-2/case/runlog/AllPacketTrace_PKT_node_0.tr"
+          ],
+          "sha256": "d980d620618137a2044e730f25ec17da93843fbd96f9a23a9e3402739e1e274f"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/AllPacketTrace_PKT_node_1.tr",
+          "paths": [
+            "runs/local-single/medium-cross-owner-runtime/run-1/case/runlog/AllPacketTrace_PKT_node_1.tr",
+            "runs/local-single/medium-cross-owner-runtime/run-2/case/runlog/AllPacketTrace_PKT_node_1.tr"
+          ],
+          "sha256": "c5a330d92373c13eab771d3245739375eecf52be1df2e625ce62468df3258893"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PacketTrace_node_0.tr",
+          "paths": [
+            "runs/local-single/medium-cross-owner-runtime/run-1/case/runlog/PacketTrace_node_0.tr",
+            "runs/local-single/medium-cross-owner-runtime/run-2/case/runlog/PacketTrace_node_0.tr"
+          ],
+          "sha256": "3a190e5cb697931909f9d4b5c40fd44dfdfd7a36640e527c7373b5d07a699267"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PacketTrace_node_1.tr",
+          "paths": [
+            "runs/local-single/medium-cross-owner-runtime/run-1/case/runlog/PacketTrace_node_1.tr",
+            "runs/local-single/medium-cross-owner-runtime/run-2/case/runlog/PacketTrace_node_1.tr"
+          ],
+          "sha256": "159619521a5195f213e938a492cbb5d9beefa32adc350890bb811dd260ed84c8"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_0_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-cross-owner-runtime/run-1/case/runlog/PortTrace_node_0_port_0.tr",
+            "runs/local-single/medium-cross-owner-runtime/run-2/case/runlog/PortTrace_node_0_port_0.tr"
+          ],
+          "sha256": "f1a35a1d7d9aa7ec0288f83a9b0706889e3f6b94381f6dc51f8350be802c3941"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/PortTrace_node_1_port_0.tr",
+          "paths": [
+            "runs/local-single/medium-cross-owner-runtime/run-1/case/runlog/PortTrace_node_1_port_0.tr",
+            "runs/local-single/medium-cross-owner-runtime/run-2/case/runlog/PortTrace_node_1_port_0.tr"
+          ],
+          "sha256": "048ef75c8abd92ec2409395eaf7b85601ae48bbd3ebb58d9c9862a8e45728ed0"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/TaskTrace_node_0.tr",
+          "paths": [
+            "runs/local-single/medium-cross-owner-runtime/run-1/case/runlog/TaskTrace_node_0.tr",
+            "runs/local-single/medium-cross-owner-runtime/run-2/case/runlog/TaskTrace_node_0.tr"
+          ],
+          "sha256": "e940530fe9a527526a3c19bd0c899b0b001563f9feeb051ac580624729a55f01"
+        },
+        {
+          "runtime": "local-single",
+          "artifact": "runlog/TaskTrace_node_1.tr",
+          "paths": [
+            "runs/local-single/medium-cross-owner-runtime/run-1/case/runlog/TaskTrace_node_1.tr",
+            "runs/local-single/medium-cross-owner-runtime/run-2/case/runlog/TaskTrace_node_1.tr"
+          ],
+          "sha256": "fb6d7333dd337bc0ae65e64d8628390ee59431803ba7d3477cafd60d2a57494b"
+        },
+        {
+          "runtime": "local-mtp",
+          "artifact": "canonical-events.rank0.txt",
           "paths": [
             "runs/local-mtp/medium-cross-owner-runtime/run-1/case/canonical-events.rank0.txt",
             "runs/local-mtp/medium-cross-owner-runtime/run-2/case/canonical-events.rank0.txt"
@@ -592,96 +1428,360 @@
           "sha256": "72a03b332b4fb144ad1a3ccc03d454f1c7e506ceafcb6274360b5ca96b7579f6"
         },
         {
-          "artifact": "mpi-single/canonical-events.rank0.txt",
+          "runtime": "local-mtp",
+          "artifact": "output/task_statistics.csv",
+          "paths": [
+            "runs/local-mtp/medium-cross-owner-runtime/run-1/case/output/task_statistics.csv",
+            "runs/local-mtp/medium-cross-owner-runtime/run-2/case/output/task_statistics.csv"
+          ],
+          "sha256": "f9e82bd87f3ae3054d2659299f2733feab2454ea936e77f509cff1a3185f5d62"
+        },
+        {
+          "runtime": "local-mtp",
+          "artifact": "output/throughput.csv",
+          "paths": [
+            "runs/local-mtp/medium-cross-owner-runtime/run-1/case/output/throughput.csv",
+            "runs/local-mtp/medium-cross-owner-runtime/run-2/case/output/throughput.csv"
+          ],
+          "sha256": "6d880c37e2c171cb8af007f5c65e5d2af0a3521585100e4038a67694d0304c51"
+        },
+        {
+          "runtime": "local-mtp",
+          "artifact": "runlog/AllPacketTrace_ACK_node_0.tr",
+          "paths": [
+            "runs/local-mtp/medium-cross-owner-runtime/run-1/case/runlog/AllPacketTrace_ACK_node_0.tr",
+            "runs/local-mtp/medium-cross-owner-runtime/run-2/case/runlog/AllPacketTrace_ACK_node_0.tr"
+          ],
+          "sha256": "5286295cc22d7e06e0dedb53a480fa657cd3f5acb448d43f0f4d1a6a5dde55a3"
+        },
+        {
+          "runtime": "local-mtp",
+          "artifact": "runlog/AllPacketTrace_ACK_node_1.tr",
+          "paths": [
+            "runs/local-mtp/medium-cross-owner-runtime/run-1/case/runlog/AllPacketTrace_ACK_node_1.tr",
+            "runs/local-mtp/medium-cross-owner-runtime/run-2/case/runlog/AllPacketTrace_ACK_node_1.tr"
+          ],
+          "sha256": "99b6d8a6afbf55b5f4e51b21a8d1bce9440ad2c49bf6fdd95912c20a44a4c42c"
+        },
+        {
+          "runtime": "local-mtp",
+          "artifact": "runlog/AllPacketTrace_PKT_node_0.tr",
+          "paths": [
+            "runs/local-mtp/medium-cross-owner-runtime/run-1/case/runlog/AllPacketTrace_PKT_node_0.tr",
+            "runs/local-mtp/medium-cross-owner-runtime/run-2/case/runlog/AllPacketTrace_PKT_node_0.tr"
+          ],
+          "sha256": "d980d620618137a2044e730f25ec17da93843fbd96f9a23a9e3402739e1e274f"
+        },
+        {
+          "runtime": "local-mtp",
+          "artifact": "runlog/AllPacketTrace_PKT_node_1.tr",
+          "paths": [
+            "runs/local-mtp/medium-cross-owner-runtime/run-1/case/runlog/AllPacketTrace_PKT_node_1.tr",
+            "runs/local-mtp/medium-cross-owner-runtime/run-2/case/runlog/AllPacketTrace_PKT_node_1.tr"
+          ],
+          "sha256": "c5a330d92373c13eab771d3245739375eecf52be1df2e625ce62468df3258893"
+        },
+        {
+          "runtime": "local-mtp",
+          "artifact": "runlog/PacketTrace_node_0.tr",
+          "paths": [
+            "runs/local-mtp/medium-cross-owner-runtime/run-1/case/runlog/PacketTrace_node_0.tr",
+            "runs/local-mtp/medium-cross-owner-runtime/run-2/case/runlog/PacketTrace_node_0.tr"
+          ],
+          "sha256": "3a190e5cb697931909f9d4b5c40fd44dfdfd7a36640e527c7373b5d07a699267"
+        },
+        {
+          "runtime": "local-mtp",
+          "artifact": "runlog/PacketTrace_node_1.tr",
+          "paths": [
+            "runs/local-mtp/medium-cross-owner-runtime/run-1/case/runlog/PacketTrace_node_1.tr",
+            "runs/local-mtp/medium-cross-owner-runtime/run-2/case/runlog/PacketTrace_node_1.tr"
+          ],
+          "sha256": "159619521a5195f213e938a492cbb5d9beefa32adc350890bb811dd260ed84c8"
+        },
+        {
+          "runtime": "local-mtp",
+          "artifact": "runlog/PortTrace_node_0_port_0.tr",
+          "paths": [
+            "runs/local-mtp/medium-cross-owner-runtime/run-1/case/runlog/PortTrace_node_0_port_0.tr",
+            "runs/local-mtp/medium-cross-owner-runtime/run-2/case/runlog/PortTrace_node_0_port_0.tr"
+          ],
+          "sha256": "f1a35a1d7d9aa7ec0288f83a9b0706889e3f6b94381f6dc51f8350be802c3941"
+        },
+        {
+          "runtime": "local-mtp",
+          "artifact": "runlog/PortTrace_node_1_port_0.tr",
+          "paths": [
+            "runs/local-mtp/medium-cross-owner-runtime/run-1/case/runlog/PortTrace_node_1_port_0.tr",
+            "runs/local-mtp/medium-cross-owner-runtime/run-2/case/runlog/PortTrace_node_1_port_0.tr"
+          ],
+          "sha256": "048ef75c8abd92ec2409395eaf7b85601ae48bbd3ebb58d9c9862a8e45728ed0"
+        },
+        {
+          "runtime": "local-mtp",
+          "artifact": "runlog/TaskTrace_node_0.tr",
+          "paths": [
+            "runs/local-mtp/medium-cross-owner-runtime/run-1/case/runlog/TaskTrace_node_0.tr",
+            "runs/local-mtp/medium-cross-owner-runtime/run-2/case/runlog/TaskTrace_node_0.tr"
+          ],
+          "sha256": "e940530fe9a527526a3c19bd0c899b0b001563f9feeb051ac580624729a55f01"
+        },
+        {
+          "runtime": "local-mtp",
+          "artifact": "runlog/TaskTrace_node_1.tr",
+          "paths": [
+            "runs/local-mtp/medium-cross-owner-runtime/run-1/case/runlog/TaskTrace_node_1.tr",
+            "runs/local-mtp/medium-cross-owner-runtime/run-2/case/runlog/TaskTrace_node_1.tr"
+          ],
+          "sha256": "fb6d7333dd337bc0ae65e64d8628390ee59431803ba7d3477cafd60d2a57494b"
+        },
+        {
+          "runtime": "mpi-single",
+          "artifact": "canonical-events.rank0.txt",
           "paths": [
             "runs/mpi-single/medium-cross-owner-runtime/run-1/case/canonical-events.rank0.txt",
-            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/canonical-events.rank0.txt",
+            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/canonical-events.rank0.txt"
+          ],
+          "sha256": "72a03b332b4fb144ad1a3ccc03d454f1c7e506ceafcb6274360b5ca96b7579f6"
+        },
+        {
+          "runtime": "mpi-single",
+          "artifact": "canonical-events.rank1.txt",
+          "paths": [
+            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/canonical-events.rank1.txt",
+            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/canonical-events.rank1.txt"
+          ],
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "runtime": "mpi-single",
+          "artifact": "output/task_statistics.csv",
+          "paths": [
+            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/output/task_statistics.csv",
+            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/output/task_statistics.csv"
+          ],
+          "sha256": "f9e82bd87f3ae3054d2659299f2733feab2454ea936e77f509cff1a3185f5d62"
+        },
+        {
+          "runtime": "mpi-single",
+          "artifact": "output/throughput.csv",
+          "paths": [
+            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/output/throughput.csv",
+            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/output/throughput.csv"
+          ],
+          "sha256": "6d880c37e2c171cb8af007f5c65e5d2af0a3521585100e4038a67694d0304c51"
+        },
+        {
+          "runtime": "mpi-single",
+          "artifact": "runlog/AllPacketTrace_ACK_node_0.tr",
+          "paths": [
+            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/runlog/AllPacketTrace_ACK_node_0.tr",
+            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/runlog/AllPacketTrace_ACK_node_0.tr"
+          ],
+          "sha256": "71c8b8641ea72752d5c0157f5ae36b00ae95a56fa15f01494f66ef05ae1f0d47"
+        },
+        {
+          "runtime": "mpi-single",
+          "artifact": "runlog/AllPacketTrace_ACK_node_1.tr",
+          "paths": [
+            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/runlog/AllPacketTrace_ACK_node_1.tr",
+            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/runlog/AllPacketTrace_ACK_node_1.tr"
+          ],
+          "sha256": "9cf9f048ba20a6ca71109dd5106e3bad8eee7886bc28860137eac97a08c025ae"
+        },
+        {
+          "runtime": "mpi-single",
+          "artifact": "runlog/AllPacketTrace_PKT_node_0.tr",
+          "paths": [
+            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/runlog/AllPacketTrace_PKT_node_0.tr",
+            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/runlog/AllPacketTrace_PKT_node_0.tr"
+          ],
+          "sha256": "d980d620618137a2044e730f25ec17da93843fbd96f9a23a9e3402739e1e274f"
+        },
+        {
+          "runtime": "mpi-single",
+          "artifact": "runlog/AllPacketTrace_PKT_node_1.tr",
+          "paths": [
+            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/runlog/AllPacketTrace_PKT_node_1.tr",
+            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/runlog/AllPacketTrace_PKT_node_1.tr"
+          ],
+          "sha256": "5e47f2fa49fb025b7432f3456f27356f51bb46d45b1231283f5eb76032b88100"
+        },
+        {
+          "runtime": "mpi-single",
+          "artifact": "runlog/PacketTrace_node_0.tr",
+          "paths": [
+            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/runlog/PacketTrace_node_0.tr",
+            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/runlog/PacketTrace_node_0.tr"
+          ],
+          "sha256": "3a190e5cb697931909f9d4b5c40fd44dfdfd7a36640e527c7373b5d07a699267"
+        },
+        {
+          "runtime": "mpi-single",
+          "artifact": "runlog/PacketTrace_node_1.tr",
+          "paths": [
+            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/runlog/PacketTrace_node_1.tr",
+            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/runlog/PacketTrace_node_1.tr"
+          ],
+          "sha256": "159619521a5195f213e938a492cbb5d9beefa32adc350890bb811dd260ed84c8"
+        },
+        {
+          "runtime": "mpi-single",
+          "artifact": "runlog/PortTrace_node_0_port_0.tr",
+          "paths": [
+            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/runlog/PortTrace_node_0_port_0.tr",
+            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/runlog/PortTrace_node_0_port_0.tr"
+          ],
+          "sha256": "f1a35a1d7d9aa7ec0288f83a9b0706889e3f6b94381f6dc51f8350be802c3941"
+        },
+        {
+          "runtime": "mpi-single",
+          "artifact": "runlog/PortTrace_node_1_port_0.tr",
+          "paths": [
+            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/runlog/PortTrace_node_1_port_0.tr",
+            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/runlog/PortTrace_node_1_port_0.tr"
+          ],
+          "sha256": "048ef75c8abd92ec2409395eaf7b85601ae48bbd3ebb58d9c9862a8e45728ed0"
+        },
+        {
+          "runtime": "mpi-single",
+          "artifact": "runlog/TaskTrace_node_0.tr",
+          "paths": [
+            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/runlog/TaskTrace_node_0.tr",
+            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/runlog/TaskTrace_node_0.tr"
+          ],
+          "sha256": "e940530fe9a527526a3c19bd0c899b0b001563f9feeb051ac580624729a55f01"
+        },
+        {
+          "runtime": "mpi-single",
+          "artifact": "runlog/TaskTrace_node_1.tr",
+          "paths": [
+            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/runlog/TaskTrace_node_1.tr",
+            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/runlog/TaskTrace_node_1.tr"
+          ],
+          "sha256": "fb6d7333dd337bc0ae65e64d8628390ee59431803ba7d3477cafd60d2a57494b"
+        },
+        {
+          "runtime": "hybrid",
+          "artifact": "canonical-events.rank0.txt",
+          "paths": [
             "runs/hybrid/medium-cross-owner-runtime/run-1/case/canonical-events.rank0.txt",
             "runs/hybrid/medium-cross-owner-runtime/run-2/case/canonical-events.rank0.txt"
           ],
           "sha256": "72a03b332b4fb144ad1a3ccc03d454f1c7e506ceafcb6274360b5ca96b7579f6"
         },
         {
-          "artifact": "parallel/canonical-events.rank1.txt",
+          "runtime": "hybrid",
+          "artifact": "canonical-events.rank1.txt",
           "paths": [
-            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/canonical-events.rank1.txt",
-            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/canonical-events.rank1.txt",
             "runs/hybrid/medium-cross-owner-runtime/run-1/case/canonical-events.rank1.txt",
             "runs/hybrid/medium-cross-owner-runtime/run-2/case/canonical-events.rank1.txt"
           ],
           "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         {
-          "artifact": "all-runtimes/output/task_statistics.csv",
+          "runtime": "hybrid",
+          "artifact": "output/task_statistics.csv",
           "paths": [
-            "runs/local-single/medium-cross-owner-runtime/run-1/case/output/task_statistics.csv",
-            "runs/local-single/medium-cross-owner-runtime/run-2/case/output/task_statistics.csv",
-            "runs/local-mtp/medium-cross-owner-runtime/run-1/case/output/task_statistics.csv",
-            "runs/local-mtp/medium-cross-owner-runtime/run-2/case/output/task_statistics.csv",
-            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/output/task_statistics.csv",
-            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/output/task_statistics.csv",
             "runs/hybrid/medium-cross-owner-runtime/run-1/case/output/task_statistics.csv",
             "runs/hybrid/medium-cross-owner-runtime/run-2/case/output/task_statistics.csv"
           ],
           "sha256": "f9e82bd87f3ae3054d2659299f2733feab2454ea936e77f509cff1a3185f5d62"
         },
         {
-          "artifact": "all-runtimes/output/throughput.csv",
+          "runtime": "hybrid",
+          "artifact": "output/throughput.csv",
           "paths": [
-            "runs/local-single/medium-cross-owner-runtime/run-1/case/output/throughput.csv",
-            "runs/local-single/medium-cross-owner-runtime/run-2/case/output/throughput.csv",
-            "runs/local-mtp/medium-cross-owner-runtime/run-1/case/output/throughput.csv",
-            "runs/local-mtp/medium-cross-owner-runtime/run-2/case/output/throughput.csv",
-            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/output/throughput.csv",
-            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/output/throughput.csv",
             "runs/hybrid/medium-cross-owner-runtime/run-1/case/output/throughput.csv",
             "runs/hybrid/medium-cross-owner-runtime/run-2/case/output/throughput.csv"
           ],
           "sha256": "6d880c37e2c171cb8af007f5c65e5d2af0a3521585100e4038a67694d0304c51"
         },
         {
-          "artifact": "all-runtimes/runlog/PacketTrace_node_0.tr",
+          "runtime": "hybrid",
+          "artifact": "runlog/AllPacketTrace_ACK_node_0.tr",
           "paths": [
-            "runs/local-single/medium-cross-owner-runtime/run-1/case/runlog/PacketTrace_node_0.tr",
-            "runs/local-single/medium-cross-owner-runtime/run-2/case/runlog/PacketTrace_node_0.tr",
-            "runs/local-mtp/medium-cross-owner-runtime/run-1/case/runlog/PacketTrace_node_0.tr",
-            "runs/local-mtp/medium-cross-owner-runtime/run-2/case/runlog/PacketTrace_node_0.tr",
-            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/runlog/PacketTrace_node_0.tr",
-            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/runlog/PacketTrace_node_0.tr",
+            "runs/hybrid/medium-cross-owner-runtime/run-1/case/runlog/AllPacketTrace_ACK_node_0.tr",
+            "runs/hybrid/medium-cross-owner-runtime/run-2/case/runlog/AllPacketTrace_ACK_node_0.tr"
+          ],
+          "sha256": "71c8b8641ea72752d5c0157f5ae36b00ae95a56fa15f01494f66ef05ae1f0d47"
+        },
+        {
+          "runtime": "hybrid",
+          "artifact": "runlog/AllPacketTrace_ACK_node_1.tr",
+          "paths": [
+            "runs/hybrid/medium-cross-owner-runtime/run-1/case/runlog/AllPacketTrace_ACK_node_1.tr",
+            "runs/hybrid/medium-cross-owner-runtime/run-2/case/runlog/AllPacketTrace_ACK_node_1.tr"
+          ],
+          "sha256": "9cf9f048ba20a6ca71109dd5106e3bad8eee7886bc28860137eac97a08c025ae"
+        },
+        {
+          "runtime": "hybrid",
+          "artifact": "runlog/AllPacketTrace_PKT_node_0.tr",
+          "paths": [
+            "runs/hybrid/medium-cross-owner-runtime/run-1/case/runlog/AllPacketTrace_PKT_node_0.tr",
+            "runs/hybrid/medium-cross-owner-runtime/run-2/case/runlog/AllPacketTrace_PKT_node_0.tr"
+          ],
+          "sha256": "d980d620618137a2044e730f25ec17da93843fbd96f9a23a9e3402739e1e274f"
+        },
+        {
+          "runtime": "hybrid",
+          "artifact": "runlog/AllPacketTrace_PKT_node_1.tr",
+          "paths": [
+            "runs/hybrid/medium-cross-owner-runtime/run-1/case/runlog/AllPacketTrace_PKT_node_1.tr",
+            "runs/hybrid/medium-cross-owner-runtime/run-2/case/runlog/AllPacketTrace_PKT_node_1.tr"
+          ],
+          "sha256": "5e47f2fa49fb025b7432f3456f27356f51bb46d45b1231283f5eb76032b88100"
+        },
+        {
+          "runtime": "hybrid",
+          "artifact": "runlog/PacketTrace_node_0.tr",
+          "paths": [
             "runs/hybrid/medium-cross-owner-runtime/run-1/case/runlog/PacketTrace_node_0.tr",
             "runs/hybrid/medium-cross-owner-runtime/run-2/case/runlog/PacketTrace_node_0.tr"
           ],
           "sha256": "3a190e5cb697931909f9d4b5c40fd44dfdfd7a36640e527c7373b5d07a699267"
         },
         {
-          "artifact": "all-runtimes/runlog/TaskTrace_node_0.tr",
+          "runtime": "hybrid",
+          "artifact": "runlog/PacketTrace_node_1.tr",
           "paths": [
-            "runs/local-single/medium-cross-owner-runtime/run-1/case/runlog/TaskTrace_node_0.tr",
-            "runs/local-single/medium-cross-owner-runtime/run-2/case/runlog/TaskTrace_node_0.tr",
-            "runs/local-mtp/medium-cross-owner-runtime/run-1/case/runlog/TaskTrace_node_0.tr",
-            "runs/local-mtp/medium-cross-owner-runtime/run-2/case/runlog/TaskTrace_node_0.tr",
-            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/runlog/TaskTrace_node_0.tr",
-            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/runlog/TaskTrace_node_0.tr",
-            "runs/hybrid/medium-cross-owner-runtime/run-1/case/runlog/TaskTrace_node_0.tr",
-            "runs/hybrid/medium-cross-owner-runtime/run-2/case/runlog/TaskTrace_node_0.tr"
-          ],
-          "sha256": "e940530fe9a527526a3c19bd0c899b0b001563f9feeb051ac580624729a55f01"
-        },
-        {
-          "artifact": "parallel/runlog/PacketTrace_node_1.tr",
-          "paths": [
-            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/runlog/PacketTrace_node_1.tr",
-            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/runlog/PacketTrace_node_1.tr",
             "runs/hybrid/medium-cross-owner-runtime/run-1/case/runlog/PacketTrace_node_1.tr",
             "runs/hybrid/medium-cross-owner-runtime/run-2/case/runlog/PacketTrace_node_1.tr"
           ],
           "sha256": "159619521a5195f213e938a492cbb5d9beefa32adc350890bb811dd260ed84c8"
         },
         {
-          "artifact": "parallel/runlog/TaskTrace_node_1.tr",
+          "runtime": "hybrid",
+          "artifact": "runlog/PortTrace_node_0_port_0.tr",
           "paths": [
-            "runs/mpi-single/medium-cross-owner-runtime/run-1/case/runlog/TaskTrace_node_1.tr",
-            "runs/mpi-single/medium-cross-owner-runtime/run-2/case/runlog/TaskTrace_node_1.tr",
+            "runs/hybrid/medium-cross-owner-runtime/run-1/case/runlog/PortTrace_node_0_port_0.tr",
+            "runs/hybrid/medium-cross-owner-runtime/run-2/case/runlog/PortTrace_node_0_port_0.tr"
+          ],
+          "sha256": "f1a35a1d7d9aa7ec0288f83a9b0706889e3f6b94381f6dc51f8350be802c3941"
+        },
+        {
+          "runtime": "hybrid",
+          "artifact": "runlog/PortTrace_node_1_port_0.tr",
+          "paths": [
+            "runs/hybrid/medium-cross-owner-runtime/run-1/case/runlog/PortTrace_node_1_port_0.tr",
+            "runs/hybrid/medium-cross-owner-runtime/run-2/case/runlog/PortTrace_node_1_port_0.tr"
+          ],
+          "sha256": "048ef75c8abd92ec2409395eaf7b85601ae48bbd3ebb58d9c9862a8e45728ed0"
+        },
+        {
+          "runtime": "hybrid",
+          "artifact": "runlog/TaskTrace_node_0.tr",
+          "paths": [
+            "runs/hybrid/medium-cross-owner-runtime/run-1/case/runlog/TaskTrace_node_0.tr",
+            "runs/hybrid/medium-cross-owner-runtime/run-2/case/runlog/TaskTrace_node_0.tr"
+          ],
+          "sha256": "e940530fe9a527526a3c19bd0c899b0b001563f9feeb051ac580624729a55f01"
+        },
+        {
+          "runtime": "hybrid",
+          "artifact": "runlog/TaskTrace_node_1.tr",
+          "paths": [
             "runs/hybrid/medium-cross-owner-runtime/run-1/case/runlog/TaskTrace_node_1.tr",
             "runs/hybrid/medium-cross-owner-runtime/run-2/case/runlog/TaskTrace_node_1.tr"
           ],

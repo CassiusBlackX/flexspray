@@ -84,11 +84,44 @@ def iter_hashed_files(
                 )
 
 
+def relative_files(root: Path) -> set[str]:
+    if not root.is_dir():
+        raise BaselineError(f"missing directory: {root}")
+    return {
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+
+
+def verify_case_input_sets(manifest: Mapping, repo_root: Path) -> None:
+    for case in manifest.get("cases", []):
+        inputs = case.get("inputs", {})
+        if not inputs:
+            continue
+        parents = {Path(relative).parent for relative in inputs}
+        if len(parents) != 1:
+            raise BaselineError(f"case {case['id']} inputs must share one source directory")
+        source_relative = parents.pop()
+        source_root = resolve_relative(repo_root, source_relative.as_posix())
+        expected = {Path(relative).name for relative in inputs}
+        actual = relative_files(source_root)
+        extras = sorted(actual - expected)
+        if extras:
+            extra = (source_relative / extras[0]).as_posix()
+            raise BaselineError(f"unregistered case input: {extra}")
+        missing = sorted(expected - actual)
+        if missing:
+            absent = (source_relative / missing[0]).as_posix()
+            raise BaselineError(f"missing registered case input: {absent}")
+
+
 def verify_manifest(manifest_path: Path, repo_root: Path, artifact_root: Path) -> int:
     manifest = read_json(manifest_path)
     if manifest.get("schema_version") != 1:
         raise BaselineError("unsupported manifest schema_version")
 
+    verify_case_input_sets(manifest, repo_root)
     verified = 0
     for path, expected, description in iter_hashed_files(manifest, repo_root, artifact_root):
         if not path.is_file():
@@ -150,15 +183,25 @@ def compare_case(
         raise BaselineError(f"unknown case in comparison rules: {case_id}") from error
 
     artifacts = case_rules.get("artifacts", [])
-    for artifact in sorted(artifacts, key=lambda entry: entry["path"]):
+    artifacts_by_path = {artifact["path"]: artifact for artifact in artifacts}
+    if len(artifacts_by_path) != len(artifacts):
+        raise BaselineError(f"duplicate artifact path in comparison rules: {case_id}")
+    for artifact in artifacts:
         if artifact.get("comparison") != "raw-byte-equality":
             raise BaselineError(
                 f"unsupported comparison for {artifact['path']}: {artifact.get('comparison')}"
             )
-        relative = artifact["path"]
+
+    reference_files = relative_files(reference)
+    candidate_files = relative_files(candidate)
+    managed_files = set(artifacts_by_path)
+    for relative in sorted(managed_files | reference_files | candidate_files):
+        if relative not in managed_files:
+            preserve_outputs(reference, candidate, diagnostics)
+            return relative, 0
         old_path = resolve_relative(reference, relative)
         new_path = resolve_relative(candidate, relative)
-        if not old_path.is_file() or not new_path.is_file():
+        if relative not in reference_files or relative not in candidate_files:
             preserve_outputs(reference, candidate, diagnostics)
             return relative, 0
         offset = first_byte_offset(old_path, new_path)
