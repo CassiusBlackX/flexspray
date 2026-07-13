@@ -8611,6 +8611,102 @@ class UbLifecycleReentrantForcedStopDefersRunningFinishTest : public TestCase
     }
 };
 
+class UbLifecycleReentrantPendingCleanupObserver
+{
+  public:
+    void OnCancelCleanup()
+    {
+        ++cleanupCount;
+        innerStatus = function->DestroyJetty(jettyNum, UbDestroyReason::SIMULATION_STOP);
+        if (innerStatus != UbDestroyStatus::COMPLETED)
+        {
+            return;
+        }
+        function->CreateJetty(srcNodeId, dstNodeId, jettyNum);
+        recreated = function->TryGetJettyLifecycleIdentity(jettyNum, newIdentity);
+    }
+
+    Ptr<UbFunction> function;
+    uint32_t srcNodeId{0};
+    uint32_t dstNodeId{0};
+    uint32_t jettyNum{0};
+    UbDestroyStatus innerStatus{UbDestroyStatus::REJECTED};
+    UbLifecycleResourceIdentity newIdentity;
+    uint32_t cleanupCount{0};
+    bool recreated{false};
+};
+
+class UbLifecycleReentrantPendingCleanupPreservesNewGenerationTest : public TestCase
+{
+  public:
+    UbLifecycleReentrantPendingCleanupPreservesNewGenerationTest()
+        : TestCase("UnifiedBus - reentrant pending cleanup preserves replacement Jetty generation")
+    {
+    }
+
+    void DoRun() override
+    {
+        const int status = RunInChildProcess([]() {
+            Config::Reset();
+            LocalTpTopology topo = BuildLocalTpTopology();
+            Ptr<UbFunction> function = topo.sender->GetObject<UbController>()->GetUbFunction();
+            function->CreateJetty(topo.sender->GetId(),
+                                  topo.receiver->GetId(),
+                                  kUrmaWriteRegressionJettyNum);
+            UbLifecycleResourceIdentity oldIdentity;
+            if (!function->TryGetJettyLifecycleIdentity(kUrmaWriteRegressionJettyNum,
+                                                        oldIdentity))
+            {
+                std::_Exit(2);
+            }
+
+            UbLifecycleReentrantPendingCleanupObserver observer;
+            observer.function = function;
+            observer.srcNodeId = topo.sender->GetId();
+            observer.dstNodeId = topo.receiver->GetId();
+            observer.jettyNum = kUrmaWriteRegressionJettyNum;
+            const uint64_t token = function->TrackJettyEvent(kUrmaWriteRegressionJettyNum);
+            const EventId event = Simulator::Schedule(MilliSeconds(1), []() {});
+            function->AttachJettyEvent(
+                kUrmaWriteRegressionJettyNum,
+                token,
+                event,
+                MakeCallback(&UbLifecycleReentrantPendingCleanupObserver::OnCancelCleanup,
+                             &observer));
+
+            const UbDestroyStatus outerStatus = function->DestroyJetty(
+                kUrmaWriteRegressionJettyNum,
+                UbDestroyReason::SIMULATION_STOP);
+            if (outerStatus != UbDestroyStatus::COMPLETED ||
+                observer.innerStatus != UbDestroyStatus::COMPLETED ||
+                observer.cleanupCount != 1 || !observer.recreated ||
+                observer.newIdentity == oldIdentity ||
+                function->GetJetty(kUrmaWriteRegressionJettyNum) == nullptr)
+            {
+                std::_Exit(3);
+            }
+            if (function->DestroyJetty(kUrmaWriteRegressionJettyNum,
+                                       UbDestroyReason::SIMULATION_STOP) !=
+                UbDestroyStatus::COMPLETED)
+            {
+                std::_Exit(4);
+            }
+            Simulator::Destroy();
+            Config::Reset();
+        });
+
+        NS_TEST_ASSERT_MSG_EQ(WIFEXITED(status),
+                              1,
+                              "Reentrant pending cleanup must not invalidate manager iteration");
+        if (WIFEXITED(status))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(status),
+                                  0,
+                                  "Outer destroy must preserve a replacement Jetty generation");
+        }
+    }
+};
+
 class UbLifecycleCancelBetweenTrackedSchedulePhasesTest : public TestCase
 {
   public:
@@ -15236,6 +15332,8 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
     AddTestCase(new UbLifecycleForcedStopCancelsTrackedScheduleTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleReentrantForcedStopDefersRunningFinishTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleReentrantPendingCleanupPreservesNewGenerationTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleForcedStopPendingFinishReleasesSchedulerTest(),
                 TestCase::Duration::QUICK);

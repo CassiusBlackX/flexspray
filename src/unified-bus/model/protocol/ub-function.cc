@@ -578,6 +578,15 @@ UbJettyManager::DestroyJetty(uint32_t jettyNum,
     {
         return UbDestroyStatus::NOT_FOUND;
     }
+    const UbLifecycleResourceIdentity identity = it->second.identity;
+    const auto findOriginalRecord = [this, jettyNum, identity]() {
+        auto current = m_records.find(jettyNum);
+        if (current == m_records.end() || current->second.identity != identity)
+        {
+            return m_records.end();
+        }
+        return current;
+    };
     if (it->second.state == UbJettyLifecycleState::ACTIVE)
     {
         it->second.state = UbJettyLifecycleState::DESTROY_REQUESTED;
@@ -599,21 +608,27 @@ UbJettyManager::DestroyJetty(uint32_t jettyNum,
         for (uint32_t wqeId : activeWqes)
         {
             GetTransaction()->CompleteWqeOperation(jettyNum, wqeId, outcome);
-        }
-        it = m_records.find(jettyNum);
-        if (it == m_records.end())
-        {
-            return UbDestroyStatus::COMPLETED;
+            it = findOriginalRecord();
+            if (it == m_records.end())
+            {
+                return UbDestroyStatus::COMPLETED;
+            }
         }
         if (reason == UbDestroyReason::SIMULATION_STOP &&
             it->second.jetty->GetActiveWqeCount() != 0)
         {
             it->second.jetty->FlushLegacyWqesForDisposal();
+            it = findOriginalRecord();
+            if (it == m_records.end())
+            {
+                return UbDestroyStatus::COMPLETED;
+            }
         }
     }
     if (reason == UbDestroyReason::SIMULATION_STOP)
     {
         Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
+        std::vector<Callback<void>> cancelCleanups;
         for (auto tracked = it->second.trackedEvents.begin();
              tracked != it->second.trackedEvents.end();)
         {
@@ -630,10 +645,24 @@ UbJettyManager::DestroyJetty(uint32_t jettyNum,
             tracked->second.cancelCleanup = {};
             if (!cancelCleanup.IsNull())
             {
-                cancelCleanup();
+                cancelCleanups.push_back(cancelCleanup);
             }
             coordinator->ReleaseLease(tracked->second.lease);
             tracked = it->second.trackedEvents.erase(tracked);
+        }
+        for (const Callback<void>& cancelCleanup : cancelCleanups)
+        {
+            cancelCleanup();
+            it = findOriginalRecord();
+            if (it == m_records.end())
+            {
+                return UbDestroyStatus::COMPLETED;
+            }
+        }
+        it = findOriginalRecord();
+        if (it == m_records.end())
+        {
+            return UbDestroyStatus::COMPLETED;
         }
     }
     if (IsDrainReady(it->second))
