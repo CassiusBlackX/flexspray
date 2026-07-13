@@ -8168,10 +8168,13 @@ class UbLifecycleStrongOrderTerminalWakesSuccessorTest : public TestCase
 {
   public:
     UbLifecycleStrongOrderTerminalWakesSuccessorTest(UbWorkOutcome frontOutcome,
-                                                     const std::string& outcomeName)
-        : TestCase("UnifiedBus - strong-order " + outcomeName +
+                                                     const std::string& outcomeName,
+                                                     bool terminalizeAfterAdmission)
+        : TestCase("UnifiedBus - strong-order " + outcomeName + " " +
+                   (terminalizeAfterAdmission ? "post-admission" : "pre-admission") +
                    " front wakes accepted successor"),
-          m_frontOutcome(frontOutcome)
+          m_frontOutcome(frontOutcome),
+          m_terminalizeAfterAdmission(terminalizeAfterAdmission)
     {
     }
 
@@ -8224,9 +8227,12 @@ class UbLifecycleStrongOrderTerminalWakesSuccessorTest : public TestCase
                 "Each strong-order WQE should enter its own lifecycle operation");
         }
 
-        Simulator::ScheduleNow(
-            &UbLifecycleStrongOrderTerminalWakesSuccessorTest::TerminalizeFront,
-            this);
+        if (!m_terminalizeAfterAdmission)
+        {
+            Simulator::ScheduleNow(
+                &UbLifecycleStrongOrderTerminalWakesSuccessorTest::TerminalizeFront,
+                this);
+        }
         m_reservedSuccessorTassn = m_successorWqe->GetTaSsnStart();
         Simulator::Stop(MilliSeconds(1));
         Simulator::Run();
@@ -8234,10 +8240,20 @@ class UbLifecycleStrongOrderTerminalWakesSuccessorTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(m_blockedSuccessorObserved,
                               true,
                               "Successor initial prepare should be blocked before front terminal");
+        const uint32_t expectedAdmissions = m_terminalizeAfterAdmission ? 2u : 1u;
         NS_TEST_ASSERT_MSG_EQ(m_admittedTasks.size(),
-                              1u,
-                              "Only the successor should reach TP admission after front terminal");
-        if (m_admittedTasks.size() == 1)
+                              expectedAdmissions,
+                              "Fixture should expose the expected front/successor admissions");
+        if (m_terminalizeAfterAdmission && m_admittedTasks.size() == 2)
+        {
+            NS_TEST_ASSERT_MSG_EQ(m_admittedTasks[0],
+                                  kUrmaWriteRegressionTaskId,
+                                  "Post-admission front should admit before its typed terminal");
+            NS_TEST_ASSERT_MSG_EQ(m_admittedTasks[1],
+                                  kUrmaWriteRegressionTaskId + 1,
+                                  "Post-admission successor should admit after the front terminal");
+        }
+        else if (!m_terminalizeAfterAdmission && m_admittedTasks.size() == 1)
         {
             NS_TEST_ASSERT_MSG_EQ(m_admittedTasks[0],
                                   kUrmaWriteRegressionTaskId + 1,
@@ -8262,10 +8278,26 @@ class UbLifecycleStrongOrderTerminalWakesSuccessorTest : public TestCase
                 static_cast<uint32_t>(UbWorkOutcome::COMPLETED),
                 "Successor WQE should complete normally after ordered admission");
         }
+        const uint32_t expectedProgress = m_terminalizeAfterAdmission ? 4u : 3u;
         NS_TEST_ASSERT_MSG_EQ(m_progress.size(),
-                              3u,
+                              expectedProgress,
                               "Strong-order terminal wake should expose one exact progress chain");
-        if (m_progress.size() == 3)
+        if (m_terminalizeAfterAdmission && m_progress.size() == 4)
+        {
+            NS_TEST_ASSERT_MSG_EQ(m_progress[0],
+                                  kUrmaWriteRegressionTaskId,
+                                  "Post-admission front should admit first");
+            NS_TEST_ASSERT_MSG_EQ(m_progress[1],
+                                  TerminalEvent(kUrmaWriteRegressionTaskId),
+                                  "Post-admission front terminal should precede successor admission");
+            NS_TEST_ASSERT_MSG_EQ(m_progress[2],
+                                  kUrmaWriteRegressionTaskId + 1,
+                                  "Post-admission successor should admit after front terminal");
+            NS_TEST_ASSERT_MSG_EQ(m_progress[3],
+                                  TerminalEvent(kUrmaWriteRegressionTaskId + 1),
+                                  "Post-admission successor should complete naturally");
+        }
+        else if (!m_terminalizeAfterAdmission && m_progress.size() == 3)
         {
             NS_TEST_ASSERT_MSG_EQ(m_progress[0],
                                   TerminalEvent(kUrmaWriteRegressionTaskId),
@@ -8285,9 +8317,18 @@ class UbLifecycleStrongOrderTerminalWakesSuccessorTest : public TestCase
                               true,
                               "Natural completion path should observe one admitted successor "
                               "segment");
-        NS_TEST_ASSERT_MSG_NE(m_reservedSuccessorTassn,
-                              m_successorAdmittedTassn,
-                              "Fixture should expose a push-time TASSN reservation gap");
+        if (m_terminalizeAfterAdmission)
+        {
+            NS_TEST_ASSERT_MSG_EQ(m_reservedSuccessorTassn,
+                                  m_successorAdmittedTassn,
+                                  "Post-admission successor should keep its reserved TASSN");
+        }
+        else
+        {
+            NS_TEST_ASSERT_MSG_NE(m_reservedSuccessorTassn,
+                                  m_successorAdmittedTassn,
+                                  "Pre-admission fixture should expose a TASSN reservation gap");
+        }
         NS_TEST_ASSERT_MSG_EQ(m_successorWqe->GetTaSsnStart(),
                               m_successorAdmittedTassn,
                               "First admission should rebase WQE start to the actual TASSN");
@@ -8307,12 +8348,24 @@ class UbLifecycleStrongOrderTerminalWakesSuccessorTest : public TestCase
 
     void TerminalizeFront()
     {
+        m_terminalScheduled = true;
+        UbTransactionOperationSnapshot front;
         UbTransactionOperationSnapshot successor;
-        m_blockedSuccessorObserved =
-            m_transaction->TryGetOperationSnapshot(kUrmaWriteRegressionJettyNum,
-                                                   kUrmaWriteRegressionTaskId + 1,
-                                                   successor) &&
-            successor.activeSegments == 0 && m_admittedTasks.empty();
+        const bool foundFront = m_transaction->TryGetOperationSnapshot(
+            kUrmaWriteRegressionJettyNum,
+            kUrmaWriteRegressionTaskId,
+            front);
+        const bool foundSuccessor = m_transaction->TryGetOperationSnapshot(
+            kUrmaWriteRegressionJettyNum,
+            kUrmaWriteRegressionTaskId + 1,
+            successor);
+        const bool expectedAdmissionState =
+            m_terminalizeAfterAdmission
+                ? (front.activeSegments == 1 && m_admittedTasks.size() == 1 &&
+                   m_admittedTasks[0] == kUrmaWriteRegressionTaskId)
+                : (front.activeSegments == 0 && m_admittedTasks.empty());
+        m_blockedSuccessorObserved = foundFront && foundSuccessor &&
+                                     successor.activeSegments == 0 && expectedAdmissionState;
         m_transaction->CompleteWqeOperation(kUrmaWriteRegressionJettyNum,
                                             kUrmaWriteRegressionTaskId,
                                             m_frontOutcome);
@@ -8322,6 +8375,13 @@ class UbLifecycleStrongOrderTerminalWakesSuccessorTest : public TestCase
     {
         m_admittedTasks.push_back(taskId);
         m_progress.push_back(taskId);
+        if (m_terminalizeAfterAdmission && !m_terminalScheduled &&
+            taskId == kUrmaWriteRegressionTaskId)
+        {
+            Simulator::ScheduleNow(
+                &UbLifecycleStrongOrderTerminalWakesSuccessorTest::TerminalizeFront,
+                this);
+        }
         if (taskId == kUrmaWriteRegressionTaskId + 1)
         {
             UbTransactionOperationSnapshot successor;
@@ -8342,15 +8402,322 @@ class UbLifecycleStrongOrderTerminalWakesSuccessorTest : public TestCase
     }
 
     UbWorkOutcome m_frontOutcome;
+    bool m_terminalizeAfterAdmission;
     Ptr<UbTransaction> m_transaction;
     Ptr<UbWqe> m_successorWqe;
     bool m_blockedSuccessorObserved{false};
     bool m_successorAdmissionPinned{false};
+    bool m_terminalScheduled{false};
     uint32_t m_reservedSuccessorTassn{UINT32_MAX};
     uint32_t m_successorAdmittedTassn{UINT32_MAX};
     std::vector<uint32_t> m_admittedTasks;
     std::vector<UbWqeCompletion> m_terminals;
     std::vector<uint64_t> m_progress;
+};
+
+class UbLifecycleExplicitDrainContinuesStrongSuccessorTest : public TestCase
+{
+  public:
+    UbLifecycleExplicitDrainContinuesStrongSuccessorTest()
+        : TestCase("UnifiedBus - explicit drain continues accepted strong-order successor")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        m_function = controller->GetUbFunction();
+        m_transaction = controller->GetUbTransaction();
+        m_function->CreateJetty(topo.sender->GetId(),
+                                topo.receiver->GetId(),
+                                kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->JettyBindTp(topo.sender->GetId(),
+                                                         topo.receiver->GetId(),
+                                                         kUrmaWriteRegressionJettyNum,
+                                                         false,
+                                                         {kUrmaWriteRegressionSenderTpn}),
+                              true,
+                              "Explicit drain fixture should establish a direct TP binding");
+        controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn)
+            ->TraceConnectWithoutContext(
+                "WqeSegmentSendsNotify",
+                MakeCallback(
+                    &UbLifecycleExplicitDrainContinuesStrongSuccessorTest::OnAdmitted,
+                    this));
+        m_function->GetJetty(kUrmaWriteRegressionJettyNum)
+            ->SetWqeCompletionCallback(MakeCallback(
+                &UbLifecycleExplicitDrainContinuesStrongSuccessorTest::OnTerminal,
+                this));
+
+        for (uint32_t taskId : {kUrmaWriteRegressionTaskId,
+                                kUrmaWriteRegressionTaskId + 1})
+        {
+            Ptr<UbWqe> wqe = m_function->CreateWqe(topo.sender->GetId(),
+                                                   topo.receiver->GetId(),
+                                                   64,
+                                                   taskId,
+                                                   TaOpcode::TA_OPCODE_WRITE);
+            wqe->SetOrderType(OrderType::ORDER_STRONG);
+            NS_TEST_ASSERT_MSG_EQ(
+                static_cast<uint32_t>(
+                    m_function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status),
+                static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+                "Explicit drain should first accept both strong-order WQEs");
+        }
+
+        Simulator::ScheduleNow(
+            &UbLifecycleExplicitDrainContinuesStrongSuccessorTest::BeginDrain,
+            this);
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
+
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_destroyStatus),
+                              static_cast<uint32_t>(UbDestroyStatus::PENDING),
+                              "Explicit destroy should wait for both accepted WQEs");
+        NS_TEST_ASSERT_MSG_EQ(m_successorInitiallyBlocked,
+                              true,
+                              "Successor initial prepare should be blocked before drain terminal");
+        NS_TEST_ASSERT_MSG_EQ(m_continuePolicyObserved,
+                              true,
+                              "Explicit DRAINING state should continue accepted WQEs");
+        NS_TEST_ASSERT_MSG_EQ(m_admittedTasks.size(),
+                              1u,
+                              "Only the successor should admit after front cancellation");
+        if (m_admittedTasks.size() == 1)
+        {
+            NS_TEST_ASSERT_MSG_EQ(m_admittedTasks[0],
+                                  kUrmaWriteRegressionTaskId + 1,
+                                  "Explicit drain should wake the accepted strong successor");
+        }
+        NS_TEST_ASSERT_MSG_EQ(m_canceledFrontCount,
+                              1u,
+                              "Explicit drain front should retain CANCELED outcome");
+        NS_TEST_ASSERT_MSG_EQ(m_completedSuccessorCount,
+                              1u,
+                              "Explicit drain successor should complete naturally");
+        NS_TEST_ASSERT_MSG_EQ(m_terminalCount,
+                              2u,
+                              "Explicit drain should terminalize each accepted WQE exactly once");
+        NS_TEST_ASSERT_MSG_EQ(m_destroyCallbackCount,
+                              1u,
+                              "Explicit drain should invoke its callback exactly once");
+        NS_TEST_ASSERT_MSG_EQ(m_callbackObservedErase,
+                              true,
+                              "Explicit destroy callback should run after manager erase");
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->GetActiveOperationCount(),
+                              0u,
+                              "Explicit drain should retire both accepted operations");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    void BeginDrain()
+    {
+        UbTransactionOperationSnapshot front;
+        UbTransactionOperationSnapshot successor;
+        m_successorInitiallyBlocked =
+            m_transaction->TryGetOperationSnapshot(kUrmaWriteRegressionJettyNum,
+                                                   kUrmaWriteRegressionTaskId,
+                                                   front) &&
+            m_transaction->TryGetOperationSnapshot(kUrmaWriteRegressionJettyNum,
+                                                   kUrmaWriteRegressionTaskId + 1,
+                                                   successor) &&
+            front.activeSegments == 0 && successor.activeSegments == 0 &&
+            m_admittedTasks.empty();
+        m_destroyStatus = m_function->DestroyJetty(
+            kUrmaWriteRegressionJettyNum,
+            UbDestroyReason::EXPLICIT,
+            MakeCallback(&UbLifecycleExplicitDrainContinuesStrongSuccessorTest::OnDestroyed,
+                         this));
+        m_continuePolicyObserved =
+            m_function->ShouldContinueAcceptedWqes(kUrmaWriteRegressionJettyNum);
+        m_transaction->CompleteWqeOperation(kUrmaWriteRegressionJettyNum,
+                                            kUrmaWriteRegressionTaskId,
+                                            UbWorkOutcome::CANCELED);
+    }
+
+    void OnAdmitted(uint32_t, uint32_t taskId, uint32_t)
+    {
+        m_admittedTasks.push_back(taskId);
+    }
+
+    void OnTerminal(UbWqeCompletion completion)
+    {
+        ++m_terminalCount;
+        if (completion.wqeId == kUrmaWriteRegressionTaskId &&
+            completion.outcome == UbWorkOutcome::CANCELED)
+        {
+            ++m_canceledFrontCount;
+        }
+        if (completion.wqeId == kUrmaWriteRegressionTaskId + 1 &&
+            completion.outcome == UbWorkOutcome::COMPLETED)
+        {
+            ++m_completedSuccessorCount;
+        }
+    }
+
+    void OnDestroyed(UbLifecycleResourceIdentity, UbDestroyStatus status)
+    {
+        ++m_destroyCallbackCount;
+        m_callbackObservedErase =
+            status == UbDestroyStatus::COMPLETED &&
+            m_function->GetJetty(kUrmaWriteRegressionJettyNum) == nullptr;
+    }
+
+    Ptr<UbFunction> m_function;
+    Ptr<UbTransaction> m_transaction;
+    UbDestroyStatus m_destroyStatus{UbDestroyStatus::REJECTED};
+    bool m_successorInitiallyBlocked{false};
+    bool m_continuePolicyObserved{false};
+    bool m_callbackObservedErase{false};
+    uint32_t m_canceledFrontCount{0};
+    uint32_t m_completedSuccessorCount{0};
+    uint32_t m_terminalCount{0};
+    uint32_t m_destroyCallbackCount{0};
+    std::vector<uint32_t> m_admittedTasks;
+};
+
+class UbLifecycleForcedStrongOrderDrainDoesNotWakeSuccessorTest : public TestCase
+{
+  public:
+    UbLifecycleForcedStrongOrderDrainDoesNotWakeSuccessorTest(UbDestroyReason reason,
+                                                              const std::string& reasonName)
+        : TestCase("UnifiedBus - " + reasonName +
+                   " strong-order drain does not wake successor"),
+          m_reason(reason)
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        m_function = controller->GetUbFunction();
+        m_transaction = controller->GetUbTransaction();
+        m_function->CreateJetty(topo.sender->GetId(),
+                                topo.receiver->GetId(),
+                                kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->JettyBindTp(topo.sender->GetId(),
+                                                         topo.receiver->GetId(),
+                                                         kUrmaWriteRegressionJettyNum,
+                                                         false,
+                                                         {kUrmaWriteRegressionSenderTpn}),
+                              true,
+                              "Forced strong WQEs should share one direct TP");
+        controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn)
+            ->TraceConnectWithoutContext(
+                "WqeSegmentSendsNotify",
+                MakeCallback(
+                    &UbLifecycleForcedStrongOrderDrainDoesNotWakeSuccessorTest::OnAdmitted,
+                    this));
+        m_function->GetJetty(kUrmaWriteRegressionJettyNum)
+            ->SetWqeCompletionCallback(MakeCallback(
+                &UbLifecycleForcedStrongOrderDrainDoesNotWakeSuccessorTest::OnTerminal,
+                this));
+
+        for (uint32_t taskId : {kUrmaWriteRegressionTaskId,
+                                kUrmaWriteRegressionTaskId + 1})
+        {
+            Ptr<UbWqe> wqe = m_function->CreateWqe(topo.sender->GetId(),
+                                                   topo.receiver->GetId(),
+                                                   64,
+                                                   taskId,
+                                                   TaOpcode::TA_OPCODE_WRITE);
+            wqe->SetOrderType(OrderType::ORDER_STRONG);
+            NS_TEST_ASSERT_MSG_EQ(
+                static_cast<uint32_t>(
+                    m_function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status),
+                static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+                "Forced drain should first accept both strong-order WQEs");
+        }
+
+        Simulator::ScheduleNow(
+            &UbLifecycleForcedStrongOrderDrainDoesNotWakeSuccessorTest::ForceDrain,
+            this);
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
+
+        NS_TEST_ASSERT_MSG_EQ(m_continuePolicyObserved,
+                              false,
+                              "Forced drain must not continue accepted successor work");
+        const bool validDestroyStatus = m_destroyStatus == UbDestroyStatus::PENDING ||
+                                        m_destroyStatus == UbDestroyStatus::COMPLETED;
+        NS_TEST_ASSERT_MSG_EQ(validDestroyStatus,
+                              true,
+                              "Forced drain should enter one valid destroy completion state");
+        NS_TEST_ASSERT_MSG_EQ(
+            std::count(m_admittedTasks.begin(),
+                       m_admittedTasks.end(),
+                       kUrmaWriteRegressionTaskId + 1),
+            0,
+            "Forced drain must not admit the strong-order successor");
+        NS_TEST_ASSERT_MSG_EQ(m_terminals.size(),
+                              2u,
+                              "Forced drain should terminalize both accepted WQEs exactly once");
+        const UbWorkOutcome expected = m_reason == UbDestroyReason::ERROR
+                                           ? UbWorkOutcome::FAILED
+                                           : UbWorkOutcome::FLUSHED;
+        uint32_t frontTerminalCount = 0;
+        uint32_t successorTerminalCount = 0;
+        for (const UbWqeCompletion& completion : m_terminals)
+        {
+            NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(completion.outcome),
+                                  static_cast<uint32_t>(expected),
+                                  "Forced drain should preserve its typed outcome");
+            frontTerminalCount += completion.wqeId == kUrmaWriteRegressionTaskId;
+            successorTerminalCount +=
+                completion.wqeId == kUrmaWriteRegressionTaskId + 1;
+        }
+        NS_TEST_ASSERT_MSG_EQ(frontTerminalCount,
+                              1u,
+                              "Forced drain should terminalize the ordered front exactly once");
+        NS_TEST_ASSERT_MSG_EQ(successorTerminalCount,
+                              1u,
+                              "Forced drain should terminalize the ordered successor exactly once");
+        NS_TEST_ASSERT_MSG_EQ(m_function->GetJetty(kUrmaWriteRegressionJettyNum),
+                              nullptr,
+                              "Forced strong drain should erase the Jetty");
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->GetActiveOperationCount(),
+                              0u,
+                              "Forced strong drain should retire both operations");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    void ForceDrain()
+    {
+        m_destroyStatus =
+            m_function->DestroyJetty(kUrmaWriteRegressionJettyNum, m_reason);
+        m_continuePolicyObserved =
+            m_function->ShouldContinueAcceptedWqes(kUrmaWriteRegressionJettyNum);
+    }
+
+    void OnAdmitted(uint32_t, uint32_t taskId, uint32_t)
+    {
+        m_admittedTasks.push_back(taskId);
+    }
+
+    void OnTerminal(UbWqeCompletion completion)
+    {
+        m_terminals.push_back(completion);
+    }
+
+    UbDestroyReason m_reason;
+    Ptr<UbFunction> m_function;
+    Ptr<UbTransaction> m_transaction;
+    UbDestroyStatus m_destroyStatus{UbDestroyStatus::REJECTED};
+    bool m_continuePolicyObserved{true};
+    std::vector<uint32_t> m_admittedTasks;
+    std::vector<UbWqeCompletion> m_terminals;
 };
 
 #ifndef _WIN32
@@ -17247,11 +17614,33 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleStrongOrderTerminalWakesSuccessorTest(
                     UbWorkOutcome::FAILED,
-                    "failed"),
+                    "failed",
+                    false),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleStrongOrderTerminalWakesSuccessorTest(
                     UbWorkOutcome::CANCELED,
-                    "canceled"),
+                    "canceled",
+                    false),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleStrongOrderTerminalWakesSuccessorTest(
+                    UbWorkOutcome::FAILED,
+                    "failed",
+                    true),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleStrongOrderTerminalWakesSuccessorTest(
+                    UbWorkOutcome::CANCELED,
+                    "canceled",
+                    true),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleExplicitDrainContinuesStrongSuccessorTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleForcedStrongOrderDrainDoesNotWakeSuccessorTest(
+                    UbDestroyReason::ERROR,
+                    "error"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleForcedStrongOrderDrainDoesNotWakeSuccessorTest(
+                    UbDestroyReason::SIMULATION_STOP,
+                    "simulation-stop"),
                 TestCase::Duration::QUICK);
 #ifndef _WIN32
     AddTestCase(new UbLifecycleAcceptedTpWorkBlocksGenerationRetirementTest(),

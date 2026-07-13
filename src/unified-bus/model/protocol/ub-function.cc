@@ -210,6 +210,12 @@ UbFunction::IsJettyAcceptingWqes(uint32_t jettyNum) const
     return m_jettyManager->IsAcceptingWqes(jettyNum);
 }
 
+bool
+UbFunction::ShouldContinueAcceptedWqes(uint32_t jettyNum) const
+{
+    return m_jettyManager->ShouldContinueAcceptedWqes(jettyNum);
+}
+
 uint64_t
 UbFunction::TrackJettyEvent(uint32_t jettyNum)
 {
@@ -358,6 +364,19 @@ UbJettyManager::IsAcceptingWqes(uint32_t jettyNum) const
 {
     const auto it = m_records.find(jettyNum);
     return it != m_records.end() && it->second.state == UbJettyLifecycleState::ACTIVE;
+}
+
+bool
+UbJettyManager::ShouldContinueAcceptedWqes(uint32_t jettyNum) const
+{
+    const auto it = m_records.find(jettyNum);
+    if (it == m_records.end())
+    {
+        return false;
+    }
+    return it->second.state == UbJettyLifecycleState::ACTIVE ||
+           (it->second.state == UbJettyLifecycleState::DRAINING &&
+            it->second.reason == UbDestroyReason::EXPLICIT);
 }
 
 bool
@@ -936,6 +955,36 @@ void UbJetty::CommitWqeSegmentAdmission(Ptr<UbWqeSegment> segment)
     wqe->SetCanSend(true);
     wqe->UpdateSentBytes(segment->GetSize());
     IncreaseTaSsnSndNxt();
+}
+
+void
+UbJetty::ApplyWqeSegmentTerminalProgress(const std::vector<uint32_t>& taSsns)
+{
+    if (taSsns.empty())
+    {
+        return;
+    }
+    NS_ABORT_MSG_IF(m_ssnAckWindow.GetBase() != m_taSsnSndUna,
+                    "Jetty terminal progress lost ACK-window alignment");
+    for (uint32_t taSsn : taSsns)
+    {
+        NS_ABORT_MSG_IF(taSsn < m_taSsnSndUna,
+                        "Jetty terminal progress would underflow the completion cursor");
+        NS_ABORT_MSG_IF(taSsn >= m_taSsnSndNxt,
+                        "Jetty terminal progress references an uncommitted TASSN");
+        NS_ABORT_MSG_IF(taSsn - m_taSsnSndUna >= m_ssnAckWindow.GetWindowSize(),
+                        "Jetty terminal progress exceeds the ACK window");
+        NS_ABORT_MSG_IF(m_ssnAckWindow.Contains(taSsn),
+                        "Jetty terminal progress duplicates an existing terminal mark");
+    }
+    for (uint32_t taSsn : taSsns)
+    {
+        NS_ABORT_MSG_IF(!m_ssnAckWindow.Mark(taSsn),
+                        "Jetty terminal progress could not mark a validated TASSN");
+    }
+    m_taSsnSndUna += m_ssnAckWindow.AdvanceContiguous();
+    NS_ABORT_MSG_IF(m_ssnAckWindow.GetBase() != m_taSsnSndUna,
+                    "Jetty terminal progress advanced ACK-window state inconsistently");
 }
 
 Ptr<UbWqeSegment> UbJetty::GenWqeSegment(Ptr<UbWqe> wqe, uint32_t segmentSize)

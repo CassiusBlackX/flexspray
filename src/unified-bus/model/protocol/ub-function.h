@@ -107,6 +107,7 @@ namespace ns3 {
                                             UbWorkOutcome outcome);
         void NotifyJettyProgress(uint32_t jettyNum);
         bool IsJettyAcceptingWqes(uint32_t jettyNum) const;
+        bool ShouldContinueAcceptedWqes(uint32_t jettyNum) const;
         uint64_t TrackJettyEvent(uint32_t jettyNum);
         void AttachJettyEvent(uint32_t jettyNum,
                               uint64_t token,
@@ -151,6 +152,7 @@ namespace ns3 {
         bool IsJettyExists(uint32_t jettyNum) const;
         Ptr<UbJetty> GetJetty(uint32_t jettyNum) const;
         bool IsAcceptingWqes(uint32_t jettyNum) const;
+        bool ShouldContinueAcceptedWqes(uint32_t jettyNum) const;
         bool TryGetState(uint32_t jettyNum, UbJettyLifecycleState& state) const;
         void RegisterWqe(uint32_t jettyNum,
                          uint32_t wqeId,
@@ -234,6 +236,7 @@ namespace ns3 {
         bool CanCommitWqeSegmentAdmission(Ptr<UbWqeSegment> segment,
                                           Ptr<UbWqe> expectedWqe) const;
         void CommitWqeSegmentAdmission(Ptr<UbWqeSegment> segment);
+        void ApplyWqeSegmentTerminalProgress(const std::vector<uint32_t>& taSsns);
         bool ProcessWqeSegmentComplete(uint32_t taSsnFin);
         void RightShiftBitset(uint32_t shiftCount);
         void SetTaSegmentBytes(uint32_t bytes);
