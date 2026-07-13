@@ -50,8 +50,8 @@ UbController::~UbController()
 {
     NS_LOG_FUNCTION(this);
     m_numToTp.clear();
-    m_tpGroups.clear();
     m_rtpTpGroups.clear();
+    m_rtpTpGroupByTpn.clear();
     m_ports.clear();
     m_destinationToPortsMap.clear();
     m_portPairsToIter.clear();
@@ -215,74 +215,6 @@ void UbController::DestroyTp(uint32_t tpn)
     m_transportsCount--;
 }
 
-// Transport channel Group management
-Ptr<UbTransportGroup> UbController::CreateTpGroup(uint32_t src, uint32_t dest,
-    uint32_t type, uint32_t priority, uint32_t tpgn)
-{
-    NS_LOG_FUNCTION(this << src << dest << type << priority << tpgn);
-    TpgTag tpgTag = GenTpGroupTag(src, dest, type, priority, tpgn);
-    // 检查是否已存在
-    if (m_tpGroups.find(tpgTag) != m_tpGroups.end()) {
-        return m_tpGroups[tpgTag];
-    }
-
-    // 创建新的Transport Group
-    Ptr<UbTransportGroup> tpGroup = CreateObject<UbTransportGroup>();
-    // 初始化transport group字段...
-
-    m_tpGroups[tpgTag] = tpGroup;
-
-    // NS_LOG_DEBUG("Created transport group with tag " << tpgTag);
-    return tpGroup;
-}
-
-Ptr<UbTransportGroup> UbController::GetTpGroup(TpgTag tpgTag)
-{
-    auto it = m_tpGroups.find(tpgTag);
-    if (it != m_tpGroups.end()) {
-        return it->second;
-    }
-    return nullptr;
-}
-
-std::vector<Ptr<UbTransportGroup>> UbController::GetTpGroup(uint64_t src, uint64_t dest, uint64_t priority)
-{
-    NS_LOG_FUNCTION(this << src << dest << priority);
-
-    std::vector<Ptr<UbTransportGroup>> UbTransportGroupVec;
-
-    for (auto it = m_tpGroups.begin(); it != m_tpGroups.end(); it++) {
-        if (it->first.GetSrc() == src && it->first.GetDest() == dest && it->first.GetPriority() == priority) {
-            UbTransportGroupVec.push_back(it->second);
-        }
-    }
-
-    return UbTransportGroupVec;
-}
-
-TpgTag UbController::GenTpGroupTag(uint32_t src, uint32_t dest, uint32_t type, uint32_t priority, uint32_t tpgn)
-{
-    return TpgTag(src, dest, priority, type, tpgn & 0xF);
-}
-
-void UbController::DestroyTpGroup(uint32_t src, uint32_t dest, uint32_t type, uint32_t priority, uint32_t tpgn)
-{
-    NS_LOG_FUNCTION(this << src << dest << type << priority << tpgn);
-
-    TpgTag tpgTag = GenTpGroupTag(src, dest, type, priority, tpgn);
-    DestroyTpGroup(tpgTag);
-}
-
-void UbController::DestroyTpGroup(TpgTag tpgTag)
-{
-    auto it = m_tpGroups.find(tpgTag);
-    if (it != m_tpGroups.end()) {
-        m_tpGroups.erase(it);
-    } else {
-        NS_LOG_WARN("Transport group with tag not found for destruction");
-    }
-}
-
 Ptr<UbTransportGroup>
 UbController::CreateRtpTpGroup(const std::vector<Ptr<UbTransportChannel>>& members,
                                uint32_t initialSelectionCursor)
@@ -294,12 +226,41 @@ UbController::CreateRtpTpGroup(const std::vector<Ptr<UbTransportChannel>>& membe
     std::vector<UbTransportGroupMember> records;
     records.reserve(members.size());
     std::set<uint32_t> seenTpns;
+    uint64_t existingGroupId = 0;
     for (const Ptr<UbTransportChannel>& member : members)
     {
         NS_ABORT_MSG_IF(member == nullptr, "Cannot add a null TP to an RTP TPG");
         NS_ABORT_MSG_IF(!seenTpns.insert(member->GetTpn()).second,
                         "Cannot add the same TP to an RTP TPG twice");
         records.push_back({member->GetTpn(), member->GetLifecycleOwner()});
+        const auto existing = m_rtpTpGroupByTpn.find(member->GetTpn());
+        if (existing != m_rtpTpGroupByTpn.end())
+        {
+            NS_ABORT_MSG_IF(existingGroupId != 0 && existingGroupId != existing->second,
+                            "RTP TPG members already belong to different groups");
+            existingGroupId = existing->second;
+        }
+    }
+
+    if (existingGroupId != 0)
+    {
+        const auto existing = m_rtpTpGroups.find(existingGroupId);
+        NS_ABORT_MSG_IF(existing == m_rtpTpGroups.end() || existing->second == nullptr,
+                        "RTP TPG member index references a missing group");
+        Ptr<UbTransportGroup> group = existing->second;
+        if (!group->IsAcceptingNewOperations())
+        {
+            return nullptr;
+        }
+        NS_ABORT_MSG_IF(group->GetMemberCount() != records.size(),
+                        "A TP can belong to only one RTP TPG");
+        for (uint32_t index = 0; index < records.size(); ++index)
+        {
+            NS_ABORT_MSG_IF(group->GetMember(index).tpn != records[index].tpn ||
+                                group->GetMember(index).tpIdentity != records[index].tpIdentity,
+                            "Existing RTP TPG membership does not match the requested group");
+        }
+        return group;
     }
 
     const uint64_t localId = ++m_nextRtpTpGroupId;
@@ -307,10 +268,21 @@ UbController::CreateRtpTpGroup(const std::vector<Ptr<UbTransportChannel>>& membe
         UbLifecycleCoordinator::GetOrCreate(GetObject<Node>());
     const UbLifecycleResourceIdentity identity =
         coordinator->OpenResource(UbLifecycleResourceKind::RTP_TPG, localId);
+    for (UbTransportGroupMember& record : records)
+    {
+        record.membershipLease = coordinator->AcquireLease(record.tpIdentity,
+                                                           UbLifecycleLeaseKind::BINDING,
+                                                           identity);
+    }
     Ptr<UbTransportGroup> group = CreateObject<UbTransportGroup>();
     group->Init(identity, records, initialSelectionCursor);
     const bool inserted = m_rtpTpGroups.emplace(localId, group).second;
     NS_ABORT_MSG_IF(!inserted, "Duplicate RTP TPG collection identity");
+    for (const UbTransportGroupMember& member : records)
+    {
+        const bool indexed = m_rtpTpGroupByTpn.emplace(member.tpn, localId).second;
+        NS_ABORT_MSG_IF(!indexed, "A TP can belong to only one RTP TPG");
+    }
     return group;
 }
 
@@ -333,6 +305,269 @@ UbController::ResolveRtpTpGroup(const UbLifecycleResourceIdentity& identity) con
         return nullptr;
     }
     return group->second;
+}
+
+Ptr<UbTransportGroup>
+UbController::ResolveRtpTpGroupForMember(
+    const UbLifecycleResourceIdentity& tpIdentity) const
+{
+    if (tpIdentity.kind != UbLifecycleResourceKind::RTP_ENDPOINT)
+    {
+        return nullptr;
+    }
+    const auto membership = m_rtpTpGroupByTpn.find(static_cast<uint32_t>(tpIdentity.localId));
+    if (membership == m_rtpTpGroupByTpn.end())
+    {
+        return nullptr;
+    }
+    const auto group = m_rtpTpGroups.find(membership->second);
+    if (group == m_rtpTpGroups.end() || group->second == nullptr)
+    {
+        return nullptr;
+    }
+    for (uint32_t index = 0; index < group->second->GetMemberCount(); ++index)
+    {
+        if (group->second->GetMember(index).tpIdentity == tpIdentity)
+        {
+            return group->second;
+        }
+    }
+    return nullptr;
+}
+
+void
+UbController::FinalizeRtpTpGroupMemberRemoval(Ptr<UbTransportGroup> group, uint32_t index)
+{
+    NS_ABORT_MSG_IF(group == nullptr || index >= group->GetMemberCount(),
+                    "TPG member finalize requires an exact member");
+    group->MarkMemberRetiring(index);
+    const UbTransportGroupMember removed = group->RemoveMember(index);
+    Ptr<UbLifecycleCoordinator> coordinator =
+        UbLifecycleCoordinator::GetOrCreate(GetObject<Node>());
+    coordinator->ReleaseLease(removed.membershipLease);
+    const auto membership = m_rtpTpGroupByTpn.find(removed.tpn);
+    NS_ABORT_MSG_IF(membership == m_rtpTpGroupByTpn.end() ||
+                        membership->second != group->GetLifecycleIdentity().localId,
+                    "TPG member reverse index is stale");
+    m_rtpTpGroupByTpn.erase(membership);
+}
+
+UbTpgMemberMutationStatus
+UbController::AddRtpTpGroupMember(
+    const UbLifecycleResourceIdentity& groupIdentity,
+    const UbLifecycleResourceIdentity& tpIdentity)
+{
+    Ptr<UbTransportGroup> group = ResolveRtpTpGroup(groupIdentity);
+    if (group == nullptr)
+    {
+        return UbTpgMemberMutationStatus::NOT_FOUND;
+    }
+    if (group->IsDestroyPending() ||
+        (!group->IsAcceptingNewOperations() && !group->HasPendingLastMemberRemoval()))
+    {
+        return UbTpgMemberMutationStatus::REJECTED;
+    }
+
+    Ptr<Node> node = GetObject<Node>();
+    Ptr<UbLifecycleCoordinator> coordinator =
+        UbLifecycleCoordinator::GetOrCreate(node);
+    if (tpIdentity.kind != UbLifecycleResourceKind::RTP_ENDPOINT ||
+        tpIdentity.ownerNodeId != node->GetId() ||
+        tpIdentity.localId > std::numeric_limits<uint32_t>::max() ||
+        !coordinator->IsResourceActive(tpIdentity))
+    {
+        return UbTpgMemberMutationStatus::REJECTED;
+    }
+    const uint32_t tpn = static_cast<uint32_t>(tpIdentity.localId);
+    const auto transport = m_numToTp.find(tpn);
+    if (transport == m_numToTp.end() || transport->second == nullptr ||
+        transport->second->GetLifecycleOwner() != tpIdentity ||
+        group->FindMemberIndex(tpIdentity) >= 0 ||
+        m_rtpTpGroupByTpn.find(tpn) != m_rtpTpGroupByTpn.end())
+    {
+        return UbTpgMemberMutationStatus::REJECTED;
+    }
+
+    UbTransportGroupMember member{tpn, tpIdentity};
+    member.membershipLease = coordinator->AcquireLease(tpIdentity,
+                                                       UbLifecycleLeaseKind::BINDING,
+                                                       groupIdentity);
+    bool memberInserted = false;
+    try
+    {
+        group->AddMember(member);
+        memberInserted = true;
+        const bool indexed = m_rtpTpGroupByTpn.emplace(tpn, groupIdentity.localId).second;
+        if (!indexed)
+        {
+            const int32_t index = group->FindMemberIndex(tpIdentity);
+            NS_ABORT_MSG_IF(index < 0, "TPG AddMember rollback lost the inserted member");
+            group->RemoveMember(static_cast<uint32_t>(index));
+            coordinator->ReleaseLease(member.membershipLease);
+            return UbTpgMemberMutationStatus::REJECTED;
+        }
+    }
+    catch (...)
+    {
+        if (memberInserted)
+        {
+            const int32_t index = group->FindMemberIndex(tpIdentity);
+            if (index >= 0)
+            {
+                group->RemoveMember(static_cast<uint32_t>(index));
+            }
+        }
+        coordinator->ReleaseLease(member.membershipLease);
+        throw;
+    }
+
+    if (group->HasPendingLastMemberRemoval())
+    {
+        const int32_t oldIndex =
+            group->FindMemberIndex(group->GetPendingLastMemberRemoval());
+        NS_ABORT_MSG_IF(oldIndex < 0,
+                        "Pending last TPG member disappeared before replacement");
+        FinalizeRtpTpGroupMemberRemoval(group, static_cast<uint32_t>(oldIndex));
+        group->ClearPendingLastMemberRemoval();
+        group->ResumeNewOperations();
+    }
+    if (m_transaction != nullptr)
+    {
+        m_transaction->NotifyRtpTpGroupMemberAvailable(groupIdentity);
+    }
+    return UbTpgMemberMutationStatus::ADDED;
+}
+
+UbTpgMemberMutationStatus
+UbController::RemoveRtpTpGroupMember(
+    const UbLifecycleResourceIdentity& groupIdentity,
+    const UbLifecycleResourceIdentity& tpIdentity,
+    UbDestroyReason reason)
+{
+    Ptr<UbTransportGroup> group = ResolveRtpTpGroup(groupIdentity);
+    if (group == nullptr)
+    {
+        return UbTpgMemberMutationStatus::NOT_FOUND;
+    }
+    const int32_t memberIndex = group->FindMemberIndex(tpIdentity);
+    if (memberIndex < 0)
+    {
+        return UbTpgMemberMutationStatus::NOT_FOUND;
+    }
+    if (group->HasPendingLastMemberRemoval())
+    {
+        return group->GetPendingLastMemberRemoval() == tpIdentity
+                   ? UbTpgMemberMutationStatus::PENDING
+                   : UbTpgMemberMutationStatus::REJECTED;
+    }
+
+    if (group->GetMemberCount() > 1)
+    {
+        FinalizeRtpTpGroupMemberRemoval(group, static_cast<uint32_t>(memberIndex));
+        return UbTpgMemberMutationStatus::REMOVED;
+    }
+
+    Ptr<UbLifecycleCoordinator> coordinator =
+        UbLifecycleCoordinator::GetOrCreate(GetObject<Node>());
+    const uint64_t useLeases = coordinator->GetSnapshot(groupIdentity).activeTransportUseLeases;
+    if (useLeases != 0)
+    {
+        if (reason != UbDestroyReason::EXPLICIT &&
+            reason != UbDestroyReason::PROTOCOL_COMPLETE)
+        {
+            return UbTpgMemberMutationStatus::REJECTED;
+        }
+        group->FreezeNewOperations();
+        group->SetPendingLastMemberRemoval(tpIdentity);
+        return UbTpgMemberMutationStatus::PENDING;
+    }
+
+    FinalizeRtpTpGroupMemberRemoval(group, static_cast<uint32_t>(memberIndex));
+    return UbTpgMemberMutationStatus::REMOVED;
+}
+
+void
+UbController::FinalizeRtpTpGroupDestroy(Ptr<UbTransportGroup> group)
+{
+    NS_ABORT_MSG_IF(group == nullptr, "TPG destroy finalize requires an exact group");
+    const UbLifecycleResourceIdentity identity = group->GetLifecycleIdentity();
+    Ptr<UbLifecycleCoordinator> coordinator =
+        UbLifecycleCoordinator::GetOrCreate(GetObject<Node>());
+    NS_ABORT_MSG_IF(coordinator->GetSnapshot(identity).activeTransportUseLeases != 0,
+                    "TPG destroy finalize requires drained use leases");
+    if (m_transaction != nullptr)
+    {
+        m_transaction->EraseRtpTpGroupBindings(identity);
+    }
+    while (group->GetMemberCount() != 0)
+    {
+        FinalizeRtpTpGroupMemberRemoval(group, group->GetMemberCount() - 1);
+    }
+    coordinator->RecordSuccessfulTerminal(identity);
+    coordinator->RetireResource(identity);
+    const auto record = m_rtpTpGroups.find(identity.localId);
+    NS_ABORT_MSG_IF(record == m_rtpTpGroups.end() || record->second != group,
+                    "TPG destroy finalize requires the canonical collection record");
+    m_rtpTpGroups.erase(record);
+}
+
+UbDestroyStatus
+UbController::DestroyRtpTpGroup(const UbLifecycleResourceIdentity& groupIdentity,
+                                UbDestroyReason reason)
+{
+    Ptr<UbTransportGroup> group = ResolveRtpTpGroup(groupIdentity);
+    if (group == nullptr)
+    {
+        return UbDestroyStatus::NOT_FOUND;
+    }
+    if (group->IsDestroyPending())
+    {
+        return UbDestroyStatus::PENDING;
+    }
+    (void)reason;
+    group->FreezeNewOperations();
+    if (m_transaction != nullptr)
+    {
+        m_transaction->ReleaseRtpTpGroupBindingLeases(groupIdentity);
+    }
+    Ptr<UbLifecycleCoordinator> coordinator =
+        UbLifecycleCoordinator::GetOrCreate(GetObject<Node>());
+    if (coordinator->GetSnapshot(groupIdentity).activeTransportUseLeases != 0)
+    {
+        group->MarkDestroyPending();
+        return UbDestroyStatus::PENDING;
+    }
+
+    FinalizeRtpTpGroupDestroy(group);
+    return UbDestroyStatus::COMPLETED;
+}
+
+void
+UbController::NotifyRtpTpGroupUseLeaseReleased(
+    const UbLifecycleResourceIdentity& groupIdentity)
+{
+    Ptr<UbTransportGroup> group = ResolveRtpTpGroup(groupIdentity);
+    if (group == nullptr ||
+        (!group->IsDestroyPending() && !group->HasPendingLastMemberRemoval()))
+    {
+        return;
+    }
+    Ptr<UbLifecycleCoordinator> coordinator =
+        UbLifecycleCoordinator::GetOrCreate(GetObject<Node>());
+    if (coordinator->GetSnapshot(groupIdentity).activeTransportUseLeases != 0)
+    {
+        return;
+    }
+    if (group->IsDestroyPending())
+    {
+        FinalizeRtpTpGroupDestroy(group);
+        return;
+    }
+    const int32_t index = group->FindMemberIndex(group->GetPendingLastMemberRemoval());
+    NS_ABORT_MSG_IF(index < 0, "Pending last TPG member disappeared before use-lease drain");
+    FinalizeRtpTpGroupMemberRemoval(group, static_cast<uint32_t>(index));
+    group->ClearPendingLastMemberRemoval();
+    group->ResumeNewOperations();
 }
 
 // Port management

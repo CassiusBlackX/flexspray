@@ -2358,11 +2358,125 @@ UbTransportGroup::GetMember(uint32_t index) const
     return m_members[index];
 }
 
+bool
+UbTransportGroup::IsMemberSelectable(uint32_t index) const
+{
+    return GetMember(index).state == UbTransportGroupMemberState::ACTIVE;
+}
+
+int32_t
+UbTransportGroup::FindMemberIndex(const UbLifecycleResourceIdentity& tpIdentity) const
+{
+    for (uint32_t index = 0; index < m_members.size(); ++index)
+    {
+        if (m_members[index].tpIdentity == tpIdentity)
+        {
+            return static_cast<int32_t>(index);
+        }
+    }
+    return -1;
+}
+
+void
+UbTransportGroup::AddMember(const UbTransportGroupMember& member)
+{
+    NS_ABORT_MSG_IF(FindMemberIndex(member.tpIdentity) >= 0,
+                    "Cannot add the same TPG member twice");
+    m_members.push_back(member);
+}
+
+void
+UbTransportGroup::MarkMemberRetiring(uint32_t index)
+{
+    NS_ABORT_MSG_IF(index >= m_members.size(), "Cannot retire an unknown TPG member");
+    m_members[index].state = UbTransportGroupMemberState::RETIRING;
+}
+
+UbTransportGroupMember
+UbTransportGroup::RemoveMember(uint32_t index)
+{
+    NS_ABORT_MSG_IF(index >= m_members.size(), "Cannot remove an unknown TPG member");
+    UbTransportGroupMember removed = m_members[index];
+    m_members.erase(m_members.begin() + index);
+    if (m_members.empty())
+    {
+        m_selectionCursor = 0;
+    }
+    else if (index < m_selectionCursor)
+    {
+        --m_selectionCursor;
+    }
+    else if (m_selectionCursor >= m_members.size())
+    {
+        m_selectionCursor = 0;
+    }
+    return removed;
+}
+
 void
 UbTransportGroup::CommitSelection(uint32_t selectedIndex)
 {
     NS_ABORT_MSG_IF(selectedIndex >= m_members.size(), "Cannot commit an unknown TPG member");
     m_selectionCursor = (selectedIndex + 1) % m_members.size();
+}
+
+bool
+UbTransportGroup::IsAcceptingNewOperations() const
+{
+    return m_acceptingNewOperations;
+}
+
+void
+UbTransportGroup::FreezeNewOperations()
+{
+    m_acceptingNewOperations = false;
+}
+
+void
+UbTransportGroup::ResumeNewOperations()
+{
+    m_acceptingNewOperations = true;
+}
+
+void
+UbTransportGroup::SetPendingLastMemberRemoval(
+    const UbLifecycleResourceIdentity& tpIdentity)
+{
+    NS_ABORT_MSG_IF(m_pendingLastMemberRemoval.has_value(),
+                    "TPG already has a pending last-member removal");
+    m_pendingLastMemberRemoval = tpIdentity;
+}
+
+bool
+UbTransportGroup::HasPendingLastMemberRemoval() const
+{
+    return m_pendingLastMemberRemoval.has_value();
+}
+
+const UbLifecycleResourceIdentity&
+UbTransportGroup::GetPendingLastMemberRemoval() const
+{
+    NS_ABORT_MSG_IF(!m_pendingLastMemberRemoval.has_value(),
+                    "TPG has no pending last-member removal");
+    return *m_pendingLastMemberRemoval;
+}
+
+void
+UbTransportGroup::ClearPendingLastMemberRemoval()
+{
+    m_pendingLastMemberRemoval.reset();
+}
+
+void
+UbTransportGroup::MarkDestroyPending()
+{
+    m_destroyPending = true;
+}
+
+bool
+UbTransportGroup::IsDestroyPending() const
+{
+    return m_destroyPending;
 }
 
 } // namespace ns3

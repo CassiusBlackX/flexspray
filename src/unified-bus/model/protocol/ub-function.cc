@@ -169,6 +169,17 @@ UbWqeSubmissionResult UbFunction::SubmitWqe(Ptr<UbWqe> wqe, uint32_t jettyNum)
     if (!GetTransaction()->IsRtpTransportReferenceCurrent(*transportReference)) {
         return {UbWqeSubmissionStatus::STALE_TRANSPORT_REFERENCE, {}};
     }
+    switch (GetTransaction()->PreflightRtpOperation(*transportReference))
+    {
+    case UbRtpOperationPreflightResult::NOT_ACCEPTING:
+        return {UbWqeSubmissionStatus::TPG_NOT_ACCEPTING, {}};
+    case UbRtpOperationPreflightResult::NO_MEMBER:
+        return {UbWqeSubmissionStatus::TPG_NO_MEMBER, {}};
+    case UbRtpOperationPreflightResult::STALE_REFERENCE:
+        return {UbWqeSubmissionStatus::STALE_TRANSPORT_REFERENCE, {}};
+    case UbRtpOperationPreflightResult::ACCEPTING:
+        break;
+    }
     if (GetTransaction()->HasWqeOperation(jettyNum, wqe->GetWqeId())) {
         return {UbWqeSubmissionStatus::DUPLICATE_OPERATION, {}};
     }
@@ -271,16 +282,16 @@ UbFunction::IsJettyDrainReady(uint32_t jettyNum) const
 void
 UbFunction::RegisterJettyRtpBinding(
     uint32_t jettyNum,
-    const std::vector<Ptr<UbTransportChannel>>& transports)
+    const UbLifecycleResourceIdentity& transportIdentity)
 {
-    std::vector<UbLifecycleResourceIdentity> identities;
-    identities.reserve(transports.size());
-    for (const Ptr<UbTransportChannel>& transport : transports)
-    {
-        NS_ABORT_MSG_IF(transport == nullptr, "Jetty RTP binding contains a null TP");
-        identities.push_back(transport->GetLifecycleOwner());
-    }
-    m_jettyManager->ReplaceRtpBinding(jettyNum, identities);
+    m_jettyManager->ReplaceRtpBinding(jettyNum, transportIdentity);
+}
+
+void
+UbFunction::ReleaseJettyRtpBindings(
+    const UbLifecycleResourceIdentity& transportIdentity)
+{
+    m_jettyManager->ReleaseRtpBindings(transportIdentity);
 }
 
 void
@@ -437,7 +448,7 @@ UbJettyManager::TryGetIdentity(uint32_t jettyNum,
 void
 UbJettyManager::ReplaceRtpBinding(
     uint32_t jettyNum,
-    const std::vector<UbLifecycleResourceIdentity>& transportIdentities)
+    const UbLifecycleResourceIdentity& transportIdentity)
 {
     auto it = m_records.find(jettyNum);
     NS_ABORT_MSG_IF(it == m_records.end() || it->second.state != UbJettyLifecycleState::ACTIVE,
@@ -449,16 +460,33 @@ UbJettyManager::ReplaceRtpBinding(
     }
     it->second.bindingLeases.clear();
     it->second.hasCtpBinding = false;
-    for (UbLifecycleResourceIdentity transportIdentity : transportIdentities)
+    NS_ABORT_MSG_IF(transportIdentity.generation == 0,
+                    "Jetty RTP binding requires an exact transport generation");
+    it->second.bindingLeases.push_back(
+        coordinator->AcquireLease(it->second.identity,
+                                  UbLifecycleLeaseKind::BINDING,
+                                  transportIdentity));
+}
+
+void
+UbJettyManager::ReleaseRtpBindings(
+    const UbLifecycleResourceIdentity& transportIdentity)
+{
+    Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
+    for (auto& [jettyNum, record] : m_records)
     {
-        if (transportIdentity.generation == 0)
+        (void)jettyNum;
+        for (auto lease = record.bindingLeases.begin();
+             lease != record.bindingLeases.end();)
         {
-            transportIdentity = it->second.identity;
+            if (lease->related != transportIdentity)
+            {
+                ++lease;
+                continue;
+            }
+            coordinator->ReleaseLease(*lease);
+            lease = record.bindingLeases.erase(lease);
         }
-        it->second.bindingLeases.push_back(
-            coordinator->AcquireLease(it->second.identity,
-                                      UbLifecycleLeaseKind::BINDING,
-                                      transportIdentity));
     }
 }
 

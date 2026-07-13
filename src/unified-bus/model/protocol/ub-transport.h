@@ -32,10 +32,27 @@ class UbWqe;
 class UbWqeSegment;
 class UbJetty;
 
+enum class UbTpgMemberMutationStatus : uint8_t
+{
+    REMOVED = 0,
+    PENDING = 1,
+    NOT_FOUND = 2,
+    REJECTED = 3,
+    ADDED = 4,
+};
+
+enum class UbTransportGroupMemberState : uint8_t
+{
+    ACTIVE = 0,
+    RETIRING = 1,
+};
+
 struct UbTransportGroupMember
 {
     uint32_t tpn{UINT32_MAX};
     UbLifecycleResourceIdentity tpIdentity;
+    UbLifecycleLeaseIdentity membershipLease;
+    UbTransportGroupMemberState state{UbTransportGroupMemberState::ACTIVE};
 };
 
 enum class UbWqeSegmentTerminalDisposition : uint8_t
@@ -610,12 +627,29 @@ public:
     uint32_t GetSelectionCursor() const;
     uint32_t GetMemberIndexAtOffset(uint32_t offset) const;
     const UbTransportGroupMember& GetMember(uint32_t index) const;
+    bool IsMemberSelectable(uint32_t index) const;
+    int32_t FindMemberIndex(const UbLifecycleResourceIdentity& tpIdentity) const;
+    void AddMember(const UbTransportGroupMember& member);
+    void MarkMemberRetiring(uint32_t index);
+    UbTransportGroupMember RemoveMember(uint32_t index);
     void CommitSelection(uint32_t selectedIndex);
+    bool IsAcceptingNewOperations() const;
+    void FreezeNewOperations();
+    void ResumeNewOperations();
+    void SetPendingLastMemberRemoval(const UbLifecycleResourceIdentity& tpIdentity);
+    bool HasPendingLastMemberRemoval() const;
+    const UbLifecycleResourceIdentity& GetPendingLastMemberRemoval() const;
+    void ClearPendingLastMemberRemoval();
+    void MarkDestroyPending();
+    bool IsDestroyPending() const;
 
 private:
     UbLifecycleResourceIdentity m_identity;
     std::vector<UbTransportGroupMember> m_members;
     uint32_t m_selectionCursor{0};
+    bool m_acceptingNewOperations{true};
+    std::optional<UbLifecycleResourceIdentity> m_pendingLastMemberRemoval;
+    bool m_destroyPending{false};
 };
 
 } // namespace ns3

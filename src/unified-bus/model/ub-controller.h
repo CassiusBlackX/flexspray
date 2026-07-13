@@ -61,50 +61,25 @@ public:
      **/
     void DestroyTp(uint32_t tpn);
 
-    // Transport channel Group management
-    /**
-     * @brief Create a new transport channel group
-     * @param groupId Group identifier
-     * @return Pointer to created transport channel group
-     */
-    Ptr<UbTransportGroup> CreateTpGroup(uint32_t src, uint32_t dest, uint32_t type, uint32_t priority, uint32_t tpgn);
-
-    /**
-     * @brief Get transport channel group by group ID
-     * @param groupId Group identifier
-     * @return Pointer to transport channel group or nullptr if not found
-     */
-    Ptr<UbTransportGroup> GetTpGroup(TpgTag tpgTag);
-
-    std::vector<Ptr<UbTransportGroup>> GetTpGroup(uint64_t src, uint64_t dest, uint64_t priority);
-    /**
-     * @brief Generate transport channel group tag from parameters
-     * @param src Source identifier
-     * @param dest Destination identifier
-     * @param sport Source port
-     * @param dport Destination port
-     * @param groupId Group identifier
-     * @return Generated transport channel group tag
-     */
-    TpgTag GenTpGroupTag(uint32_t src, uint32_t dest, uint32_t type, uint32_t priority, uint32_t tpgn);
-
-    /**
-     * @brief Destroy transport channel group
-     * @param groupId Group identifier
-     */
-    void DestroyTpGroup(uint32_t src, uint32_t dest, uint32_t type, uint32_t priority, uint32_t tpgn);
-
-    /**
-     * @brief Destroy transport channel group by tag
-     * @param tpgTag transport channel group tag
-     */
-    void DestroyTpGroup(TpgTag tpgTag);
-
     Ptr<UbTransportGroup> CreateRtpTpGroup(
         const std::vector<Ptr<UbTransportChannel>>& members,
         uint32_t initialSelectionCursor);
     Ptr<UbTransportGroup> ResolveRtpTpGroup(
         const UbLifecycleResourceIdentity& identity) const;
+    Ptr<UbTransportGroup> ResolveRtpTpGroupForMember(
+        const UbLifecycleResourceIdentity& tpIdentity) const;
+    UbTpgMemberMutationStatus AddRtpTpGroupMember(
+        const UbLifecycleResourceIdentity& groupIdentity,
+        const UbLifecycleResourceIdentity& tpIdentity);
+    UbTpgMemberMutationStatus RemoveRtpTpGroupMember(
+        const UbLifecycleResourceIdentity& groupIdentity,
+        const UbLifecycleResourceIdentity& tpIdentity,
+        UbDestroyReason reason);
+    UbDestroyStatus DestroyRtpTpGroup(
+        const UbLifecycleResourceIdentity& groupIdentity,
+        UbDestroyReason reason = UbDestroyReason::EXPLICIT);
+    void NotifyRtpTpGroupUseLeaseReleased(
+        const UbLifecycleResourceIdentity& groupIdentity);
 
     // Port management
     /**
@@ -213,6 +188,8 @@ public:
     }
 private:
   Ptr<UbTransportChannel> CreateReservedTpEndpointLocked(uint32_t tpn);
+  void FinalizeRtpTpGroupMemberRemoval(Ptr<UbTransportGroup> group, uint32_t index);
+  void FinalizeRtpTpGroupDestroy(Ptr<UbTransportGroup> group);
 
   Ptr<UbFunction> m_function;       // 功能层
   Ptr<UbTransaction> m_transaction; // 事务层
@@ -223,9 +200,9 @@ private:
   std::map<uint32_t, Ptr<UbTransportChannel>>
       m_numToTp{}; // 协议规定TPH中的TP number，在生成TP时，赋值为m_transports_count
   uint32_t m_transportsCount{0}; // increment only，用于标识tpn
-  std::map<TpgTag, Ptr<UbTransportGroup>> m_tpGroups{};
   uint64_t m_nextRtpTpGroupId{0};
   std::map<uint64_t, Ptr<UbTransportGroup>> m_rtpTpGroups{};
+  std::map<uint32_t, uint64_t> m_rtpTpGroupByTpn{};
   std::map<uint64_t, Ptr<UbPort>> m_ports{};
   Ptr<UbDataLink> m_datalink = nullptr;
 
