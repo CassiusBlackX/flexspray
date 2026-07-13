@@ -908,6 +908,12 @@ Ptr<Packet> UbTransportChannel::GenDataPacket(Ptr<UbWqeSegment> wqeSegment,
     Ptr<Packet> p = Create<Packet>(payloadSize);
     UbFlowTag flowTag(wqeSegment->GetTaskId(), wqeSegment->GetWqeSize());
     p->AddPacketTag(flowTag);
+    if (wqeSegment->HasTransactionCorrelation())
+    {
+        UbTransactionCorrelationTag correlationTag;
+        correlationTag.SetIdentity(wqeSegment->GetTransactionCorrelation());
+        p->AddPacketTag(correlationTag);
+    }
     // add UbMAExtTah
     UbMAExtTah MAExtTaHeader;
     MAExtTaHeader.SetLength(wireLengthBytes);
@@ -963,7 +969,9 @@ Ptr<UbWqeSegment> UbTransportChannel::TrackInboundTaPacket(const UbTransportHead
                                                            const UbTransactionHeader& taHeader,
                                                            uint32_t resLenBytes,
                                                            uint32_t payloadBytes,
-                                                           uint32_t taskId)
+                                                           uint32_t taskId,
+                                                           bool hasTransactionCorrelation,
+                                                           const UbTransactionCorrelationIdentity& correlation)
 {
     const uint32_t srcTpn = tpHeader.GetSrcTpn();
     uint64_t& tpMsnReference = m_inboundTpMsnReferences[srcTpn];
@@ -994,6 +1002,13 @@ Ptr<UbWqeSegment> UbTransportChannel::TrackInboundTaPacket(const UbTransportHead
         state.segment->SetResolvedTpIdentity(m_packetLifecycleOwner);
         state.segment->SetTpMsn(logicalTpMsn);
         state.segment->SetTpn(m_tpn);
+    }
+    if (hasTransactionCorrelation)
+    {
+        NS_ABORT_MSG_IF(state.segment->HasTransactionCorrelation() &&
+                            state.segment->GetTransactionCorrelation() != correlation,
+                        "Packets for one inbound Transaction unit have different correlations");
+        state.segment->SetTransactionCorrelation(correlation);
     }
 
     const auto taOpcode = static_cast<TaOpcode>(taHeader.GetTaOpcode());
@@ -1566,6 +1581,12 @@ UbTransportChannel::ParseReceivedDataPacket(Ptr<Packet> packet,
     ctx.resLenBytes = ctx.maExtHeader.GetLength();
     ctx.psn = UbTpPsnSequence::Unwrap(ctx.transportHeader.GetPsn(), m_psnRecvNxt);
     packet->PeekPacketTag(ctx.flowTag);
+    UbTransactionCorrelationTag correlationTag;
+    ctx.hasTransactionCorrelation = packet->PeekPacketTag(correlationTag);
+    if (ctx.hasTransactionCorrelation)
+    {
+        ctx.transactionCorrelation = correlationTag.GetIdentity();
+    }
     return true;
 }
 
@@ -1595,6 +1616,12 @@ UbTransportChannel::BuildTransportResponsePacket(const ReceivedDataPacketContext
 {
     Ptr<Packet> responsePacket = Create<Packet>(0);
     responsePacket->AddPacketTag(ctx.flowTag);
+    if (ctx.hasTransactionCorrelation)
+    {
+        UbTransactionCorrelationTag correlationTag;
+        correlationTag.SetIdentity(ctx.transactionCorrelation);
+        responsePacket->AddPacketTag(correlationTag);
+    }
 
     UbAckTransactionHeader ackTaHeader;
     ackTaHeader.SetTaOpcode(TaOpcode::TA_OPCODE_TRANSACTION_ACK);
@@ -1761,7 +1788,9 @@ UbTransportChannel::UpdateReceiveWindowAndCollectCompletedTa(
                                          ctx.transactionHeader,
                                          ctx.resLenBytes,
                                          ctx.payloadBytes,
-                                         flowTag.GetFlowId()};
+                                         flowTag.GetFlowId(),
+                                         ctx.hasTransactionCorrelation,
+                                         ctx.transactionCorrelation};
     if (outOfOrderPacket) {
         NS_LOG_DEBUG("Out-of-Order Packet,tpn:{" << m_tpn << "} psn:{"
                      << ctx.psn << "} expectedPsn:{" << m_psnRecvNxt << "}");
@@ -1791,7 +1820,9 @@ UbTransportChannel::UpdateReceiveWindowAndCollectCompletedTa(
                                  bufferedIt->second.taHeader,
                                  bufferedIt->second.resLenBytes,
                                  bufferedIt->second.payloadBytes,
-                                 bufferedIt->second.taskId);
+                                 bufferedIt->second.taskId,
+                                 bufferedIt->second.hasTransactionCorrelation,
+                                 bufferedIt->second.transactionCorrelation);
         if (completedTaUnit != nullptr) {
             completedTaUnits.push_back(completedTaUnit);
         }
@@ -2187,14 +2218,15 @@ UbTransportGroup::~UbTransportGroup()
 
 void
 UbTransportGroup::Init(const UbLifecycleResourceIdentity& identity,
-                       const std::vector<UbTransportGroupMember>& members)
+                       const std::vector<UbTransportGroupMember>& members,
+                       uint32_t initialSelectionCursor)
 {
     NS_ABORT_MSG_IF(identity.kind != UbLifecycleResourceKind::RTP_TPG || identity.generation == 0,
                     "TPG requires a live lifecycle identity");
     NS_ABORT_MSG_IF(members.empty(), "TPG requires at least one member");
     m_identity = identity;
     m_members = members;
-    m_selectionCursor = 0;
+    m_selectionCursor = initialSelectionCursor % m_members.size();
 }
 
 const UbLifecycleResourceIdentity&

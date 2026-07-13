@@ -104,6 +104,14 @@ struct UbLifecycleLeaseIdentity
     bool operator==(const UbLifecycleLeaseIdentity&) const = default;
 };
 
+struct UbTransactionCorrelationIdentity
+{
+    UbLifecycleResourceIdentity operation;
+    UbLifecycleResourceIdentity segment;
+
+    bool operator==(const UbTransactionCorrelationIdentity&) const = default;
+};
+
 std::ostream& operator<<(std::ostream& os, const UbLifecycleResourceIdentity& identity);
 std::ostream& operator<<(std::ostream& os, const UbPacketAttemptIdentity& identity);
 
@@ -123,6 +131,24 @@ class UbPacketLifecycleTag : public Tag
 
   private:
     UbPacketAttemptIdentity m_identity;
+};
+
+class UbTransactionCorrelationTag : public Tag
+{
+  public:
+    static TypeId GetTypeId();
+    TypeId GetInstanceTypeId() const override;
+
+    uint32_t GetSerializedSize() const override;
+    void Serialize(TagBuffer buffer) const override;
+    void Deserialize(TagBuffer buffer) override;
+    void Print(std::ostream& os) const override;
+
+    void SetIdentity(const UbTransactionCorrelationIdentity& identity);
+    UbTransactionCorrelationIdentity GetIdentity() const;
+
+  private:
+    UbTransactionCorrelationIdentity m_identity;
 };
 
 struct UbLifecycleResourceSnapshot

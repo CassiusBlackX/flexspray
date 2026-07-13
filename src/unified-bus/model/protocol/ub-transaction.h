@@ -34,11 +34,32 @@ namespace ns3 {
         TPG = 1,
     };
 
-    struct UbRtpTransportReference
+    class UbRtpTransportReference
     {
-        UbRtpTransportReferenceKind kind{UbRtpTransportReferenceKind::DIRECT_TP};
-        UbLifecycleResourceIdentity identity;
-        uint32_t directTpn{UINT32_MAX};
+      public:
+        static UbRtpTransportReference ForDirectTp(
+            uint32_t tpn,
+            const UbLifecycleResourceIdentity& identity);
+        static UbRtpTransportReference ForTpGroup(
+            const UbLifecycleResourceIdentity& identity);
+
+        UbRtpTransportReferenceKind GetKind() const;
+        const UbLifecycleResourceIdentity& GetIdentity() const;
+        bool IsDirectTp() const;
+        uint32_t GetDirectTpn() const;
+
+      private:
+        UbRtpTransportReference() = default;
+        UbRtpTransportReference(UbRtpTransportReferenceKind kind,
+                                const UbLifecycleResourceIdentity& identity,
+                                uint32_t directTpn);
+
+        UbRtpTransportReferenceKind m_kind{UbRtpTransportReferenceKind::DIRECT_TP};
+        UbLifecycleResourceIdentity m_identity;
+        uint32_t m_directTpn{UINT32_MAX};
+
+        friend class UbTransaction;
+        friend struct UbTransactionOperationSnapshot;
     };
 
     struct UbTransactionOperationSnapshot
@@ -49,6 +70,7 @@ namespace ns3 {
         uint32_t directTpn{UINT32_MAX};
         uint32_t activeSegments{0};
         uint32_t activeTransportWorkLeases{0};
+        std::vector<UbLifecycleResourceIdentity> segmentIdentities;
         std::vector<UbLifecycleResourceIdentity> resolvedTpIdentities;
     };
     /**
@@ -113,8 +135,7 @@ namespace ns3 {
         // 新增wqe任务
         void AddWqe(uint32_t jettyNum, Ptr<UbWqe> wqe);
 
-        bool TryGetRtpTransportReference(uint32_t jettyNum,
-                                         UbRtpTransportReference& reference) const;
+        const UbRtpTransportReference* FindRtpTransportReference(uint32_t jettyNum) const;
         bool IsRtpTransportReferenceCurrent(
             const UbRtpTransportReference& reference) const;
         bool TryAdmitRtpWqe(uint32_t jettyNum,
@@ -154,10 +175,17 @@ namespace ns3 {
         void RunTrackedAdmitRtpWqeSegment(Ptr<UbWqeSegment> segment,
                                           Ptr<UbWqe> originatingWqe,
                                           uint64_t eventToken);
-        bool TryAdmitRtpSegment(uint32_t jettyNum,
-                                Ptr<UbWqe> originatingWqe,
-                                Ptr<UbWqeSegment> segment,
-                                Ptr<UbTransportChannel>& admittedTp);
+        enum class RtpSegmentAdmissionResult : uint8_t
+        {
+            ADMITTED,
+            STALE_PREPARED_CANDIDATE,
+            REJECTED,
+        };
+        RtpSegmentAdmissionResult TryAdmitRtpSegment(
+            uint32_t jettyNum,
+            Ptr<UbWqe> originatingWqe,
+            Ptr<UbWqeSegment> segment,
+            Ptr<UbTransportChannel>& admittedTp);
         void RunTrackedScheduleWqeSegment(uint32_t jettyNum,
                                           Ptr<UbWqe> originatingWqe,
                                           bool lifecycleOperation,
@@ -180,6 +208,15 @@ namespace ns3 {
                                   uint32_t wqeId,
                                   uint32_t taSsn,
                                   Ptr<UbWqeSegment> completion);
+        struct RtpTransportResolution
+        {
+            Ptr<UbTransportChannel> directTp;
+            Ptr<UbTransportGroup> group;
+        };
+        Ptr<UbController> GetOwnerController() const;
+        bool ResolveRtpTransportReference(
+            const UbRtpTransportReference& reference,
+            RtpTransportResolution& resolution) const;
 
         bool IsUrmaReadWriteRequest(const Ptr<UbWqeSegment>& segment);
 

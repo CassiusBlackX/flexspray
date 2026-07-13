@@ -161,11 +161,12 @@ UbWqeSubmissionResult UbFunction::SubmitWqe(Ptr<UbWqe> wqe, uint32_t jettyNum)
     if (!ubJetty->CanAcceptWqe(wqe)) {
         return {UbWqeSubmissionStatus::JETTY_BINDING_MISMATCH, {}};
     }
-    UbRtpTransportReference transportReference;
-    if (!GetTransaction()->TryGetRtpTransportReference(jettyNum, transportReference)) {
+    const UbRtpTransportReference* transportReference =
+        GetTransaction()->FindRtpTransportReference(jettyNum);
+    if (transportReference == nullptr) {
         return {UbWqeSubmissionStatus::NO_DIRECT_TRANSPORT, {}};
     }
-    if (!GetTransaction()->IsRtpTransportReferenceCurrent(transportReference)) {
+    if (!GetTransaction()->IsRtpTransportReferenceCurrent(*transportReference)) {
         return {UbWqeSubmissionStatus::STALE_TRANSPORT_REFERENCE, {}};
     }
     if (GetTransaction()->HasWqeOperation(jettyNum, wqe->GetWqeId())) {
@@ -821,7 +822,7 @@ Ptr<UbWqeSegment> UbJetty::GetNextWqeSegment()
     return segment;
 }
 
-Ptr<UbWqeSegment> UbJetty::PrepareNextWqeSegment()
+Ptr<UbWqeSegment> UbJetty::PrepareNextWqeSegment(Ptr<UbWqe> expectedWqe)
 {
     NS_LOG_FUNCTION(this);
 
@@ -835,19 +836,30 @@ Ptr<UbWqeSegment> UbJetty::PrepareNextWqeSegment()
         return nullptr;
     }
 
-    // 获取第一个未完成的 WQE
     Ptr<UbWqe> currentWqe = nullptr;
-    for (auto it = m_wqeVector.begin(); it != m_wqeVector.end(); ++it) {
-        if (*it && !(*it)->IsSentCompleted()) {
-            currentWqe = *it;
-            // WQE初始发送状态为False，当TA根据事务序判断当前WQE可以发送后，修改为True，即可发送。
-            if (currentWqe->CanSend()) {
-                break;
-            } else {
-                // 调用TA，判断currentWqe是否允许发送
-                auto ubTa = GetTransaction();
-                if (ubTa->IsOrderedByInitiator(m_jettyNum, currentWqe)) {
+    if (expectedWqe != nullptr)
+    {
+        const auto expected = std::find(m_wqeVector.begin(), m_wqeVector.end(), expectedWqe);
+        if (expected != m_wqeVector.end() && !expectedWqe->IsSentCompleted())
+        {
+            currentWqe = expectedWqe;
+        }
+    }
+    else
+    {
+        // Legacy pull callers select the first unfinished eligible WQE.
+        for (auto it = m_wqeVector.begin(); it != m_wqeVector.end(); ++it) {
+            if (*it && !(*it)->IsSentCompleted()) {
+                currentWqe = *it;
+                // WQE初始发送状态为False，当TA根据事务序判断当前WQE可以发送后，修改为True，即可发送。
+                if (currentWqe->CanSend()) {
                     break;
+                } else {
+                    // 调用TA，判断currentWqe是否允许发送
+                    auto ubTa = GetTransaction();
+                    if (ubTa->IsOrderedByInitiator(m_jettyNum, currentWqe)) {
+                        break;
+                    }
                 }
             }
         }

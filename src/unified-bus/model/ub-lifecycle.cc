@@ -12,7 +12,33 @@ namespace ns3
 {
 
 NS_OBJECT_ENSURE_REGISTERED(UbPacketLifecycleTag);
+NS_OBJECT_ENSURE_REGISTERED(UbTransactionCorrelationTag);
 NS_OBJECT_ENSURE_REGISTERED(UbLifecycleCoordinator);
+
+namespace
+{
+
+void
+SerializeResourceIdentity(TagBuffer& buffer, const UbLifecycleResourceIdentity& identity)
+{
+    buffer.WriteU32(identity.ownerNodeId);
+    buffer.WriteU8(static_cast<uint8_t>(identity.kind));
+    buffer.WriteU64(identity.localId);
+    buffer.WriteU64(identity.generation);
+}
+
+UbLifecycleResourceIdentity
+DeserializeResourceIdentity(TagBuffer& buffer)
+{
+    UbLifecycleResourceIdentity identity;
+    identity.ownerNodeId = buffer.ReadU32();
+    identity.kind = static_cast<UbLifecycleResourceKind>(buffer.ReadU8());
+    identity.localId = buffer.ReadU64();
+    identity.generation = buffer.ReadU64();
+    return identity;
+}
+
+} // namespace
 
 std::ostream&
 operator<<(std::ostream& os, const UbLifecycleResourceIdentity& identity)
@@ -54,20 +80,14 @@ UbPacketLifecycleTag::GetSerializedSize() const
 void
 UbPacketLifecycleTag::Serialize(TagBuffer buffer) const
 {
-    buffer.WriteU32(m_identity.owner.ownerNodeId);
-    buffer.WriteU8(static_cast<uint8_t>(m_identity.owner.kind));
-    buffer.WriteU64(m_identity.owner.localId);
-    buffer.WriteU64(m_identity.owner.generation);
+    SerializeResourceIdentity(buffer, m_identity.owner);
     buffer.WriteU64(m_identity.attempt);
 }
 
 void
 UbPacketLifecycleTag::Deserialize(TagBuffer buffer)
 {
-    m_identity.owner.ownerNodeId = buffer.ReadU32();
-    m_identity.owner.kind = static_cast<UbLifecycleResourceKind>(buffer.ReadU8());
-    m_identity.owner.localId = buffer.ReadU64();
-    m_identity.owner.generation = buffer.ReadU64();
+    m_identity.owner = DeserializeResourceIdentity(buffer);
     m_identity.attempt = buffer.ReadU64();
 }
 
@@ -85,6 +105,60 @@ UbPacketLifecycleTag::SetIdentity(const UbPacketAttemptIdentity& identity)
 
 UbPacketAttemptIdentity
 UbPacketLifecycleTag::GetIdentity() const
+{
+    return m_identity;
+}
+
+TypeId
+UbTransactionCorrelationTag::GetTypeId()
+{
+    static TypeId tid = TypeId("ns3::UbTransactionCorrelationTag")
+                            .SetParent<Tag>()
+                            .SetGroupName("UnifiedBus")
+                            .AddConstructor<UbTransactionCorrelationTag>();
+    return tid;
+}
+
+TypeId
+UbTransactionCorrelationTag::GetInstanceTypeId() const
+{
+    return GetTypeId();
+}
+
+uint32_t
+UbTransactionCorrelationTag::GetSerializedSize() const
+{
+    return 2 * (sizeof(uint32_t) + sizeof(uint8_t) + 2 * sizeof(uint64_t));
+}
+
+void
+UbTransactionCorrelationTag::Serialize(TagBuffer buffer) const
+{
+    SerializeResourceIdentity(buffer, m_identity.operation);
+    SerializeResourceIdentity(buffer, m_identity.segment);
+}
+
+void
+UbTransactionCorrelationTag::Deserialize(TagBuffer buffer)
+{
+    m_identity.operation = DeserializeResourceIdentity(buffer);
+    m_identity.segment = DeserializeResourceIdentity(buffer);
+}
+
+void
+UbTransactionCorrelationTag::Print(std::ostream& os) const
+{
+    os << "operation={" << m_identity.operation << "},segment={" << m_identity.segment << '}';
+}
+
+void
+UbTransactionCorrelationTag::SetIdentity(const UbTransactionCorrelationIdentity& identity)
+{
+    m_identity = identity;
+}
+
+UbTransactionCorrelationIdentity
+UbTransactionCorrelationTag::GetIdentity() const
 {
     return m_identity;
 }

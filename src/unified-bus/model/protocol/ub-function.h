@@ -230,7 +230,7 @@ namespace ns3 {
         static TypeId GetTypeId(void);
         UbJetty();
         Ptr<UbWqeSegment> GetNextWqeSegment();
-        Ptr<UbWqeSegment> PrepareNextWqeSegment();
+        Ptr<UbWqeSegment> PrepareNextWqeSegment(Ptr<UbWqe> expectedWqe = nullptr);
         bool CanCommitWqeSegmentAdmission(Ptr<UbWqeSegment> segment,
                                           Ptr<UbWqe> expectedWqe) const;
         void CommitWqeSegmentAdmission(Ptr<UbWqeSegment> segment);
