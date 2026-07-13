@@ -218,7 +218,7 @@ UbTransaction::RunTrackedScheduleWqeSegment(uint32_t jettyNum,
                                             Ptr<UbTransportChannel> tp,
                                             uint64_t eventToken)
 {
-    if (!GetFunction()->IsJettyEventActive(jettyNum, eventToken))
+    if (!GetFunction()->BeginJettyEvent(jettyNum, eventToken))
     {
         return;
     }
@@ -386,7 +386,12 @@ void UbTransaction::ScheduleWqeSegment(Ptr<UbTransportChannel> tp)
                 localSegment,
                 lifecycleOperation,
                 eventToken);
-            GetFunction()->AttachJettyEvent(wqeSegment->GetJettyNum(), eventToken, event);
+            GetFunction()->AttachJettyEvent(
+                wqeSegment->GetJettyNum(),
+                eventToken,
+                event,
+                MakeCallback(&UbTransaction::CancelPendingScheduleWqeSegmentFinish, this)
+                    .Bind(wqeSegment->GetTpn()));
         }
         else
         {
@@ -412,7 +417,7 @@ UbTransaction::RunTrackedScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment,
                                                   uint64_t eventToken)
 {
     const uint32_t jettyNum = segment->GetJettyNum();
-    if (!GetFunction()->IsJettyEventActive(jettyNum, eventToken))
+    if (!GetFunction()->BeginJettyEvent(jettyNum, eventToken))
     {
         return;
     }
@@ -437,6 +442,16 @@ UbTransaction::RunTrackedScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment,
         }
     }
     GetFunction()->ResolveJettyEvent(jettyNum, eventToken);
+}
+
+void
+UbTransaction::CancelPendingScheduleWqeSegmentFinish(uint32_t tpn)
+{
+    const auto scheduling = m_tpSchedulingStatus.find(tpn);
+    if (scheduling != m_tpSchedulingStatus.end())
+    {
+        scheduling->second = false;
+    }
 }
 
 bool

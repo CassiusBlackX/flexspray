@@ -143,6 +143,7 @@ namespace ns3 {
                                                 bool localSegment,
                                                 bool lifecycleOperation,
                                                 uint64_t eventToken);
+        void CancelPendingScheduleWqeSegmentFinish(uint32_t tpn);
         bool IsCurrentWqeOperation(uint32_t jettyNum, Ptr<UbWqe> wqe) const;
         void RecordSegmentAdmission(Ptr<UbWqeSegment> segment);
         bool RecordSegmentSuccess(uint32_t jettyNum, uint32_t wqeId, uint32_t taSsn);

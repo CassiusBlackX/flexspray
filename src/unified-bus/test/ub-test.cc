@@ -8400,6 +8400,217 @@ class UbLifecycleForcedStopCancelsTrackedScheduleTest : public TestCase
     }
 };
 
+class UbLifecycleForcedStopPendingFinishReleasesSchedulerTest : public TestCase
+{
+  public:
+    UbLifecycleForcedStopPendingFinishReleasesSchedulerTest()
+        : TestCase("UnifiedBus - forced stop pending finish releases TP scheduler ownership")
+    {
+    }
+
+    void DoRun() override
+    {
+        const int status = RunInChildProcess([]() {
+            Config::Reset();
+            LocalTpTopology topo = BuildLocalTpTopology();
+            InstallStaticTpPair(topo);
+            Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+            Ptr<UbFunction> function = controller->GetUbFunction();
+            Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+            function->CreateJetty(topo.sender->GetId(),
+                                  topo.receiver->GetId(),
+                                  kUrmaWriteRegressionJettyNum);
+            if (!transaction->JettyBindTp(topo.sender->GetId(),
+                                          topo.receiver->GetId(),
+                                          kUrmaWriteRegressionJettyNum,
+                                          false,
+                                          {kUrmaWriteRegressionSenderTpn}))
+            {
+                std::_Exit(2);
+            }
+            Ptr<UbWqe> oldWqe = function->CreateWqe(topo.sender->GetId(),
+                                                    topo.receiver->GetId(),
+                                                    64,
+                                                    kUrmaWriteRegressionTaskId,
+                                                    TaOpcode::TA_OPCODE_WRITE);
+            if (function->SubmitWqe(oldWqe, kUrmaWriteRegressionJettyNum).status !=
+                UbWqeSubmissionStatus::ACCEPTED)
+            {
+                std::_Exit(3);
+            }
+
+            bool recreated = false;
+            Simulator::ScheduleNow([&]() {
+                if (function->DestroyJetty(kUrmaWriteRegressionJettyNum,
+                                           UbDestroyReason::SIMULATION_STOP) !=
+                    UbDestroyStatus::COMPLETED)
+                {
+                    std::_Exit(4);
+                }
+                function->CreateJetty(topo.sender->GetId(),
+                                      topo.receiver->GetId(),
+                                      kUrmaWriteRegressionJettyNum);
+                if (!transaction->JettyBindTp(topo.sender->GetId(),
+                                              topo.receiver->GetId(),
+                                              kUrmaWriteRegressionJettyNum,
+                                              false,
+                                              {kUrmaWriteRegressionSenderTpn}))
+                {
+                    std::_Exit(5);
+                }
+                Ptr<UbWqe> replacement = function->CreateWqe(topo.sender->GetId(),
+                                                             topo.receiver->GetId(),
+                                                             64,
+                                                             kUrmaWriteRegressionTaskId,
+                                                             TaOpcode::TA_OPCODE_WRITE);
+                if (function->SubmitWqe(replacement, kUrmaWriteRegressionJettyNum).status !=
+                    UbWqeSubmissionStatus::ACCEPTED)
+                {
+                    std::_Exit(6);
+                }
+                recreated = true;
+            });
+
+            Simulator::Stop(MilliSeconds(1));
+            Simulator::Run();
+            Ptr<UbJetty> replacementJetty = function->GetJetty(kUrmaWriteRegressionJettyNum);
+            if (!recreated || replacementJetty == nullptr ||
+                replacementJetty->GetActiveWqeCount() != 0 ||
+                transaction->GetActiveOperationCount() != 0)
+            {
+                std::_Exit(7);
+            }
+            Simulator::Destroy();
+            Config::Reset();
+        });
+
+        NS_TEST_ASSERT_MSG_EQ(WIFEXITED(status),
+                              1,
+                              "Pending finish cancellation should not abort across Jetty reuse");
+        if (WIFEXITED(status))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(status),
+                                  0,
+                                  "Canceled finish must return TP scheduler ownership before reuse");
+        }
+    }
+};
+
+class UbLifecycleReentrantForcedStopObserver
+{
+  public:
+    void OnSegmentScheduled(uint32_t, uint32_t taskId, uint32_t)
+    {
+        if (taskId != kUrmaWriteRegressionTaskId || sawSegment)
+        {
+            return;
+        }
+        sawSegment = true;
+        insideFinishTrace = true;
+        destroyStatus = function->DestroyJetty(
+            kUrmaWriteRegressionJettyNum,
+            UbDestroyReason::SIMULATION_STOP,
+            MakeCallback(&UbLifecycleReentrantForcedStopObserver::OnDestroyed, this));
+        erasedInsideDestroy = function->GetJetty(kUrmaWriteRegressionJettyNum) == nullptr;
+        insideFinishTrace = false;
+    }
+
+    void OnDestroyed(UbLifecycleResourceIdentity, UbDestroyStatus status)
+    {
+        callbackReenteredFinishTrace = insideFinishTrace;
+        callbackObservedErase = function->GetJetty(kUrmaWriteRegressionJettyNum) == nullptr;
+        callbackStatus = status;
+        ++callbackCount;
+    }
+
+    Ptr<UbFunction> function;
+    UbDestroyStatus destroyStatus{UbDestroyStatus::REJECTED};
+    UbDestroyStatus callbackStatus{UbDestroyStatus::REJECTED};
+    uint32_t callbackCount{0};
+    bool sawSegment{false};
+    bool insideFinishTrace{false};
+    bool erasedInsideDestroy{false};
+    bool callbackReenteredFinishTrace{false};
+    bool callbackObservedErase{false};
+};
+
+class UbLifecycleReentrantForcedStopDefersRunningFinishTest : public TestCase
+{
+  public:
+    UbLifecycleReentrantForcedStopDefersRunningFinishTest()
+        : TestCase("UnifiedBus - reentrant forced stop defers running finish retirement")
+    {
+    }
+
+    void DoRun() override
+    {
+        const int status = RunInChildProcess([]() {
+            Config::Reset();
+            LocalTpTopology topo = BuildLocalTpTopology();
+            InstallStaticTpPair(topo);
+            Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+            Ptr<UbFunction> function = controller->GetUbFunction();
+            Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+            function->CreateJetty(topo.sender->GetId(),
+                                  topo.receiver->GetId(),
+                                  kUrmaWriteRegressionJettyNum);
+            if (!transaction->JettyBindTp(topo.sender->GetId(),
+                                          topo.receiver->GetId(),
+                                          kUrmaWriteRegressionJettyNum,
+                                          false,
+                                          {kUrmaWriteRegressionSenderTpn}))
+            {
+                std::_Exit(2);
+            }
+
+            UbLifecycleReentrantForcedStopObserver observer;
+            observer.function = function;
+            Ptr<UbTransportChannel> tp =
+                controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            tp->TraceConnectWithoutContext(
+                "WqeSegmentSendsNotify",
+                MakeCallback(&UbLifecycleReentrantForcedStopObserver::OnSegmentScheduled,
+                             &observer));
+            Ptr<UbWqe> wqe = function->CreateWqe(topo.sender->GetId(),
+                                                 topo.receiver->GetId(),
+                                                 64,
+                                                 kUrmaWriteRegressionTaskId,
+                                                 TaOpcode::TA_OPCODE_WRITE);
+            if (function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status !=
+                UbWqeSubmissionStatus::ACCEPTED)
+            {
+                std::_Exit(3);
+            }
+
+            Simulator::Stop(NanoSeconds(1));
+            Simulator::Run();
+            if (!observer.sawSegment ||
+                observer.destroyStatus != UbDestroyStatus::PENDING ||
+                observer.erasedInsideDestroy || observer.callbackReenteredFinishTrace ||
+                observer.callbackCount != 1 ||
+                observer.callbackStatus != UbDestroyStatus::COMPLETED ||
+                !observer.callbackObservedErase ||
+                function->GetJetty(kUrmaWriteRegressionJettyNum) != nullptr ||
+                transaction->GetActiveOperationCount() != 0)
+            {
+                std::_Exit(4);
+            }
+            Simulator::Destroy();
+            Config::Reset();
+        });
+
+        NS_TEST_ASSERT_MSG_EQ(WIFEXITED(status),
+                              1,
+                              "Reentrant forced stop must not retire a running tracked event");
+        if (WIFEXITED(status))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(status),
+                                  0,
+                                  "Running finish should drain before erase and destroy callback");
+        }
+    }
+};
+
 class UbLifecycleCancelBetweenTrackedSchedulePhasesTest : public TestCase
 {
   public:
@@ -15023,6 +15234,10 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
     AddTestCase(new UbLifecyclePendingJettyDestroyTest(), TestCase::Duration::QUICK);
 #ifndef _WIN32
     AddTestCase(new UbLifecycleForcedStopCancelsTrackedScheduleTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleReentrantForcedStopDefersRunningFinishTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleForcedStopPendingFinishReleasesSchedulerTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleCancelBetweenTrackedSchedulePhasesTest(),
                 TestCase::Duration::QUICK);

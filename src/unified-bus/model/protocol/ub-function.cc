@@ -231,15 +231,18 @@ UbFunction::TrackJettyEvent(uint32_t jettyNum)
 }
 
 void
-UbFunction::AttachJettyEvent(uint32_t jettyNum, uint64_t token, EventId event)
+UbFunction::AttachJettyEvent(uint32_t jettyNum,
+                             uint64_t token,
+                             EventId event,
+                             Callback<void> cancelCleanup)
 {
-    m_jettyManager->AttachEvent(jettyNum, token, event);
+    m_jettyManager->AttachEvent(jettyNum, token, event, cancelCleanup);
 }
 
 bool
-UbFunction::IsJettyEventActive(uint32_t jettyNum, uint64_t token) const
+UbFunction::BeginJettyEvent(uint32_t jettyNum, uint64_t token)
 {
-    return m_jettyManager->IsEventActive(jettyNum, token);
+    return m_jettyManager->BeginEvent(jettyNum, token);
 }
 
 void
@@ -514,7 +517,10 @@ UbJettyManager::TrackEvent(uint32_t jettyNum)
 }
 
 void
-UbJettyManager::AttachEvent(uint32_t jettyNum, uint64_t token, EventId event)
+UbJettyManager::AttachEvent(uint32_t jettyNum,
+                            uint64_t token,
+                            EventId event,
+                            Callback<void> cancelCleanup)
 {
     auto it = m_records.find(jettyNum);
     NS_ABORT_MSG_IF(it == m_records.end(), "Cannot attach work for a missing Jetty");
@@ -525,14 +531,26 @@ UbJettyManager::AttachEvent(uint32_t jettyNum, uint64_t token, EventId event)
                     "Tracked event already has an attached EventId");
     NS_ABORT_MSG_IF(!event.IsPending(), "Tracked event must attach a pending EventId");
     tracked->second.event = event;
+    tracked->second.cancelCleanup = cancelCleanup;
 }
 
 bool
-UbJettyManager::IsEventActive(uint32_t jettyNum, uint64_t token) const
+UbJettyManager::BeginEvent(uint32_t jettyNum, uint64_t token)
 {
-    const auto it = m_records.find(jettyNum);
-    return it != m_records.end() && it->second.trackedEvents.find(token) !=
-                                           it->second.trackedEvents.end();
+    auto it = m_records.find(jettyNum);
+    if (it == m_records.end())
+    {
+        return false;
+    }
+    auto tracked = it->second.trackedEvents.find(token);
+    if (tracked == it->second.trackedEvents.end())
+    {
+        return false;
+    }
+    NS_ABORT_MSG_IF(tracked->second.phase != TrackedEventPhase::PENDING,
+                    "Tracked event began more than once");
+    tracked->second.phase = TrackedEventPhase::RUNNING;
+    return true;
 }
 
 void
@@ -543,6 +561,8 @@ UbJettyManager::ResolveEvent(uint32_t jettyNum, uint64_t token)
     const auto event = it->second.trackedEvents.find(token);
     NS_ABORT_MSG_IF(event == it->second.trackedEvents.end(),
                     "Tracked event release would underflow");
+    NS_ABORT_MSG_IF(event->second.phase != TrackedEventPhase::RUNNING,
+                    "Tracked event resolved before its handler began");
     m_coordinator->ReleaseLease(event->second.lease);
     it->second.trackedEvents.erase(event);
     NotifyProgress(jettyNum);
@@ -594,16 +614,27 @@ UbJettyManager::DestroyJetty(uint32_t jettyNum,
     if (reason == UbDestroyReason::SIMULATION_STOP)
     {
         Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
-        for (auto& [token, tracked] : it->second.trackedEvents)
+        for (auto tracked = it->second.trackedEvents.begin();
+             tracked != it->second.trackedEvents.end();)
         {
-            if (tracked.event.IsPending())
+            if (tracked->second.phase == TrackedEventPhase::RUNNING)
             {
-                tracked.event.Cancel();
+                ++tracked;
+                continue;
             }
-            (void)token;
-            coordinator->ReleaseLease(tracked.lease);
+            if (tracked->second.event.IsPending())
+            {
+                tracked->second.event.Cancel();
+            }
+            Callback<void> cancelCleanup = tracked->second.cancelCleanup;
+            tracked->second.cancelCleanup = {};
+            if (!cancelCleanup.IsNull())
+            {
+                cancelCleanup();
+            }
+            coordinator->ReleaseLease(tracked->second.lease);
+            tracked = it->second.trackedEvents.erase(tracked);
         }
-        it->second.trackedEvents.clear();
     }
     if (IsDrainReady(it->second))
     {
