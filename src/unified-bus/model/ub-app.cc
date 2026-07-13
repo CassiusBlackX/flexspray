@@ -199,8 +199,6 @@ UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
                     "CTP transport mode requires UbTransaction");
 
     Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-    service->SetUseShortestPaths(m_useShortestPaths);
-    service->SetUsePacketSpray(m_usePacketSpray);
 
     const uint32_t srcEntityId = task.hasSrcEntityId ? task.srcEntityId : m_localEntityId;
     const uint32_t dstEntityId = task.hasDstEntityId ? task.dstEntityId : m_peerEntityId;
@@ -220,6 +218,14 @@ UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
                                          vl,
                                          &jettyNum);
     }
+    if (!ubFunc->IsJettyAcceptingWqes(jettyNum))
+    {
+        NS_LOG_WARN("CTP WQE submission rejected because Jetty " << jettyNum
+                                                                  << " is draining");
+        return;
+    }
+    service->SetUseShortestPaths(m_useShortestPaths);
+    service->SetUsePacketSpray(m_usePacketSpray);
     service->PrepareJetty(jetty);
 
     NS_LOG_INFO("CTP WQE Starts, jettyNum: " << jettyNum << " taskId: " << task.taskId);

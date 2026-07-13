@@ -476,6 +476,16 @@ public:
         m_wqeId = wqeId;
     }
 
+    bool IsLifecycleManaged() const
+    {
+        return m_lifecycleManaged;
+    }
+
+    void MarkLifecycleManaged()
+    {
+        m_lifecycleManaged = true;
+    }
+
     // ========== 任务描述信息 ==========
     uint32_t GetSrc() const
     {
@@ -871,6 +881,7 @@ private:
     uint32_t m_resLenBytes = 0;
     uint32_t m_payloadBytes = 0;
     uint32_t m_carrierBytes = 0;
+    bool m_lifecycleManaged = false;
 
     // ========== TA层动态信息 (追踪WQE segment的完成) ==========
     uint32_t m_bytesLeft = 0; // 剩余的字节数

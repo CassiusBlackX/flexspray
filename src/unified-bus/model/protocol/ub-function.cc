@@ -160,7 +160,7 @@ void UbFunction::PushLegacyWqeToJetty(Ptr<UbWqe> wqe, uint32_t jettyNum)
     jetty->SetNodeId(m_nodeId);
     jetty->PushWqe(wqe);
     GetTransaction()->AddWqe(jettyNum, wqe);
-    GetTransaction()->TriggerScheduleWqeSegment(jettyNum);
+    GetTransaction()->TriggerScheduleWqeSegment(jettyNum, wqe->GetWqeId(), false);
 }
 
 UbWqeSubmissionResult UbFunction::SubmitWqe(Ptr<UbWqe> wqe, uint32_t jettyNum)
@@ -198,7 +198,7 @@ UbWqeSubmissionResult UbFunction::SubmitWqe(Ptr<UbWqe> wqe, uint32_t jettyNum)
     ubJetty->PushWqe(wqe);
     m_jettyManager->RegisterWqe(jettyNum, wqe->GetWqeId(), wqeIdentity);
     GetTransaction()->AddWqe(jettyNum, wqe);
-    GetTransaction()->TriggerScheduleWqeSegment(jettyNum);
+    GetTransaction()->TriggerScheduleWqeSegment(jettyNum, wqe->GetWqeId(), true);
     return {UbWqeSubmissionStatus::ACCEPTED, wqeIdentity};
 }
 
@@ -218,10 +218,28 @@ UbFunction::NotifyJettyProgress(uint32_t jettyNum)
     m_jettyManager->NotifyProgress(jettyNum);
 }
 
+bool
+UbFunction::IsJettyAcceptingWqes(uint32_t jettyNum) const
+{
+    return m_jettyManager->IsAcceptingWqes(jettyNum);
+}
+
 uint64_t
 UbFunction::TrackJettyEvent(uint32_t jettyNum)
 {
     return m_jettyManager->TrackEvent(jettyNum);
+}
+
+void
+UbFunction::AttachJettyEvent(uint32_t jettyNum, uint64_t token, EventId event)
+{
+    m_jettyManager->AttachEvent(jettyNum, token, event);
+}
+
+bool
+UbFunction::IsJettyEventActive(uint32_t jettyNum, uint64_t token) const
+{
+    return m_jettyManager->IsEventActive(jettyNum, token);
 }
 
 void
@@ -482,28 +500,60 @@ UbJettyManager::TrackEvent(uint32_t jettyNum)
 {
     auto it = m_records.find(jettyNum);
     NS_ABORT_MSG_IF(it == m_records.end(), "Cannot track work for a missing Jetty");
-    NS_ABORT_MSG_IF(it->second.nextEventToken == std::numeric_limits<uint64_t>::max(),
-                    "Jetty tracked-event token exhausted");
-    const uint64_t token = ++it->second.nextEventToken;
+    NS_ABORT_MSG_IF(m_nextEventToken == std::numeric_limits<uint64_t>::max(),
+                    "Tracked-event token exhausted");
+    const uint64_t token = ++m_nextEventToken;
     Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
-    const UbLifecycleLeaseIdentity lease =
-        coordinator->AcquireLease(it->second.identity,
-                                  UbLifecycleLeaseKind::TRACKED_EVENT,
-                                  it->second.identity);
-    NS_ABORT_MSG_IF(!it->second.trackedEvents.emplace(token, lease).second,
+    TrackedEventRecord record;
+    record.lease = coordinator->AcquireLease(it->second.identity,
+                                             UbLifecycleLeaseKind::TRACKED_EVENT,
+                                             it->second.identity);
+    NS_ABORT_MSG_IF(!it->second.trackedEvents.emplace(token, record).second,
                     "Duplicate Jetty tracked-event token");
     return token;
 }
 
 void
+UbJettyManager::AttachEvent(uint32_t jettyNum, uint64_t token, EventId event)
+{
+    auto it = m_records.find(jettyNum);
+    NS_ABORT_MSG_IF(it == m_records.end(), "Cannot attach work for a missing Jetty");
+    auto tracked = it->second.trackedEvents.find(token);
+    NS_ABORT_MSG_IF(tracked == it->second.trackedEvents.end(),
+                    "Cannot attach an unknown tracked event");
+    NS_ABORT_MSG_IF(tracked->second.event.IsPending(),
+                    "Tracked event already has an attached EventId");
+    NS_ABORT_MSG_IF(!event.IsPending(), "Tracked event must attach a pending EventId");
+    tracked->second.event = event;
+}
+
+bool
+UbJettyManager::IsEventActive(uint32_t jettyNum, uint64_t token) const
+{
+    if (m_canceledEventTokens.find(token) != m_canceledEventTokens.end())
+    {
+        return false;
+    }
+    const auto it = m_records.find(jettyNum);
+    return it != m_records.end() && it->second.trackedEvents.find(token) !=
+                                           it->second.trackedEvents.end();
+}
+
+void
 UbJettyManager::ResolveEvent(uint32_t jettyNum, uint64_t token)
 {
+    const auto canceled = m_canceledEventTokens.find(token);
+    if (canceled != m_canceledEventTokens.end())
+    {
+        m_canceledEventTokens.erase(canceled);
+        return;
+    }
     auto it = m_records.find(jettyNum);
     NS_ABORT_MSG_IF(it == m_records.end(), "Tracked event references a retired Jetty");
     const auto event = it->second.trackedEvents.find(token);
     NS_ABORT_MSG_IF(event == it->second.trackedEvents.end(),
                     "Tracked event release would underflow");
-    m_coordinator->ReleaseLease(event->second);
+    m_coordinator->ReleaseLease(event->second.lease);
     it->second.trackedEvents.erase(event);
     NotifyProgress(jettyNum);
 }
@@ -554,10 +604,14 @@ UbJettyManager::DestroyJetty(uint32_t jettyNum,
     if (reason == UbDestroyReason::SIMULATION_STOP)
     {
         Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
-        for (const auto& [token, lease] : it->second.trackedEvents)
+        for (auto& [token, tracked] : it->second.trackedEvents)
         {
-            (void)token;
-            coordinator->ReleaseLease(lease);
+            if (tracked.event.IsPending())
+            {
+                tracked.event.Cancel();
+            }
+            m_canceledEventTokens.insert(token);
+            coordinator->ReleaseLease(tracked.lease);
         }
         it->second.trackedEvents.clear();
     }
@@ -634,6 +688,7 @@ UbJettyManager::DisposeAll()
     m_ctpService = nullptr;
     m_transaction = nullptr;
     m_coordinator = nullptr;
+    m_canceledEventTokens.clear();
 }
 
 void
@@ -645,6 +700,7 @@ UbJettyManager::DoDispose()
     m_ctpService = nullptr;
     m_transaction = nullptr;
     m_coordinator = nullptr;
+    m_canceledEventTokens.clear();
     Object::DoDispose();
 }
 
