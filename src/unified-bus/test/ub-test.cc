@@ -8169,12 +8169,15 @@ class UbLifecycleStrongOrderTerminalWakesSuccessorTest : public TestCase
   public:
     UbLifecycleStrongOrderTerminalWakesSuccessorTest(UbWorkOutcome frontOutcome,
                                                      const std::string& outcomeName,
-                                                     bool terminalizeAfterAdmission)
+                                                     bool terminalizeAfterAdmission,
+                                                     bool synchronousPreRunTerminal = false)
         : TestCase("UnifiedBus - strong-order " + outcomeName + " " +
                    (terminalizeAfterAdmission ? "post-admission" : "pre-admission") +
+                   (synchronousPreRunTerminal ? " synchronous" : "") +
                    " front wakes accepted successor"),
           m_frontOutcome(frontOutcome),
-          m_terminalizeAfterAdmission(terminalizeAfterAdmission)
+          m_terminalizeAfterAdmission(terminalizeAfterAdmission),
+          m_synchronousPreRunTerminal(synchronousPreRunTerminal)
     {
     }
 
@@ -8229,9 +8232,16 @@ class UbLifecycleStrongOrderTerminalWakesSuccessorTest : public TestCase
 
         if (!m_terminalizeAfterAdmission)
         {
-            Simulator::ScheduleNow(
-                &UbLifecycleStrongOrderTerminalWakesSuccessorTest::TerminalizeFront,
-                this);
+            if (m_synchronousPreRunTerminal)
+            {
+                TerminalizeFront();
+            }
+            else
+            {
+                Simulator::ScheduleNow(
+                    &UbLifecycleStrongOrderTerminalWakesSuccessorTest::TerminalizeFront,
+                    this);
+            }
         }
         m_reservedSuccessorTassn = m_successorWqe->GetTaSsnStart();
         Simulator::Stop(MilliSeconds(1));
@@ -8449,6 +8459,7 @@ class UbLifecycleStrongOrderTerminalWakesSuccessorTest : public TestCase
 
     UbWorkOutcome m_frontOutcome;
     bool m_terminalizeAfterAdmission;
+    bool m_synchronousPreRunTerminal;
     Ptr<UbTransaction> m_transaction;
     Ptr<UbTransportChannel> m_tp;
     Ptr<UbWqe> m_successorWqe;
@@ -8643,9 +8654,15 @@ class UbLifecycleStartedTerminalRetainsCorrelationUntilResponseTest : public Tes
         InstallStaticTpPair(topo);
         Ptr<UbController> controller = topo.sender->GetObject<UbController>();
         Ptr<UbFunction> function = controller->GetUbFunction();
+        m_function = function;
         m_transaction = controller->GetUbTransaction();
         m_tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
         m_coordinator = UbLifecycleCoordinator::GetOrCreate(topo.sender);
+        if (m_outcome == UbWorkOutcome::FAILED)
+        {
+            m_tp->SetRetransmissionMode(UbRetransmissionMode::GBN);
+            m_tp->SetRetransEnable(true);
+        }
 
         for (uint32_t jettyNum : {kUrmaWriteRegressionJettyNum,
                                   kUrmaWriteRegressionJettyNum + 1})
@@ -8719,9 +8736,21 @@ class UbLifecycleStartedTerminalRetainsCorrelationUntilResponseTest : public Tes
                               2u,
                               "Shared TP should own exact work for A and B");
 
-        m_transaction->CompleteWqeOperation(kUrmaWriteRegressionJettyNum,
-                                            kUrmaWriteRegressionTaskId,
-                                            m_outcome);
+        if (m_outcome == UbWorkOutcome::FAILED)
+        {
+            m_errorDestroyStatus = m_function->DestroyJetty(
+                kUrmaWriteRegressionJettyNum,
+                UbDestroyReason::ERROR,
+                MakeCallback(
+                    &UbLifecycleStartedTerminalRetainsCorrelationUntilResponseTest::OnDestroyed,
+                    this));
+        }
+        else
+        {
+            m_transaction->CompleteWqeOperation(kUrmaWriteRegressionJettyNum,
+                                                kUrmaWriteRegressionTaskId,
+                                                m_outcome);
+        }
 
         UbTransactionOperationSnapshot terminalPending;
         NS_TEST_ASSERT_MSG_EQ(m_transaction->TryGetOperationSnapshot(
@@ -8758,6 +8787,18 @@ class UbLifecycleStartedTerminalRetainsCorrelationUntilResponseTest : public Tes
             m_coordinator->GetSnapshot(m_tp->GetLifecycleOwner()).activeTransportWorkLeases,
             2u,
             "Started terminal must not release shared TP work before response cleanup");
+        NS_TEST_ASSERT_MSG_EQ(m_tp->GetWqeSegmentVecSize(),
+                              2u,
+                              "Started terminal must preserve A and B in the shared TP");
+        NS_TEST_ASSERT_MSG_EQ(m_tp->GetPsnSndNxtForTest(),
+                              1u,
+                              "ERROR must not rewrite shared TP send progress");
+        if (m_outcome == UbWorkOutcome::FAILED)
+        {
+            NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_errorDestroyStatus),
+                                  static_cast<uint32_t>(UbDestroyStatus::PENDING),
+                                  "ERROR should wait for real started transport cleanup");
+        }
         NS_TEST_ASSERT_MSG_EQ(m_terminals.size(),
                               1u,
                               "Application should observe A terminal exactly once immediately");
@@ -8813,6 +8854,15 @@ class UbLifecycleStartedTerminalRetainsCorrelationUntilResponseTest : public Tes
         NS_TEST_ASSERT_MSG_EQ(m_tp->GetOutstandingUnackedSegmentCount(),
                               0u,
                               "Real TP ACKs should leave no unacked segment residue");
+        if (m_outcome == UbWorkOutcome::FAILED)
+        {
+            NS_TEST_ASSERT_MSG_EQ(m_destroyCallbacks,
+                                  1u,
+                                  "ERROR drain should finalize once after real protocol cleanup");
+            NS_TEST_ASSERT_MSG_EQ(m_callbackObservedErase,
+                                  true,
+                                  "ERROR callback should observe manager erase");
+        }
 
         Simulator::Destroy();
         Config::Reset();
@@ -8844,10 +8894,22 @@ class UbLifecycleStartedTerminalRetainsCorrelationUntilResponseTest : public Tes
         m_terminals.push_back(completion);
     }
 
+    void OnDestroyed(UbLifecycleResourceIdentity, UbDestroyStatus status)
+    {
+        ++m_destroyCallbacks;
+        m_callbackObservedErase =
+            status == UbDestroyStatus::COMPLETED &&
+            m_function->GetJetty(kUrmaWriteRegressionJettyNum) == nullptr;
+    }
+
     UbWorkOutcome m_outcome;
+    Ptr<UbFunction> m_function;
     Ptr<UbTransaction> m_transaction;
     Ptr<UbTransportChannel> m_tp;
     Ptr<UbLifecycleCoordinator> m_coordinator;
+    UbDestroyStatus m_errorDestroyStatus{UbDestroyStatus::REJECTED};
+    bool m_callbackObservedErase{false};
+    uint32_t m_destroyCallbacks{0};
     std::vector<uint32_t> m_admittedTasks;
     std::vector<uint32_t> m_firstPacketTasks;
     std::vector<UbWqeCompletion> m_terminals;
@@ -8856,11 +8918,8 @@ class UbLifecycleStartedTerminalRetainsCorrelationUntilResponseTest : public Tes
 class UbLifecycleStartedTerminalPendingForcedDrainTest : public TestCase
 {
   public:
-    UbLifecycleStartedTerminalPendingForcedDrainTest(UbDestroyReason reason,
-                                                      const std::string& reasonName)
-        : TestCase("UnifiedBus - started terminal-pending work survives " + reasonName +
-                   " forced drain"),
-          m_reason(reason)
+    UbLifecycleStartedTerminalPendingForcedDrainTest()
+        : TestCase("UnifiedBus - error pending tombstone upgrades to simulation-stop force")
     {
     }
 
@@ -8871,6 +8930,7 @@ class UbLifecycleStartedTerminalPendingForcedDrainTest : public TestCase
         InstallStaticTpPair(topo);
         Ptr<UbController> controller = topo.sender->GetObject<UbController>();
         Ptr<UbFunction> function = controller->GetUbFunction();
+        m_function = function;
         Ptr<UbTransaction> transaction = controller->GetUbTransaction();
         Ptr<UbTransportChannel> tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
         Ptr<UbLifecycleCoordinator> coordinator =
@@ -8925,11 +8985,30 @@ class UbLifecycleStartedTerminalPendingForcedDrainTest : public TestCase
                               1u,
                               "Started cancel should notify the application once");
 
+        const UbDestroyStatus errorStatus = function->DestroyJetty(
+            kUrmaWriteRegressionJettyNum,
+            UbDestroyReason::ERROR,
+            MakeCallback(&UbLifecycleStartedTerminalPendingForcedDrainTest::OnDestroyed,
+                         this));
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(errorStatus),
+                              static_cast<uint32_t>(UbDestroyStatus::PENDING),
+                              "ERROR should preserve started transport cleanup as pending");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
+                              1u,
+                              "ERROR must retain the terminal-pending operation");
+        NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(tp->GetLifecycleOwner())
+                                  .activeTransportWorkLeases,
+                              1u,
+                              "ERROR must retain exact TP work for real protocol cleanup");
+        NS_TEST_ASSERT_MSG_EQ(tp->GetWqeSegmentVecSize(),
+                              1u,
+                              "ERROR must not force-remove started TP work");
+
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(function->DestroyJetty(
                                   kUrmaWriteRegressionJettyNum,
-                                  m_reason)),
+                                  UbDestroyReason::SIMULATION_STOP)),
                               static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
-                              "Forced drain should synchronously finalize terminal-pending work");
+                              "SIMULATION_STOP upgrade should force-finalize the pending tombstone");
         NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
                               0u,
                               "Forced drain should leave no terminal-pending operation");
@@ -8946,6 +9025,12 @@ class UbLifecycleStartedTerminalPendingForcedDrainTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(m_terminals.size(),
                               1u,
                               "Forced drain must not apply a second WQE terminal");
+        NS_TEST_ASSERT_MSG_EQ(m_destroyCallbacks,
+                              1u,
+                              "Mode upgrade should preserve one callback on the original drain");
+        NS_TEST_ASSERT_MSG_EQ(m_callbackObservedErase,
+                              true,
+                              "Pending callback should run after the one final manager erase");
         NS_TEST_ASSERT_MSG_EQ(function->GetJetty(kUrmaWriteRegressionJettyNum),
                               nullptr,
                               "Forced drain should erase the Jetty without deadlock");
@@ -8975,8 +9060,18 @@ class UbLifecycleStartedTerminalPendingForcedDrainTest : public TestCase
         m_terminals.push_back(completion);
     }
 
-    UbDestroyReason m_reason;
+    void OnDestroyed(UbLifecycleResourceIdentity, UbDestroyStatus status)
+    {
+        ++m_destroyCallbacks;
+        m_callbackObservedErase =
+            status == UbDestroyStatus::COMPLETED &&
+            m_function->GetJetty(kUrmaWriteRegressionJettyNum) == nullptr;
+    }
+
+    Ptr<UbFunction> m_function;
     bool m_started{false};
+    bool m_callbackObservedErase{false};
+    uint32_t m_destroyCallbacks{0};
     std::vector<UbWqeCompletion> m_terminals;
 };
 
@@ -9114,11 +9209,83 @@ class UbLifecycleResponseBearingTpAckBeforeTerminalTest : public TestCase
     std::vector<UbWqeCompletion> m_terminals;
 };
 
+#ifndef _WIN32
+class UbLifecycleForceRemoveMissingUnackedFailsFastTest : public TestCase
+{
+  public:
+    UbLifecycleForceRemoveMissingUnackedFailsFastTest()
+        : TestCase("UnifiedBus - forced removal rejects missing unacknowledged segment")
+    {
+    }
+
+    void DoRun() override
+    {
+        const pid_t pid = fork();
+        NS_TEST_ASSERT_MSG_NE(pid, -1, "fork should succeed");
+        if (pid == 0)
+        {
+            Config::Reset();
+            LocalTpTopology topo = BuildLocalTpTopology();
+            InstallStaticTpPair(topo);
+            Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+            Ptr<UbTransportChannel> tp =
+                controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            Ptr<UbLifecycleCoordinator> coordinator =
+                UbLifecycleCoordinator::GetOrCreate(topo.sender);
+            const UbLifecycleResourceIdentity operationIdentity = coordinator->OpenResource(
+                UbLifecycleResourceKind::TRANSACTION_OPERATION,
+                kUrmaWriteRegressionTaskId);
+            const UbLifecycleResourceIdentity segmentIdentity = coordinator->OpenResource(
+                UbLifecycleResourceKind::TRANSACTION_SEGMENT,
+                kUrmaWriteRegressionTaskId);
+            Ptr<UbWqeSegment> segment = CreateObject<UbWqeSegment>();
+            segment->SetSize(64);
+            segment->SetTransactionCorrelation(operationIdentity, segmentIdentity);
+            if (!tp->TryAdmitWqeSegment(segment))
+            {
+                std::_Exit(2);
+            }
+            const UbWqeSegmentTerminalDisposition firstRemoval =
+                tp->ForceRemoveRetainedWqeSegment(segment,
+                                                  {operationIdentity, segmentIdentity},
+                                                  tp->GetLifecycleOwner());
+            if (firstRemoval != UbWqeSegmentTerminalDisposition::FORCE_REMOVED)
+            {
+                std::_Exit(3);
+            }
+            if (tp->GetWqeSegmentVecSize() != 0 || tp->GetPsnSndUnaForTest() != 0)
+            {
+                std::_Exit(4);
+            }
+            tp->ForceRemoveRetainedWqeSegment(segment,
+                                              {operationIdentity, segmentIdentity},
+                                              tp->GetLifecycleOwner());
+            std::_Exit(5);
+        }
+
+        int status = 0;
+        NS_TEST_ASSERT_MSG_EQ(waitpid(pid, &status, 0), pid, "waitpid should observe child");
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status),
+                              1,
+                              "Missing unacknowledged force-remove must fail fast");
+        if (WIFSIGNALED(status))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status),
+                                  SIGABRT,
+                                  "Missing unacknowledged force-remove should abort");
+        }
+    }
+};
+#endif
+
 class UbLifecycleExplicitDrainContinuesStrongSuccessorTest : public TestCase
 {
   public:
-    UbLifecycleExplicitDrainContinuesStrongSuccessorTest()
-        : TestCase("UnifiedBus - explicit drain continues accepted strong-order successor")
+    UbLifecycleExplicitDrainContinuesStrongSuccessorTest(UbDestroyReason reason,
+                                                          const std::string& reasonName)
+        : TestCase("UnifiedBus - " + reasonName +
+                   " graceful drain continues accepted strong-order successor"),
+          m_reason(reason)
     {
     }
 
@@ -9230,7 +9397,7 @@ class UbLifecycleExplicitDrainContinuesStrongSuccessorTest : public TestCase
             m_admittedTasks.empty();
         m_destroyStatus = m_function->DestroyJetty(
             kUrmaWriteRegressionJettyNum,
-            UbDestroyReason::EXPLICIT,
+            m_reason,
             MakeCallback(&UbLifecycleExplicitDrainContinuesStrongSuccessorTest::OnDestroyed,
                          this));
         m_continuePolicyObserved =
@@ -9270,6 +9437,7 @@ class UbLifecycleExplicitDrainContinuesStrongSuccessorTest : public TestCase
 
     Ptr<UbFunction> m_function;
     Ptr<UbTransaction> m_transaction;
+    UbDestroyReason m_reason;
     UbDestroyStatus m_destroyStatus{UbDestroyStatus::REJECTED};
     bool m_successorInitiallyBlocked{false};
     bool m_continuePolicyObserved{false};
@@ -9279,6 +9447,140 @@ class UbLifecycleExplicitDrainContinuesStrongSuccessorTest : public TestCase
     uint32_t m_terminalCount{0};
     uint32_t m_destroyCallbackCount{0};
     std::vector<uint32_t> m_admittedTasks;
+};
+
+class UbLifecycleGracefulAbortUpgradeTest : public TestCase
+{
+  public:
+    UbLifecycleGracefulAbortUpgradeTest()
+        : TestCase("UnifiedBus - explicit pending drain upgrades monotonically to error abort")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        m_function = controller->GetUbFunction();
+        m_transaction = controller->GetUbTransaction();
+        m_function->CreateJetty(topo.sender->GetId(),
+                                topo.receiver->GetId(),
+                                kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->JettyBindTp(
+                                  topo.sender->GetId(),
+                                  topo.receiver->GetId(),
+                                  kUrmaWriteRegressionJettyNum,
+                                  false,
+                                  {kUrmaWriteRegressionSenderTpn}),
+                              true,
+                              "Mode-upgrade fixture should bind one direct TP");
+        controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn)
+            ->TraceConnectWithoutContext(
+                "WqeSegmentSendsNotify",
+                MakeCallback(&UbLifecycleGracefulAbortUpgradeTest::OnAdmitted, this));
+        m_function->GetJetty(kUrmaWriteRegressionJettyNum)
+            ->SetWqeCompletionCallback(
+                MakeCallback(&UbLifecycleGracefulAbortUpgradeTest::OnTerminal, this));
+
+        for (uint32_t taskId : {kUrmaWriteRegressionTaskId,
+                                kUrmaWriteRegressionTaskId + 1})
+        {
+            Ptr<UbWqe> wqe = m_function->CreateWqe(topo.sender->GetId(),
+                                                   topo.receiver->GetId(),
+                                                   64,
+                                                   taskId,
+                                                   TaOpcode::TA_OPCODE_WRITE);
+            wqe->SetOrderType(OrderType::ORDER_STRONG);
+            NS_TEST_ASSERT_MSG_EQ(
+                static_cast<uint32_t>(
+                    m_function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status),
+                static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+                "Mode-upgrade fixture should accept both strong WQEs");
+        }
+
+        const UbDestroyStatus gracefulStatus = m_function->DestroyJetty(
+            kUrmaWriteRegressionJettyNum,
+            UbDestroyReason::EXPLICIT,
+            MakeCallback(&UbLifecycleGracefulAbortUpgradeTest::OnDestroyed, this));
+        const UbDestroyStatus abortStatus = m_function->DestroyJetty(
+            kUrmaWriteRegressionJettyNum,
+            UbDestroyReason::ERROR,
+            MakeCallback(&UbLifecycleGracefulAbortUpgradeTest::OnDestroyed, this));
+        m_continueAfterUpgrade =
+            m_function->ShouldContinueAcceptedWqes(kUrmaWriteRegressionJettyNum);
+
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(gracefulStatus),
+                              static_cast<uint32_t>(UbDestroyStatus::PENDING),
+                              "Initial graceful request should open one pending drain");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(abortStatus),
+                              static_cast<uint32_t>(UbDestroyStatus::PENDING),
+                              "ERROR upgrade should reuse the pending drain");
+        NS_TEST_ASSERT_MSG_EQ(m_continueAfterUpgrade,
+                              false,
+                              "ERROR upgrade must disable graceful accepted-work continuation");
+
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
+
+        NS_TEST_ASSERT_MSG_EQ(m_admittedTasks.empty(),
+                              true,
+                              "ERROR upgrade must prevent successor or front admission");
+        NS_TEST_ASSERT_MSG_EQ(m_terminals.size(),
+                              2u,
+                              "ERROR upgrade should abort both accepted WQEs exactly once");
+        for (const UbWqeCompletion& completion : m_terminals)
+        {
+            NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(completion.outcome),
+                                  static_cast<uint32_t>(UbWorkOutcome::FAILED),
+                                  "ERROR upgrade should apply FAILED to accepted work");
+        }
+        NS_TEST_ASSERT_MSG_EQ(m_destroyCallbacks,
+                              2u,
+                              "Both pending requests should receive one completion callback");
+        NS_TEST_ASSERT_MSG_EQ(m_callbacksAfterErase,
+                              2u,
+                              "Each callback should observe the one final manager erase");
+        NS_TEST_ASSERT_MSG_EQ(m_function->GetJetty(kUrmaWriteRegressionJettyNum),
+                              nullptr,
+                              "Mode upgrade should finalize one shared drain flow");
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->GetActiveOperationCount(),
+                              0u,
+                              "Mode upgrade should leave no operation residue");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    void OnAdmitted(uint32_t, uint32_t taskId, uint32_t)
+    {
+        m_admittedTasks.push_back(taskId);
+    }
+
+    void OnTerminal(UbWqeCompletion completion)
+    {
+        m_terminals.push_back(completion);
+    }
+
+    void OnDestroyed(UbLifecycleResourceIdentity, UbDestroyStatus status)
+    {
+        ++m_destroyCallbacks;
+        if (status == UbDestroyStatus::COMPLETED &&
+            m_function->GetJetty(kUrmaWriteRegressionJettyNum) == nullptr)
+        {
+            ++m_callbacksAfterErase;
+        }
+    }
+
+    Ptr<UbFunction> m_function;
+    Ptr<UbTransaction> m_transaction;
+    bool m_continueAfterUpgrade{true};
+    uint32_t m_destroyCallbacks{0};
+    uint32_t m_callbacksAfterErase{0};
+    std::vector<uint32_t> m_admittedTasks;
+    std::vector<UbWqeCompletion> m_terminals;
 };
 
 class UbLifecycleForcedStrongOrderDrainDoesNotWakeSuccessorTest : public TestCase
@@ -18331,6 +18633,18 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
                     "canceled",
                     true),
                 TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleStrongOrderTerminalWakesSuccessorTest(
+                    UbWorkOutcome::FAILED,
+                    "failed",
+                    false,
+                    true),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleStrongOrderTerminalWakesSuccessorTest(
+                    UbWorkOutcome::CANCELED,
+                    "canceled",
+                    false,
+                    true),
+                TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleSharedTpNonTailUnsentTerminalTest(UbWorkOutcome::FAILED,
                                                                 "failed"),
                 TestCase::Duration::QUICK);
@@ -18345,12 +18659,7 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
                     UbWorkOutcome::CANCELED,
                     "canceled"),
                 TestCase::Duration::QUICK);
-    AddTestCase(new UbLifecycleStartedTerminalPendingForcedDrainTest(UbDestroyReason::ERROR,
-                                                                    "error"),
-                TestCase::Duration::QUICK);
-    AddTestCase(new UbLifecycleStartedTerminalPendingForcedDrainTest(
-                    UbDestroyReason::SIMULATION_STOP,
-                    "simulation-stop"),
+    AddTestCase(new UbLifecycleStartedTerminalPendingForcedDrainTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleResponseBearingTpAckBeforeTerminalTest(UbWorkOutcome::FAILED,
                                                                      "failed"),
@@ -18358,8 +18667,19 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
     AddTestCase(new UbLifecycleResponseBearingTpAckBeforeTerminalTest(UbWorkOutcome::CANCELED,
                                                                      "canceled"),
                 TestCase::Duration::QUICK);
-    AddTestCase(new UbLifecycleExplicitDrainContinuesStrongSuccessorTest(),
+#ifndef _WIN32
+    AddTestCase(new UbLifecycleForceRemoveMissingUnackedFailsFastTest(),
                 TestCase::Duration::QUICK);
+#endif
+    AddTestCase(new UbLifecycleExplicitDrainContinuesStrongSuccessorTest(
+                    UbDestroyReason::EXPLICIT,
+                    "explicit"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleExplicitDrainContinuesStrongSuccessorTest(
+                    UbDestroyReason::PROTOCOL_COMPLETE,
+                    "protocol-complete"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleGracefulAbortUpgradeTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleForcedStrongOrderDrainDoesNotWakeSuccessorTest(
                     UbDestroyReason::ERROR,
                     "error"),

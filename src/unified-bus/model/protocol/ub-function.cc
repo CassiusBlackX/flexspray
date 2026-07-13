@@ -382,7 +382,7 @@ UbJettyManager::ShouldContinueAcceptedWqes(uint32_t jettyNum) const
     }
     return it->second.state == UbJettyLifecycleState::ACTIVE ||
            (it->second.state == UbJettyLifecycleState::DRAINING &&
-            it->second.reason == UbDestroyReason::EXPLICIT);
+            it->second.cleanupMode == CleanupMode::GRACEFUL);
 }
 
 bool
@@ -390,8 +390,23 @@ UbJettyManager::ShouldForceDrainAcceptedWqes(uint32_t jettyNum) const
 {
     const auto it = m_records.find(jettyNum);
     return it != m_records.end() && it->second.state == UbJettyLifecycleState::DRAINING &&
-           (it->second.reason == UbDestroyReason::ERROR ||
-            it->second.reason == UbDestroyReason::SIMULATION_STOP);
+           it->second.cleanupMode == CleanupMode::FORCE;
+}
+
+UbJettyManager::CleanupMode
+UbJettyManager::GetCleanupMode(UbDestroyReason reason)
+{
+    switch (reason)
+    {
+    case UbDestroyReason::PROTOCOL_COMPLETE:
+    case UbDestroyReason::EXPLICIT:
+        return CleanupMode::GRACEFUL;
+    case UbDestroyReason::ERROR:
+        return CleanupMode::ABORT;
+    case UbDestroyReason::SIMULATION_STOP:
+        return CleanupMode::FORCE;
+    }
+    NS_ABORT_MSG("Unknown Jetty destroy reason");
 }
 
 bool
@@ -599,6 +614,7 @@ UbJettyManager::DestroyJetty(uint32_t jettyNum,
         return UbDestroyStatus::NOT_FOUND;
     }
     const UbLifecycleResourceIdentity identity = it->second.identity;
+    const CleanupMode requestedMode = GetCleanupMode(reason);
     const auto findOriginalRecord = [this, jettyNum, identity]() {
         auto current = m_records.find(jettyNum);
         if (current == m_records.end() || current->second.identity != identity)
@@ -611,11 +627,19 @@ UbJettyManager::DestroyJetty(uint32_t jettyNum,
     {
         it->second.state = UbJettyLifecycleState::DESTROY_REQUESTED;
         it->second.reason = reason;
+        it->second.cleanupMode = requestedMode;
+    }
+    else if (static_cast<uint8_t>(requestedMode) >
+             static_cast<uint8_t>(it->second.cleanupMode))
+    {
+        it->second.reason = reason;
+        it->second.cleanupMode = requestedMode;
     }
     it->second.state = UbJettyLifecycleState::DRAINING;
-    if (reason == UbDestroyReason::ERROR || reason == UbDestroyReason::SIMULATION_STOP)
+    if (it->second.cleanupMode == CleanupMode::ABORT ||
+        it->second.cleanupMode == CleanupMode::FORCE)
     {
-        const UbWorkOutcome outcome = reason == UbDestroyReason::ERROR
+        const UbWorkOutcome outcome = it->second.cleanupMode == CleanupMode::ABORT
                                           ? UbWorkOutcome::FAILED
                                           : UbWorkOutcome::FLUSHED;
         while (!it->second.wqes.empty())
@@ -628,20 +652,22 @@ UbJettyManager::DestroyJetty(uint32_t jettyNum,
                 return UbDestroyStatus::COMPLETED;
             }
         }
-        GetTransaction()->ForceDrainTerminalPendingOperations(jettyNum);
-        if (reason == UbDestroyReason::SIMULATION_STOP &&
-            it->second.jetty->GetActiveWqeCount() != 0)
+        if (it->second.cleanupMode == CleanupMode::FORCE)
         {
-            Ptr<UbJetty> keepAlive = it->second.jetty;
-            keepAlive->FlushLegacyWqesForDisposal();
-            it = findOriginalRecord();
-            if (it == m_records.end())
+            GetTransaction()->ForceDrainTerminalPendingOperations(jettyNum);
+            if (it->second.jetty->GetActiveWqeCount() != 0)
             {
-                return UbDestroyStatus::COMPLETED;
+                Ptr<UbJetty> keepAlive = it->second.jetty;
+                keepAlive->FlushLegacyWqesForDisposal();
+                it = findOriginalRecord();
+                if (it == m_records.end())
+                {
+                    return UbDestroyStatus::COMPLETED;
+                }
             }
         }
     }
-    if (reason == UbDestroyReason::SIMULATION_STOP)
+    if (it->second.cleanupMode == CleanupMode::FORCE)
     {
         Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
         std::vector<Callback<void>> cancelCleanups;

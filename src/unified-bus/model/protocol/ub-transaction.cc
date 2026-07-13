@@ -270,6 +270,15 @@ UbTransaction::TriggerScheduleWqeSegment(uint32_t jettyNum,
 {
     if (lifecycleOperation)
     {
+        const auto operation = originatingWqe == nullptr
+                                   ? m_operations.end()
+                                   : m_operations.find({jettyNum, originatingWqe->GetWqeId()});
+        if (operation == m_operations.end() || operation->second.wqe != originatingWqe ||
+            operation->second.terminalPending || operation->second.rtpScheduleChainActive)
+        {
+            return;
+        }
+        operation->second.rtpScheduleChainActive = true;
         const uint64_t eventToken = GetFunction()->TrackJettyEvent(jettyNum);
         const EventId event = Simulator::ScheduleNow(
             &UbTransaction::RunTrackedPrepareRtpWqeSegment,
@@ -277,7 +286,12 @@ UbTransaction::TriggerScheduleWqeSegment(uint32_t jettyNum,
             jettyNum,
             originatingWqe,
             eventToken);
-        GetFunction()->AttachJettyEvent(jettyNum, eventToken, event);
+        GetFunction()->AttachJettyEvent(
+            jettyNum,
+            eventToken,
+            event,
+            MakeCallback(&UbTransaction::ClearRtpScheduleChain, this)
+                .Bind(jettyNum, originatingWqe));
         return;
     }
 
@@ -329,8 +343,21 @@ UbTransaction::RunTrackedPrepareRtpWqeSegment(uint32_t jettyNum,
                 segment,
                 originatingWqe,
                 finishToken);
-            GetFunction()->AttachJettyEvent(jettyNum, finishToken, finishEvent);
+            GetFunction()->AttachJettyEvent(
+                jettyNum,
+                finishToken,
+                finishEvent,
+                MakeCallback(&UbTransaction::ClearRtpScheduleChain, this)
+                    .Bind(jettyNum, originatingWqe));
         }
+        else
+        {
+            ClearRtpScheduleChain(jettyNum, originatingWqe);
+        }
+    }
+    else
+    {
+        ClearRtpScheduleChain(jettyNum, originatingWqe);
     }
     GetFunction()->ResolveJettyEvent(jettyNum, eventToken);
 }
@@ -350,6 +377,7 @@ UbTransaction::RunTrackedAdmitRtpWqeSegment(Ptr<UbWqeSegment> segment,
         Ptr<UbTransportChannel> admittedTp;
         const RtpSegmentAdmissionResult result =
             TryAdmitRtpSegment(jettyNum, originatingWqe, segment, admittedTp);
+        ClearRtpScheduleChain(jettyNum, originatingWqe);
         if (result == RtpSegmentAdmissionResult::ADMITTED)
         {
             NS_LOG_INFO("WQE Segment Sends, taskId:" << segment->GetTaskId()
@@ -363,6 +391,10 @@ UbTransaction::RunTrackedAdmitRtpWqeSegment(Ptr<UbWqeSegment> segment,
         {
             TriggerScheduleWqeSegment(jettyNum, originatingWqe, true);
         }
+    }
+    else
+    {
+        ClearRtpScheduleChain(jettyNum, originatingWqe);
     }
     GetFunction()->ResolveJettyEvent(jettyNum, eventToken);
 }
@@ -609,6 +641,20 @@ UbTransaction::CancelPendingScheduleWqeSegmentFinish(uint32_t tpn)
     if (scheduling != m_tpSchedulingStatus.end())
     {
         scheduling->second = false;
+    }
+}
+
+void
+UbTransaction::ClearRtpScheduleChain(uint32_t jettyNum, Ptr<UbWqe> originatingWqe)
+{
+    if (originatingWqe == nullptr)
+    {
+        return;
+    }
+    const auto operation = m_operations.find({jettyNum, originatingWqe->GetWqeId()});
+    if (operation != m_operations.end() && operation->second.wqe == originatingWqe)
+    {
+        operation->second.rtpScheduleChainActive = false;
     }
 }
 
@@ -1258,6 +1304,7 @@ void UbTransaction::WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe, UbWorkOutcome o
         NS_ABORT_MSG_IF(operation->second.terminalPending,
                         "WqeFinish references an operation already awaiting transport cleanup");
         hadLifecycleOperation = true;
+        operation->second.rtpScheduleChainActive = false;
         wqeIdentity = operation->second.wqeIdentity;
         Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
         const bool forceDrain = GetFunction()->ShouldForceDrainAcceptedWqes(jettyNum);
@@ -1295,10 +1342,16 @@ void UbTransaction::WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe, UbWorkOutcome o
                     record.resolvedTpIdentity);
             if (disposition == UbWqeSegmentTerminalDisposition::RETAINED && forceDrain)
             {
-                transport->second->ForceRemoveRetainedWqeSegment(
-                    record.segment,
-                    {operation->second.operationIdentity, record.identity},
-                    record.resolvedTpIdentity);
+                const UbWqeSegmentTerminalDisposition forcedDisposition =
+                    transport->second->ForceRemoveRetainedWqeSegment(
+                        record.segment,
+                        {operation->second.operationIdentity, record.identity},
+                        record.resolvedTpIdentity);
+                NS_ABORT_MSG_IF(
+                    forcedDisposition != UbWqeSegmentTerminalDisposition::FORCE_REMOVED &&
+                        forcedDisposition !=
+                            UbWqeSegmentTerminalDisposition::TRANSPORT_CLEANED,
+                    "Forced WQE terminal did not resolve exact TP retained state");
             }
             if (disposition != UbWqeSegmentTerminalDisposition::RETAINED || forceDrain)
             {
@@ -1424,10 +1477,15 @@ UbTransaction::ForceDrainTerminalPendingOperations(uint32_t jettyNum)
                                 transport->second->GetLifecycleOwner() !=
                                     segment.resolvedTpIdentity,
                             "Forced terminal-pending drain lost its exact TP generation");
-            transport->second->ForceRemoveRetainedWqeSegment(
-                segment.segment,
-                {operation->second.operationIdentity, segment.identity},
-                segment.resolvedTpIdentity);
+            const UbWqeSegmentTerminalDisposition forcedDisposition =
+                transport->second->ForceRemoveRetainedWqeSegment(
+                    segment.segment,
+                    {operation->second.operationIdentity, segment.identity},
+                    segment.resolvedTpIdentity);
+            NS_ABORT_MSG_IF(
+                forcedDisposition != UbWqeSegmentTerminalDisposition::FORCE_REMOVED &&
+                    forcedDisposition != UbWqeSegmentTerminalDisposition::TRANSPORT_CLEANED,
+                "Forced terminal-pending drain did not resolve exact TP retained state");
             coordinator->ReleaseLease(segment.childLease);
             coordinator->ReleaseLease(segment.transportWorkLease);
             coordinator->RetireResource(segment.identity);
