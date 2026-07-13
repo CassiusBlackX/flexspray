@@ -919,6 +919,20 @@ void UbJetty::CommitWqeSegmentAdmission(Ptr<UbWqeSegment> segment)
     NS_ABORT_MSG_IF(wqe == nullptr, "WQE segment admission references an unknown WQE");
     NS_ABORT_MSG_IF(wqe->GetBytesLeft() < segment->GetSize(),
                     "WQE segment admission would overrun the remaining WQE bytes");
+    const bool firstAdmission = !wqe->CanSend();
+    if (firstAdmission && wqe->GetTaSsnStart() != segment->GetTaSsn())
+    {
+        // Push-time TASSN is a reservation. A terminalized predecessor may leave a gap before
+        // this WQE's first actual admission, so bind its request identity to the committed cursor.
+        wqe->SetTaSsnStart(segment->GetTaSsn());
+        wqe->SetRequestTassn(segment->GetTaSsn());
+        segment->SetRequestTassn(segment->GetTaSsn());
+    }
+    else if (!firstAdmission)
+    {
+        NS_ABORT_MSG_IF(segment->GetRequestTassn() != wqe->GetRequestTassn(),
+                        "WQE request identity changed after first segment admission");
+    }
     wqe->SetCanSend(true);
     wqe->UpdateSentBytes(segment->GetSize());
     IncreaseTaSsnSndNxt();
