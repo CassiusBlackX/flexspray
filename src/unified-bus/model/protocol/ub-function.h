@@ -15,6 +15,9 @@
 
 namespace ns3 {
     class UbController;
+    class UbCtpTransportService;
+    class UbJettyManager;
+    enum class UbJettyLifecycleState : uint8_t;
 
     enum class UbWqeSubmissionStatus : uint8_t
     {
@@ -24,12 +27,20 @@ namespace ns3 {
         NO_DIRECT_TRANSPORT = 3,
         DUPLICATE_OPERATION = 4,
         LEGACY_MULTI_TRANSPORT = 5,
+        JETTY_DESTROYING = 6,
     };
 
     struct UbWqeSubmissionResult
     {
         UbWqeSubmissionStatus status{UbWqeSubmissionStatus::JETTY_NOT_FOUND};
         UbLifecycleResourceIdentity wqeIdentity;
+    };
+
+    struct UbWqeCompletion
+    {
+        uint32_t jettyNum{0};
+        uint32_t wqeId{0};
+        UbWorkOutcome outcome{UbWorkOutcome::COMPLETED};
     };
     /**
     * @brief 管理jetty
@@ -55,6 +66,7 @@ namespace ns3 {
         void CreateJetty(uint32_t src, uint32_t jettyNum);
 
         void Init(uint32_t nodeId);
+        void BindTransaction(Ptr<UbTransaction> transaction);
 
         Ptr<UbTransaction> GetUbTransaction();
 
@@ -66,7 +78,9 @@ namespace ns3 {
          * @brief Destroy jetty by parameters
          * @param jettyNum Jetty identifier
          */
-        void DestroyJetty(uint32_t jettyNum);
+        UbDestroyStatus DestroyJetty(uint32_t jettyNum,
+                                     UbDestroyReason reason = UbDestroyReason::EXPLICIT,
+                                     UbDestroyCallback callback = {});
 
         /**
          * @brief Assemble wqe
@@ -86,15 +100,98 @@ namespace ns3 {
          */
         void PushWqeToJetty(Ptr<UbWqe> wqe, uint32_t jettyNum);
         UbWqeSubmissionResult SubmitWqe(Ptr<UbWqe> wqe, uint32_t jettyNum);
+        void ApplyWqeOutcomeFromTransaction(uint32_t jettyNum,
+                                            uint32_t wqeId,
+                                            const UbLifecycleResourceIdentity& wqeIdentity,
+                                            UbWorkOutcome outcome);
+        void NotifyJettyProgress(uint32_t jettyNum);
+        uint64_t TrackJettyEvent(uint32_t jettyNum);
+        void ResolveJettyEvent(uint32_t jettyNum, uint64_t token);
+        bool TryGetJettyLifecycleIdentity(uint32_t jettyNum,
+                                          UbLifecycleResourceIdentity& identity) const;
+        bool TryGetJettyState(uint32_t jettyNum, UbJettyLifecycleState& state) const;
+        bool IsJettyDrainReady(uint32_t jettyNum) const;
+        void RegisterJettyRtpBinding(
+            uint32_t jettyNum,
+            const std::vector<Ptr<UbTransportChannel>>& transports);
+        void RegisterJettyCtpBinding(uint32_t jettyNum,
+                                     Ptr<UbCtpTransportService> service);
     private:
         void DoDispose() override;
         Ptr<UbTransaction> GetTransaction();
         void PushLegacyWqeToJetty(Ptr<UbWqe> wqe, uint32_t jettyNum);
         Ptr<UbLdstApi> m_ldstApi;
-        std::vector<Ptr<UbJetty>> m_jettyVector;
         uint32_t m_nodeId;
-        std::map<uint32_t, Ptr<UbJetty>> m_numToJetty;
+        Ptr<UbTransaction> m_transaction;
+        Ptr<UbJettyManager> m_jettyManager;
     
+    };
+
+    enum class UbJettyLifecycleState : uint8_t
+    {
+        ACTIVE = 0,
+        DESTROY_REQUESTED = 1,
+        DRAINING = 2,
+    };
+
+    class UbJettyManager : public Object
+    {
+      public:
+        static TypeId GetTypeId();
+
+        void Init(uint32_t nodeId, Ptr<UbLifecycleCoordinator> coordinator);
+        void BindTransaction(Ptr<UbTransaction> transaction);
+        void RegisterJetty(Ptr<UbJetty> jetty);
+        bool IsJettyExists(uint32_t jettyNum) const;
+        Ptr<UbJetty> GetJetty(uint32_t jettyNum) const;
+        bool IsAcceptingWqes(uint32_t jettyNum) const;
+        bool TryGetState(uint32_t jettyNum, UbJettyLifecycleState& state) const;
+        void RegisterWqe(uint32_t jettyNum,
+                         uint32_t wqeId,
+                         const UbLifecycleResourceIdentity& identity);
+        void ApplyWqeOutcome(uint32_t jettyNum,
+                             uint32_t wqeId,
+                             const UbLifecycleResourceIdentity& identity,
+                             UbWorkOutcome outcome);
+        UbDestroyStatus DestroyJetty(uint32_t jettyNum,
+                                     UbDestroyReason reason,
+                                     UbDestroyCallback callback);
+        void NotifyProgress(uint32_t jettyNum);
+        bool IsDrainReady(uint32_t jettyNum) const;
+        uint64_t TrackEvent(uint32_t jettyNum);
+        void ResolveEvent(uint32_t jettyNum, uint64_t token);
+        bool TryGetIdentity(uint32_t jettyNum, UbLifecycleResourceIdentity& identity) const;
+        void ReplaceRtpBinding(
+            uint32_t jettyNum,
+            const std::vector<UbLifecycleResourceIdentity>& transportIdentities);
+        void RegisterCtpBinding(uint32_t jettyNum, Ptr<UbCtpTransportService> service);
+        void DisposeAll();
+
+      private:
+        struct JettyRecord
+        {
+            Ptr<UbJetty> jetty;
+            UbLifecycleResourceIdentity identity;
+            UbJettyLifecycleState state{UbJettyLifecycleState::ACTIVE};
+            UbDestroyReason reason{UbDestroyReason::EXPLICIT};
+            std::map<uint32_t, UbLifecycleResourceIdentity> wqes;
+            uint64_t nextEventToken{0};
+            std::map<uint64_t, UbLifecycleLeaseIdentity> trackedEvents;
+            std::vector<UbLifecycleLeaseIdentity> bindingLeases;
+            bool hasCtpBinding{false};
+            std::vector<UbDestroyCallback> callbacks;
+        };
+
+        Ptr<UbTransaction> GetTransaction() const;
+        bool IsDrainReady(const JettyRecord& record) const;
+        void FinalizeDestroy(uint32_t jettyNum);
+        void DoDispose() override;
+
+        uint32_t m_nodeId{UINT32_MAX};
+        Ptr<UbLifecycleCoordinator> m_coordinator;
+        Ptr<UbTransaction> m_transaction;
+        Ptr<UbCtpTransportService> m_ctpService;
+        std::map<uint32_t, JettyRecord> m_records;
     };
 
     /**
@@ -204,9 +301,16 @@ namespace ns3 {
 
         void SetClientCallback(Callback<void, uint32_t, uint32_t> cb);
         void SetCompletionObserver(Callback<void, uint32_t, uint32_t> cb);
+        void SetWqeCompletionCallback(Callback<void, UbWqeCompletion> cb);
+        void ApplyWqeTerminal(uint32_t wqeId, UbWorkOutcome outcome);
+        void FlushLegacyWqesForDisposal();
         Callback<void, uint32_t, uint32_t> FinishCallback;
 
         void SetNodeId(uint32_t nodeId) {m_nodeId = nodeId; }
+        void SetTransaction(UbTransaction* transaction)
+        {
+            m_transaction = transaction;
+        }
 
         uint32_t GetNodeId() { return m_nodeId; }
 
@@ -233,7 +337,7 @@ namespace ns3 {
         }
 
     private:
-        Ptr<UbTransaction> GetTransaction();
+        UbTransaction* GetTransaction();
         void DoDispose() override;
         std::vector<Ptr<UbWqe>> m_wqeVector;
         // ========== Jetty标识信息 ==========
@@ -241,6 +345,7 @@ namespace ns3 {
 
         // ========== 传输参数 ==========
         uint32_t m_nodeId;
+        UbTransaction* m_transaction{nullptr};
         uint32_t m_src;  // 源节点标识符
         uint32_t m_dest{UINT32_MAX}; // 目的节点标识符；UINT32_MAX 表示 unbound Jetty
         uint8_t m_sport;
@@ -260,6 +365,7 @@ namespace ns3 {
         uint32_t m_taSsnSndUna = 0;                                 // TA层未确认的最小分段序号
         UbSlidingBitmapWindow m_ssnAckWindow{UB_JETTY_TASSN_OOO_THRESHOLD}; // 接收维护的bitmap
         Callback<void, uint32_t, uint32_t> m_completionObserver;
+        Callback<void, UbWqeCompletion> m_wqeCompletionCallback;
         // 每个jetty统一编号，单调升，作为WqeSegment的编号统计
         //   |----ssn5----|------ssn4-------|------ssn3----->
         //   |----ssn2----|----ssn1---|---startssn0----->

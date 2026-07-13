@@ -226,6 +226,8 @@ class UbCtpTransportService : public Object
     bool SendSegment(Ptr<UbWqeSegment> segment, const UbCtpEntityKey& key);
     void PrepareJetty(Ptr<UbJetty> jetty);
     void StartJetty(Ptr<UbJetty> jetty, const UbCtpEntityKey& key);
+    void ReleaseJetty(uint32_t jettyNum);
+    bool HasJettyBindingForTest(uint32_t jettyNum) const;
     UbCtpEntityKey MakeSourceGroupKeyForRequest(const UbCtpEntityKey& key) const;
     UbCtpEntityKey MakeTxKeyForSegment(const UbCtpEntityKey& jettyKey,
                                        Ptr<UbWqeSegment> segment) const;

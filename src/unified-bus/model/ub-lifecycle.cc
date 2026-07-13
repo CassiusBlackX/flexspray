@@ -177,6 +177,12 @@ UbLifecycleCoordinator::AcquireLease(const UbLifecycleResourceIdentity& owner,
     case UbLifecycleLeaseKind::TRANSPORT_USE:
         ++state.snapshot.activeTransportUseLeases;
         break;
+    case UbLifecycleLeaseKind::BINDING:
+        ++state.snapshot.activeBindingLeases;
+        break;
+    case UbLifecycleLeaseKind::TRACKED_EVENT:
+        ++state.snapshot.activeTrackedEventLeases;
+        break;
     default:
         NS_ABORT_MSG("Unknown lifecycle lease kind");
     }
@@ -208,6 +214,16 @@ UbLifecycleCoordinator::ReleaseLease(const UbLifecycleLeaseIdentity& lease)
                         "Lifecycle transport-use lease counter underflow");
         --state.snapshot.activeTransportUseLeases;
         break;
+    case UbLifecycleLeaseKind::BINDING:
+        NS_ABORT_MSG_IF(state.snapshot.activeBindingLeases == 0,
+                        "Lifecycle binding lease counter underflow");
+        --state.snapshot.activeBindingLeases;
+        break;
+    case UbLifecycleLeaseKind::TRACKED_EVENT:
+        NS_ABORT_MSG_IF(state.snapshot.activeTrackedEventLeases == 0,
+                        "Lifecycle tracked-event lease counter underflow");
+        --state.snapshot.activeTrackedEventLeases;
+        break;
     default:
         NS_ABORT_MSG("Unknown lifecycle lease kind");
     }
@@ -217,10 +233,38 @@ UbLifecycleCoordinator::ReleaseLease(const UbLifecycleLeaseIdentity& lease)
 void
 UbLifecycleCoordinator::RecordSuccessfulTerminal(const UbLifecycleResourceIdentity& identity)
 {
+    RecordWorkTerminal(identity, UbWorkOutcome::COMPLETED);
+}
+
+void
+UbLifecycleCoordinator::RecordWorkTerminal(const UbLifecycleResourceIdentity& identity,
+                                           UbWorkOutcome outcome)
+{
     ResourceState& state = ValidateMutable(identity);
-    NS_ABORT_MSG_IF(state.snapshot.successfulTerminals != 0,
+    const uint64_t terminalCount = state.snapshot.completedTerminals +
+                                   state.snapshot.failedTerminals +
+                                   state.snapshot.canceledTerminals +
+                                   state.snapshot.flushedTerminals;
+    NS_ABORT_MSG_IF(terminalCount != 0,
                     "Lifecycle resource already has a terminal outcome");
-    ++state.snapshot.successfulTerminals;
+    switch (outcome)
+    {
+    case UbWorkOutcome::COMPLETED:
+        ++state.snapshot.completedTerminals;
+        ++state.snapshot.successfulTerminals;
+        break;
+    case UbWorkOutcome::FAILED:
+        ++state.snapshot.failedTerminals;
+        break;
+    case UbWorkOutcome::CANCELED:
+        ++state.snapshot.canceledTerminals;
+        break;
+    case UbWorkOutcome::FLUSHED:
+        ++state.snapshot.flushedTerminals;
+        break;
+    default:
+        NS_ABORT_MSG("Unknown work terminal outcome");
+    }
 }
 
 UbLifecycleResourceIdentity

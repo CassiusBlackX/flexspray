@@ -963,10 +963,56 @@ UbCtpTransportService::StartJetty(Ptr<UbJetty> jetty, const UbCtpEntityKey& key)
     {
         jettys.push_back(jetty);
     }
+    m_node->GetObject<UbController>()->GetUbFunction()->RegisterJettyCtpBinding(
+        jetty->GetJettyNum(),
+        Ptr<UbCtpTransportService>(this));
     UbCtpEntityState& state = GetOrCreateEntityState(key);
     state.Tx().routing.useShortestPaths = m_defaultRoutingPolicy.useShortestPaths;
     state.Tx().routing.usePacketSpray = m_defaultRoutingPolicy.usePacketSpray;
     DrainJettys(state);
+}
+
+void
+UbCtpTransportService::ReleaseJetty(uint32_t jettyNum)
+{
+    for (auto it = m_keyJettys.begin(); it != m_keyJettys.end();)
+    {
+        auto& jettys = it->second;
+        jettys.erase(std::remove_if(jettys.begin(),
+                                    jettys.end(),
+                                    [jettyNum](const Ptr<UbJetty>& jetty) {
+                                        return jetty == nullptr ||
+                                               jetty->GetJettyNum() == jettyNum;
+                                    }),
+                      jettys.end());
+        if (jettys.empty())
+        {
+            m_keyJettyRrIndex.erase(it->first);
+            it = m_keyJettys.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+}
+
+bool
+UbCtpTransportService::HasJettyBindingForTest(uint32_t jettyNum) const
+{
+    for (const auto& [key, jettys] : m_keyJettys)
+    {
+        (void)key;
+        if (std::any_of(jettys.begin(),
+                        jettys.end(),
+                        [jettyNum](const Ptr<UbJetty>& jetty) {
+                            return jetty != nullptr && jetty->GetJettyNum() == jettyNum;
+                        }))
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 UbCtpEntityKey

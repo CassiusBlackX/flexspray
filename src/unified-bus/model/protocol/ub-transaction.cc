@@ -33,6 +33,7 @@ UbTransaction::~UbTransaction()
 UbTransaction::UbTransaction(Ptr<Node> node)
 {
     m_nodeId = node->GetId();
+    m_coordinator = UbLifecycleCoordinator::GetOrCreate(node);
     m_random = CreateObject<UniformRandomVariable>();
     m_random->SetAttribute("Min", DoubleValue(0.0));
     m_random->SetAttribute("Max", DoubleValue(1.0));
@@ -63,9 +64,17 @@ void UbTransaction::TpDeinit(uint32_t tpn)
     m_tpRelatedRemoteRequests.erase(tpn);
 }
 
-Ptr<UbFunction> UbTransaction::GetFunction()
+UbFunction* UbTransaction::GetFunction()
 {
-    return NodeList::GetNode(m_nodeId)->GetObject<UbController>()->GetUbFunction();
+    NS_ABORT_MSG_IF(m_function == nullptr, "Transaction has no Function facade");
+    return m_function;
+}
+
+void
+UbTransaction::SetFunction(UbFunction* function)
+{
+    NS_ABORT_MSG_IF(function == nullptr, "Transaction requires a Function facade");
+    m_function = function;
 }
 
 Ptr<UbJetty> UbTransaction::GetJetty(uint32_t jettyNum)
@@ -124,6 +133,7 @@ bool UbTransaction::JettyBindTp(uint32_t src, uint32_t dest, uint32_t jettyNum,
     } else {
         m_jettyTpNextIndex[jettyNum] = 0;
     }
+    GetFunction()->RegisterJettyRtpBinding(jettyNum, ubTransportGroup);
     return true;
 }
 
@@ -183,10 +193,24 @@ void UbTransaction::TriggerScheduleWqeSegment(uint32_t jettyNum)
         }
         for (uint32_t i = 0; i < tpVec.size(); i++) {
             uint32_t idx = (nextIndex + i) % tpVec.size();
-            Simulator::ScheduleNow(&UbTransaction::ScheduleWqeSegment, this, tpVec[idx]);
+            const uint64_t eventToken = GetFunction()->TrackJettyEvent(jettyNum);
+            Simulator::ScheduleNow(&UbTransaction::RunTrackedScheduleWqeSegment,
+                                   this,
+                                   jettyNum,
+                                   tpVec[idx],
+                                   eventToken);
         }
         nextIndex = (nextIndex + 1) % tpVec.size();
     }
+}
+
+void
+UbTransaction::RunTrackedScheduleWqeSegment(uint32_t jettyNum,
+                                            Ptr<UbTransportChannel> tp,
+                                            uint64_t eventToken)
+{
+    GetFunction()->ResolveJettyEvent(jettyNum, eventToken);
+    ScheduleWqeSegment(tp);
 }
 
 void UbTransaction::ApplyScheduleWqeSegment(Ptr<UbTransportChannel> tp)
@@ -328,16 +352,42 @@ void UbTransaction::ScheduleWqeSegment(Ptr<UbTransportChannel> tp)
     }
     if (wqeSegment != nullptr) {
         wqeSegment->SetTpn(tpn);
-        Simulator::ScheduleNow(&UbTransaction::OnScheduleWqeSegmentFinish,
-                               this,
-                               wqeSegment,
-                               nextRrIndex,
-                               localSegment,
-                               lifecycleOperation);
+        if (lifecycleOperation)
+        {
+            const uint64_t eventToken =
+                GetFunction()->TrackJettyEvent(wqeSegment->GetJettyNum());
+            Simulator::ScheduleNow(&UbTransaction::RunTrackedScheduleWqeSegmentFinish,
+                                   this,
+                                   wqeSegment,
+                                   nextRrIndex,
+                                   localSegment,
+                                   lifecycleOperation,
+                                   eventToken);
+        }
+        else
+        {
+            Simulator::ScheduleNow(&UbTransaction::OnScheduleWqeSegmentFinish,
+                                   this,
+                                   wqeSegment,
+                                   nextRrIndex,
+                                   localSegment,
+                                   lifecycleOperation);
+        }
     } else {
         m_tpSchedulingStatus[tpn] = false;
     }
 
+}
+
+void
+UbTransaction::RunTrackedScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment,
+                                                  uint32_t nextRrIndex,
+                                                  bool localSegment,
+                                                  bool lifecycleOperation,
+                                                  uint64_t eventToken)
+{
+    GetFunction()->ResolveJettyEvent(segment->GetJettyNum(), eventToken);
+    OnScheduleWqeSegmentFinish(segment, nextRrIndex, localSegment, lifecycleOperation);
 }
 
 void UbTransaction::OnScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment,
@@ -410,8 +460,7 @@ UbTransaction::RecordSegmentAdmission(Ptr<UbWqeSegment> segment)
                         operation->second.segments.end(),
                     "Duplicate Transaction segment admission");
 
-    Ptr<UbLifecycleCoordinator> coordinator =
-        UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId));
+    Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
     const uint64_t localId = (static_cast<uint64_t>(segment->GetJettyNum()) << 32) |
                              segment->GetTaSsn();
     OperationRecord::SegmentRecord record;
@@ -437,10 +486,9 @@ UbTransaction::RecordSegmentSuccess(uint32_t jettyNum, uint32_t wqeId, uint32_t 
         return false;
     }
 
-    Ptr<UbLifecycleCoordinator> coordinator =
-        UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId));
+    Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
     coordinator->ReleaseLease(segment->second.childLease);
-    coordinator->RecordSuccessfulTerminal(segment->second.identity);
+    coordinator->RecordWorkTerminal(segment->second.identity, UbWorkOutcome::COMPLETED);
     coordinator->RetireResource(segment->second.identity);
     operation->second.segments.erase(segment);
     return true;
@@ -729,8 +777,7 @@ UbTransaction::TryAdmitDirectWqe(uint32_t jettyNum,
     }
 
     Ptr<UbTransportChannel> tp = tpGroup->second.front();
-    Ptr<UbLifecycleCoordinator> coordinator =
-        UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId));
+    Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
     OperationRecord operation;
     operation.wqe = wqe;
     operation.wqeIdentity = wqeIdentity;
@@ -786,25 +833,41 @@ UbTransaction::GetTpRoundRobinIndexForTest(uint32_t tpn) const
     return it->second;
 }
 
-void UbTransaction::WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe)
+void UbTransaction::WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe, UbWorkOutcome outcome)
 {
     const auto operation = m_operations.find({jettyNum, wqe->GetWqeId()});
+    bool hadLifecycleOperation = false;
+    UbLifecycleResourceIdentity wqeIdentity;
     if (operation != m_operations.end())
     {
-        NS_ABORT_MSG_IF(!operation->second.segments.empty(),
-                        "Cannot retire a WQE with active Transaction segments");
-        Ptr<UbLifecycleCoordinator> coordinator =
-            UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId));
+        hadLifecycleOperation = true;
+        wqeIdentity = operation->second.wqeIdentity;
+        Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
+        for (const auto& [taSsn, segment] : operation->second.segments)
+        {
+            (void)taSsn;
+            coordinator->ReleaseLease(segment.childLease);
+            coordinator->RecordWorkTerminal(segment.identity, outcome);
+            coordinator->RetireResource(segment.identity);
+        }
+        operation->second.segments.clear();
         coordinator->ReleaseLease(operation->second.workLease);
         coordinator->ReleaseLease(operation->second.transportUseLease);
-        coordinator->RecordSuccessfulTerminal(operation->second.operationIdentity);
+        coordinator->RecordWorkTerminal(operation->second.operationIdentity, outcome);
         coordinator->RetireResource(operation->second.operationIdentity);
-        coordinator->RecordSuccessfulTerminal(operation->second.wqeIdentity);
+        coordinator->RecordWorkTerminal(operation->second.wqeIdentity, outcome);
         coordinator->RetireResource(operation->second.wqeIdentity);
         m_operations.erase(operation);
     }
 
     if (m_serviceMode.find(jettyNum) == m_serviceMode.end() || m_serviceMode[jettyNum] != TransactionServiceMode::ROI) {
+        if (hadLifecycleOperation)
+        {
+            GetFunction()->ApplyWqeOutcomeFromTransaction(jettyNum,
+                                                          wqe->GetWqeId(),
+                                                          wqeIdentity,
+                                                          outcome);
+        }
         return;
     }
     // 从vector中寻找该wqe并删除
@@ -812,6 +875,27 @@ void UbTransaction::WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe)
     if (it != m_jettyOrderedWqe[jettyNum].end()) {
         m_jettyOrderedWqe[jettyNum].erase(it);
     }
+    if (hadLifecycleOperation)
+    {
+        GetFunction()->ApplyWqeOutcomeFromTransaction(jettyNum,
+                                                      wqe->GetWqeId(),
+                                                      wqeIdentity,
+                                                      outcome);
+    }
+}
+
+void
+UbTransaction::CompleteWqeOperation(uint32_t jettyNum,
+                                    uint32_t wqeId,
+                                    UbWorkOutcome outcome)
+{
+    NS_ABORT_MSG_IF(outcome == UbWorkOutcome::COMPLETED,
+                    "Successful WQE completion must come from Transaction response processing");
+    const auto operation = m_operations.find({jettyNum, wqeId});
+    NS_ABORT_MSG_IF(operation == m_operations.end(),
+                    "Transaction outcome references an unknown, duplicate, or stale operation");
+    Ptr<UbWqe> wqe = operation->second.wqe;
+    WqeFinish(jettyNum, wqe, outcome);
 }
 
 void UbTransaction::DoDispose()
@@ -845,6 +929,8 @@ void UbTransaction::DoDispose()
     m_serviceMode.clear();
     m_memoryStore.clear();
     m_operations.clear();
+    m_coordinator = nullptr;
+    m_function = nullptr;
     for (auto &it : m_jettyOrderedWqe) {
         it.second.clear();
     }

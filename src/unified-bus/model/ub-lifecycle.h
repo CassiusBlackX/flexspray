@@ -2,6 +2,7 @@
 #ifndef UB_LIFECYCLE_H
 #define UB_LIFECYCLE_H
 
+#include "ns3/callback.h"
 #include "ns3/object.h"
 #include "ns3/packet.h"
 #include "ns3/tag.h"
@@ -22,6 +23,7 @@ enum class UbLifecycleResourceKind : uint8_t
     WQE = 2,
     TRANSACTION_OPERATION = 3,
     TRANSACTION_SEGMENT = 4,
+    JETTY = 5,
 };
 
 enum class UbLifecycleLeaseKind : uint8_t
@@ -29,6 +31,16 @@ enum class UbLifecycleLeaseKind : uint8_t
     WORK = 1,
     CHILD = 2,
     TRANSPORT_USE = 3,
+    BINDING = 4,
+    TRACKED_EVENT = 5,
+};
+
+enum class UbWorkOutcome : uint8_t
+{
+    COMPLETED = 0,
+    FAILED = 1,
+    CANCELED = 2,
+    FLUSHED = 3,
 };
 
 enum class UbPacketTransfer : uint8_t
@@ -53,6 +65,24 @@ struct UbLifecycleResourceIdentity
 
     bool operator==(const UbLifecycleResourceIdentity&) const = default;
 };
+
+enum class UbDestroyReason : uint8_t
+{
+    EXPLICIT = 0,
+    PROTOCOL_COMPLETE = 1,
+    ERROR = 2,
+    SIMULATION_STOP = 3,
+};
+
+enum class UbDestroyStatus : uint8_t
+{
+    COMPLETED = 0,
+    PENDING = 1,
+    NOT_FOUND = 2,
+    REJECTED = 3,
+};
+
+using UbDestroyCallback = Callback<void, UbLifecycleResourceIdentity, UbDestroyStatus>;
 
 struct UbPacketAttemptIdentity
 {
@@ -106,7 +136,13 @@ struct UbLifecycleResourceSnapshot
     uint64_t activeWorkLeases{0};
     uint64_t activeChildLeases{0};
     uint64_t activeTransportUseLeases{0};
+    uint64_t activeBindingLeases{0};
+    uint64_t activeTrackedEventLeases{0};
     uint64_t successfulTerminals{0};
+    uint64_t completedTerminals{0};
+    uint64_t failedTerminals{0};
+    uint64_t canceledTerminals{0};
+    uint64_t flushedTerminals{0};
     bool retired{false};
 };
 
@@ -124,6 +160,7 @@ class UbLifecycleCoordinator : public Object
                                           const UbLifecycleResourceIdentity& related);
     void ReleaseLease(const UbLifecycleLeaseIdentity& lease);
     void RecordSuccessfulTerminal(const UbLifecycleResourceIdentity& identity);
+    void RecordWorkTerminal(const UbLifecycleResourceIdentity& identity, UbWorkOutcome outcome);
 
     UbLifecycleResourceIdentity OpenPacketOwner(UbLifecycleResourceKind kind, uint64_t localId);
     void RetirePacketOwner(const UbLifecycleResourceIdentity& identity);
