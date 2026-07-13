@@ -26,13 +26,30 @@ namespace ns3 {
     class UbJetty;
     class UbFunction;
     class UbTransportChannel;
+    class UbTransportGroup;
+
+    enum class UbRtpTransportReferenceKind : uint8_t
+    {
+        DIRECT_TP = 0,
+        TPG = 1,
+    };
+
+    struct UbRtpTransportReference
+    {
+        UbRtpTransportReferenceKind kind{UbRtpTransportReferenceKind::DIRECT_TP};
+        UbLifecycleResourceIdentity identity;
+        uint32_t directTpn{UINT32_MAX};
+    };
 
     struct UbTransactionOperationSnapshot
     {
         UbLifecycleResourceIdentity wqeIdentity;
         UbLifecycleResourceIdentity operationIdentity;
+        UbRtpTransportReference transportReference;
         uint32_t directTpn{UINT32_MAX};
         uint32_t activeSegments{0};
+        uint32_t activeTransportWorkLeases{0};
+        std::vector<UbLifecycleResourceIdentity> resolvedTpIdentities;
     };
     /**
     * @brief
@@ -96,9 +113,13 @@ namespace ns3 {
         // 新增wqe任务
         void AddWqe(uint32_t jettyNum, Ptr<UbWqe> wqe);
 
-        bool TryAdmitDirectWqe(uint32_t jettyNum,
-                               Ptr<UbWqe> wqe,
-                               const UbLifecycleResourceIdentity& wqeIdentity);
+        bool TryGetRtpTransportReference(uint32_t jettyNum,
+                                         UbRtpTransportReference& reference) const;
+        bool IsRtpTransportReferenceCurrent(
+            const UbRtpTransportReference& reference) const;
+        bool TryAdmitRtpWqe(uint32_t jettyNum,
+                            Ptr<UbWqe> wqe,
+                            const UbLifecycleResourceIdentity& wqeIdentity);
         bool HasWqeOperation(uint32_t jettyNum, uint32_t wqeId) const;
         bool HasLifecycleOperationForJetty(uint32_t jettyNum) const;
         uint32_t GetActiveOperationCount() const;
@@ -127,6 +148,16 @@ namespace ns3 {
         void DoDispose() override;
 
         void ScheduleWqeSegment(Ptr<UbTransportChannel> tp);
+        void RunTrackedPrepareRtpWqeSegment(uint32_t jettyNum,
+                                            Ptr<UbWqe> originatingWqe,
+                                            uint64_t eventToken);
+        void RunTrackedAdmitRtpWqeSegment(Ptr<UbWqeSegment> segment,
+                                          Ptr<UbWqe> originatingWqe,
+                                          uint64_t eventToken);
+        bool TryAdmitRtpSegment(uint32_t jettyNum,
+                                Ptr<UbWqe> originatingWqe,
+                                Ptr<UbWqeSegment> segment,
+                                Ptr<UbTransportChannel>& admittedTp);
         void RunTrackedScheduleWqeSegment(uint32_t jettyNum,
                                           Ptr<UbWqe> originatingWqe,
                                           bool lifecycleOperation,
@@ -145,8 +176,10 @@ namespace ns3 {
                                                 uint64_t eventToken);
         void CancelPendingScheduleWqeSegmentFinish(uint32_t tpn);
         bool IsCurrentWqeOperation(uint32_t jettyNum, Ptr<UbWqe> wqe) const;
-        void RecordSegmentAdmission(Ptr<UbWqeSegment> segment);
-        bool RecordSegmentSuccess(uint32_t jettyNum, uint32_t wqeId, uint32_t taSsn);
+        bool RecordSegmentSuccess(uint32_t jettyNum,
+                                  uint32_t wqeId,
+                                  uint32_t taSsn,
+                                  Ptr<UbWqeSegment> completion);
 
         bool IsUrmaReadWriteRequest(const Ptr<UbWqeSegment>& segment);
 
@@ -166,6 +199,7 @@ namespace ns3 {
         std::map<uint32_t, Ptr<UbTransportChannel>> m_tpnMap;
         // Jetty和TP的绑定关系
         std::map<uint32_t, std::vector<Ptr<UbTransportChannel>>> m_jettyTpGroup;
+        std::map<uint32_t, UbRtpTransportReference> m_jettyRtpReferences;
         // 每个 Jetty 下次从哪个 TP 开始调度，避免短 WQE 总被第一个 TP 抢占。
         std::map<uint32_t, uint32_t> m_jettyTpNextIndex;
         // 新 Jetty 的初始 TP 轮转位置；一任务一 Jetty 的短流也能展开到多 TP。
@@ -196,6 +230,7 @@ namespace ns3 {
             Ptr<UbWqe> wqe;
             UbLifecycleResourceIdentity wqeIdentity;
             UbLifecycleResourceIdentity operationIdentity;
+            UbRtpTransportReference transportReference;
             uint32_t directTpn{UINT32_MAX};
             UbLifecycleLeaseIdentity workLease;
             UbLifecycleLeaseIdentity transportUseLease;
@@ -203,6 +238,8 @@ namespace ns3 {
             {
                 UbLifecycleResourceIdentity identity;
                 UbLifecycleLeaseIdentity childLease;
+                UbLifecycleResourceIdentity resolvedTpIdentity;
+                UbLifecycleLeaseIdentity transportWorkLease;
             };
             std::map<uint32_t, SegmentRecord> segments;
         };

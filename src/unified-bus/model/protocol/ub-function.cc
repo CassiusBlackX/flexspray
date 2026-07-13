@@ -143,24 +143,9 @@ Ptr<UbWqe> UbFunction::CreateWqe(uint32_t src, uint32_t dest, uint32_t size, uin
 void UbFunction::PushWqeToJetty(Ptr<UbWqe> wqe, uint32_t jettyNum)
 {
     const UbWqeSubmissionResult result = SubmitWqe(wqe, jettyNum);
-    if (result.status == UbWqeSubmissionStatus::LEGACY_MULTI_TRANSPORT) {
-        PushLegacyWqeToJetty(wqe, jettyNum);
-        return;
-    }
     if (result.status != UbWqeSubmissionStatus::ACCEPTED) {
         NS_LOG_WARN("WQE submission rejected with status " << static_cast<uint32_t>(result.status));
     }
-}
-
-void UbFunction::PushLegacyWqeToJetty(Ptr<UbWqe> wqe, uint32_t jettyNum)
-{
-    Ptr<UbJetty> jetty = GetJetty(jettyNum);
-    NS_ABORT_MSG_IF(jetty == nullptr || !jetty->CanAcceptWqe(wqe),
-                    "Legacy multi-TP WQE submission lost its validated Jetty binding");
-    jetty->SetNodeId(m_nodeId);
-    jetty->PushWqe(wqe);
-    GetTransaction()->AddWqe(jettyNum, wqe);
-    GetTransaction()->TriggerScheduleWqeSegment(jettyNum, wqe, false);
 }
 
 UbWqeSubmissionResult UbFunction::SubmitWqe(Ptr<UbWqe> wqe, uint32_t jettyNum)
@@ -176,12 +161,12 @@ UbWqeSubmissionResult UbFunction::SubmitWqe(Ptr<UbWqe> wqe, uint32_t jettyNum)
     if (!ubJetty->CanAcceptWqe(wqe)) {
         return {UbWqeSubmissionStatus::JETTY_BINDING_MISMATCH, {}};
     }
-    const auto tpGroup = GetTransaction()->GetJettyRelatedTpVec(jettyNum);
-    if (tpGroup.size() > 1) {
-        return {UbWqeSubmissionStatus::LEGACY_MULTI_TRANSPORT, {}};
-    }
-    if (tpGroup.empty() || tpGroup.front() == nullptr) {
+    UbRtpTransportReference transportReference;
+    if (!GetTransaction()->TryGetRtpTransportReference(jettyNum, transportReference)) {
         return {UbWqeSubmissionStatus::NO_DIRECT_TRANSPORT, {}};
+    }
+    if (!GetTransaction()->IsRtpTransportReferenceCurrent(transportReference)) {
+        return {UbWqeSubmissionStatus::STALE_TRANSPORT_REFERENCE, {}};
     }
     if (GetTransaction()->HasWqeOperation(jettyNum, wqe->GetWqeId())) {
         return {UbWqeSubmissionStatus::DUPLICATE_OPERATION, {}};
@@ -191,8 +176,8 @@ UbWqeSubmissionResult UbFunction::SubmitWqe(Ptr<UbWqe> wqe, uint32_t jettyNum)
         UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId));
     const UbLifecycleResourceIdentity wqeIdentity =
         coordinator->OpenResource(UbLifecycleResourceKind::WQE, wqe->GetWqeId());
-    NS_ABORT_MSG_IF(!GetTransaction()->TryAdmitDirectWqe(jettyNum, wqe, wqeIdentity),
-                    "Validated direct WQE admission changed before commit");
+    NS_ABORT_MSG_IF(!GetTransaction()->TryAdmitRtpWqe(jettyNum, wqe, wqeIdentity),
+                    "Validated RTP WQE admission changed before commit");
 
     ubJetty->SetNodeId(m_nodeId);
     ubJetty->PushWqe(wqe);
@@ -862,7 +847,6 @@ Ptr<UbWqeSegment> UbJetty::PrepareNextWqeSegment()
                 // 调用TA，判断currentWqe是否允许发送
                 auto ubTa = GetTransaction();
                 if (ubTa->IsOrderedByInitiator(m_jettyNum, currentWqe)) {
-                    currentWqe->SetCanSend(true);
                     break;
                 }
             }
@@ -874,7 +858,8 @@ Ptr<UbWqeSegment> UbJetty::PrepareNextWqeSegment()
         return nullptr;
     }
 
-    if (!currentWqe->CanSend()) {
+    if (!currentWqe->CanSend() &&
+        !GetTransaction()->IsOrderedByInitiator(m_jettyNum, currentWqe)) {
         NS_LOG_DEBUG("No unfinished WQE available to send");
         return nullptr;
     }
@@ -888,6 +873,20 @@ Ptr<UbWqeSegment> UbJetty::PrepareNextWqeSegment()
     segment->SetTaskId(currentWqe->GetWqeId());
     segment->SetWqeSize(currentWqe->GetSize());
     return segment;
+}
+
+bool
+UbJetty::CanCommitWqeSegmentAdmission(Ptr<UbWqeSegment> segment,
+                                      Ptr<UbWqe> expectedWqe) const
+{
+    if (segment == nullptr || expectedWqe == nullptr ||
+        segment->GetTaSsn() != m_taSsnSndNxt ||
+        segment->GetTaskId() != expectedWqe->GetWqeId() ||
+        expectedWqe->GetBytesLeft() < segment->GetSize())
+    {
+        return false;
+    }
+    return std::find(m_wqeVector.begin(), m_wqeVector.end(), expectedWqe) != m_wqeVector.end();
 }
 
 void UbJetty::CommitWqeSegmentAdmission(Ptr<UbWqeSegment> segment)
@@ -908,6 +907,7 @@ void UbJetty::CommitWqeSegmentAdmission(Ptr<UbWqeSegment> segment)
     NS_ABORT_MSG_IF(wqe == nullptr, "WQE segment admission references an unknown WQE");
     NS_ABORT_MSG_IF(wqe->GetBytesLeft() < segment->GetSize(),
                     "WQE segment admission would overrun the remaining WQE bytes");
+    wqe->SetCanSend(true);
     wqe->UpdateSentBytes(segment->GetSize());
     IncreaseTaSsnSndNxt();
 }
