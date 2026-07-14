@@ -154,10 +154,11 @@ UbGbnRetransStrategy::RetireSegment(const UbTransactionCorrelationIdentity& corr
 {
     for (auto descriptor = m_descriptors.lower_bound(psnStart);
          descriptor != m_descriptors.end() && descriptor->first < psnEnd;) {
-        NS_ABORT_MSG_IF(!descriptor->second.hasCorrelation ||
-                            descriptor->second.correlation != correlation,
-                        "GBN segment cleanup references a stale Transaction generation");
-        descriptor = m_descriptors.erase(descriptor);
+        if (descriptor->second.hasCorrelation && descriptor->second.correlation == correlation) {
+            descriptor = m_descriptors.erase(descriptor);
+        } else {
+            ++descriptor;
+        }
     }
     if (m_retransmitCursor.has_value() && *m_retransmitCursor >= psnStart &&
         *m_retransmitCursor < psnEnd) {
@@ -270,13 +271,10 @@ UbSelectiveRetransStrategy::UbSelectiveRetransStrategy(UbRetransController& cont
 }
 
 void
-UbSelectiveRetransStrategy::RetainSentPsn(uint64_t psn,
-                                          Ptr<Packet> packet,
-                                          uint32_t payloadBytes)
+UbSelectiveRetransStrategy::RetainSentPsn(const UbGbnPacketDescriptor& descriptor)
 {
-    SentPsnState& state = m_sentPsnState[psn];
-    state.packet = packet != nullptr ? packet->Copy() : nullptr;
-    state.payloadBytes = payloadBytes;
+    SentPsnState& state = m_sentPsnState[descriptor.logicalPsn];
+    state.descriptor = descriptor;
     state.acknowledged = false;
     state.selectivelyReportedMissing = false;
     state.retransmitPending = false;
@@ -291,7 +289,6 @@ UbSelectiveRetransStrategy::MarkPsnAcked(uint64_t psn)
         return;
     }
     it->second.acknowledged = true;
-    it->second.packet = nullptr;
     it->second.selectivelyReportedMissing = false;
     it->second.retransmitPending = false;
 }
@@ -434,7 +431,7 @@ UbSelectiveRetransStrategy::CompactRetransmissionQueue()
     for (uint64_t psn : m_selectiveRetransmitQ) {
         auto it = m_sentPsnState.find(psn);
         if (it != m_sentPsnState.end() && !it->second.acknowledged &&
-            it->second.retransmitPending && it->second.packet != nullptr)
+            it->second.retransmitPending)
         {
             liveQueue.push_back(psn);
         }
@@ -447,7 +444,7 @@ UbSelectiveRetransStrategy::HasPendingRetransmission() const
 {
     for (uint64_t psn : m_selectiveRetransmitQ) {
         auto it = m_sentPsnState.find(psn);
-        if (it != m_sentPsnState.end() && !it->second.acknowledged && it->second.packet != nullptr) {
+        if (it != m_sentPsnState.end() && !it->second.acknowledged) {
             return true;
         }
     }
@@ -471,8 +468,8 @@ UbSelectiveRetransStrategy::GetNextRetransmissionSize() const
 {
     for (uint64_t psn : m_selectiveRetransmitQ) {
         auto it = m_sentPsnState.find(psn);
-        if (it != m_sentPsnState.end() && !it->second.acknowledged && it->second.packet != nullptr) {
-            return it->second.packet->GetSize();
+        if (it != m_sentPsnState.end() && !it->second.acknowledged) {
+            return it->second.descriptor.serializedSizeBytes;
         }
     }
     return 0;
@@ -483,8 +480,8 @@ UbSelectiveRetransStrategy::GetNextRetransmissionPayloadBytes() const
 {
     for (uint64_t psn : m_selectiveRetransmitQ) {
         auto it = m_sentPsnState.find(psn);
-        if (it != m_sentPsnState.end() && !it->second.acknowledged && it->second.packet != nullptr) {
-            return it->second.payloadBytes;
+        if (it != m_sentPsnState.end() && !it->second.acknowledged) {
+            return it->second.descriptor.payloadBytes;
         }
     }
     return 0;
@@ -494,7 +491,7 @@ uint32_t
 UbSelectiveRetransStrategy::GetRetainedPayloadBytes(uint64_t psn) const
 {
     auto it = m_sentPsnState.find(psn);
-    return it == m_sentPsnState.end() ? 0 : it->second.payloadBytes;
+    return it == m_sentPsnState.end() ? 0 : it->second.descriptor.payloadBytes;
 }
 
 bool
@@ -512,14 +509,15 @@ UbSelectiveRetransStrategy::TryGetNextRetransmissionPacket()
     while (CanSendRetransmission()) {
         const uint64_t psn = m_selectiveRetransmitQ.front();
         auto it = m_sentPsnState.find(psn);
-        if (it == m_sentPsnState.end() || it->second.acknowledged || it->second.packet == nullptr) {
+        if (it == m_sentPsnState.end() || it->second.acknowledged) {
             m_selectiveRetransmitQ.pop_front();
             if (IsMarkPsnEnabled()) {
                 FinishMarkPsnRetransPhaseIfDone();
             }
             continue;
         }
-        const uint32_t payloadBytes = it->second.payloadBytes;
+        const UbGbnPacketDescriptor descriptor = it->second.descriptor;
+        const uint32_t payloadBytes = descriptor.payloadBytes;
         if (transport.IsCcLimitedForRetransmission(payloadBytes)) {
             transport.SetSendWindowLimited(true);
             return nullptr;
@@ -531,8 +529,7 @@ UbSelectiveRetransStrategy::TryGetNextRetransmissionPacket()
             m_lastFirstRtxPsnValid = true;
         }
         it->second.retransmitCount++;
-        transport.OnSelectiveRetransmissionPacketSent(psn, payloadBytes);
-        Ptr<Packet> retransmission = it->second.packet->Copy();
+        Ptr<Packet> retransmission = transport.SendSelectiveRetransmission(descriptor);
         if (IsMarkPsnEnabled()) {
             FinishMarkPsnRetransPhaseIfDone();
         }
@@ -749,14 +746,34 @@ UbSelectiveRetransStrategy::BuildReceiveDecisionForCurrentState() const
 }
 
 void
-UbSelectiveRetransStrategy::OnNewDataPacketSent(uint64_t psn,
-                                                Ptr<Packet> packet,
-                                                uint32_t payloadBytes)
+UbSelectiveRetransStrategy::OnNewDataPacketSent(const UbGbnPacketDescriptor& descriptor)
 {
     if (IsMarkPsnEnabled()) {
-        MaybeMarkFirstNewSelectivePacket(psn);
+        MaybeMarkFirstNewSelectivePacket(descriptor.logicalPsn);
     }
-    RetainSentPsn(psn, packet, payloadBytes);
+    RetainSentPsn(descriptor);
+}
+
+void
+UbSelectiveRetransStrategy::RetireSegment(
+    const UbTransactionCorrelationIdentity& correlation,
+    uint64_t psnStart,
+    uint64_t psnEnd)
+{
+    for (auto descriptor = m_sentPsnState.lower_bound(psnStart);
+         descriptor != m_sentPsnState.end() && descriptor->first < psnEnd;)
+    {
+        if (descriptor->second.descriptor.hasCorrelation &&
+            descriptor->second.descriptor.correlation == correlation)
+        {
+            descriptor = m_sentPsnState.erase(descriptor);
+        }
+        else
+        {
+            ++descriptor;
+        }
+    }
+    CompactRetransmissionQueue();
 }
 
 void
@@ -847,7 +864,7 @@ UbSelectiveRetransStrategy::GetPendingRetransmissionCountForTest() const
     uint32_t count = 0;
     for (uint64_t psn : m_selectiveRetransmitQ) {
         auto it = m_sentPsnState.find(psn);
-        if (it != m_sentPsnState.end() && !it->second.acknowledged && it->second.packet != nullptr) {
+        if (it != m_sentPsnState.end() && !it->second.acknowledged) {
             ++count;
         }
     }
@@ -1240,8 +1257,7 @@ UbRetransController::BuildReceiveDecisionForCurrentState() const
 }
 
 void
-UbRetransController::OnNewDataPacketSent(const UbGbnPacketDescriptor& descriptor,
-                                         Ptr<Packet> packet)
+UbRetransController::OnNewDataPacketSent(const UbGbnPacketDescriptor& descriptor)
 {
     if (!m_enableRetrans)
     {
@@ -1251,9 +1267,7 @@ UbRetransController::OnNewDataPacketSent(const UbGbnPacketDescriptor& descriptor
     if (m_retransmissionMode == UbRetransmissionMode::GBN) {
         m_gbn->RetainDescriptor(descriptor);
     } else if (m_retransmissionMode == UbRetransmissionMode::SELECTIVE) {
-        m_selective->OnNewDataPacketSent(descriptor.logicalPsn,
-                                         packet,
-                                         descriptor.payloadBytes);
+        m_selective->OnNewDataPacketSent(descriptor);
     }
 }
 
@@ -1309,6 +1323,22 @@ UbRetransController::RetireGbnSegment(const UbTransactionCorrelationIdentity& co
     }
     m_gbn->RetireSegment(correlation, psnStart, psnEnd);
     if (!m_gbn->HasOutstandingDescriptors()) {
+        CancelTimer();
+    }
+}
+
+void
+UbRetransController::RetireSegmentDescriptors(
+    const UbTransactionCorrelationIdentity& correlation,
+    uint64_t psnStart,
+    uint64_t psnEnd)
+{
+    if (m_retransmissionMode == UbRetransmissionMode::GBN) {
+        m_gbn->RetireSegment(correlation, psnStart, psnEnd);
+    } else if (m_retransmissionMode == UbRetransmissionMode::SELECTIVE) {
+        m_selective->RetireSegment(correlation, psnStart, psnEnd);
+    }
+    if (!HasOutstandingRetransmissionState()) {
         CancelTimer();
     }
 }

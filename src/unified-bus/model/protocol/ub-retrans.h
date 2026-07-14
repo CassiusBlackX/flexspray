@@ -67,6 +67,7 @@ struct UbGbnPacketDescriptor
     uint64_t tpMsn{0};
     bool firstPacket{false};
     bool lastPacket{false};
+    uint32_t serializedSizeBytes{0};
 };
 
 class UbRetransStrategy
@@ -116,9 +117,7 @@ class UbSelectiveRetransStrategy : public UbRetransStrategy
 public:
     explicit UbSelectiveRetransStrategy(UbRetransController& controller);
 
-    void RetainSentPsn(uint64_t psn,
-                       Ptr<Packet> packet,
-                       uint32_t payloadBytes);
+    void RetainSentPsn(const UbGbnPacketDescriptor& descriptor);
     void MarkPsnAcked(uint64_t psn);
     void AcknowledgeCumulativePsn(uint64_t ackPsn);
     void OnCumulativeAckProgress(uint64_t previousSndUna, uint64_t newSndUna);
@@ -141,9 +140,10 @@ public:
     uint64_t GetSelectiveAckBase() const;
     UbSelectiveAckExtTph BuildSelectiveAckHeader(uint64_t ackBase) const;
     UbRetransReceiveDecision BuildReceiveDecisionForCurrentState() const;
-    void OnNewDataPacketSent(uint64_t psn,
-                             Ptr<Packet> packet,
-                             uint32_t payloadBytes);
+    void OnNewDataPacketSent(const UbGbnPacketDescriptor& descriptor);
+    void RetireSegment(const UbTransactionCorrelationIdentity& correlation,
+                       uint64_t psnStart,
+                       uint64_t psnEnd);
     bool HasPendingRetransmission() const;
     bool CanSendRetransmission() const;
     uint32_t GetNextRetransmissionSize() const;
@@ -161,8 +161,7 @@ public:
 private:
     struct SentPsnState
     {
-        Ptr<Packet> packet;
-        uint32_t payloadBytes{0};
+        UbGbnPacketDescriptor descriptor;
         bool acknowledged{false};
         bool selectivelyReportedMissing{false};
         bool retransmitPending{false};
@@ -241,7 +240,7 @@ public:
     UbRetransReceiveDecision OnDataPacketReceived(uint64_t psn);
     bool ResolveSelectiveAckBitmapBits(uint32_t& bits) const;
     UbRetransReceiveDecision BuildReceiveDecisionForCurrentState() const;
-    void OnNewDataPacketSent(const UbGbnPacketDescriptor& descriptor, Ptr<Packet> packet);
+    void OnNewDataPacketSent(const UbGbnPacketDescriptor& descriptor);
     Ptr<Packet> TryGetNextRetransmissionPacket();
     bool HasPendingGbnRetransmission() const;
     uint32_t GetNextGbnRetransmissionSize() const;
@@ -250,6 +249,9 @@ public:
     void RetireGbnSegment(const UbTransactionCorrelationIdentity& correlation,
                           uint64_t psnStart,
                           uint64_t psnEnd);
+    void RetireSegmentDescriptors(const UbTransactionCorrelationIdentity& correlation,
+                                  uint64_t psnStart,
+                                  uint64_t psnEnd);
     bool HasPendingSelectiveRetransmission() const;
     bool CanSendSelectiveRetransmission() const;
     uint32_t GetNextSelectiveRetransmissionSize() const;
