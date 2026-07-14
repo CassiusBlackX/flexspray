@@ -12,12 +12,13 @@ The following contract applies to every ticket:
 
 - T00 freezes and protects exactly one current `main@ccf41b58` reference executable for each incompatible build configuration required by the acceptance matrix, together with hashes, build facts, inputs, complete output manifests, and the comparison harness. No ticket rebuilds a frozen configuration or substitutes a different compile-time superset.
 - An ordinary ticket follows the Matt SDD/TDD gate: focused RED/GREEN tests, a targeted build and module tests, and only the smallest necessary scenario. It does not run frozen baseline `verify`/`compare` by default, and byte equality is not a completion gate.
-- Byte-level milestone gates are T06, T08, T12, T13, T17, T19, T20, and T21. Before each milestone comparison, verify the frozen artifact root, select the exact runtime-matching variant, and compare the applicable acceptance profiles.
+- When an existing active path already implements reusable behavior, extract or copy that implementation and make only the required parameter/state adaptations. Do not rewrite equivalent packet construction, protocol handling, scheduling, parsing, or cleanup logic unless the ticket cannot be completed safely by reuse and the replacement is justified by focused evidence.
+- Byte-level milestone gates are T06, T08, T12, T13, T17, T19, T20, and T21. Before each milestone comparison, verify the frozen artifact root, select the exact runtime-matching variant, and compare the applicable acceptance profiles. Exact equality remains the default pass condition; a milestone may also pass with an explicit approved exception for every differing artifact when the cause and impact are known and acceptable.
 - A non-milestone ticket escalates to the smallest applicable baseline comparison only when focused tests expose an unexplained user-visible output change or the ticket explicitly changes the artifact contract.
 - T00 proves reference self-reproducibility by running each accepted case at least twice. Whenever a milestone or escalated comparison runs, require raw byte equality for outputs proven stable; preserve unstable raw output and compare its documented canonical representation without deleting semantic events or values.
 - Use minimal targeted cases for implementation and debugging. Use separate medium-complexity, risk-focused cases at applicable milestones; do not use one large all-features scenario.
 - Validate new lifecycle-only output through schema, balance, generation, terminal-outcome, and causal-order invariants because no old counterpart exists.
-- Any intentional output difference still requires an explicit exception manifest with old bytes, new bytes, Specification or characterization evidence, and approval. Any unexplained difference in a required or escalated comparison fails.
+- Any intentional output difference requires an explicit exception manifest with old bytes, new bytes, first differing offset, exact cause, affected and unaffected behavior, Specification or characterization evidence, and approval. Each exception is narrow to the recorded artifact difference and applies to later milestones only while its cause and evidence remain unchanged. If the cause is uncertain, the impact is unacceptable, or approval is missing, the required or escalated comparison fails and must be brought to the user instead of being waived broadly.
 
 ## Task 00: Freeze the current-main executable and two-tier acceptance corpus
 
@@ -100,11 +101,11 @@ The following contract applies to every ticket:
 
 **Blocked by:** T02 Make WQE submission and completion atomic.
 
-- [ ] Sent items retain protocol descriptors and progress state rather than complete wire packets.
-- [ ] The first-never-sent PSN remains monotonic; retransmission selection uses separate state.
-- [ ] Every retransmission rebuilds headers and payload through the common RTP builder and registers a new physical packet attempt.
-- [ ] ACK, operation failure, and cancellation retire the corresponding items and tracked timer state.
-- [ ] Rebuilt bytes, protocol traces, task results, and throughput match the frozen deterministic-loss GBN baseline byte-for-byte where stable.
+- [x] Sent items retain protocol descriptors and progress state rather than complete wire packets.
+- [x] The first-never-sent PSN remains monotonic; retransmission selection uses separate state.
+- [x] Every retransmission rebuilds headers and payload through the common RTP builder and registers a new physical packet attempt.
+- [x] ACK, operation failure, and cancellation retire the corresponding items and tracked timer state.
+- [x] Rebuilt bytes, protocol traces, task results, and throughput match the frozen deterministic-loss GBN baseline byte-for-byte where stable.
 
 ## Task 07: Migrate selective retransmission and remove full-packet retention
 
