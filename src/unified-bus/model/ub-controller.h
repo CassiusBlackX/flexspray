@@ -178,6 +178,7 @@ public:
     bool IsTPExists(uint32_t tpn);
 
     uint32_t GetActiveSenderFlowCount() const { return m_activeSenderFlowCount; }
+    bool IsDisposing() const { return m_disposing; }
     void IncrementActiveSenderFlowCount() { ++m_activeSenderFlowCount; }
     void DecrementActiveSenderFlowCount()
     {
@@ -187,6 +188,7 @@ public:
         }
     }
 private:
+  void DoDispose() override;
   Ptr<UbTransportChannel> CreateReservedTpEndpointLocked(uint32_t tpn);
   void FinalizeRtpTpGroupMemberRemoval(Ptr<UbTransportGroup> group, uint32_t index);
   void FinalizeRtpTpGroupDestroy(Ptr<UbTransportGroup> group);
@@ -219,6 +221,7 @@ private:
 
   Ptr<TpConnectionManager> m_tpnConn; // 当前节点维护的tpnConn
   uint32_t m_activeSenderFlowCount{0};
+  bool m_disposing{false};
 };
 
 } // namespace ns3

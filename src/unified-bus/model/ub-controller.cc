@@ -49,6 +49,8 @@ void UbController::CreateUbTransaction()
 UbController::~UbController()
 {
     NS_LOG_FUNCTION(this);
+    NS_ASSERT_MSG(m_rtpTpGroups.empty(),
+                  "UbController must force-clean canonical TPGs in DoDispose");
     m_numToTp.clear();
     m_rtpTpGroups.clear();
     m_rtpTpGroupByTpn.clear();
@@ -57,6 +59,61 @@ UbController::~UbController()
     m_portPairsToIter.clear();
     m_dstPriToTp.clear();
     m_dstPriToTpRrIndex.clear();
+}
+
+void
+UbController::DoDispose()
+{
+    m_disposing = true;
+    for (const auto& [tpn, tp] : m_numToTp)
+    {
+        (void)tpn;
+        NS_ABORT_MSG_IF(tp == nullptr,
+                        "Controller canonical TP collection contains a null owner");
+        tp->MarkOwnerControllerDisposing();
+    }
+    std::vector<UbLifecycleResourceIdentity> groups;
+    groups.reserve(m_rtpTpGroups.size());
+    for (const auto& [localId, group] : m_rtpTpGroups)
+    {
+        (void)localId;
+        NS_ABORT_MSG_IF(group == nullptr,
+                        "Controller canonical TPG collection contains a null owner");
+        groups.push_back(group->GetLifecycleIdentity());
+    }
+    for (const UbLifecycleResourceIdentity& identity : groups)
+    {
+        const UbDestroyStatus status =
+            DestroyRtpTpGroup(identity, UbDestroyReason::SIMULATION_STOP);
+        NS_ABORT_MSG_IF(status != UbDestroyStatus::COMPLETED,
+                        "Controller dispose failed to force-clean canonical TPG");
+    }
+    NS_ABORT_MSG_IF(!m_rtpTpGroups.empty() || !m_rtpTpGroupByTpn.empty(),
+                    "Controller dispose left canonical TPG ownership behind: groups="
+                        << m_rtpTpGroups.size()
+                        << ", member-index=" << m_rtpTpGroupByTpn.size());
+
+    m_ctpTransportService = nullptr;
+    if (m_function != nullptr)
+    {
+        m_function->Dispose();
+    }
+    if (m_transaction != nullptr)
+    {
+        m_transaction->Dispose();
+    }
+    m_transaction = nullptr;
+    m_function = nullptr;
+    m_numToTp.clear();
+    m_ports.clear();
+    m_datalink = nullptr;
+    m_destinationToPortsMap.clear();
+    m_destinationToPortPairMap.clear();
+    m_portPairsToIter.clear();
+    m_dstPriToTp.clear();
+    m_dstPriToTpRrIndex.clear();
+    m_tpnConn = nullptr;
+    Object::DoDispose();
 }
 
 Ptr<UbTransportChannel> UbController::GetTpByTpn(uint32_t tpn)
@@ -497,14 +554,18 @@ UbController::FinalizeRtpTpGroupDestroy(Ptr<UbTransportGroup> group)
                     "TPG destroy finalize requires drained use leases");
     if (m_transaction != nullptr)
     {
+        m_transaction->RetireRtpAdmissionDomain(identity);
         m_transaction->EraseRtpTpGroupBindings(identity);
     }
     while (group->GetMemberCount() != 0)
     {
         FinalizeRtpTpGroupMemberRemoval(group, group->GetMemberCount() - 1);
     }
-    coordinator->RecordSuccessfulTerminal(identity);
-    coordinator->RetireResource(identity);
+    if (!coordinator->GetSnapshot(identity).retired)
+    {
+        coordinator->RecordSuccessfulTerminal(identity);
+        coordinator->RetireResource(identity);
+    }
     const auto record = m_rtpTpGroups.find(identity.localId);
     NS_ABORT_MSG_IF(record == m_rtpTpGroups.end() || record->second != group,
                     "TPG destroy finalize requires the canonical collection record");
@@ -516,25 +577,51 @@ UbController::DestroyRtpTpGroup(const UbLifecycleResourceIdentity& groupIdentity
                                 UbDestroyReason reason)
 {
     Ptr<UbTransportGroup> group = ResolveRtpTpGroup(groupIdentity);
+    if (group == nullptr && m_disposing && reason == UbDestroyReason::SIMULATION_STOP)
+    {
+        const auto canonical = m_rtpTpGroups.find(groupIdentity.localId);
+        if (canonical != m_rtpTpGroups.end() && canonical->second != nullptr &&
+            canonical->second->GetLifecycleIdentity() == groupIdentity)
+        {
+            group = canonical->second;
+        }
+    }
     if (group == nullptr)
     {
         return UbDestroyStatus::NOT_FOUND;
     }
-    if (group->IsDestroyPending())
-    {
-        return UbDestroyStatus::PENDING;
-    }
-    (void)reason;
+    const UbTpgCleanupMode requestedMode =
+        reason == UbDestroyReason::SIMULATION_STOP
+            ? UbTpgCleanupMode::FORCE
+            : (reason == UbDestroyReason::ERROR ? UbTpgCleanupMode::ABORT
+                                                : UbTpgCleanupMode::GRACEFUL);
+    group->RequestDestroy(requestedMode);
     group->FreezeNewOperations();
-    if (m_transaction != nullptr)
+    if (!group->AreBindingLeasesReleased())
     {
-        m_transaction->ReleaseRtpTpGroupBindingLeases(groupIdentity);
+        if (m_transaction != nullptr)
+        {
+            m_transaction->ReleaseRtpTpGroupBindingLeases(groupIdentity);
+        }
+        group->MarkBindingLeasesReleased();
+    }
+    if (group->GetCleanupMode() != UbTpgCleanupMode::GRACEFUL && m_transaction != nullptr)
+    {
+        const bool forceDrain = group->GetCleanupMode() == UbTpgCleanupMode::FORCE;
+        m_transaction->TerminateRtpTpGroupOperations(groupIdentity,
+                                                     forceDrain ? UbWorkOutcome::FLUSHED
+                                                                : UbWorkOutcome::FAILED,
+                                                     forceDrain);
+        const auto canonical = m_rtpTpGroups.find(groupIdentity.localId);
+        if (canonical == m_rtpTpGroups.end() || canonical->second != group)
+        {
+            return UbDestroyStatus::COMPLETED;
+        }
     }
     Ptr<UbLifecycleCoordinator> coordinator =
         UbLifecycleCoordinator::GetOrCreate(GetObject<Node>());
     if (coordinator->GetSnapshot(groupIdentity).activeTransportUseLeases != 0)
     {
-        group->MarkDestroyPending();
         return UbDestroyStatus::PENDING;
     }
 

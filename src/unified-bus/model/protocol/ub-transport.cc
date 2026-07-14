@@ -2191,7 +2191,22 @@ Ptr<UbTransaction> UbTransportChannel::GetTransaction()
 
 void UbTransportChannel::ApplyNextWqeSegment()
 {
-    GetTransaction()->ApplyScheduleWqeSegment(this);
+    if (m_ownerControllerDisposing)
+    {
+        return;
+    }
+    Ptr<Node> node = NodeList::GetNode(m_nodeId);
+    NS_ABORT_MSG_IF(node == nullptr, "TP capacity wake requires its owning Node");
+    Ptr<UbController> controller = node->GetObject<UbController>();
+    NS_ABORT_MSG_IF(controller == nullptr, "TP capacity wake requires its owning Controller");
+    if (controller->IsDisposing())
+    {
+        return;
+    }
+    Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+    NS_ABORT_MSG_IF(transaction == nullptr,
+                    "TP capacity wake requires the Controller Transaction facade");
+    transaction->ApplyScheduleWqeSegment(this);
 }
 
 bool UbTransportChannel::IsEmpty()
@@ -2468,15 +2483,39 @@ UbTransportGroup::ClearPendingLastMemberRemoval()
 }
 
 void
-UbTransportGroup::MarkDestroyPending()
+UbTransportGroup::RequestDestroy(UbTpgCleanupMode mode)
 {
     m_destroyPending = true;
+    if (static_cast<uint8_t>(mode) > static_cast<uint8_t>(m_cleanupMode))
+    {
+        m_cleanupMode = mode;
+    }
 }
 
 bool
 UbTransportGroup::IsDestroyPending() const
 {
     return m_destroyPending;
+}
+
+UbTpgCleanupMode
+UbTransportGroup::GetCleanupMode() const
+{
+    return m_cleanupMode;
+}
+
+bool
+UbTransportGroup::AreBindingLeasesReleased() const
+{
+    return m_bindingLeasesReleased;
+}
+
+void
+UbTransportGroup::MarkBindingLeasesReleased()
+{
+    NS_ABORT_MSG_IF(m_bindingLeasesReleased,
+                    "TPG binding leases were already released");
+    m_bindingLeasesReleased = true;
 }
 
 } // namespace ns3
