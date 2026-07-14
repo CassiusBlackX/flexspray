@@ -171,12 +171,31 @@ requirements remain authoritative.
 
 **Blocked by:** T08 Close all RTP packet and tracked-event terminal paths.
 
-- [ ] Create, resolve, state query, destroy request, drain inspection, private finalization, and forced disposal share one manager-owned record.
-- [ ] Endpoint destruction waits for bindings, segments, packets, events, retained state, queues, and allocator ownership.
-- [ ] Finalization unregisters the allocator and erases the endpoint exactly once while leaving the parent reservation and TPN valid.
-- [ ] Later legitimate demand can create a new endpoint generation under the still-valid reservation.
-- [ ] Idle alone never invokes endpoint destroy or resets required PSN/congestion continuity.
-- [ ] The legacy task-driven removal default remains disabled, and enabling it fails with the specified unsupported-teardown error.
+- [x] Create, resolve, state query, destroy request, drain inspection, private finalization, and forced disposal share one manager-owned record.
+- [x] Endpoint destruction waits for bindings, segments, packets, events, retained state, queues, and allocator ownership.
+- [x] Finalization unregisters the allocator and erases the endpoint exactly once while leaving the parent reservation and TPN valid.
+- [x] Later legitimate demand can create a new endpoint generation under the still-valid reservation.
+- [x] Idle alone never invokes endpoint destroy or resets required PSN/congestion continuity.
+- [x] The legacy task-driven removal default remains disabled, and enabling it fails with the specified unsupported-teardown error.
+
+Closeout:
+
+- `UbTransportChannelManager` now owns the endpoint collection and reuses the former controller
+  create, lookup, reserved materialization, and inbound channel-key validation blocks. Controller
+  APIs remain forwarding-compatible.
+- Explicit local destroy freezes new segment admission, cancels endpoint-only DCQCN events through
+  existing tracked-event helpers, and waits on the canonical lifecycle snapshot plus retained TP
+  and Transaction state. The last packet or lease terminal triggers reassessment without polling.
+- Finalization preserves the old allocator unregister -> Transaction `TpDeinit` -> collection erase
+  order, adds generation retirement before erase, and invokes callbacks only after erase.
+- The reservation and TPN remain in `TpConnectionManager`; rematerialization opens a new endpoint
+  generation. No connection teardown or paired-slot aggregation from T10 is included.
+- DCQCN idle cleanup still cancels recovery events and active-flow accounting but now preserves its
+  reduced rate and other congestion scalar continuity. No idle or task-completion destroy caller was
+  introduced.
+- Focused validation passed: targeted build, lifecycle, TP reservation/materialization,
+  transport-retransmission, congestion-control, DCQCN marking, switch-VOQ, and diff check. T09 has
+  no frozen byte comparison.
 
 ## Task 10: Tear down a paired TP connection only after both slots drain
 
