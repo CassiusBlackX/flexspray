@@ -47,6 +47,13 @@ enum class UbTransportGroupMemberState : uint8_t
     RETIRING = 1,
 };
 
+enum class UbTpgCleanupMode : uint8_t
+{
+    GRACEFUL = 0,
+    ABORT = 1,
+    FORCE = 2,
+};
+
 struct UbTransportGroupMember
 {
     uint32_t tpn{UINT32_MAX};
@@ -162,6 +169,10 @@ public:
      * @brief apply ta for next wqesegment
      */
     void ApplyNextWqeSegment();
+    void MarkOwnerControllerDisposing()
+    {
+        m_ownerControllerDisposing = true;
+    }
 
     void WqeSegmentTriggerPortTransmit(Ptr<UbWqeSegment> segment);
 
@@ -588,6 +599,7 @@ private:
 
     // Status flags
     bool m_isActive = true;
+    bool m_ownerControllerDisposing = false;
     bool m_tpFullFlag = false; // 记录tp队列状态是否满
     bool m_sendWindowLimited = false; // 记录发送窗口是否满
     uint64_t m_defaultMaxWqeSegNum;
@@ -640,8 +652,11 @@ public:
     bool HasPendingLastMemberRemoval() const;
     const UbLifecycleResourceIdentity& GetPendingLastMemberRemoval() const;
     void ClearPendingLastMemberRemoval();
-    void MarkDestroyPending();
+    void RequestDestroy(UbTpgCleanupMode mode);
     bool IsDestroyPending() const;
+    UbTpgCleanupMode GetCleanupMode() const;
+    bool AreBindingLeasesReleased() const;
+    void MarkBindingLeasesReleased();
 
 private:
     UbLifecycleResourceIdentity m_identity;
@@ -650,6 +665,8 @@ private:
     bool m_acceptingNewOperations{true};
     std::optional<UbLifecycleResourceIdentity> m_pendingLastMemberRemoval;
     bool m_destroyPending{false};
+    UbTpgCleanupMode m_cleanupMode{UbTpgCleanupMode::GRACEFUL};
+    bool m_bindingLeasesReleased{false};
 };
 
 } // namespace ns3

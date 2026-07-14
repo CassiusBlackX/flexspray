@@ -4,6 +4,7 @@
 
 #include <ns3/node.h>
 #include <deque>
+#include <optional>
 #include <tuple>
 #include <vector>
 #include <unordered_map>
@@ -166,8 +167,15 @@ namespace ns3 {
             const UbLifecycleResourceIdentity& identity) const;
         uint64_t GetAdmissionDomainCapacityWakeCountForTest(
             const UbLifecycleResourceIdentity& identity) const;
+        uint32_t GetAdmissionDomainCountForTest() const;
         void NotifyRtpTpGroupMemberAvailable(
             const UbLifecycleResourceIdentity& groupIdentity);
+        void TerminateRtpTpGroupOperations(
+            const UbLifecycleResourceIdentity& groupIdentity,
+            UbWorkOutcome outcome,
+            bool forceDrain);
+        void RetireRtpAdmissionDomain(
+            const UbLifecycleResourceIdentity& identity);
         bool TryGetOperationSnapshot(uint32_t jettyNum,
                                      uint32_t wqeId,
                                      UbTransactionOperationSnapshot& snapshot) const;
@@ -194,7 +202,7 @@ namespace ns3 {
         void DoDispose() override;
 
         struct AdmissionDomainKey;
-        void ScheduleWqeSegment(Ptr<UbTransportChannel> tp);
+        struct OperationRecord;
         void RunTrackedPrepareRtpWqeSegment(uint32_t jettyNum,
                                             Ptr<UbWqe> originatingWqe,
                                             AdmissionDomainKey domainKey,
@@ -215,23 +223,6 @@ namespace ns3 {
             Ptr<UbWqe> originatingWqe,
             Ptr<UbWqeSegment> segment,
             Ptr<UbTransportChannel>& admittedTp);
-        void RunTrackedScheduleWqeSegment(uint32_t jettyNum,
-                                          Ptr<UbWqe> originatingWqe,
-                                          bool lifecycleOperation,
-                                          Ptr<UbTransportChannel> tp,
-                                          uint64_t eventToken);
-
-        void OnScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment,
-                                        uint32_t nextRrIndex,
-                                        bool localSegment,
-                                        bool lifecycleOperation);
-        void RunTrackedScheduleWqeSegmentFinish(Ptr<UbWqeSegment> segment,
-                                                Ptr<UbWqe> originatingWqe,
-                                                uint32_t nextRrIndex,
-                                                bool localSegment,
-                                                bool lifecycleOperation,
-                                                uint64_t eventToken);
-        void CancelPendingScheduleWqeSegmentFinish(uint32_t tpn);
         void ClearRtpScheduleChain(uint32_t jettyNum, Ptr<UbWqe> originatingWqe);
         struct AdmissionDomainKey
         {
@@ -255,9 +246,43 @@ namespace ns3 {
         };
         struct ReadySourceKey
         {
+            enum class Kind : uint8_t
+            {
+                LOCAL_OPERATION,
+                REMOTE_ORIGIN,
+            };
+
+            Kind kind{Kind::LOCAL_OPERATION};
             uint32_t jettyNum{0};
             uint32_t wqeId{0};
             UbLifecycleResourceIdentity operationIdentity;
+        };
+        struct RemoteSourceKey
+        {
+            uint32_t originJettyNum{0};
+            uint32_t taskId{0};
+            UbLifecycleResourceIdentity operationIdentity;
+
+            bool operator<(const RemoteSourceKey& other) const
+            {
+                return std::tie(originJettyNum,
+                                taskId,
+                                operationIdentity.ownerNodeId,
+                                operationIdentity.kind,
+                                operationIdentity.localId,
+                                operationIdentity.generation) <
+                       std::tie(other.originJettyNum,
+                                other.taskId,
+                                other.operationIdentity.ownerNodeId,
+                                other.operationIdentity.kind,
+                                other.operationIdentity.localId,
+                                other.operationIdentity.generation);
+            }
+        };
+        struct RemoteSourceState
+        {
+            std::deque<Ptr<UbWqeSegment>> segments;
+            bool readyQueued{false};
         };
         struct AdmissionDomainState
         {
@@ -265,6 +290,8 @@ namespace ns3 {
             bool blocked{false};
             bool eventPending{false};
             bool sourceActive{false};
+            EventId pendingEvent;
+            std::optional<ReadySourceKey> activeSource;
             uint64_t capacityWakeEvents{0};
         };
         static AdmissionDomainKey MakeAdmissionDomainKey(
@@ -273,11 +300,16 @@ namespace ns3 {
         void EnqueueRtpSource(uint32_t jettyNum,
                               Ptr<UbWqe> originatingWqe,
                               bool restoreBlockedFront);
+        void EnqueueRemoteRtpSource(uint32_t tpn, Ptr<UbWqeSegment> segment);
+        void RunRemoteRtpSource(const AdmissionDomainKey& domainKey,
+                                const ReadySourceKey& source);
         void ScheduleAdmissionDomain(const AdmissionDomainKey& domainKey);
         void CompleteAdmissionDomainAttempt(uint32_t jettyNum, Ptr<UbWqe> originatingWqe);
         void CancelRtpScheduleChain(AdmissionDomainKey domainKey,
                                     uint32_t jettyNum,
                                     Ptr<UbWqe> originatingWqe);
+        void DetachRtpSource(OperationRecord& operation);
+        void ForceDrainTerminalPendingOperation(uint32_t jettyNum, uint32_t wqeId);
         void DeferRtpSource(uint32_t jettyNum, Ptr<UbWqe> originatingWqe);
         void WakeDeferredRtpSources(Ptr<UbTransportChannel> tp);
         void WakeAdmissionDomain(const AdmissionDomainKey& key, bool capacityTransition);
@@ -307,7 +339,6 @@ namespace ns3 {
         void CompleteLocalRequestFromResponse(Ptr<UbWqeSegment> response);
         uint64_t DeriveRemoteAddress(const Ptr<UbWqeSegment>& request) const;
 
-        struct OperationRecord;
         void ReleaseTransportUseLease(OperationRecord& operation);
 
         uint32_t m_nodeId;
@@ -321,17 +352,10 @@ namespace ns3 {
         std::map<uint32_t, uint32_t> m_jettyTpNextIndex;
         // 新 Jetty 的初始 TP 轮转位置；一任务一 Jetty 的短流也能展开到多 TP。
         uint32_t m_nextJettyTpStartIndex = 0;
-        //  TP收到的各个remote解析后存储的segment
-        // tp1: remoteJetty1: [seg1, seg2, ...]
-        //      remoteJetty2: [seg3, seg4, ...]
-        // tp2: remoteJetty3: [seg5, seg6, ...]
-        //      remoteJetty4: [seg7, seg8, ...]
-        std::map<uint32_t, std::map<uint32_t, std::vector<Ptr<UbWqeSegment>>>> m_tpRelatedRemoteRequests;
+        std::map<uint32_t, std::map<RemoteSourceKey, RemoteSourceState>>
+            m_tpRelatedRemoteRequests;
 
-        // 记录每个TP下次轮询的开始位置
         std::map<uint32_t, uint32_t> m_tpRRIndex;
-        // 记录每个TP当前是否正处于调度WqeSegment的过程中
-        std::map<uint32_t, bool> m_tpSchedulingStatus;
         Ptr<UniformRandomVariable> m_random;        //随机数产生工具，伪随机，多次仿真可复现
 
         // 记录每个jetty对应的serviceMode
@@ -366,6 +390,7 @@ namespace ns3 {
 
         std::map<std::pair<uint32_t, uint32_t>, OperationRecord> m_operations;
         std::map<AdmissionDomainKey, AdmissionDomainState> m_admissionDomains;
+        std::optional<UbLifecycleResourceIdentity> m_suppressedTpgOwnerProgress;
     };
 
 } // namespace ns3

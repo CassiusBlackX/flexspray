@@ -7853,6 +7853,158 @@ class UbLifecycleReadySourceRoundRobinReportsFairnessTest : public TestCase
     std::vector<uint32_t> m_admissionOrder;
 };
 
+class UbLifecycleLocalAndRemoteReadySourcesShareFixedOrderTest : public TestCase
+{
+  public:
+    UbLifecycleLocalAndRemoteReadySourcesShareFixedOrderTest()
+        : TestCase("UnifiedBus - local and remote ready sources share fixed TP order")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        Config::SetDefault("ns3::UbTransportChannel::DefaultMaxWqeSegNum",
+                           UintegerValue(1));
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        m_transaction = controller->GetUbTransaction();
+        m_tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->JettyBindTp(topo.sender->GetId(),
+                                                         topo.receiver->GetId(),
+                                                         kUrmaWriteRegressionJettyNum,
+                                                         false,
+                                                         {kUrmaWriteRegressionSenderTpn}),
+                              true,
+                              "Local source should bind to the shared TP domain");
+        Ptr<UbJetty> jetty = function->GetJetty(kUrmaWriteRegressionJettyNum);
+        jetty->SetTaSegmentBytes(64);
+        jetty->SetClientCallback(
+            MakeCallback(&UbLifecycleLocalAndRemoteReadySourcesShareFixedOrderTest::ObserveCompletion,
+                         this));
+        m_tp->TraceConnectWithoutContext(
+            "WqeSegmentSendsNotify",
+            MakeCallback(&UbLifecycleLocalAndRemoteReadySourcesShareFixedOrderTest::ObserveAdmission,
+                         this));
+
+        m_localTask = kUrmaWriteRegressionTaskId + 60;
+        m_remoteTask = kUrmaWriteRegressionTaskId + 61;
+        Ptr<UbWqe> local = function->CreateWqe(topo.sender->GetId(),
+                                               topo.receiver->GetId(),
+                                               128,
+                                               m_localTask,
+                                               TaOpcode::TA_OPCODE_WRITE);
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(function->SubmitWqe(
+                                      local,
+                                      kUrmaWriteRegressionJettyNum).status),
+            static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+            "Two-segment local source should enter the shared ready domain");
+
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
+
+        NS_TEST_ASSERT_MSG_EQ(m_remoteQueuedAtFirstAdmission,
+                              true,
+                              "Remote origin should occupy one generation-aware ready-source slot");
+        NS_TEST_ASSERT_MSG_EQ(m_admissionOrder.size(),
+                              3u,
+                              "Local and remote sources should admit three segments without starvation");
+        if (m_admissionOrder.size() == 3)
+        {
+            NS_TEST_ASSERT_MSG_EQ(m_admissionOrder[0],
+                                  m_localTask,
+                                  "Local source should admit its first segment first");
+            NS_TEST_ASSERT_MSG_EQ(m_admissionOrder[1],
+                                  m_remoteTask,
+                                  "Remote source should rotate ahead of the local continuation");
+            NS_TEST_ASSERT_MSG_EQ(m_admissionOrder[2],
+                                  m_localTask,
+                                  "Local continuation should resume after the remote source");
+        }
+        NS_TEST_ASSERT_MSG_EQ(m_localCompletionCount,
+                              1u,
+                              "Local source should complete without starvation");
+        NS_TEST_ASSERT_MSG_EQ(m_tp->GetMsnCnt(),
+                              3u,
+                              "Local and remote segments should share one TP MSN sequence");
+        NS_TEST_ASSERT_MSG_EQ(m_tp->GetPsnCnt(),
+                              3u,
+                              "Local and remote segments should share one TP PSN sequence");
+        NS_TEST_ASSERT_MSG_EQ(
+            m_transaction->GetAdmissionDomainCapacityWakeCountForTest(
+                m_tp->GetLifecycleOwner()),
+            2u,
+            "Capacity-one A-R-A flow should need two bounded availability wakes");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    Ptr<UbWqeSegment> BuildRemoteRequest() const
+    {
+        Ptr<UbWqeSegment> request = CreateObject<UbWqeSegment>();
+        request->SetSrc(1);
+        request->SetDest(0);
+        request->SetSport(0);
+        request->SetDport(0);
+        request->SetType(TaOpcode::TA_OPCODE_WRITE);
+        request->SetSize(64);
+        request->SetPriority(kUrmaWriteRegressionPriority);
+        request->SetTaskId(m_remoteTask);
+        request->SetWqeSize(64);
+        request->SetJettyNum(77);
+        request->SetOriginJettyNum(77);
+        request->SetTaSsn(0);
+        request->SetRequestTassn(0);
+        request->SetOrderType(OrderType::ORDER_NO);
+        request->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
+        request->SetRemoteAddress(0);
+        return request;
+    }
+
+    void ObserveAdmission(uint32_t, uint32_t taskId, uint32_t)
+    {
+        if (taskId != m_localTask && taskId != m_remoteTask)
+        {
+            return;
+        }
+        m_admissionOrder.push_back(taskId);
+        if (taskId == m_localTask && !m_remoteInjected)
+        {
+            m_remoteInjected = true;
+            m_transaction->HandleInboundTaUnit(kUrmaWriteRegressionSenderTpn,
+                                               BuildRemoteRequest());
+            m_remoteQueuedAtFirstAdmission =
+                m_transaction->GetAdmissionDomainReadySourceCountForTest(
+                    m_tp->GetLifecycleOwner()) == 1;
+        }
+    }
+
+    void ObserveCompletion(uint32_t taskId, uint32_t)
+    {
+        if (taskId == m_localTask)
+        {
+            ++m_localCompletionCount;
+        }
+    }
+
+    Ptr<UbTransaction> m_transaction;
+    Ptr<UbTransportChannel> m_tp;
+    uint32_t m_localTask{0};
+    uint32_t m_remoteTask{0};
+    bool m_remoteInjected{false};
+    bool m_remoteQueuedAtFirstAdmission{false};
+    uint32_t m_localCompletionCount{0};
+    std::vector<uint32_t> m_admissionOrder;
+};
+
 class UbLifecycleTpgRealCapacityTransitionsCoalesceWakeTest : public TestCase
 {
   public:
@@ -9198,6 +9350,399 @@ class UbLifecycleActiveUseTpgDestroyFinalizesOnceTest : public TestCase
     uint32_t m_admissions{0};
     uint32_t m_completionCount{0};
     bool m_finalizedBeforeSecondTrace{false};
+};
+
+class UbLifecycleRepeatedDeferredTpgDestroyRetiresExactDomainTest : public TestCase
+{
+  public:
+    UbLifecycleRepeatedDeferredTpgDestroyRetiresExactDomainTest()
+        : TestCase("UnifiedBus - repeated deferred TPG destroy retires exact admission domain")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        Config::SetDefault("ns3::UbTransportChannel::DefaultMaxWqeSegNum",
+                           UintegerValue(0));
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        InstallAdditionalTpPair(topo, 303, 404);
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              kUrmaWriteRegressionJettyNum);
+
+        for (uint32_t cycle = 0; cycle < 3; ++cycle)
+        {
+            NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
+                                                           topo.receiver->GetId(),
+                                                           kUrmaWriteRegressionJettyNum,
+                                                           true,
+                                                           {kUrmaWriteRegressionSenderTpn, 303}),
+                                  true,
+                                  "Each cycle should create one fresh canonical TPG");
+            const UbRtpTransportReference* reference =
+                transaction->FindRtpTransportReference(kUrmaWriteRegressionJettyNum);
+            NS_TEST_ASSERT_MSG_NE(reference, nullptr, "Fresh cycle should expose its TPG reference");
+            const UbLifecycleResourceIdentity groupIdentity = reference->GetIdentity();
+            const uint32_t taskId = kUrmaWriteRegressionTaskId + 70 + cycle;
+            Ptr<UbWqe> wqe = function->CreateWqe(topo.sender->GetId(),
+                                                 topo.receiver->GetId(),
+                                                 64,
+                                                 taskId,
+                                                 TaOpcode::TA_OPCODE_WRITE);
+            NS_TEST_ASSERT_MSG_EQ(
+                static_cast<uint32_t>(function->SubmitWqe(
+                                          wqe,
+                                          kUrmaWriteRegressionJettyNum).status),
+                static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+                "Zero-capacity cycle should retain one deferred operation");
+            Simulator::Stop(NanoSeconds(1));
+            Simulator::Run();
+            NS_TEST_ASSERT_MSG_EQ(transaction->IsAdmissionDomainBlockedForTest(groupIdentity),
+                                  true,
+                                  "Each exact group generation should become blocked");
+            NS_TEST_ASSERT_MSG_EQ(
+                transaction->GetAdmissionDomainReadySourceCountForTest(groupIdentity),
+                1u,
+                "Blocked group should retain one bounded source entry");
+
+            transaction->CompleteWqeOperation(kUrmaWriteRegressionJettyNum,
+                                              taskId,
+                                              UbWorkOutcome::CANCELED);
+            NS_TEST_ASSERT_MSG_EQ(
+                static_cast<uint32_t>(controller->DestroyRtpTpGroup(groupIdentity)),
+                static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
+                "Terminal blocked operation should let exact group destroy complete");
+            NS_TEST_ASSERT_MSG_EQ(transaction->GetAdmissionDomainCountForTest(),
+                                  0u,
+                                  "TPG finalize must erase its pending event and stale source domain");
+        }
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbLifecycleTypedTpgCleanupTerminatesBlockedTailTest : public TestCase
+{
+  public:
+    UbLifecycleTypedTpgCleanupTerminatesBlockedTailTest(UbDestroyReason reason,
+                                                       const std::string& reasonName)
+        : TestCase("UnifiedBus - " + reasonName +
+                   " TPG cleanup terminates blocked tail exactly once"),
+          m_reason(reason)
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        Config::SetDefault("ns3::UbTransportChannel::DefaultMaxWqeSegNum",
+                           UintegerValue(1));
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        InstallAdditionalTpPair(topo, 303, 404);
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(topo.sender);
+        m_firstTp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        m_secondTp = controller->GetTpByTpn(303);
+        m_firstTp->TraceConnectWithoutContext(
+            "FirstPacketSendsNotify",
+            MakeCallback(&UbLifecycleTypedTpgCleanupTerminatesBlockedTailTest::ObserveFirstPacket,
+                         this));
+
+        constexpr uint32_t blockerJetty = kUrmaWriteRegressionJettyNum;
+        constexpr uint32_t groupJetty = kUrmaWriteRegressionJettyNum + 1;
+        function->CreateJetty(topo.sender->GetId(), topo.receiver->GetId(), blockerJetty);
+        function->CreateJetty(topo.sender->GetId(), topo.receiver->GetId(), groupJetty);
+        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
+                                                       topo.receiver->GetId(),
+                                                       blockerJetty,
+                                                       false,
+                                                       {303}),
+                              true,
+                              "Blocker should bind directly to the second TPG member");
+        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
+                                                       topo.receiver->GetId(),
+                                                       groupJetty,
+                                                       true,
+                                                       {kUrmaWriteRegressionSenderTpn, 303}),
+                              true,
+                              "Cleanup fixture should bind a two-member TPG");
+        Ptr<UbJetty> groupJettyObject = function->GetJetty(groupJetty);
+        groupJettyObject->SetTaSegmentBytes(64);
+        groupJettyObject->SetWqeCompletionCallback(
+            MakeCallback(&UbLifecycleTypedTpgCleanupTerminatesBlockedTailTest::ObserveTerminal,
+                         this));
+        const UbRtpTransportReference* reference =
+            transaction->FindRtpTransportReference(groupJetty);
+        NS_TEST_ASSERT_MSG_NE(reference, nullptr, "Cleanup fixture should expose exact TPG ref");
+        m_groupIdentity = reference->GetIdentity();
+
+        Ptr<UbWqe> blocker = function->CreateWqe(topo.sender->GetId(),
+                                                 topo.receiver->GetId(),
+                                                 64,
+                                                 kUrmaWriteRegressionTaskId + 80,
+                                                 TaOpcode::TA_OPCODE_WRITE);
+        m_groupTask = kUrmaWriteRegressionTaskId + 81;
+        Ptr<UbWqe> groupWqe = function->CreateWqe(topo.sender->GetId(),
+                                                  topo.receiver->GetId(),
+                                                  128,
+                                                  m_groupTask,
+                                                  TaOpcode::TA_OPCODE_WRITE);
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(function->SubmitWqe(blocker, blockerJetty).status),
+            static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+            "Direct blocker should enter the second member");
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(function->SubmitWqe(groupWqe, groupJetty).status),
+            static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+            "TPG operation should acquire one group-use lease");
+        Simulator::Run();
+
+        NS_TEST_ASSERT_MSG_EQ(m_started,
+                              true,
+                              "Cleanup fixture should stop only after exact TP send starts");
+        UbTransactionOperationSnapshot beforeCleanup;
+        NS_TEST_ASSERT_MSG_EQ(transaction->TryGetOperationSnapshot(groupJetty,
+                                                                   m_groupTask,
+                                                                   beforeCleanup),
+                              true,
+                              "Blocked-tail operation should remain inspectable");
+        NS_TEST_ASSERT_MSG_EQ(beforeCleanup.activeSegments,
+                              1u,
+                              "First segment should remain accepted on its exact TP");
+        if (!beforeCleanup.resolvedTpIdentities.empty())
+        {
+            NS_TEST_ASSERT_MSG_EQ(beforeCleanup.resolvedTpIdentities[0],
+                                  m_firstTp->GetLifecycleOwner(),
+                                  "Accepted segment should pin the first member generation");
+        }
+        NS_TEST_ASSERT_MSG_EQ(transaction->IsAdmissionDomainBlockedForTest(m_groupIdentity),
+                              true,
+                              "Tail assignment should be blocked while both members are full");
+        NS_TEST_ASSERT_MSG_EQ(
+            transaction->GetAdmissionDomainReadySourceCountForTest(m_groupIdentity),
+            1u,
+            "Blocked tail should retain one exact ready-source entry");
+        NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(m_groupIdentity).activeTransportUseLeases,
+                              1u,
+                              "Blocked tail should retain its TPG-use lease before cleanup");
+
+        const UbDestroyStatus status =
+            controller->DestroyRtpTpGroup(m_groupIdentity, m_reason);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(status),
+                              static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
+                              "Abort/force TPG cleanup should terminalize blocked assignment");
+        NS_TEST_ASSERT_MSG_EQ(controller->ResolveRtpTpGroup(m_groupIdentity),
+                              nullptr,
+                              "Typed cleanup should erase the canonical group generation");
+        NS_TEST_ASSERT_MSG_EQ(m_terminals.size(),
+                              1u,
+                              "Typed group cleanup should notify the WQE terminal exactly once");
+        if (m_terminals.size() == 1)
+        {
+            const UbWorkOutcome expected = m_reason == UbDestroyReason::ERROR
+                                               ? UbWorkOutcome::FAILED
+                                               : UbWorkOutcome::FLUSHED;
+            NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_terminals[0].outcome),
+                                  static_cast<uint32_t>(expected),
+                                  "Cleanup reason should map to one typed WQE outcome");
+        }
+        NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(m_groupIdentity).activeTransportUseLeases,
+                              0u,
+                              "Typed cleanup should release TPG-use before group finalize");
+        NS_TEST_ASSERT_MSG_EQ(coordinator->IsResourceActive(m_firstTp->GetLifecycleOwner()),
+                              true,
+                              "Typed group cleanup must not destroy first member TP");
+        NS_TEST_ASSERT_MSG_EQ(coordinator->IsResourceActive(m_secondTp->GetLifecycleOwner()),
+                              true,
+                              "Typed group cleanup must not destroy second member TP");
+        if (m_reason == UbDestroyReason::ERROR)
+        {
+            UbTransactionOperationSnapshot tombstone;
+            NS_TEST_ASSERT_MSG_EQ(transaction->TryGetOperationSnapshot(groupJetty,
+                                                                       m_groupTask,
+                                                                       tombstone),
+                                  true,
+                                  "ERROR should retain started exact-TP cleanup tombstone");
+            if (!tombstone.resolvedTpIdentities.empty())
+            {
+                NS_TEST_ASSERT_MSG_EQ(tombstone.resolvedTpIdentities[0],
+                                      m_firstTp->GetLifecycleOwner(),
+                                      "ERROR tombstone must not migrate accepted segment");
+            }
+            NS_TEST_ASSERT_MSG_EQ(m_firstTp->GetWqeSegmentVecSize(),
+                                  1u,
+                                  "ERROR should retain started segment until real TP cleanup");
+        }
+        else
+        {
+            NS_TEST_ASSERT_MSG_EQ(transaction->HasWqeOperation(groupJetty, m_groupTask),
+                                  false,
+                                  "SIMULATION_STOP should force-finalize blocked-tail operation");
+            NS_TEST_ASSERT_MSG_EQ(m_firstTp->GetWqeSegmentVecSize(),
+                                  0u,
+                                  "SIMULATION_STOP should force-remove exact retained segment");
+        }
+
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(m_terminals.size(),
+                              1u,
+                              "Late TP cleanup must not repeat typed WQE terminal");
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    void ObserveFirstPacket(uint32_t,
+                            uint32_t taskId,
+                            uint32_t,
+                            uint32_t,
+                            uint32_t,
+                            uint32_t,
+                            uint32_t)
+    {
+        if (taskId == m_groupTask && !m_started)
+        {
+            m_started = true;
+            Simulator::Stop(NanoSeconds(1));
+        }
+    }
+
+    void ObserveTerminal(UbWqeCompletion completion)
+    {
+        if (completion.wqeId == m_groupTask)
+        {
+            m_terminals.push_back(completion);
+        }
+    }
+
+    UbDestroyReason m_reason;
+    Ptr<UbTransportChannel> m_firstTp;
+    Ptr<UbTransportChannel> m_secondTp;
+    UbLifecycleResourceIdentity m_groupIdentity;
+    uint32_t m_groupTask{0};
+    bool m_started{false};
+    std::vector<UbWqeCompletion> m_terminals;
+};
+
+class UbLifecycleControllerDisposeForceCleansCanonicalTpgTest : public TestCase
+{
+  public:
+    UbLifecycleControllerDisposeForceCleansCanonicalTpgTest()
+        : TestCase("UnifiedBus - Controller dispose force-cleans canonical TPG")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        Config::SetDefault("ns3::UbTransportChannel::DefaultMaxWqeSegNum",
+                           UintegerValue(0));
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        InstallAdditionalTpPair(topo, 303, 404);
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(topo.sender);
+        Ptr<UbTransportChannel> firstTp =
+            controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        Ptr<UbTransportChannel> secondTp = controller->GetTpByTpn(303);
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              kUrmaWriteRegressionJettyNum);
+        function->GetJetty(kUrmaWriteRegressionJettyNum)
+            ->SetWqeCompletionCallback(MakeCallback(
+                &UbLifecycleControllerDisposeForceCleansCanonicalTpgTest::ObserveTerminal,
+                this));
+        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
+                                                       topo.receiver->GetId(),
+                                                       kUrmaWriteRegressionJettyNum,
+                                                       true,
+                                                       {kUrmaWriteRegressionSenderTpn, 303}),
+                              true,
+                              "Dispose fixture should bind one canonical TPG");
+        const UbRtpTransportReference* reference =
+            transaction->FindRtpTransportReference(kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_NE(reference, nullptr, "Dispose fixture should expose exact TPG ref");
+        const UbLifecycleResourceIdentity groupIdentity = reference->GetIdentity();
+        m_taskId = kUrmaWriteRegressionTaskId + 90;
+        Ptr<UbWqe> wqe = function->CreateWqe(topo.sender->GetId(),
+                                             topo.receiver->GetId(),
+                                             64,
+                                             m_taskId,
+                                             TaOpcode::TA_OPCODE_WRITE);
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(function->SubmitWqe(
+                                      wqe,
+                                      kUrmaWriteRegressionJettyNum).status),
+            static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+            "Dispose fixture should acquire one TPG-use lease");
+        Simulator::Stop(NanoSeconds(1));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(groupIdentity).activeTransportUseLeases,
+                              1u,
+                              "Blocked operation should hold TPG-use before Controller dispose");
+
+        Simulator::Destroy();
+
+        const UbLifecycleResourceSnapshot groupSnapshot =
+            coordinator->GetSnapshot(groupIdentity);
+        NS_TEST_ASSERT_MSG_EQ(groupSnapshot.retired,
+                              true,
+                              "Controller dispose should retire every canonical TPG generation");
+        NS_TEST_ASSERT_MSG_EQ(groupSnapshot.activeTransportUseLeases,
+                              0u,
+                              "Controller dispose should release blocked TPG-use");
+        NS_TEST_ASSERT_MSG_EQ(m_terminals.size(),
+                              1u,
+                              "Controller dispose should apply one forced WQE terminal");
+        if (m_terminals.size() == 1)
+        {
+            NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_terminals[0].outcome),
+                                  static_cast<uint32_t>(UbWorkOutcome::FLUSHED),
+                                  "Controller dispose should map canonical TPG cleanup to FLUSHED");
+        }
+        NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(firstTp->GetLifecycleOwner())
+                                  .activeBindingLeases,
+                              0u,
+                              "Controller dispose should release first membership lease");
+        NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(secondTp->GetLifecycleOwner())
+                                  .activeBindingLeases,
+                              0u,
+                              "Controller dispose should release second membership lease");
+        NS_TEST_ASSERT_MSG_EQ(coordinator->IsResourceActive(firstTp->GetLifecycleOwner()),
+                              true,
+                              "Controller dispose must not destroy first TP generation");
+        NS_TEST_ASSERT_MSG_EQ(coordinator->IsResourceActive(secondTp->GetLifecycleOwner()),
+                              true,
+                              "Controller dispose must not destroy second TP generation");
+
+        Config::Reset();
+    }
+
+  private:
+    void ObserveTerminal(UbWqeCompletion completion)
+    {
+        if (completion.wqeId == m_taskId)
+        {
+            m_terminals.push_back(completion);
+        }
+    }
+
+    uint32_t m_taskId{0};
+    std::vector<UbWqeCompletion> m_terminals;
 };
 
 class UbLifecycleMultiSegmentTpgRoundRobinPinsGenerationsTest : public TestCase
@@ -20327,6 +20872,8 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleReadySourceRoundRobinReportsFairnessTest(),
                 TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleLocalAndRemoteReadySourcesShareFixedOrderTest(),
+                TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleTpgRealCapacityTransitionsCoalesceWakeTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleLiveTpgDestroyReleasesExactBindingTest(),
@@ -20340,6 +20887,18 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
     AddTestCase(new UbLifecycleNonLastTpgMemberRemovalPinsAcceptedSegmentTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleActiveUseTpgDestroyFinalizesOnceTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleRepeatedDeferredTpgDestroyRetiresExactDomainTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleTypedTpgCleanupTerminatesBlockedTailTest(
+                    UbDestroyReason::ERROR,
+                    "error"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleTypedTpgCleanupTerminatesBlockedTailTest(
+                    UbDestroyReason::SIMULATION_STOP,
+                    "simulation-stop"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleControllerDisposeForceCleansCanonicalTpgTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleMultiSegmentTpgRoundRobinPinsGenerationsTest(),
                 TestCase::Duration::QUICK);
