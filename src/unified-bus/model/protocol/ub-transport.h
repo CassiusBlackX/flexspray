@@ -411,6 +411,7 @@ public:
     TpOpcode GetResponseOpcodeForRetrans(bool selectiveAck) const;
 private:
     friend class UbGbnRetransStrategy;
+    friend class UbSelectiveRetransStrategy;
 
     struct InboundTaUnitState
     {
@@ -494,6 +495,7 @@ private:
                                                    uint64_t logicalPsn) const;
     Ptr<Packet> BuildRtpDataPacket(const UbGbnPacketDescriptor& descriptor);
     Ptr<Packet> SendGbnRetransmission(const UbGbnPacketDescriptor& descriptor);
+    Ptr<Packet> SendSelectiveRetransmission(const UbGbnPacketDescriptor& descriptor);
     void NotifyDataPacketSent(const UbGbnPacketDescriptor& descriptor, Ptr<Packet> packet);
     void AdvanceNewDataSendState(const NewDataSendContext& ctx, Ptr<Packet> packet);
     Ptr<UbTransaction> GetTransaction();

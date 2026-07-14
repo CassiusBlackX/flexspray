@@ -768,10 +768,11 @@ UbTransportChannel::AdvanceNewDataSendState(const NewDataSendContext& ctx,
 Ptr<Packet>
 UbTransportChannel::SendNewDataPacket(const NewDataSendContext& ctx)
 {
-    const UbGbnPacketDescriptor descriptor = BuildGbnPacketDescriptor(ctx, m_psnSndNxt);
+    UbGbnPacketDescriptor descriptor = BuildGbnPacketDescriptor(ctx, m_psnSndNxt);
     Ptr<Packet> packet = BuildRtpDataPacket(descriptor);
+    descriptor.serializedSizeBytes = packet->GetSize();
     if (IsRetransEnabled()) {
-        m_retrans->OnNewDataPacketSent(descriptor, packet);
+        m_retrans->OnNewDataPacketSent(descriptor);
     }
     NotifyDataPacketSent(descriptor, packet);
     AdvanceNewDataSendState(ctx, packet);
@@ -788,6 +789,14 @@ UbTransportChannel::SendGbnRetransmission(const UbGbnPacketDescriptor& descripto
     Ptr<Packet> packet = BuildRtpDataPacket(descriptor);
     NotifyDataPacketSent(descriptor, packet);
     m_retrans->StartTimerIfNeeded();
+    return packet;
+}
+
+Ptr<Packet>
+UbTransportChannel::SendSelectiveRetransmission(const UbGbnPacketDescriptor& descriptor)
+{
+    Ptr<Packet> packet = BuildRtpDataPacket(descriptor);
+    OnSelectiveRetransmissionPacketSent(descriptor.logicalPsn, descriptor.payloadBytes);
     return packet;
 }
 
@@ -1199,17 +1208,12 @@ UbTransportChannel::GetResponseOpcodeForRetrans(bool selectiveAck) const
 void
 UbTransportChannel::RetainSentPsnForTest(uint64_t psn, uint32_t payloadBytes)
 {
-    Ptr<Packet> packet = Create<Packet>(payloadBytes);
-    UbTransportHeader tpHeader;
-    tpHeader.SetTPOpcode(TpOpcode::TP_OPCODE_RELIABLE_TA);
-    tpHeader.SetSrcTpn(m_tpn);
-    tpHeader.SetDestTpn(m_dstTpn);
-    tpHeader.SetPsn(UbTpPsnSequence::ToWire(psn));
-    packet->AddHeader(tpHeader);
     UbGbnPacketDescriptor descriptor;
     descriptor.logicalPsn = psn;
     descriptor.payloadBytes = payloadBytes;
-    m_retrans->OnNewDataPacketSent(descriptor, packet);
+    descriptor.wireLengthBytes = payloadBytes;
+    descriptor.serializedSizeBytes = payloadBytes + UbTransportHeader().GetSerializedSize();
+    m_retrans->OnNewDataPacketSent(descriptor);
     m_psnSndNxt = std::max(m_psnSndNxt, psn + 1);
 }
 
@@ -2109,9 +2113,10 @@ UbTransportChannel::TryCancelUnsentWqeSegment(
     if (segment->HasStartedSending() || m_psnSndNxt > segment->GetPsnStart())
     {
         if (IsRetransEnabled()) {
-            m_retrans->RetireGbnSegment(expectedCorrelation,
-                                        segment->GetPsnStart(),
-                                        segment->GetPsnStart() + segment->GetPsnSize());
+            m_retrans->RetireSegmentDescriptors(
+                expectedCorrelation,
+                segment->GetPsnStart(),
+                segment->GetPsnStart() + segment->GetPsnSize());
         }
         return UbWqeSegmentTerminalDisposition::RETAINED;
     }
@@ -2173,9 +2178,9 @@ UbTransportChannel::ForceRemoveRetainedWqeSegment(
         return UbWqeSegmentTerminalDisposition::TRANSPORT_CLEANED;
     }
     if (IsRetransEnabled()) {
-        m_retrans->RetireGbnSegment(expectedCorrelation,
-                                    segment->GetPsnStart(),
-                                    segment->GetPsnStart() + segment->GetPsnSize());
+        m_retrans->RetireSegmentDescriptors(expectedCorrelation,
+                                            segment->GetPsnStart(),
+                                            segment->GetPsnStart() + segment->GetPsnSize());
     }
     m_wqeSegmentVector.erase(retained);
     if (m_wqeSegmentVector.empty() && m_retrans != nullptr)
