@@ -113,12 +113,12 @@ The following contract applies to every ticket:
 
 **Blocked by:** T06 Introduce a descriptor-backed GBN transmit buffer.
 
-- [ ] Missing PSNs enter retransmission selection once and acknowledged stale entries are removed.
-- [ ] Cumulative ACK and selective acknowledgement retire the correct descriptor ranges.
-- [ ] Selective retransmission uses the common builder and creates a separately tracked physical attempt.
-- [ ] No active selective path retains a complete previously sent wire packet.
-- [ ] Existing selective, wire-wrap, congestion-accounting, queue-priority, and fault cases remain green.
-- [ ] A targeted selective-loss scenario confirms rebuilt packet/header semantics, completion, and accounting after full-packet cache removal.
+- [x] Missing PSNs enter retransmission selection once and acknowledged stale entries are removed.
+- [x] Cumulative ACK and selective acknowledgement retire the correct descriptor ranges.
+- [x] Selective retransmission uses the common builder and creates a separately tracked physical attempt.
+- [x] No active selective path retains a complete previously sent wire packet.
+- [x] Existing selective, wire-wrap, congestion-accounting, queue-priority, and fault cases remain green.
+- [x] A targeted selective-loss scenario confirms rebuilt packet/header semantics, completion, and accounting after full-packet cache removal.
 
 ## Task 08: Close all RTP packet and tracked-event terminal paths
 
