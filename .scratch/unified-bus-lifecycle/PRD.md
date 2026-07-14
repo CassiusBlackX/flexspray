@@ -157,16 +157,17 @@ scheduler behavior, congestion accounting, output, and error behavior unless the
 records an intentional change. Implement the lifecycle structure by direct reuse, minimal
 extraction, copy-and-adjust, and lifecycle-only adaptation in that order.
 
-One execution subagent normally owns each ticket; the root agent may appoint a replacement under
-the repository workflow's takeover conditions and must independently review all batches. Approve
+The root agent normally implements each ticket inline and performs a separate review pass after
+each batch. Do not delegate ticket implementation unless the user explicitly requests it. Record
 work as semantic batches using Batch Reuse Maps, never symbol by symbol, caller by caller, or line
-by line. Approval remains valid inside its recorded scope. Ordinary batches use focused validation;
+by line. The batch boundary remains valid inside its recorded scope. Ordinary batches use focused
+validation;
 frozen comparison runs only at the milestones defined in Testing Decisions. The next ticket cannot
 start until the current ticket has implementation and closeout commits.
 
 For every ticket, the local task brief resolves its ticket-defined acceptance suite into concrete
-commands, scenarios, and expected artifacts. Missing details require root approval before the suite
-is treated as complete.
+commands, scenarios, and expected artifacts. Resolve missing details before the suite is treated as
+complete.
 
 Authority follows `AGENTS.md` -> `docs/agents/implementation-workflow.md` -> this PRD ->
 `tickets.md` -> current task brief. This feature policy may tighten the repository workflow. The

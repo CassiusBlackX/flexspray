@@ -24,17 +24,18 @@ The following contract applies to every ticket:
 
 This policy applies to every unfinished Unified Bus lifecycle ticket. At ticket start, create a
 ticket-level Reuse Plan against `main@ccf41b58`, then split work into the semantic batches required
-by actual behavior and risk. Two to four batches is common, not mandatory. Each batch submits one
-Batch Reuse Map and receives one root approval; approved mechanical callers may then migrate
-continuously, followed by one batch-level build, focused validation, and root review.
+by actual behavior and risk. Two to four batches is common, not mandatory. Before editing, record
+one Batch Reuse Map for each batch; in-scope mechanical callers may then migrate continuously,
+followed by one batch-level build, focused validation, and a separate review pass.
 
-Pause only on a re-approval trigger defined in `docs/agents/implementation-workflow.md`. If an agent
-exits or reaches a takeover threshold, the root agent may appoint a replacement to continue the
-recorded frontier. Every approval, diff scope, and validation result must be written to the current
-task brief so replacement does not depend on chat history.
+Pause only on a reassessment trigger defined in `docs/agents/implementation-workflow.md`. The root
+agent normally implements inline without delegation. Every batch boundary, diff scope, and
+validation result must be written to the current task brief so work can resume from the recorded
+frontier without depending on chat history.
 
 At ticket start, resolve its complete acceptance list below and the PRD into concrete commands,
-scenarios, and expected artifacts in the task brief. Any missing definition requires root approval.
+scenarios, and expected artifacts in the task brief. Resolve any missing definition before
+implementation.
 At ticket end, run that ticket-defined full acceptance suite, then create one implementation commit
 and one closeout commit. This does not mean every ticket runs repository-wide `./test.py`.
 
