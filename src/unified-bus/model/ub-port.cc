@@ -66,6 +66,8 @@ bool UbEgressQueue::DoEnqueue(PacketEntry packetEntry)
                      << (m_currentBytes + pktSize) << " bytes > limit " << m_maxEgressBytes 
                      << " bytes. Packet dropped (inPort=" << inPortId 
                      << " priority=" << (uint32_t)priority << ")");
+        UbLifecycleCoordinator::TerminatePacket(pkt,
+                                                UbPacketTerminal::EGRESS_QUEUE_FULL);
         return false;
     }
     
@@ -456,6 +458,8 @@ void UbPort::TransmitPacket(Ptr<Packet> packet, Time delay)
         m_currentInPortId = 0;
         m_currentPriority = 0;
         Simulator::ScheduleNow(&UbPort::TriggerTransmit, this);
+        UbLifecycleCoordinator::TerminatePacket(packet,
+                                                UbPacketTerminal::CHANNEL_FAILURE);
         return;
     }
 
@@ -489,6 +493,8 @@ UbPort::TransmitPacketDetached(Ptr<Packet> packet)
     if (result == false) {
         NS_LOG_WARN("Detached channel transmission failed! Packet dropped at Node "
                     << GetNode()->GetId() << " Port " << m_portId);
+        UbLifecycleCoordinator::TerminatePacket(packet,
+                                                UbPacketTerminal::CHANNEL_FAILURE);
         return;
     }
 

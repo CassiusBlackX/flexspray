@@ -7,6 +7,7 @@
 #include "ns3/ptr.h"
 #include "ns3/data-rate.h"
 #include "ns3/ub-congestion-control.h"
+#include "ns3/ub-lifecycle.h"
 #include <cstdint>
 
 namespace ns3 {
@@ -69,6 +70,16 @@ private:
     void ReleaseHostActiveFlow();
     void SchedulePacingWakeup();
     void HandlePacingWakeup();
+    void InitTrackedEvents();
+    EventId SchedulePendingCnp(Time delay);
+    EventId ScheduleRateIncrease();
+    EventId ScheduleAlphaUpdate();
+    EventId SchedulePacing(Time delay);
+    void CancelTrackedEvent(EventId& event, UbTrackedEventSet& trackedEvents);
+    void HandleTrackedPendingCnp(uint64_t token);
+    void HandleTrackedRateIncrease(uint64_t token);
+    void HandleTrackedAlphaUpdate(uint64_t token);
+    void HandleTrackedPacingWakeup(uint64_t token);
 
     Ptr<UbTransportChannel> m_tp;
     Ptr<UbPort> m_port;
@@ -99,6 +110,11 @@ private:
     EventId m_rateIncreaseEvent;
     EventId m_alphaEvent;
     EventId m_pacingWakeupEvent;
+    UbTrackedEventSet m_pendingCnpTrackedEvents;
+    UbTrackedEventSet m_rateIncreaseTrackedEvents;
+    UbTrackedEventSet m_alphaTrackedEvents;
+    UbTrackedEventSet m_pacingTrackedEvents;
+    bool m_trackedEventsInitialized{false};
     bool m_senderStarted{false};
     bool m_registeredHostFlow{false};
 };

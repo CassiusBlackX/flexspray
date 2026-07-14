@@ -198,6 +198,15 @@ CreatePort(Ptr<Node> node)
     return port;
 }
 
+class UbFailingLink : public UbLink
+{
+  public:
+    bool TransmitStart(Ptr<Packet>, Ptr<UbPort>, Time) override
+    {
+        return false;
+    }
+};
+
 void
 InitNode(Ptr<Node> node, UbNodeType_t nodeType, uint32_t portCount)
 {
@@ -2507,6 +2516,10 @@ public:
             topo.receiver->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionReceiverTpn);
         Ptr<UbHostDcqcn> cc = DynamicCast<UbHostDcqcn>(rxTp->GetCongestionCtrlForTest());
         NS_TEST_ASSERT_MSG_NE(cc, nullptr, "Receiver TP should bind a host DCQCN instance");
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(topo.receiver);
+        const UbLifecycleResourceSnapshot beforeCnp =
+            coordinator->GetSnapshot(rxTp->GetLifecycleOwner());
 
         UbIpBasedNetworkHeader marked;
         marked.SetMode(0b100);
@@ -2519,6 +2532,23 @@ public:
         NS_TEST_ASSERT_MSG_EQ(rxTp->GetPendingCnpCountForTest(),
                               1u,
                               "Receiver should queue only one immediate CNP inside suppression window");
+        const UbLifecycleResourceSnapshot afterCnp =
+            coordinator->GetSnapshot(rxTp->GetLifecycleOwner());
+        NS_TEST_ASSERT_MSG_EQ(afterCnp.registeredPackets,
+                              beforeCnp.registeredPackets + 1,
+                              "Suppressed burst should register exactly one physical CNP attempt");
+        NS_TEST_ASSERT_MSG_EQ(afterCnp.inFlightPackets,
+                              beforeCnp.inFlightPackets + 1,
+                              "Queued production CNP should add exactly one in-flight attempt");
+
+        Ptr<Packet> cnpPacket = rxTp->GetNextPacketForTest();
+        UbPacketLifecycleTag lifecycleTag;
+        NS_TEST_ASSERT_MSG_EQ(cnpPacket->PeekPacketTag(lifecycleTag),
+                              true,
+                              "Queued production CNP should carry lifecycle identity");
+        NS_TEST_ASSERT_MSG_EQ(lifecycleTag.GetIdentity().owner,
+                              rxTp->GetLifecycleOwner(),
+                              "CNP should use the exact emitting RTP endpoint generation");
 
         Simulator::Destroy();
         Config::Reset();
@@ -3141,11 +3171,32 @@ public:
         rxTp->RecvDataPacket(BuildReceiverDataPacket(topo, 0, false));
         NS_TEST_ASSERT_MSG_EQ(rxTp->GetPendingAckCountForTest(), 1u, "PSN 0 should produce TPACK");
         rxTp->PopAckForTest();
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(topo.receiver);
+        const UbLifecycleResourceSnapshot beforeGapResponse =
+            coordinator->GetSnapshot(rxTp->GetLifecycleOwner());
 
         rxTp->RecvDataPacket(BuildReceiverDataPacket(topo, 2, true));
         NS_TEST_ASSERT_MSG_EQ(rxTp->GetPendingAckCountForTest(), 1u, "PSN 2 should produce TPSACK while PSN 1 is missing");
 
-        DecodedReceiverAck ack = DecodeReceiverAck(rxTp->PopAckForTest());
+        Ptr<Packet> responsePacket = rxTp->PopAckForTest();
+        UbPacketLifecycleTag lifecycleTag;
+        NS_TEST_ASSERT_MSG_EQ(responsePacket->PeekPacketTag(lifecycleTag),
+                              true,
+                              "TPSACK response should register a lifecycle attempt");
+        NS_TEST_ASSERT_MSG_EQ(lifecycleTag.GetIdentity().owner,
+                              rxTp->GetLifecycleOwner(),
+                              "TPSACK response should use the exact RTP endpoint generation owner");
+        const UbLifecycleResourceSnapshot afterGapResponse =
+            coordinator->GetSnapshot(rxTp->GetLifecycleOwner());
+        NS_TEST_ASSERT_MSG_EQ(afterGapResponse.registeredPackets,
+                              beforeGapResponse.registeredPackets + 1,
+                              "TPSACK response should register exactly one physical attempt");
+        NS_TEST_ASSERT_MSG_EQ(afterGapResponse.inFlightPackets,
+                              beforeGapResponse.inFlightPackets + 1,
+                              "TPSACK response birth should add exactly one in-flight attempt");
+
+        DecodedReceiverAck ack = DecodeReceiverAck(responsePacket);
         NS_TEST_ASSERT_MSG_EQ(ack.tpHeader.GetTPOpcode(),
                               static_cast<uint8_t>(TpOpcode::TP_OPCODE_SACK_WITHOUT_CETPH),
                               "selective gap response should use TPSACK without CETPH when CC is disabled");
@@ -3505,6 +3556,9 @@ public:
 
         Ptr<UbTransportChannel> txTp =
             topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        Ptr<UbTransportChannel> responseOwnerTp =
+            topo.receiver->GetObject<UbController>()->GetTpByTpn(
+                kUrmaWriteRegressionReceiverTpn);
         txTp->RetainSentPsnForTest(0, 16);
         txTp->SetPsnSndUnaForTest(0);
 
@@ -3525,11 +3579,41 @@ public:
                                     true,
                                     UbDatalinkHeaderConfig::PACKET_IPV4);
 
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(topo.receiver);
+        coordinator->RegisterPacketAttempt(responseOwnerTp->GetLifecycleOwner(), packet);
+        UbPacketLifecycleTag lifecycleTag;
+        NS_TEST_ASSERT_MSG_EQ(packet->PeekPacketTag(lifecycleTag),
+                              true,
+                              "Production TPSACK should carry a lifecycle attempt identity");
+        NS_TEST_ASSERT_MSG_EQ(lifecycleTag.GetIdentity().owner,
+                              responseOwnerTp->GetLifecycleOwner(),
+                              "TPSACK should retain the exact emitting RTP endpoint generation");
+        const UbLifecycleResourceSnapshot beforeDispatch =
+            coordinator->GetSnapshot(responseOwnerTp->GetLifecycleOwner());
+        NS_TEST_ASSERT_MSG_EQ(beforeDispatch.inFlightPackets,
+                              1u,
+                              "Registered TPSACK should be in flight before switch dispatch");
+
         topo.sender->GetObject<UbSwitch>()->SwitchHandlePacket(topo.senderPort, packet);
 
         NS_TEST_ASSERT_MSG_EQ(txTp->GetPsnSndUnaForTest(),
                               1u,
                               "TPSACK reaching local sink should advance only through RecvTpAck");
+        const UbLifecycleResourceSnapshot afterDispatch =
+            coordinator->GetSnapshot(responseOwnerTp->GetLifecycleOwner());
+        NS_TEST_ASSERT_MSG_EQ(afterDispatch.inFlightPackets,
+                              0u,
+                              "Response endpoint consumption should drain the TPSACK attempt");
+        NS_TEST_ASSERT_MSG_EQ(afterDispatch.endpointConsumed,
+                              beforeDispatch.endpointConsumed + 1,
+                              "Response dispatch should record one endpoint-consumed terminal");
+        NS_TEST_ASSERT_MSG_EQ(afterDispatch.malformedPacketDrops,
+                              beforeDispatch.malformedPacketDrops,
+                              "Valid TPSACK dispatch must not record another terminal kind");
+        NS_TEST_ASSERT_MSG_GT(afterDispatch.lastTerminalSequence,
+                              afterDispatch.lastBirthSequence,
+                              "TPSACK terminal should occur after its registered birth");
 
         Simulator::Destroy();
         Config::Reset();
@@ -4320,12 +4404,21 @@ class UbGbnFinalAckWithPendingTaResponseLeavesTimerStoppedTest : public TestCase
         txTp->UpdatePsnCnt(response->GetPsnSize());
         txTp->UpDateMsnCnt(1);
         txTp->PushWqeSegment(response);
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(topo.sender);
+        const UbLifecycleResourceSnapshot beforeSend =
+            coordinator->GetSnapshot(txTp->GetLifecycleOwner());
         NS_TEST_ASSERT_MSG_NE(txTp->GetNextPacketForTest(),
                               nullptr,
                               "Initial DATA should start the retransmission timer");
         NS_TEST_ASSERT_MSG_EQ(txTp->IsRetransTimerRunningForTest(),
                               true,
                               "Outstanding GBN descriptor should keep the timer running");
+        const UbLifecycleResourceSnapshot afterSend =
+            coordinator->GetSnapshot(txTp->GetLifecycleOwner());
+        NS_TEST_ASSERT_MSG_EQ(afterSend.activeTrackedEventLeases,
+                              beforeSend.activeTrackedEventLeases + 1,
+                              "Running RTO should hold one tracked-event lease");
 
         txTp->RecvTpAck(BuildTpackForSender(0));
 
@@ -4338,6 +4431,11 @@ class UbGbnFinalAckWithPendingTaResponseLeavesTimerStoppedTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(txTp->IsRetransTimerRunningForTest(),
                               false,
                               "No descriptor must mean no retransmission timer");
+        const UbLifecycleResourceSnapshot afterAck =
+            coordinator->GetSnapshot(txTp->GetLifecycleOwner());
+        NS_TEST_ASSERT_MSG_EQ(afterAck.activeTrackedEventLeases,
+                              beforeSend.activeTrackedEventLeases,
+                              "Final ACK should cancel and release the RTO lease");
 
         Simulator::Destroy();
         Config::Reset();
@@ -4771,7 +4869,6 @@ public:
             topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
         Ptr<UbHostDcqcn> cc = DynamicCast<UbHostDcqcn>(txTp->GetCongestionCtrlForTest());
         NS_TEST_ASSERT_MSG_NE(cc, nullptr, "Sender TP should bind a host DCQCN instance");
-
         (void)cc->IsCcLimited(1);
         txTp->RetainSentPsnForTest(11, 64);
         txTp->SetPsnSndUnaForTest(11);
@@ -5398,7 +5495,10 @@ public:
             topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
         Ptr<UbHostDcqcn> cc = DynamicCast<UbHostDcqcn>(txTp->GetCongestionCtrlForTest());
         NS_TEST_ASSERT_MSG_NE(cc, nullptr, "Sender TP should bind a host DCQCN instance");
-
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(topo.sender);
+        const uint64_t trackedBefore =
+            coordinator->GetSnapshot(txTp->GetLifecycleOwner()).activeTrackedEventLeases;
         (void)cc->IsCcLimited(1);
         cc->OnSenderDataPacketSent(1, 4096);
 
@@ -5408,10 +5508,14 @@ public:
                                   true,
                                   "CNP cut should stretch outstanding pacing debt to the reduced rate");
         });
-        Simulator::Schedule(NanoSeconds(600), [this, cc]() {
+        Simulator::Schedule(NanoSeconds(600), [this, cc, coordinator, txTp, trackedBefore]() {
             NS_TEST_ASSERT_MSG_EQ(cc->IsCcLimited(4096),
                                   false,
                                   "Sender should become sendable again after the rescaled pacing deadline");
+            NS_TEST_ASSERT_MSG_EQ(
+                coordinator->GetSnapshot(txTp->GetLifecycleOwner()).activeTrackedEventLeases,
+                trackedBefore + 2,
+                "Pacing reschedule should release the old wakeup while recovery timers remain");
         });
 
         Simulator::Stop(NanoSeconds(601));
@@ -5546,6 +5650,10 @@ public:
         Ptr<UbTransportChannel> txTp = senderCtrl->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
         Ptr<UbHostDcqcn> cc = DynamicCast<UbHostDcqcn>(txTp->GetCongestionCtrlForTest());
         NS_TEST_ASSERT_MSG_NE(cc, nullptr, "Sender TP should bind a host DCQCN instance");
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(topo.sender);
+        const UbLifecycleResourceSnapshot beforeRecovery =
+            coordinator->GetSnapshot(txTp->GetLifecycleOwner());
 
         (void)cc->IsCcLimited(1);
         NS_TEST_ASSERT_MSG_EQ(senderCtrl->GetActiveSenderFlowCount(),
@@ -5553,7 +5661,17 @@ public:
                               "Starting sender should register one active host flow");
 
         cc->ApplySyntheticCnpForTest();
+        const UbLifecycleResourceSnapshot duringRecovery =
+            coordinator->GetSnapshot(txTp->GetLifecycleOwner());
+        NS_TEST_ASSERT_MSG_EQ(duringRecovery.activeTrackedEventLeases,
+                              beforeRecovery.activeTrackedEventLeases + 2,
+                              "DCQCN recovery should track rate and alpha timers independently");
         cc->OnSenderTransportIdle();
+        const UbLifecycleResourceSnapshot afterIdle =
+            coordinator->GetSnapshot(txTp->GetLifecycleOwner());
+        NS_TEST_ASSERT_MSG_EQ(afterIdle.activeTrackedEventLeases,
+                              beforeRecovery.activeTrackedEventLeases,
+                              "Idle transition should cancel and release both recovery timers");
 
         NS_TEST_ASSERT_MSG_EQ(senderCtrl->GetActiveSenderFlowCount(),
                               0u,
@@ -7264,6 +7382,59 @@ class UbLifecyclePacketAccountingTest : public TestCase
                               "Reopening an owner-local resource should allocate a new generation");
 
         Simulator::Destroy();
+    }
+};
+
+class UbLifecycleEgressQueueFullDropTest : public TestCase
+{
+  public:
+    UbLifecycleEgressQueueFullDropTest()
+        : TestCase("UnifiedBus - direct egress queue rejection records a typed terminal")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        auto fixture = CreateMultiPortSwitchFixture(FcType::NONE,
+                                                    /*portsNum*/ 1,
+                                                    /*reserveBytes*/ 256,
+                                                    /*sharedPoolBytes*/ 0,
+                                                    /*headroomPerPortBytes*/ 0,
+                                                    /*resumeGapBytes*/ 16,
+                                                    /*alphaShift*/ 0,
+                                                    {});
+        Ptr<UbEgressQueue> queue = fixture.ports[0]->GetUbQueue();
+        queue->SetAttribute("MaxEgressBytes", UintegerValue(0));
+
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(fixture.node);
+        const UbLifecycleResourceIdentity owner =
+            coordinator->OpenPacketOwner(UbLifecycleResourceKind::RTP_ENDPOINT, 17);
+        Ptr<Packet> packet = Create<Packet>(64);
+        coordinator->RegisterPacketAttempt(owner, packet);
+        const UbLifecycleResourceSnapshot before = coordinator->GetSnapshot(owner);
+
+        NS_TEST_ASSERT_MSG_EQ(queue->DoEnqueue(std::make_tuple(0, 1, packet)),
+                              false,
+                              "Zero-capacity egress queue should reject the packet");
+        NS_TEST_ASSERT_MSG_EQ(queue->GetCurrentBytes(),
+                              0u,
+                              "Rejected packet must not change egress occupancy");
+        const UbLifecycleResourceSnapshot after = coordinator->GetSnapshot(owner);
+        NS_TEST_ASSERT_MSG_EQ(after.inFlightPackets,
+                              0u,
+                              "Defensive egress rejection should drain the registered attempt");
+        NS_TEST_ASSERT_MSG_EQ(after.egressQueueFullDrops,
+                              before.egressQueueFullDrops + 1,
+                              "Defensive egress rejection should record one typed drop");
+        NS_TEST_ASSERT_MSG_GT(after.lastTerminalSequence,
+                              after.lastBirthSequence,
+                              "Egress rejection terminal should follow packet birth");
+
+        coordinator->RetirePacketOwner(owner);
+        Simulator::Destroy();
+        Config::Reset();
     }
 };
 
@@ -16206,7 +16377,7 @@ class UbLifecyclePacketMetadataTransferTest : public TestCase
         const UbPacketAttemptIdentity attempt =
             coordinator->RegisterPacketAttempt(owner, packet);
 
-        Ptr<Packet> copy = packet->Copy();
+        Ptr<Packet> copy = CopyPacketTransfer(packet);
         UbPacketLifecycleTag copyTag;
         NS_TEST_ASSERT_MSG_EQ(copy->PeekPacketTag(copyTag),
                               true,
@@ -16267,6 +16438,311 @@ class UbLifecyclePacketMetadataTransferTest : public TestCase
         UbLifecycleCoordinator::TerminatePacket(dequeued,
                                                 UbPacketTerminal::ENDPOINT_CONSUMED);
         Simulator::Destroy();
+    }
+};
+
+class UbLifecycleFaultParserViewPreservesPacketTest : public TestCase
+{
+  public:
+    UbLifecycleFaultParserViewPreservesPacketTest()
+        : TestCase("UnifiedBus - fault parser view preserves packet identity and accounting")
+    {
+    }
+
+    void DoRun() override
+    {
+        Ptr<Node> ownerNode = CreateObject<Node>();
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(ownerNode);
+        const UbLifecycleResourceIdentity owner =
+            coordinator->OpenPacketOwner(UbLifecycleResourceKind::RTP_ENDPOINT, 8);
+
+        Ptr<Packet> packet = Create<Packet>(16);
+        UbTransportHeader transportHeader;
+        transportHeader.SetTPOpcode(TpOpcode::TP_OPCODE_RELIABLE_TA);
+        transportHeader.SetPsn(42);
+        transportHeader.SetLastPacket(true);
+        packet->AddHeader(transportHeader);
+        UdpHeader udpHeader;
+        packet->AddHeader(udpHeader);
+        UbPort::AddIpv4Header(packet, NodeIdToIp(0), NodeIdToIp(1));
+        UbIpBasedNetworkHeader networkHeader;
+        packet->AddHeader(networkHeader);
+        UbDataLink::GenPacketHeader(packet,
+                                    false,
+                                    false,
+                                    UB_PRIORITY_DEFAULT,
+                                    UB_PRIORITY_DEFAULT,
+                                    false,
+                                    true,
+                                    UbDatalinkHeaderConfig::PACKET_IPV4);
+
+        const UbPacketAttemptIdentity attempt =
+            coordinator->RegisterPacketAttempt(owner, packet);
+        std::vector<uint8_t> originalBytes(packet->GetSize());
+        packet->CopyData(originalBytes.data(), originalBytes.size());
+        const UbLifecycleResourceSnapshot before = coordinator->GetSnapshot(owner);
+
+        Ptr<Packet> view = CopyPacketView(packet);
+        NS_TEST_ASSERT_MSG_EQ(view->GetUid(),
+                              packet->GetUid(),
+                              "Parser view should preserve the source packet UID");
+        UbPacketLifecycleTag viewTag;
+        NS_TEST_ASSERT_MSG_EQ(view->PeekPacketTag(viewTag),
+                              true,
+                              "Parser view should preserve lifecycle metadata");
+        NS_TEST_ASSERT_MSG_EQ(viewTag.GetIdentity(),
+                              attempt,
+                              "Parser view must retain the same physical attempt identity");
+
+        Ptr<UbFault> fault = CreateObject<UbFault>();
+        RetransFaultPacketInfo info;
+        NS_TEST_ASSERT_MSG_EQ(fault->TryGetRetransFaultPacketInfo(packet, 2, 1, 9001, info),
+                              true,
+                              "Production fault parser should decode the DATA packet view");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(info.packetType),
+                              static_cast<uint32_t>(RetransFaultPacketType::DATA),
+                              "Fault parser should preserve the existing DATA classification");
+        NS_TEST_ASSERT_MSG_EQ(info.psn, 42u, "Fault parser should preserve the wire PSN");
+        NS_TEST_ASSERT_MSG_EQ(info.lastPacket,
+                              true,
+                              "Fault parser should preserve the last-packet bit");
+
+        std::vector<uint8_t> bytesAfterParse(packet->GetSize());
+        packet->CopyData(bytesAfterParse.data(), bytesAfterParse.size());
+        const bool sourceBytesPreserved = bytesAfterParse == originalBytes;
+        NS_TEST_ASSERT_MSG_EQ(sourceBytesPreserved,
+                              true,
+                              "Destructive parser work on the view must not mutate source bytes");
+        UbDatalinkPacketHeader dataLinkHeader;
+        NS_TEST_ASSERT_MSG_EQ(packet->PeekHeader(dataLinkHeader),
+                              dataLinkHeader.GetSerializedSize(),
+                              "Source packet should retain its original leading header");
+
+        const UbLifecycleResourceSnapshot after = coordinator->GetSnapshot(owner);
+        NS_TEST_ASSERT_MSG_EQ(after.registeredPackets,
+                              before.registeredPackets,
+                              "Parser view must not register another physical attempt");
+        NS_TEST_ASSERT_MSG_EQ(after.inFlightPackets,
+                              before.inFlightPackets,
+                              "Parser view must not change in-flight packet accounting");
+        UbLifecycleCoordinator::TerminatePacket(packet, UbPacketTerminal::ENDPOINT_CONSUMED);
+        coordinator->RetirePacketOwner(owner);
+        Simulator::Destroy();
+    }
+};
+
+Ptr<Packet> BuildLifecycleTracerPacket(const LocalTpTopology& topo);
+
+class UbLifecycleFaultDropIntegrationTest : public TestCase
+{
+  public:
+    UbLifecycleFaultDropIntegrationTest()
+        : TestCase("UnifiedBus - fault drop terminates only true drop results")
+    {
+    }
+
+    void DoRun() override
+    {
+        RunFaultCase(/*dropCount*/ 1, /*delayNs*/ 0, /*delayCount*/ 0, true);
+        RunFaultCase(/*dropCount*/ 0, /*delayNs*/ 300, /*delayCount*/ 1, false);
+    }
+
+  private:
+    void RunFaultCase(uint32_t dropCount,
+                      uint32_t delayNs,
+                      uint32_t delayCount,
+                      bool expectDrop)
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<Packet> packet = BuildLifecycleTracerPacket(topo);
+        UbPacketLifecycleTag lifecycleTag;
+        NS_TEST_ASSERT_MSG_EQ(packet->PeekPacketTag(lifecycleTag),
+                              true,
+                              "Production RTP packet should carry lifecycle identity");
+        const UbLifecycleResourceIdentity owner = lifecycleTag.GetIdentity().owner;
+
+        auto fixture = CreateMultiPortSwitchFixture(FcType::NONE,
+                                                    /*portsNum*/ 1,
+                                                    /*reserveBytes*/ 4096,
+                                                    /*sharedPoolBytes*/ 4096,
+                                                    /*headroomPerPortBytes*/ 4096,
+                                                    /*resumeGapBytes*/ 16,
+                                                    /*alphaShift*/ 1,
+                                                    {});
+        Ptr<Node> peerNode = CreateObject<Node>();
+        InitNode(peerNode, UB_DEVICE, 1);
+        Ptr<UbPort> peerPort = DynamicCast<UbPort>(peerNode->GetDevice(0));
+        Ptr<UbLink> link = CreateObject<UbLink>();
+        fixture.ports[0]->Attach(link);
+        peerPort->Attach(link);
+
+        const std::filesystem::path rulePath =
+            std::filesystem::temp_directory_path() /
+            (expectDrop ? "ub-lifecycle-fault-drop.csv" :
+                          "ub-lifecycle-fault-delay.csv");
+        {
+            std::ofstream ruleFile(rulePath);
+            NS_TEST_ASSERT_MSG_EQ(ruleFile.good(), true, "temporary fault rule should open");
+            ruleFile << "ruleId,enabled,taskId,nodeId,portId,direction,packetType,psn,"
+                        "lastPacket,dropCount,delayNs,delayCount,comment\n";
+            ruleFile << "lifecycle,true," << kUrmaWriteRegressionTaskId << ","
+                     << fixture.node->GetId() << "," << fixture.ports[0]->GetIfIndex()
+                     << ",forward,DATA,0,any," << dropCount << "," << delayNs << ","
+                     << delayCount << ",lifecycle characterization\n";
+        }
+
+        Ptr<UbFault> fault = CreateObject<UbFault>();
+        fault->InitRetransFault(rulePath.string());
+        fixture.ports[0]->SetFaultCallBack(MakeCallback(&UbFault::FaultCallback, fault));
+        NS_TEST_ASSERT_MSG_EQ(fixture.ports[0]->EnqueueToEgress(
+                                  std::make_tuple(0,
+                                                  kUrmaWriteRegressionPriority,
+                                                  packet)),
+                              true,
+                              "Production RTP packet should enter the faulted egress port");
+        fixture.ports[0]->TriggerTransmit();
+        Simulator::Stop(expectDrop ? MicroSeconds(1) : NanoSeconds(delayNs - 1));
+        Simulator::Run();
+
+        Ptr<UbLifecycleCoordinator> coordinator =
+            topo.sender->GetObject<UbLifecycleCoordinator>();
+        const UbLifecycleResourceSnapshot snapshot = coordinator->GetSnapshot(owner);
+        NS_TEST_ASSERT_MSG_EQ(snapshot.faultDrops,
+                              (expectDrop ? 1u : 0u),
+                              "Only the true-drop return should record a typed fault terminal");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.inFlightPackets,
+                              (expectDrop ? 0u : 1u),
+                              "Detached delay must keep the physical attempt live");
+        if (!expectDrop)
+        {
+            UbLifecycleCoordinator::TerminatePacket(packet,
+                                                    UbPacketTerminal::ENDPOINT_CONSUMED);
+        }
+
+        std::error_code ec;
+        std::filesystem::remove(rulePath, ec);
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbLifecycleChannelFailureIntegrationTest : public TestCase
+{
+  public:
+    UbLifecycleChannelFailureIntegrationTest()
+        : TestCase("UnifiedBus - normal and detached channel failures terminalize packets")
+    {
+    }
+
+    void DoRun() override
+    {
+        RunFailureCase(false);
+        RunFailureCase(true);
+    }
+
+  private:
+    void RunFailureCase(bool detached)
+    {
+        Config::Reset();
+        auto fixture = CreateMultiPortSwitchFixture(FcType::NONE,
+                                                    1,
+                                                    4096,
+                                                    4096,
+                                                    4096,
+                                                    16,
+                                                    1,
+                                                    {});
+        Ptr<Node> peerNode = CreateObject<Node>();
+        InitNode(peerNode, UB_DEVICE, 1);
+        Ptr<UbPort> peerPort = DynamicCast<UbPort>(peerNode->GetDevice(0));
+        Ptr<UbFailingLink> link = CreateObject<UbFailingLink>();
+        fixture.ports[0]->Attach(link);
+        peerPort->Attach(link);
+
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(fixture.node);
+        const UbLifecycleResourceIdentity owner = coordinator->OpenPacketOwner(
+            UbLifecycleResourceKind::RTP_ENDPOINT,
+            detached ? 12 : 11);
+        Ptr<Packet> packet = Create<Packet>(64);
+        coordinator->RegisterPacketAttempt(owner, packet);
+
+        if (detached)
+        {
+            fixture.ports[0]->TransmitPacketDetached(packet);
+        }
+        else
+        {
+            NS_TEST_ASSERT_MSG_EQ(fixture.ports[0]->EnqueueToEgress(
+                                      std::make_tuple(0, UB_PRIORITY_DEFAULT, packet)),
+                                  true,
+                                  "Normal channel-failure packet should enter egress");
+            fixture.ports[0]->TriggerTransmit();
+            Simulator::Stop(NanoSeconds(1));
+            Simulator::Run();
+            NS_TEST_ASSERT_MSG_EQ(fixture.ports[0]->IsReady(),
+                                  true,
+                                  "Normal channel failure should preserve the old READY reset");
+        }
+
+        const UbLifecycleResourceSnapshot snapshot = coordinator->GetSnapshot(owner);
+        NS_TEST_ASSERT_MSG_EQ(snapshot.channelFailureDrops,
+                              1u,
+                              "Failed TransmitStart should record one typed terminal");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.inFlightPackets,
+                              0u,
+                              "Failed TransmitStart should drain the exact physical attempt");
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbLifecycleMalformedTpsackIntegrationTest : public TestCase
+{
+  public:
+    UbLifecycleMalformedTpsackIntegrationTest()
+        : TestCase("UnifiedBus - malformed TPSACK terminalizes after production parser rejection")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbTransportChannel> txTp =
+            topo.sender->GetObject<UbController>()->GetTpByTpn(
+                kUrmaWriteRegressionSenderTpn);
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(topo.sender);
+
+        const uint8_t malformedSaetph[] = {5, 0, 0, 0};
+        Ptr<Packet> packet = Create<Packet>(malformedSaetph, sizeof(malformedSaetph));
+        UbTransportHeader transportHeader;
+        transportHeader.SetTPOpcode(TpOpcode::TP_OPCODE_SACK_WITHOUT_CETPH);
+        packet->AddHeader(transportHeader);
+        coordinator->RegisterPacketAttempt(txTp->GetLifecycleOwner(), packet);
+        const UbLifecycleResourceSnapshot before =
+            coordinator->GetSnapshot(txTp->GetLifecycleOwner());
+
+        txTp->RecvTpAck(packet);
+
+        const UbLifecycleResourceSnapshot after =
+            coordinator->GetSnapshot(txTp->GetLifecycleOwner());
+        NS_TEST_ASSERT_MSG_EQ(after.malformedPacketDrops,
+                              before.malformedPacketDrops + 1,
+                              "Production TPSACK parser rejection should record one malformed terminal");
+        NS_TEST_ASSERT_MSG_EQ(after.inFlightPackets,
+                              before.inFlightPackets - 1,
+                              "Malformed TPSACK rejection should drain its physical attempt");
+        NS_TEST_ASSERT_MSG_EQ(after.endpointConsumed,
+                              before.endpointConsumed,
+                              "Malformed TPSACK rejection must not also record endpoint consumption");
+        Simulator::Destroy();
+        Config::Reset();
     }
 };
 
@@ -16437,6 +16913,68 @@ class UbLifecycleRtpRouteDropIntegrationTest : public TestCase
         NS_TEST_ASSERT_MSG_LT(snapshot.lastTransferSequence,
                               snapshot.lastTerminalSequence,
                               "Route drop should be causally after local-link transfer");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbLifecycleRtpIngressQueueFullIntegrationTest : public TestCase
+{
+  public:
+    UbLifecycleRtpIngressQueueFullIntegrationTest()
+        : TestCase("UnifiedBus - RTP ingress admission failure records one typed drop")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<Packet> packet = BuildLifecycleTracerPacket(topo);
+
+        UbPacketLifecycleTag tag;
+        NS_TEST_ASSERT_MSG_EQ(packet->PeekPacketTag(tag),
+                              true,
+                              "RTP DATA should carry its production lifecycle identity");
+        const UbLifecycleResourceIdentity owner = tag.GetIdentity().owner;
+
+        Ptr<UbQueueManager> switchQueueManager =
+            topo.switch0->GetObject<UbSwitch>()->GetQueueManager();
+        switchQueueManager->SetAttribute("ReservePerQueueBytes", UintegerValue(0));
+        switchQueueManager->SetAttribute("SharedPoolBytes", UintegerValue(0));
+        switchQueueManager->SetAttribute("HeadroomPerPortBytes", UintegerValue(0));
+
+        NS_TEST_ASSERT_MSG_EQ(topo.senderPort->EnqueueToEgress(
+                                  std::make_tuple(0,
+                                                  kUrmaWriteRegressionPriority,
+                                                  packet)),
+                              true,
+                              "RTP DATA should enter source egress before switch admission");
+        topo.senderPort->TriggerTransmit();
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
+
+        Ptr<UbLifecycleCoordinator> coordinator =
+            topo.sender->GetObject<UbLifecycleCoordinator>();
+        const UbLifecycleResourceSnapshot snapshot = coordinator->GetSnapshot(owner);
+        NS_TEST_ASSERT_MSG_EQ(snapshot.inFlightPackets,
+                              0u,
+                              "Ingress admission drop should drain the physical attempt");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.ingressQueueFullDrops,
+                              1u,
+                              "Ingress admission failure should record one typed drop");
+        NS_TEST_ASSERT_MSG_GT(snapshot.lastTerminalSequence,
+                              snapshot.lastBirthSequence,
+                              "Ingress-full terminal should follow packet birth");
+        const uint32_t switchInPort = topo.switch0DevicePort->GetIfIndex();
+        NS_TEST_ASSERT_MSG_EQ(
+            switchQueueManager->GetQueueIngressTotalBytes(
+                switchInPort,
+                kUrmaWriteRegressionPriority),
+            0u,
+            "Rejected RTP DATA must not enter the switch VOQ");
 
         Simulator::Destroy();
         Config::Reset();
@@ -22212,6 +22750,7 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
     : TestSuite("unified-bus-lifecycle", Type::UNIT)
 {
     AddTestCase(new UbLifecyclePacketAccountingTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleEgressQueueFullDropTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleAtomicWqeSubmissionTest(), TestCase::Duration::QUICK);
 #ifndef _WIN32
     AddTestCase(new UbLifecycleDuplicateDirectSubmissionTest(), TestCase::Duration::QUICK);
@@ -22431,9 +22970,16 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
     AddTestCase(new UbLifecycleStaleWqeFinishFailFastTest(), TestCase::Duration::QUICK);
 #endif
     AddTestCase(new UbLifecyclePacketMetadataTransferTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleFaultParserViewPreservesPacketTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleFaultDropIntegrationTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleChannelFailureIntegrationTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleMalformedTpsackIntegrationTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleRtpEndpointConsumeIntegrationTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleRtpRouteDropIntegrationTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleRtpIngressQueueFullIntegrationTest(),
+                TestCase::Duration::QUICK);
 #ifndef _WIN32
     AddTestCase(new UbLifecycleFailFastTest(), TestCase::Duration::QUICK);
 #endif

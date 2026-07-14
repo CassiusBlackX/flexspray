@@ -3,6 +3,7 @@
 
 #include "ns3/assert.h"
 #include "ns3/log.h"
+#include "ns3/node-list.h"
 #include "ns3/simulator.h"
 #include "ns3/ub-modulo-sequence.h"
 #include "ns3/ub-transport.h"
@@ -1064,7 +1065,35 @@ UbRetransController::GetRetransEnable() const
 void
 UbRetransController::ScheduleTimeout()
 {
-    m_retransEvent = Simulator::Schedule(m_rto, &UbTransportChannel::ReTxTimeout, &m_transport);
+    const UbLifecycleResourceIdentity& owner = m_transport.GetLifecycleOwner();
+    if (owner.generation == 0)
+    {
+        m_retransEvent =
+            Simulator::Schedule(m_rto, &UbTransportChannel::ReTxTimeout, &m_transport);
+        return;
+    }
+    if (!m_trackedEventsInitialized)
+    {
+        m_trackedEvents.Init(
+            UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_transport.GetSrc())));
+        m_trackedEventsInitialized = true;
+    }
+    const uint64_t token = m_trackedEvents.Track(owner);
+    m_retransEvent =
+        Simulator::Schedule(m_rto, &UbRetransController::HandleTrackedTimeout, this, token);
+    m_trackedEvents.Attach(owner, token, m_retransEvent, {});
+}
+
+void
+UbRetransController::HandleTrackedTimeout(uint64_t token)
+{
+    const UbLifecycleResourceIdentity& owner = m_transport.GetLifecycleOwner();
+    if (!m_trackedEvents.Begin(owner, token))
+    {
+        return;
+    }
+    m_transport.ReTxTimeout();
+    m_trackedEvents.Resolve(owner, token);
 }
 
 void
@@ -1094,7 +1123,7 @@ UbRetransController::RestartTimerAfterAckProgress()
 
     m_rto = m_baseRto;
     m_retransAttemptsLeft = m_maxRetransAttempts;
-    m_retransEvent.Cancel();
+    CancelTimer();
     if (HasOutstandingRetransmissionState()) {
         ScheduleTimeout();
     }
@@ -1104,6 +1133,10 @@ void
 UbRetransController::CancelTimer()
 {
     m_retransEvent.Cancel();
+    if (m_trackedEventsInitialized)
+    {
+        m_trackedEvents.CancelPending(m_transport.GetLifecycleOwner());
+    }
 }
 
 UbRetransTimeoutResult

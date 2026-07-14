@@ -196,20 +196,6 @@ namespace ns3 {
             FORCE = 2,
         };
 
-        enum class TrackedEventPhase : uint8_t
-        {
-            PENDING = 0,
-            RUNNING = 1,
-        };
-
-        struct TrackedEventRecord
-        {
-            UbLifecycleLeaseIdentity lease;
-            EventId event;
-            Callback<void> cancelCleanup;
-            TrackedEventPhase phase{TrackedEventPhase::PENDING};
-        };
-
         struct JettyRecord
         {
             Ptr<UbJetty> jetty;
@@ -218,7 +204,6 @@ namespace ns3 {
             UbDestroyReason reason{UbDestroyReason::EXPLICIT};
             CleanupMode cleanupMode{CleanupMode::GRACEFUL};
             std::map<uint32_t, UbLifecycleResourceIdentity> wqes;
-            std::map<uint64_t, TrackedEventRecord> trackedEvents;
             std::vector<UbLifecycleLeaseIdentity> bindingLeases;
             bool hasCtpBinding{false};
             std::vector<UbDestroyCallback> callbacks;
@@ -234,7 +219,7 @@ namespace ns3 {
         Ptr<UbLifecycleCoordinator> m_coordinator;
         Ptr<UbTransaction> m_transaction;
         Ptr<UbCtpTransportService> m_ctpService;
-        uint64_t m_nextEventToken{0};
+        UbTrackedEventSet m_trackedEvents;
         std::map<uint32_t, JettyRecord> m_records;
     };
 
