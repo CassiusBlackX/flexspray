@@ -14,6 +14,7 @@
 namespace ns3
 {
 class UbController;
+class UbTransportChannelManager;
 }
 
 namespace utils {
@@ -164,6 +165,7 @@ public:
     }
 private:
   friend class ns3::UbController;
+  friend class ns3::UbTransportChannelManager;
 
   static std::mutex g_tpConnectionControlLock;
 

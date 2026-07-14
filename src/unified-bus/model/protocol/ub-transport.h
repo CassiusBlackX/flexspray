@@ -131,6 +131,10 @@ public:
     uint32_t GetNextPacketSize() override;
     bool IsEmpty() override;
     bool IsLimited() override;
+    bool IsSafeForExplicitDestroy() const;
+    void FreezeNewWork();
+    void PrepareForExplicitDestroy();
+    void SetLifecycleStateChangedCallback(Callback<void, uint32_t> callback);
 
     Ptr<Packet> GenDataPacket(Ptr<UbWqeSegment> wqeSegment,
                               uint32_t payloadSize,
@@ -543,6 +547,7 @@ private:
                                       uint64_t psnEnd,
                                       AckResponseContext& response);
     void CompleteInboundTaUnits(const std::vector<Ptr<UbWqeSegment>>& completedTaUnits);
+    void NotifyLifecycleStateChanged();
 
     TracedCallback<uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t> m_traceFirstPacketSendsNotify;
     TracedCallback<uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t> m_traceLastPacketSendsNotify;
@@ -627,6 +632,7 @@ private:
     IngressQueueType m_ingressQueueType = IngressQueueType::TP; // Transport channel queue type (TP)
 
     bool m_pktTraceEnabled = false;
+    Callback<void, uint32_t> m_lifecycleStateChangedCallback;
 };
 
 /**

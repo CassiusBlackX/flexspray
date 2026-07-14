@@ -192,6 +192,7 @@ namespace ns3 {
 
         // 判断本地tp是否处于使用状态
         bool IsTpInUse(uint32_t tpn);
+        bool HasPendingTransportWork(uint32_t tpn) const;
 
         // 判断与本地tp配对的远程tp是否处于使用状态
         bool IsPeerTpInUse(uint32_t tpn);

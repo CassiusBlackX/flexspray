@@ -1972,6 +1972,13 @@ bool UbTransaction::IsTpInUse(uint32_t tpn)
     return !GetTpRelatedJettyVec(tpn).empty();
 }
 
+bool
+UbTransaction::HasPendingTransportWork(uint32_t tpn) const
+{
+    const auto remoteRequests = m_tpRelatedRemoteRequests.find(tpn);
+    return remoteRequests != m_tpRelatedRemoteRequests.end() && !remoteRequests->second.empty();
+}
+
 bool UbTransaction::IsPeerTpInUse(uint32_t tpn)
 {
     auto localTpIt = m_tpnMap.find(tpn);

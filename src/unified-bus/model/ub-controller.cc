@@ -29,6 +29,8 @@ UbController::UbController()
 {
     NS_LOG_FUNCTION(this);
     m_tpnConn = CreateObject<TpConnectionManager>();
+    m_transportChannelManager = CreateObject<UbTransportChannelManager>();
+    m_transportChannelManager->Init(this);
 }
 
 void UbController::CreateUbFunction()
@@ -51,7 +53,9 @@ UbController::~UbController()
     NS_LOG_FUNCTION(this);
     NS_ASSERT_MSG(m_rtpTpGroups.empty(),
                   "UbController must force-clean canonical TPGs in DoDispose");
-    m_numToTp.clear();
+    NS_ASSERT_MSG(m_transportChannelManager == nullptr ||
+                      m_transportChannelManager->GetCount() == 0,
+                  "UbController must force-clean canonical TPs in DoDispose");
     m_rtpTpGroups.clear();
     m_rtpTpGroupByTpn.clear();
     m_ports.clear();
@@ -65,13 +69,7 @@ void
 UbController::DoDispose()
 {
     m_disposing = true;
-    for (const auto& [tpn, tp] : m_numToTp)
-    {
-        (void)tpn;
-        NS_ABORT_MSG_IF(tp == nullptr,
-                        "Controller canonical TP collection contains a null owner");
-        tp->MarkOwnerControllerDisposing();
-    }
+    m_transportChannelManager->ForceDispose();
     std::vector<UbLifecycleResourceIdentity> groups;
     groups.reserve(m_rtpTpGroups.size());
     for (const auto& [localId, group] : m_rtpTpGroups)
@@ -104,7 +102,7 @@ UbController::DoDispose()
     }
     m_transaction = nullptr;
     m_function = nullptr;
-    m_numToTp.clear();
+    m_transportChannelManager = nullptr;
     m_ports.clear();
     m_datalink = nullptr;
     m_destinationToPortsMap.clear();
@@ -118,12 +116,7 @@ UbController::DoDispose()
 
 Ptr<UbTransportChannel> UbController::GetTpByTpn(uint32_t tpn)
 {
-    auto it = m_numToTp.find(tpn);
-    if (it == m_numToTp.end())
-    {
-        return nullptr;
-    }
-    return it->second;
+    return m_transportChannelManager->GetTp(tpn);
 }
 
 // Transport channel management
@@ -131,76 +124,14 @@ bool UbController::CreateTp(uint32_t src, uint32_t dest, uint8_t sport,
                             uint8_t dport, UbPriority priority, uint32_t srcTpn,
                             uint32_t dstTpn, Ptr<UbCongestionControl> congestionCtrl)
 {
-    NS_LOG_FUNCTION(this << src << dest << sport << dport  << priority << srcTpn);
-    // 检查是否已存在
-    if (m_numToTp.find(srcTpn) != m_numToTp.end()) {
-        NS_LOG_DEBUG("Transport channel already exists");
-        return false;
-    }
-
-    // 创建新的Transport Channel
-    // 需要先获取当前节点
-    Ptr<Node> currentNode = GetObject<Node>();
-
-    if (!currentNode) {
-        // 如果没有关联节点，可能需要从其他地方获取或设置默认值
-        NS_LOG_WARN("No associated node found for UbController");
-        currentNode = CreateObject<Node> ();
-    }
-
-    Ipv4Address sip = NodeIdToIp(src, sport);
-    Ipv4Address dip = NodeIdToIp(dest, dport);
-
-    Ptr<UbTransportChannel> tp = CreateObject<UbTransportChannel>();
-    tp->SetUbTransport(currentNode->GetId(), src, dest, srcTpn, dstTpn, 0, static_cast<uint8_t>(priority),
-                       static_cast<uint16_t>(sport), static_cast<uint16_t>(dport), sip, dip, congestionCtrl);
-    m_transaction->TpInit(tp);
-    m_numToTp[srcTpn] = tp;
-    m_transportsCount++;
-    currentNode->GetObject<UbSwitch>()->RegisterTpWithAllocator(tp, sport, priority);  // register TP with allocator
-
-    utils::UbUtils::Get()->SingleTpTraceConnect(src, srcTpn);
-    NS_LOG_DEBUG("Created transport channel success");
-    return true;
+    return m_transportChannelManager->CreateTp(
+        src, dest, sport, dport, priority, srcTpn, dstTpn, congestionCtrl);
 }
 
 Ptr<UbTransportChannel>
 UbController::CreateReservedTpEndpoint(uint32_t tpn)
 {
-    std::lock_guard<std::mutex> controlLock(TpConnectionManager::g_tpConnectionControlLock);
-    return CreateReservedTpEndpointLocked(tpn);
-}
-
-Ptr<UbTransportChannel>
-UbController::CreateReservedTpEndpointLocked(uint32_t tpn)
-{
-    Ptr<UbTransportChannel> existingTp = GetTpByTpn(tpn);
-    if (existingTp != nullptr)
-    {
-        return existingTp;
-    }
-
-    Ptr<Node> currentNode = GetObject<Node>();
-    NS_ASSERT_MSG(currentNode != nullptr, "Reserved TP endpoint requires an attached node");
-    NS_ASSERT_MSG(m_transaction != nullptr, "Reserved TP endpoint requires UbTransaction");
-    NS_ASSERT_MSG(m_tpnConn != nullptr, "Reserved TP endpoint requires TpConnectionManager");
-
-    Connection conn;
-    if (!m_tpnConn->TryGetLocalConnection(currentNode->GetId(), tpn, conn))
-    {
-        return nullptr;
-    }
-
-    auto congestionCtrl = UbCongestionControl::Create(UB_DEVICE);
-    CreateTp(conn.node1,
-             conn.node2,
-             conn.port1,
-             conn.port2,
-             static_cast<UbPriority>(conn.priority),
-             conn.tpn1,
-             conn.tpn2,
-             congestionCtrl);
-    return GetTpByTpn(tpn);
+    return m_transportChannelManager->CreateReservedTpEndpoint(tpn);
 }
 
 Ptr<UbTransportChannel>
@@ -210,66 +141,21 @@ UbController::ResolveInboundTp(uint32_t srcTpn,
                                Ipv4Address destinationIp,
                                UbPriority priority)
 {
-    std::lock_guard<std::mutex> controlLock(TpConnectionManager::g_tpConnectionControlLock);
-    Ptr<UbTransportChannel> targetTp = GetTpByTpn(dstTpn);
-
-    uint32_t expectedSrcTpn;
-    Ipv4Address expectedSourceIp;
-    Ipv4Address expectedDestinationIp;
-    UbPriority expectedPriority;
-    if (targetTp != nullptr)
-    {
-        expectedSrcTpn = targetTp->GetDestTpn();
-        expectedSourceIp = targetTp->GetDip();
-        expectedDestinationIp = targetTp->GetSip();
-        expectedPriority = static_cast<UbPriority>(targetTp->GetPriority());
-    }
-    else
-    {
-        Ptr<Node> currentNode = GetObject<Node>();
-        NS_ASSERT_MSG(currentNode != nullptr, "Inbound TP resolution requires an attached node");
-
-        Connection conn;
-        if (!m_tpnConn->TryGetLocalConnection(currentNode->GetId(), dstTpn, conn))
-        {
-            return nullptr;
-        }
-        expectedSrcTpn = conn.tpn2;
-        expectedSourceIp = NodeIdToIp(conn.node2, conn.port2);
-        expectedDestinationIp = NodeIdToIp(conn.node1, conn.port1);
-        expectedPriority = static_cast<UbPriority>(conn.priority);
-    }
-
-    if (srcTpn != expectedSrcTpn || sourceIp != expectedSourceIp ||
-        destinationIp != expectedDestinationIp || priority != expectedPriority)
-    {
-        return nullptr;
-    }
-
-    return targetTp != nullptr ? targetTp : CreateReservedTpEndpointLocked(dstTpn);
+    return m_transportChannelManager->ResolveInboundTp(
+        srcTpn, dstTpn, sourceIp, destinationIp, priority);
 }
 
 Ptr<UbTransportChannel> UbController::GetTp(uint32_t tpn)
 {
     NS_LOG_FUNCTION(this);
 
-    auto it = m_numToTp.find(tpn);
-    if (it != m_numToTp.end()) {
-        return it->second;
-    }
-
-    return nullptr;
+    return m_transportChannelManager->GetTp(tpn);
 }
 
-void UbController::DestroyTp(uint32_t tpn)
+UbDestroyStatus
+UbController::DestroyTp(uint32_t tpn, UbDestroyReason reason, UbDestroyCallback callback)
 {
-    // 算法中删除tp记录
-    GetObject<Node>()->GetObject<UbSwitch>()->RemoveTpFromAllocator(m_numToTp[tpn]);
-    // 事务层删除tp记录
-    m_transaction->TpDeinit(tpn);
-    // 删除本地记录
-    m_numToTp.erase(tpn);
-    m_transportsCount--;
+    return m_transportChannelManager->DestroyTp(tpn, reason, callback);
 }
 
 Ptr<UbTransportGroup>
@@ -436,9 +322,8 @@ UbController::AddRtpTpGroupMember(
         return UbTpgMemberMutationStatus::REJECTED;
     }
     const uint32_t tpn = static_cast<uint32_t>(tpIdentity.localId);
-    const auto transport = m_numToTp.find(tpn);
-    if (transport == m_numToTp.end() || transport->second == nullptr ||
-        transport->second->GetLifecycleOwner() != tpIdentity ||
+    Ptr<UbTransportChannel> transport = m_transportChannelManager->GetTp(tpn);
+    if (transport == nullptr || transport->GetLifecycleOwner() != tpIdentity ||
         group->FindMemberIndex(tpIdentity) >= 0 ||
         m_rtpTpGroupByTpn.find(tpn) != m_rtpTpGroupByTpn.end())
     {
@@ -782,7 +667,7 @@ UbController::SetCtpPacketTimingTraceCallbacks(CtpPacketTimingCallback firstPack
 
 std::map<uint32_t, Ptr<UbTransportChannel>> UbController::GetTpnMap() const
 {
-    return m_numToTp;
+    return m_transportChannelManager->GetTpnMap();
 }
 
 bool UbController::AddTpMapping(uint32_t key, Ptr<UbTransportChannel> tp)
@@ -814,6 +699,12 @@ Ptr<UbTransportChannel> UbController::GetTpByMap(uint32_t key)
 
 bool UbController::IsTPExists(uint32_t tpn)
 {
-    return (m_numToTp.find(tpn) != m_numToTp.end());
+    return m_transportChannelManager->Contains(tpn);
+}
+
+uint32_t
+UbController::GetTransportCountForTest() const
+{
+    return m_transportChannelManager->GetCount();
 }
 } // namespace ns3

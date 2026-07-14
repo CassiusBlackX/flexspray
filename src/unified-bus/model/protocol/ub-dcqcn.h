@@ -50,6 +50,7 @@ public:
                                         uint32_t psn,
                                         UbCongestionExtTph header) override;
     void OnSenderTransportIdle() override;
+    void OnTpDestroyRequested() override;
 
     DataRate GetCurrentRateForTest() const { return m_currentRate; }
     DataRate GetTargetRateForTest() const { return m_targetRate; }

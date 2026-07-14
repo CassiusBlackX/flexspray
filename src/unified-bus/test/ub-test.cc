@@ -5661,6 +5661,7 @@ public:
                               "Starting sender should register one active host flow");
 
         cc->ApplySyntheticCnpForTest();
+        const uint64_t reducedRate = cc->GetCurrentRateForTest().GetBitRate();
         const UbLifecycleResourceSnapshot duringRecovery =
             coordinator->GetSnapshot(txTp->GetLifecycleOwner());
         NS_TEST_ASSERT_MSG_EQ(duringRecovery.activeTrackedEventLeases,
@@ -5677,13 +5678,13 @@ public:
                               0u,
                               "Idle sender should release host active-flow slot immediately");
 
-        Simulator::Schedule(MicroSeconds(120), [this, senderCtrl, cc]() {
+        Simulator::Schedule(MicroSeconds(120), [this, senderCtrl, cc, reducedRate]() {
             NS_TEST_ASSERT_MSG_EQ(senderCtrl->GetActiveSenderFlowCount(),
                                   0u,
                                   "Idle sender must stay inactive after old DCQCN recovery timers would have fired");
             NS_TEST_ASSERT_MSG_EQ(cc->GetCurrentRateForTest().GetBitRate(),
-                                  DataRate("25Gbps").GetBitRate(),
-                                  "Idle sender should keep fresh baseline rate until a new flow starts");
+                                  reducedRate,
+                                  "Idle sender should preserve its DCQCN rate continuity");
         });
 
         Simulator::Stop(MicroSeconds(121));
@@ -19345,6 +19346,42 @@ class UbUnknownInboundTpnFailsWithAutoRemoveTest : public TestCase
                               "Unknown inbound TPN should fail with SIGABRT");
     }
 };
+
+class UbLegacyTaskDrivenTpRemovalFailsFastTest : public TestCase
+{
+  public:
+    UbLegacyTaskDrivenTpRemovalFailsFastTest()
+        : TestCase("UnifiedBus - legacy task-driven TP removal stays disabled and fails fast")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const int disabledStatus = RunInChildProcess([]() {
+            Ptr<TpConnectionManager> manager = CreateObject<TpConnectionManager>();
+            manager->RemoveUselessTps(0, 0, 1, 0);
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFEXITED(disabledStatus),
+                              1,
+                              "Default-disabled legacy removal should remain a no-op");
+        NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(disabledStatus),
+                              0,
+                              "Default-disabled legacy removal should not mutate or abort");
+
+        const int enabledStatus = RunInChildProcess([]() {
+            Ptr<TpConnectionManager> manager = CreateObject<TpConnectionManager>();
+            manager->SetAttribute("RemoveUselessTp", BooleanValue(true));
+            manager->RemoveUselessTps(0, 0, 1, 0);
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(enabledStatus),
+                              1,
+                              "Enabled legacy removal should fail fast");
+        NS_TEST_ASSERT_MSG_EQ(WTERMSIG(enabledStatus),
+                              SIGABRT,
+                              "Unsupported task-driven teardown should abort explicitly");
+    }
+};
 #endif
 
 class UbConcurrentReservedReceiverTpnMaterializationTest : public TestCase
@@ -19504,6 +19541,116 @@ class UbUnreservedReceiverTpnDoesNotMaterializeTest : public TestCase
         Simulator::Destroy();
         Config::Reset();
     }
+};
+
+class UbExplicitTpDestroyDrainsAndRematerializesTest : public TestCase
+{
+  public:
+    UbExplicitTpDestroyDrainsAndRematerializesTest()
+        : TestCase("UnifiedBus - explicit TP destroy drains and preserves reservation")
+    {
+    }
+
+  private:
+    void OnDestroyed(UbLifecycleResourceIdentity identity, UbDestroyStatus status)
+    {
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(status),
+                              static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
+                              "Destroy callback should report completion");
+        NS_TEST_ASSERT_MSG_EQ(m_controller->GetTpByTpn(static_cast<uint32_t>(identity.localId)),
+                              nullptr,
+                              "Destroy callback should run after canonical endpoint erase");
+        m_callbackIdentity = identity;
+        ++m_callbackCount;
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(true));
+        GlobalValue::Bind("UB_CC_ALGO", StringValue("DCQCN"));
+        LocalTpTopology topo = BuildLocalTpTopology();
+        Ptr<UbController> sender = topo.sender->GetObject<UbController>();
+        m_controller = topo.receiver->GetObject<UbController>();
+        sender->GetTpConnManager()->ReserveTpnsForTraffic(true,
+                                                          topo.sender->GetId(),
+                                                          topo.receiver->GetId(),
+                                                          kUrmaWriteRegressionPriority);
+        const auto receiverTpns = m_controller->GetTpConnManager()->GetTpnsByPeerNodePriority(
+            topo.receiver->GetId(),
+            topo.sender->GetId(),
+            kUrmaWriteRegressionPriority);
+        NS_TEST_ASSERT_MSG_EQ(receiverTpns.size(), 1u, "Expected one receiver reservation");
+        const uint32_t tpn = receiverTpns[0].first;
+        Ptr<UbTransportChannel> first = m_controller->CreateReservedTpEndpoint(tpn);
+        NS_TEST_ASSERT_MSG_NE(first, nullptr, "Reserved endpoint should materialize");
+        const UbLifecycleResourceIdentity firstIdentity = first->GetLifecycleOwner();
+
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(topo.receiver);
+        const UbLifecycleLeaseIdentity gate = coordinator->AcquireLease(
+            firstIdentity,
+            UbLifecycleLeaseKind::TRANSPORT_WORK,
+            firstIdentity);
+        const UbDestroyStatus pending = m_controller->DestroyTp(
+            tpn,
+            UbDestroyReason::EXPLICIT,
+            MakeCallback(&UbExplicitTpDestroyDrainsAndRematerializesTest::OnDestroyed, this));
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(pending),
+                              static_cast<uint32_t>(UbDestroyStatus::PENDING),
+                              "Active lifecycle work should defer endpoint finalization");
+        NS_TEST_ASSERT_MSG_EQ(m_controller->GetTpByTpn(tpn),
+                              first,
+                              "Pending destroy should retain the canonical endpoint");
+        NS_TEST_ASSERT_MSG_EQ(first->CanAdmitWqeSegment(nullptr),
+                              false,
+                              "Destroy request should freeze new segment admission");
+
+        coordinator->ReleaseLease(gate);
+        NS_TEST_ASSERT_MSG_EQ(m_callbackCount, 1u, "Pending callback should run exactly once");
+        NS_TEST_ASSERT_MSG_EQ(m_controller->GetTpByTpn(tpn),
+                              nullptr,
+                              "Last lifecycle release should finalize without a second destroy");
+        NS_TEST_ASSERT_MSG_EQ(m_callbackIdentity,
+                              firstIdentity,
+                              "Destroy callback should identify the retired generation");
+        NS_TEST_ASSERT_MSG_EQ(m_controller->GetTpConnManager()->TryGetLocalConnection(
+                                  topo.receiver->GetId(), tpn, m_connection),
+                              true,
+                              "Local endpoint destroy should preserve its reservation");
+
+        Ptr<UbTransportChannel> second = m_controller->CreateReservedTpEndpoint(tpn);
+        NS_TEST_ASSERT_MSG_NE(second, nullptr, "Later demand should rematerialize the endpoint");
+        NS_TEST_ASSERT_MSG_NE(second->GetLifecycleOwner().generation,
+                              firstIdentity.generation,
+                              "Rematerialization should open a new endpoint generation");
+        Ptr<UbHostDcqcn> secondCc =
+            DynamicCast<UbHostDcqcn>(second->GetCongestionCtrlForTest());
+        NS_TEST_ASSERT_MSG_NE(secondCc, nullptr, "Rematerialized TP should use configured DCQCN");
+        (void)secondCc->IsCcLimited(1);
+        secondCc->ApplySyntheticCnpForTest();
+        const UbDestroyStatus eventDrain = m_controller->DestroyTp(
+            tpn,
+            UbDestroyReason::EXPLICIT,
+            MakeCallback(&UbExplicitTpDestroyDrainsAndRematerializesTest::OnDestroyed, this));
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(eventDrain),
+                              static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
+                              "Destroy freeze should cancel endpoint-only DCQCN events");
+        NS_TEST_ASSERT_MSG_EQ(m_callbackCount,
+                              2u,
+                              "Tracked-event cancellation should finalize reentrantly once");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_controller->DestroyTp(999999)),
+                              static_cast<uint32_t>(UbDestroyStatus::NOT_FOUND),
+                              "Destroying an unknown TPN should not insert an endpoint");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+    Ptr<UbController> m_controller;
+    Connection m_connection;
+    UbLifecycleResourceIdentity m_callbackIdentity;
+    uint32_t m_callbackCount{0};
 };
 
 class UbTraceDirSetupTest : public TestCase
@@ -22721,11 +22868,14 @@ UbTpReservationTestSuite::UbTpReservationTestSuite()
 #ifndef _WIN32
     AddTestCase(new UbInboundTpChannelKeyValidationTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbUnknownInboundTpnFailsWithAutoRemoveTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbLegacyTaskDrivenTpRemovalFailsFastTest(), TestCase::Duration::QUICK);
 #endif
     AddTestCase(new UbConcurrentReservedReceiverTpnMaterializationTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbRepeatedTpResolutionReusesReservationTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbUnreservedReceiverTpnDoesNotMaterializeTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbExplicitTpDestroyDrainsAndRematerializesTest(),
+                TestCase::Duration::QUICK);
 }
 
 static UbTpReservationTestSuite g_ubTpReservationTestSuite;

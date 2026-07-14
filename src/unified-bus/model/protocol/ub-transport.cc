@@ -589,6 +589,7 @@ UbTransportChannel::PopQueuedPacket(std::queue<Ptr<Packet>>& packetQ)
     if (HasPendingTransmitWork()) {
         m_headArrivalTime = Simulator::Now();
     }
+    NotifyLifecycleStateChanged();
     return packet;
 }
 
@@ -1637,6 +1638,7 @@ void UbTransportChannel::RecvTpAck(Ptr<Packet> p)
     FinalizeTransportAckProgress(ctx, previousSndUna);
     UbLifecycleCoordinator::TerminatePacket(p,
                                             UbPacketTerminal::ENDPOINT_CONSUMED);
+    NotifyLifecycleStateChanged();
 }
 
 
@@ -2095,7 +2097,8 @@ UbTransportChannel::TryAdmitWqeSegment(Ptr<UbWqeSegment> segment)
 bool
 UbTransportChannel::CanAdmitWqeSegment(Ptr<const UbWqeSegment> segment) const
 {
-    return segment != nullptr && !IsWqeSegmentLimited() && CanScheduleAnotherSegment();
+    return m_isActive && segment != nullptr && !IsWqeSegmentLimited() &&
+           CanScheduleAnotherSegment();
 }
 
 UbWqeSegmentTerminalDisposition
@@ -2319,6 +2322,46 @@ void UbTransportChannel::ApplyNextWqeSegment()
 bool UbTransportChannel::IsEmpty()
 {
     return !HasPendingTransmitWork();
+}
+
+bool
+UbTransportChannel::IsSafeForExplicitDestroy() const
+{
+    return m_ackQ.empty() && m_cnpQ.empty() && m_wqeSegmentVector.empty() &&
+           m_remoteRequest.empty() && m_inboundTaUnits.empty() &&
+           m_bufferedInboundPackets.empty() && m_psnSndUna == m_psnSndNxt &&
+           (m_retrans == nullptr || !m_retrans->HasTimerRunning());
+}
+
+void
+UbTransportChannel::FreezeNewWork()
+{
+    m_isActive = false;
+    if (m_congestionCtrl != nullptr)
+    {
+        m_congestionCtrl->OnTpDestroyRequested();
+    }
+}
+
+void
+UbTransportChannel::PrepareForExplicitDestroy()
+{
+    m_lifecycleStateChangedCallback = {};
+}
+
+void
+UbTransportChannel::SetLifecycleStateChangedCallback(Callback<void, uint32_t> callback)
+{
+    m_lifecycleStateChangedCallback = callback;
+}
+
+void
+UbTransportChannel::NotifyLifecycleStateChanged()
+{
+    if (!m_lifecycleStateChangedCallback.IsNull())
+    {
+        m_lifecycleStateChangedCallback(m_tpn);
+    }
 }
 
 bool UbTransportChannel::HasPendingTransmitWork()

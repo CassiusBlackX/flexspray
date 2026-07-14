@@ -229,6 +229,7 @@ UbLifecycleCoordinator::OpenResource(UbLifecycleResourceKind kind, uint64_t loca
     state.snapshot = {};
     state.activeAttempts.clear();
     state.activeLeases.clear();
+    state.stateChangedCallback = {};
     return {m_ownerNodeId, kind, localId, state.generation};
 }
 
@@ -254,6 +255,14 @@ UbLifecycleCoordinator::IsResourceActive(const UbLifecycleResourceIdentity& iden
     return resource != m_resources.end() &&
            resource->second.generation == identity.generation &&
            !resource->second.snapshot.retired;
+}
+
+void
+UbLifecycleCoordinator::SetResourceStateChangedCallback(
+    const UbLifecycleResourceIdentity& identity,
+    Callback<void, UbLifecycleResourceIdentity> callback)
+{
+    ValidateMutable(identity).stateChangedCallback = callback;
 }
 
 UbLifecycleLeaseIdentity
@@ -340,6 +349,11 @@ UbLifecycleCoordinator::ReleaseLease(const UbLifecycleLeaseIdentity& lease)
         NS_ABORT_MSG("Unknown lifecycle lease kind");
     }
     state.activeLeases.erase(it);
+    const auto callback = state.stateChangedCallback;
+    if (!callback.IsNull())
+    {
+        callback(lease.owner);
+    }
 }
 
 void
@@ -552,6 +566,11 @@ UbLifecycleCoordinator::TerminatePacket(const UbPacketAttemptIdentity& identity,
         NS_ABORT_MSG("Unknown packet lifecycle terminal");
     }
     state.snapshot.lastTerminalSequence = ++state.sequence;
+    const auto callback = state.stateChangedCallback;
+    if (!callback.IsNull())
+    {
+        callback(identity.owner);
+    }
 }
 
 void

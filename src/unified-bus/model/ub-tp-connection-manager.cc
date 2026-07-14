@@ -603,20 +603,11 @@ void TpConnectionManager::RemoveUselessTps(uint32_t jettyNum, uint32_t src, uint
     if (!m_removeUselessTp) { // 仅在开启了删除无用tp模式下才进行此操作
         return;
     }
-    std::lock_guard<std::mutex> controlLock(g_tpConnectionControlLock);
-    auto ctrl = NodeList::GetNode(src)->GetObject<UbController>();
-    auto sendTa = ctrl->GetUbTransaction();
-    // 事务层删除与该jetty绑定的tp记录
-    sendTa->DestroyJettyTpMap(jettyNum);
-    // 获取当前已经没有jetty与之绑定的tp
-    auto tpns = sendTa->GetUselessTpns();
-    for (uint32_t i = 0; i < tpns.size(); i++) {
-        ctrl->DestroyTp(tpns[i]);
-        Connection conn = GetConnection(tpns[i], src, dst);
-        NodeList::GetNode(dst)->GetObject<UbController>()->DestroyTp(conn.tpn2);
-        NS_LOG_DEBUG("Delete node: " << src << " tpn: " << tpns[i] <<
-                        " node: " << dst << " tpn:" << conn.tpn2);
-    }
+    (void)jettyNum;
+    (void)src;
+    (void)dst;
+    (void)priority;
+    NS_ABORT_MSG("RemoveUselessTp task-driven teardown is unsupported; use explicit TP lifecycle management");
 }
 
 uint32_t TpConnectionManager::GetNextTpn()
