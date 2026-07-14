@@ -11,6 +11,7 @@
 #include "ns3/ub-datalink.h"
 #include "ns3/ub-function.h"
 #include "ns3/ub-header.h"
+#include "ns3/ub-lifecycle.h"
 #include "ns3/ub-modulo-sequence.h"
 #include "ns3/ub-network-address.h"
 #include "ns3/ub-port.h"
@@ -1180,7 +1181,7 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t receive
         return false;
     }
 
-    Ptr<Packet> copy = packet->Copy();
+    Ptr<Packet> copy = CopyPacketView(packet);
 
     UbDatalinkPacketHeader linkHeader;
     if (copy->RemoveHeader(linkHeader) == 0 ||
@@ -1240,7 +1241,7 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t receive
 
     if (copy->GetSize() >= UbCompactAckTransactionHeader().GetSerializedSize())
     {
-        Ptr<Packet> ackCandidate = copy->Copy();
+        Ptr<Packet> ackCandidate = CopyPacketView(copy);
         UbCompactAckTransactionHeader ackHeader;
         if (ackCandidate->RemoveHeader(ackHeader) != 0 &&
             (ackHeader.GetTaOpcode() ==

@@ -530,7 +530,7 @@ UbPacketType_t UbSwitch::GetPacketType(Ptr<Packet> packet)
     if (dlHeader.IsPacketIpv4Header())
         return UB_URMA_DATA_PACKET;
     if (dlHeader.GetConfig() == static_cast<uint8_t>(UbDatalinkHeaderConfig::PACKET_CNA16)) {
-        Ptr<Packet> copy = packet->Copy();
+        Ptr<Packet> copy = CopyPacketView(packet);
         UbDatalinkPacketHeader packetHeader;
         UbCna16NetworkHeader cna16Header;
         copy->RemoveHeader(packetHeader);
@@ -541,7 +541,7 @@ UbPacketType_t UbSwitch::GetPacketType(Ptr<Packet> packet)
         return UB_LDST_DATA_PACKET;
     }
     if (dlHeader.GetConfig() == static_cast<uint8_t>(UbDatalinkHeaderConfig::PACKET_CNA24)) {
-        Ptr<Packet> copy = packet->Copy();
+        Ptr<Packet> copy = CopyPacketView(packet);
         UbDatalinkPacketHeader packetHeader;
         UbCna24NetworkHeader cna24Header;
         copy->RemoveHeader(packetHeader);
@@ -779,7 +779,7 @@ bool UbSwitch::SinkCtpDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
     if (controller != nullptr) {
         Ptr<UbCtpTransportService> ctpService = controller->GetCtpTransportService();
         if (ctpService != nullptr) {
-            ctpService->HandleReceivedPacket(packet->Copy(), port->GetIfIndex());
+            ctpService->HandleReceivedPacket(CopyPacketTransfer(packet), port->GetIfIndex());
         }
     }
 
@@ -827,6 +827,8 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
         utils::UbUtils::RecordRuntimePacketDrop("ingress buffer full");
         NS_LOG_WARN("NodeId " << GetObject<Node>()->GetId() << " InPort " << inPort << " pri=" << (uint32_t)priority
                     << " buffer full. Packet Dropped!");
+        UbLifecycleCoordinator::TerminatePacket(packet,
+                                                UbPacketTerminal::INGRESS_QUEUE_FULL);
         return;
     }
 
@@ -868,6 +870,8 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
         utils::UbUtils::RecordRuntimePacketDrop("ingress buffer full");
         NS_LOG_WARN("NodeId " << GetObject<Node>()->GetId() << " InPort " << inPort << " pri=" << (uint32_t)priority
                     << " buffer full. Packet Dropped!");
+        UbLifecycleCoordinator::TerminatePacket(packet,
+                                                UbPacketTerminal::INGRESS_QUEUE_FULL);
         return;
     }
 
@@ -905,6 +909,8 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
         utils::UbUtils::RecordRuntimePacketDrop("ingress buffer full");
         NS_LOG_WARN("NodeId " << GetObject<Node>()->GetId() << " InPort " << inPort << " pri=" << (uint32_t)priority
                     << " buffer full. Packet Dropped!");
+        UbLifecycleCoordinator::TerminatePacket(packet,
+                                                UbPacketTerminal::INGRESS_QUEUE_FULL);
         return;
     }
 

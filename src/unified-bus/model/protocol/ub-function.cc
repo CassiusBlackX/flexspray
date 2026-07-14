@@ -332,6 +332,7 @@ UbJettyManager::Init(uint32_t nodeId, Ptr<UbLifecycleCoordinator> coordinator)
 {
     m_nodeId = nodeId;
     m_coordinator = coordinator;
+    m_trackedEvents.Init(coordinator);
 }
 
 void
@@ -550,7 +551,7 @@ bool
 UbJettyManager::IsDrainReady(const JettyRecord& record) const
 {
     return record.wqes.empty() && record.jetty->GetActiveWqeCount() == 0 &&
-           record.trackedEvents.empty() &&
+           !m_trackedEvents.HasEvents(record.identity) &&
            !GetTransaction()->HasLifecycleOperationForJetty(record.jetty->GetJettyNum());
 }
 
@@ -566,17 +567,7 @@ UbJettyManager::TrackEvent(uint32_t jettyNum)
 {
     auto it = m_records.find(jettyNum);
     NS_ABORT_MSG_IF(it == m_records.end(), "Cannot track work for a missing Jetty");
-    NS_ABORT_MSG_IF(m_nextEventToken == std::numeric_limits<uint64_t>::max(),
-                    "Tracked-event token exhausted");
-    const uint64_t token = ++m_nextEventToken;
-    Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
-    TrackedEventRecord record;
-    record.lease = coordinator->AcquireLease(it->second.identity,
-                                             UbLifecycleLeaseKind::TRACKED_EVENT,
-                                             it->second.identity);
-    NS_ABORT_MSG_IF(!it->second.trackedEvents.emplace(token, record).second,
-                    "Duplicate Jetty tracked-event token");
-    return token;
+    return m_trackedEvents.Track(it->second.identity);
 }
 
 void
@@ -587,14 +578,7 @@ UbJettyManager::AttachEvent(uint32_t jettyNum,
 {
     auto it = m_records.find(jettyNum);
     NS_ABORT_MSG_IF(it == m_records.end(), "Cannot attach work for a missing Jetty");
-    auto tracked = it->second.trackedEvents.find(token);
-    NS_ABORT_MSG_IF(tracked == it->second.trackedEvents.end(),
-                    "Cannot attach an unknown tracked event");
-    NS_ABORT_MSG_IF(tracked->second.event.IsPending(),
-                    "Tracked event already has an attached EventId");
-    NS_ABORT_MSG_IF(!event.IsPending(), "Tracked event must attach a pending EventId");
-    tracked->second.event = event;
-    tracked->second.cancelCleanup = cancelCleanup;
+    m_trackedEvents.Attach(it->second.identity, token, event, cancelCleanup);
 }
 
 bool
@@ -605,15 +589,7 @@ UbJettyManager::BeginEvent(uint32_t jettyNum, uint64_t token)
     {
         return false;
     }
-    auto tracked = it->second.trackedEvents.find(token);
-    if (tracked == it->second.trackedEvents.end())
-    {
-        return false;
-    }
-    NS_ABORT_MSG_IF(tracked->second.phase != TrackedEventPhase::PENDING,
-                    "Tracked event began more than once");
-    tracked->second.phase = TrackedEventPhase::RUNNING;
-    return true;
+    return m_trackedEvents.Begin(it->second.identity, token);
 }
 
 void
@@ -621,13 +597,7 @@ UbJettyManager::ResolveEvent(uint32_t jettyNum, uint64_t token)
 {
     auto it = m_records.find(jettyNum);
     NS_ABORT_MSG_IF(it == m_records.end(), "Tracked event references a retired Jetty");
-    const auto event = it->second.trackedEvents.find(token);
-    NS_ABORT_MSG_IF(event == it->second.trackedEvents.end(),
-                    "Tracked event release would underflow");
-    NS_ABORT_MSG_IF(event->second.phase != TrackedEventPhase::RUNNING,
-                    "Tracked event resolved before its handler began");
-    m_coordinator->ReleaseLease(event->second.lease);
-    it->second.trackedEvents.erase(event);
+    m_trackedEvents.Resolve(it->second.identity, token);
     NotifyProgress(jettyNum);
 }
 
@@ -697,29 +667,8 @@ UbJettyManager::DestroyJetty(uint32_t jettyNum,
     }
     if (it->second.cleanupMode == CleanupMode::FORCE)
     {
-        Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
-        std::vector<Callback<void>> cancelCleanups;
-        for (auto tracked = it->second.trackedEvents.begin();
-             tracked != it->second.trackedEvents.end();)
-        {
-            if (tracked->second.phase == TrackedEventPhase::RUNNING)
-            {
-                ++tracked;
-                continue;
-            }
-            if (tracked->second.event.IsPending())
-            {
-                tracked->second.event.Cancel();
-            }
-            Callback<void> cancelCleanup = tracked->second.cancelCleanup;
-            tracked->second.cancelCleanup = {};
-            if (!cancelCleanup.IsNull())
-            {
-                cancelCleanups.push_back(cancelCleanup);
-            }
-            coordinator->ReleaseLease(tracked->second.lease);
-            tracked = it->second.trackedEvents.erase(tracked);
-        }
+        std::vector<Callback<void>> cancelCleanups =
+            m_trackedEvents.CancelPending(it->second.identity);
         for (const Callback<void>& cancelCleanup : cancelCleanups)
         {
             cancelCleanup();
@@ -800,6 +749,9 @@ UbJettyManager::DisposeAll()
                         "Forced Jetty manager disposal left active residue");
     }
     NS_ABORT_MSG_IF(!m_records.empty(), "Forced Jetty manager disposal did not erase all records");
+    NS_ABORT_MSG_IF(!m_trackedEvents.IsEmpty(),
+                    "Forced Jetty manager disposal left tracked events");
+    m_trackedEvents.Clear();
     m_ctpService = nullptr;
     m_transaction = nullptr;
     m_coordinator = nullptr;
@@ -810,6 +762,8 @@ UbJettyManager::DoDispose()
 {
     NS_ABORT_MSG_IF(!m_records.empty(),
                     "UbJettyManager disposal requires explicit forced record disposal");
+    NS_ABORT_MSG_IF(!m_trackedEvents.IsEmpty(),
+                    "UbJettyManager disposal requires resolved tracked events");
     m_records.clear();
     m_ctpService = nullptr;
     m_transaction = nullptr;

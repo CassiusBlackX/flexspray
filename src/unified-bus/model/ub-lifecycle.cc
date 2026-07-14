@@ -5,6 +5,7 @@
 #include "ns3/node.h"
 #include "ns3/node-list.h"
 
+#include <algorithm>
 #include <limits>
 #include <tuple>
 
@@ -14,6 +15,20 @@ namespace ns3
 NS_OBJECT_ENSURE_REGISTERED(UbPacketLifecycleTag);
 NS_OBJECT_ENSURE_REGISTERED(UbTransactionCorrelationTag);
 NS_OBJECT_ENSURE_REGISTERED(UbLifecycleCoordinator);
+
+Ptr<Packet>
+CopyPacketView(Ptr<const Packet> packet)
+{
+    NS_ABORT_MSG_IF(packet == nullptr, "Cannot create a parser view of a null packet");
+    return packet->Copy();
+}
+
+Ptr<Packet>
+CopyPacketTransfer(Ptr<const Packet> packet)
+{
+    NS_ABORT_MSG_IF(packet == nullptr, "Cannot create a transfer copy of a null packet");
+    return packet->Copy();
+}
 
 namespace
 {
@@ -518,10 +533,141 @@ UbLifecycleCoordinator::TerminatePacket(const UbPacketAttemptIdentity& identity,
     case UbPacketTerminal::ROUTE_NOT_FOUND:
         ++state.snapshot.routeNotFoundDrops;
         break;
+    case UbPacketTerminal::EGRESS_QUEUE_FULL:
+        ++state.snapshot.egressQueueFullDrops;
+        break;
+    case UbPacketTerminal::INGRESS_QUEUE_FULL:
+        ++state.snapshot.ingressQueueFullDrops;
+        break;
+    case UbPacketTerminal::FAULT_DROP:
+        ++state.snapshot.faultDrops;
+        break;
+    case UbPacketTerminal::CHANNEL_FAILURE:
+        ++state.snapshot.channelFailureDrops;
+        break;
+    case UbPacketTerminal::MALFORMED_PACKET:
+        ++state.snapshot.malformedPacketDrops;
+        break;
     default:
         NS_ABORT_MSG("Unknown packet lifecycle terminal");
     }
     state.snapshot.lastTerminalSequence = ++state.sequence;
+}
+
+void
+UbTrackedEventSet::Init(Ptr<UbLifecycleCoordinator> coordinator)
+{
+    NS_ABORT_MSG_IF(coordinator == nullptr, "Tracked events require a lifecycle coordinator");
+    NS_ABORT_MSG_IF(m_coordinator != nullptr && m_coordinator != coordinator,
+                    "Tracked events cannot replace their lifecycle coordinator");
+    m_coordinator = coordinator;
+}
+
+uint64_t
+UbTrackedEventSet::Track(const UbLifecycleResourceIdentity& owner)
+{
+    NS_ABORT_MSG_IF(m_coordinator == nullptr, "Tracked events have no lifecycle coordinator");
+    NS_ABORT_MSG_IF(m_nextToken == std::numeric_limits<uint64_t>::max(),
+                    "Tracked-event token exhausted");
+    const uint64_t token = ++m_nextToken;
+    Record record;
+    record.owner = owner;
+    record.lease = m_coordinator->AcquireLease(owner,
+                                               UbLifecycleLeaseKind::TRACKED_EVENT,
+                                               owner);
+    NS_ABORT_MSG_IF(!m_records.emplace(token, record).second,
+                    "Duplicate tracked-event token");
+    return token;
+}
+
+void
+UbTrackedEventSet::Attach(const UbLifecycleResourceIdentity& owner,
+                          uint64_t token,
+                          EventId event,
+                          Callback<void> cancelCleanup)
+{
+    auto tracked = m_records.find(token);
+    NS_ABORT_MSG_IF(tracked == m_records.end() || tracked->second.owner != owner,
+                    "Cannot attach an unknown tracked event");
+    NS_ABORT_MSG_IF(tracked->second.event.IsPending(),
+                    "Tracked event already has an attached EventId");
+    NS_ABORT_MSG_IF(!event.IsPending(), "Tracked event must attach a pending EventId");
+    tracked->second.event = event;
+    tracked->second.cancelCleanup = cancelCleanup;
+}
+
+bool
+UbTrackedEventSet::Begin(const UbLifecycleResourceIdentity& owner, uint64_t token)
+{
+    auto tracked = m_records.find(token);
+    if (tracked == m_records.end() || tracked->second.owner != owner)
+    {
+        return false;
+    }
+    NS_ABORT_MSG_IF(tracked->second.phase != Phase::PENDING,
+                    "Tracked event began more than once");
+    tracked->second.phase = Phase::RUNNING;
+    return true;
+}
+
+void
+UbTrackedEventSet::Resolve(const UbLifecycleResourceIdentity& owner, uint64_t token)
+{
+    const auto event = m_records.find(token);
+    NS_ABORT_MSG_IF(event == m_records.end() || event->second.owner != owner,
+                    "Tracked event release would underflow");
+    NS_ABORT_MSG_IF(event->second.phase != Phase::RUNNING,
+                    "Tracked event resolved before its handler began");
+    m_coordinator->ReleaseLease(event->second.lease);
+    m_records.erase(event);
+}
+
+bool
+UbTrackedEventSet::HasEvents(const UbLifecycleResourceIdentity& owner) const
+{
+    return std::any_of(m_records.begin(),
+                       m_records.end(),
+                       [&owner](const auto& entry) { return entry.second.owner == owner; });
+}
+
+std::vector<Callback<void>>
+UbTrackedEventSet::CancelPending(const UbLifecycleResourceIdentity& owner)
+{
+    std::vector<Callback<void>> cancelCleanups;
+    for (auto tracked = m_records.begin(); tracked != m_records.end();)
+    {
+        if (tracked->second.owner != owner || tracked->second.phase == Phase::RUNNING)
+        {
+            ++tracked;
+            continue;
+        }
+        if (tracked->second.event.IsPending())
+        {
+            tracked->second.event.Cancel();
+        }
+        Callback<void> cancelCleanup = tracked->second.cancelCleanup;
+        tracked->second.cancelCleanup = {};
+        if (!cancelCleanup.IsNull())
+        {
+            cancelCleanups.push_back(cancelCleanup);
+        }
+        m_coordinator->ReleaseLease(tracked->second.lease);
+        tracked = m_records.erase(tracked);
+    }
+    return cancelCleanups;
+}
+
+bool
+UbTrackedEventSet::IsEmpty() const
+{
+    return m_records.empty();
+}
+
+void
+UbTrackedEventSet::Clear()
+{
+    NS_ABORT_MSG_IF(!m_records.empty(), "Cannot clear active tracked events");
+    m_coordinator = nullptr;
 }
 
 } // namespace ns3

@@ -867,6 +867,8 @@ UbTransportChannel::EnqueueDcqcnCnp(uint8_t ecn, bool location)
                                 m_useShortestPaths,
                                 UbDatalinkHeaderConfig::PACKET_IPV4);
 
+    UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId))
+        ->RegisterPacketAttempt(m_packetLifecycleOwner, cnp);
     if (m_cnpQ.empty() && m_ackQ.empty() && m_wqeSegmentVector.empty()) {
         m_headArrivalTime = Simulator::Now();
     }
@@ -1607,24 +1609,34 @@ void UbTransportChannel::RecvTpAck(Ptr<Packet> p)
 {
     TransportResponseContext ctx;
     if (!ParseTransportResponsePacket(p, ctx)) {
+        UbLifecycleCoordinator::TerminatePacket(p,
+                                                UbPacketTerminal::MALFORMED_PACKET);
         return;
     }
 
     if (HandleReceivedCnp(ctx)) {
+        UbLifecycleCoordinator::TerminatePacket(p,
+                                                UbPacketTerminal::ENDPOINT_CONSUMED);
         return;
     }
 
     if (HandleReceivedTpNak(ctx)) {
+        UbLifecycleCoordinator::TerminatePacket(p,
+                                                UbPacketTerminal::ENDPOINT_CONSUMED);
         return;
     }
 
     const uint64_t previousSndUna = m_psnSndUna;
     UbRetransAckResult ackResult;
     if (!HandleReceivedAckOrSack(ctx, previousSndUna, ackResult)) {
+        UbLifecycleCoordinator::TerminatePacket(p,
+                                                UbPacketTerminal::ENDPOINT_CONSUMED);
         return;
     }
 
     FinalizeTransportAckProgress(ctx, previousSndUna);
+    UbLifecycleCoordinator::TerminatePacket(p,
+                                            UbPacketTerminal::ENDPOINT_CONSUMED);
 }
 
 
@@ -1770,6 +1782,8 @@ UbTransportChannel::EnqueueTransportResponse(Ptr<Packet> response,
                                              const char* logType,
                                              uint64_t psn)
 {
+    UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId))
+        ->RegisterPacketAttempt(m_packetLifecycleOwner, response);
     if (m_ackQ.empty()) {
         m_headArrivalTime = Simulator::Now();
     }

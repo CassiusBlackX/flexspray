@@ -6,6 +6,7 @@
 #include "ns3/nstime.h"
 #include "ns3/ub-datatype.h"
 #include "ns3/ub-header.h"
+#include "ns3/ub-lifecycle.h"
 #include "ns3/packet.h"
 
 #include <cstdint>
@@ -272,11 +273,14 @@ public:
 
 private:
     void ScheduleTimeout();
+    void HandleTrackedTimeout(uint64_t token);
 
     UbTransportChannel& m_transport;
     std::unique_ptr<UbGbnRetransStrategy> m_gbn;
     std::unique_ptr<UbSelectiveRetransStrategy> m_selective;
     EventId m_retransEvent{};
+    UbTrackedEventSet m_trackedEvents;
+    bool m_trackedEventsInitialized{false};
     Time m_baseRto{NanoSeconds(25600)};
     Time m_rto{NanoSeconds(25600)};
     uint16_t m_maxRetransAttempts{7};
