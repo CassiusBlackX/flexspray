@@ -390,7 +390,7 @@ namespace ns3 {
 
         std::map<std::pair<uint32_t, uint32_t>, OperationRecord> m_operations;
         std::map<AdmissionDomainKey, AdmissionDomainState> m_admissionDomains;
-        std::optional<UbLifecycleResourceIdentity> m_suppressedTpgOwnerProgress;
+        std::vector<UbLifecycleResourceIdentity> m_suppressedTpgOwnerProgress;
     };
 
 } // namespace ns3

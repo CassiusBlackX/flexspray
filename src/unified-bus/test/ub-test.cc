@@ -9635,6 +9635,442 @@ class UbLifecycleTypedTpgCleanupTerminatesBlockedTailTest : public TestCase
     std::vector<UbWqeCompletion> m_terminals;
 };
 
+class UbLifecycleTypedLastTpgMemberRemovalTerminatesActiveUseTest : public TestCase
+{
+  public:
+    UbLifecycleTypedLastTpgMemberRemovalTerminatesActiveUseTest(
+        UbDestroyReason reason,
+        const std::string& reasonName)
+        : TestCase("UnifiedBus - " + reasonName +
+                   " last TPG member removal terminates active use"),
+          m_reason(reason)
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        Config::SetDefault("ns3::UbTransportChannel::DefaultMaxWqeSegNum",
+                           UintegerValue(1));
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        InstallAdditionalTpPair(topo, 303, 404);
+        InstallAdditionalTpPair(topo, 305, 406);
+        m_controller = topo.sender->GetObject<UbController>();
+        m_function = m_controller->GetUbFunction();
+        m_transaction = m_controller->GetUbTransaction();
+        m_coordinator = UbLifecycleCoordinator::GetOrCreate(topo.sender);
+        m_memberTp = m_controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        m_directTp = m_controller->GetTpByTpn(303);
+        Ptr<UbTransportChannel> removedTp = m_controller->GetTpByTpn(305);
+
+        constexpr uint32_t groupJetty = kUrmaWriteRegressionJettyNum;
+        constexpr uint32_t directJetty = kUrmaWriteRegressionJettyNum + 1;
+        m_function->CreateJetty(topo.sender->GetId(), topo.receiver->GetId(), groupJetty);
+        m_function->CreateJetty(topo.sender->GetId(), topo.receiver->GetId(), directJetty);
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->JettyBindTp(topo.sender->GetId(),
+                                                         topo.receiver->GetId(),
+                                                         groupJetty,
+                                                         true,
+                                                         {m_memberTp->GetTpn(), removedTp->GetTpn()}),
+                              true,
+                              "Last-member fixture should bind an exact two-member TPG");
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->JettyBindTp(topo.sender->GetId(),
+                                                         topo.receiver->GetId(),
+                                                         directJetty,
+                                                         false,
+                                                         {m_directTp->GetTpn()}),
+                              true,
+                              "Last-member fixture should retain an unrelated direct binding");
+        const UbRtpTransportReference* groupReference =
+            m_transaction->FindRtpTransportReference(groupJetty);
+        const UbRtpTransportReference* directReference =
+            m_transaction->FindRtpTransportReference(directJetty);
+        NS_TEST_ASSERT_MSG_NE(groupReference, nullptr, "Fixture should expose exact TPG ref");
+        NS_TEST_ASSERT_MSG_NE(directReference, nullptr, "Fixture should expose direct TP ref");
+        m_groupIdentity = groupReference->GetIdentity();
+        m_directIdentity = directReference->GetIdentity();
+        m_group = m_controller->ResolveRtpTpGroup(m_groupIdentity);
+        NS_TEST_ASSERT_MSG_NE(m_group, nullptr, "Fixture should resolve the one-member TPG");
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(m_controller->RemoveRtpTpGroupMember(
+                m_groupIdentity,
+                removedTp->GetLifecycleOwner(),
+                UbDestroyReason::EXPLICIT)),
+            static_cast<uint32_t>(UbTpgMemberMutationStatus::REMOVED),
+            "Fixture should synchronously remove the non-last member");
+        Ptr<UbJetty> jetty = m_function->GetJetty(groupJetty);
+        jetty->SetTaSegmentBytes(64);
+        jetty->SetWqeCompletionCallback(
+            MakeCallback(
+                &UbLifecycleTypedLastTpgMemberRemovalTerminatesActiveUseTest::ObserveTerminal,
+                this));
+        m_memberTp->TraceConnectWithoutContext(
+            "FirstPacketSendsNotify",
+            MakeCallback(
+                &UbLifecycleTypedLastTpgMemberRemovalTerminatesActiveUseTest::ObserveFirstPacket,
+                this));
+
+        m_taskId = kUrmaWriteRegressionTaskId + 92;
+        Ptr<UbWqe> wqe = m_function->CreateWqe(topo.sender->GetId(),
+                                               topo.receiver->GetId(),
+                                               128,
+                                               m_taskId,
+                                               TaOpcode::TA_OPCODE_WRITE);
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(m_function->SubmitWqe(wqe, groupJetty).status),
+            static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+            "Last-member fixture should acquire one TPG-use lease");
+        Simulator::Run();
+
+        NS_TEST_ASSERT_MSG_EQ(m_started,
+                              true,
+                              "Last-member cleanup should start one exact-TP segment");
+        NS_TEST_ASSERT_MSG_EQ(m_group->GetMemberCount(),
+                              1u,
+                              "Last-member cleanup should begin with one canonical member");
+        NS_TEST_ASSERT_MSG_EQ(
+            m_coordinator->GetSnapshot(m_groupIdentity).activeTransportUseLeases,
+            1u,
+            "Blocked tail should retain one TPG-use lease before member cleanup");
+
+        const UbTpgMemberMutationStatus status =
+            m_controller->RemoveRtpTpGroupMember(m_groupIdentity,
+                                                  m_memberTp->GetLifecycleOwner(),
+                                                  m_reason);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(status),
+                              static_cast<uint32_t>(UbTpgMemberMutationStatus::REMOVED),
+                              "Typed abort/force should finish last-member removal");
+        NS_TEST_ASSERT_MSG_EQ(m_controller->ResolveRtpTpGroup(m_groupIdentity),
+                              m_group,
+                              "Member cleanup should retain the active empty TPG owner");
+        NS_TEST_ASSERT_MSG_EQ(m_group->GetMemberCount(),
+                              0u,
+                              "Typed cleanup should remove the exact last member");
+        NS_TEST_ASSERT_MSG_EQ(m_terminals.size(),
+                              1u,
+                              "Typed last-member cleanup should emit one WQE terminal");
+        if (m_terminals.size() == 1)
+        {
+            const UbWorkOutcome expected = m_reason == UbDestroyReason::ERROR
+                                               ? UbWorkOutcome::FAILED
+                                               : UbWorkOutcome::FLUSHED;
+            NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_terminals[0].outcome),
+                                  static_cast<uint32_t>(expected),
+                                  "Member cleanup reason should preserve typed outcome");
+        }
+        NS_TEST_ASSERT_MSG_EQ(
+            m_coordinator->GetSnapshot(m_groupIdentity).activeTransportUseLeases,
+            0u,
+            "Typed last-member cleanup should release exact group use");
+        NS_TEST_ASSERT_MSG_EQ(
+            m_coordinator->GetSnapshot(m_memberTp->GetLifecycleOwner()).activeBindingLeases,
+            0u,
+            "Typed last-member cleanup should release membership exactly once");
+        NS_TEST_ASSERT_MSG_EQ(m_controller->GetTpByTpn(m_memberTp->GetTpn()),
+                              m_memberTp,
+                              "Typed last-member cleanup must retain the member TP");
+        NS_TEST_ASSERT_MSG_EQ(
+            m_coordinator->IsResourceActive(m_memberTp->GetLifecycleOwner()),
+            true,
+            "Typed last-member cleanup must retain the member generation");
+        const UbRtpTransportReference* directAfter =
+            m_transaction->FindRtpTransportReference(directJetty);
+        NS_TEST_ASSERT_MSG_NE(directAfter,
+                              nullptr,
+                              "Typed last-member cleanup must retain unrelated direct binding");
+        if (directAfter != nullptr)
+        {
+            NS_TEST_ASSERT_MSG_EQ(directAfter->GetIdentity(),
+                                  m_directIdentity,
+                                  "Unrelated direct binding must retain exact generation");
+        }
+        if (m_reason == UbDestroyReason::ERROR)
+        {
+            UbTransactionOperationSnapshot tombstone;
+            NS_TEST_ASSERT_MSG_EQ(m_transaction->TryGetOperationSnapshot(groupJetty,
+                                                                          m_taskId,
+                                                                          tombstone),
+                                  true,
+                                  "ERROR member cleanup should retain started TP tombstone");
+            NS_TEST_ASSERT_MSG_EQ(tombstone.activeSegments,
+                                  1u,
+                                  "ERROR member cleanup should retain one started segment");
+            NS_TEST_ASSERT_MSG_EQ(m_memberTp->GetWqeSegmentVecSize(),
+                                  1u,
+                                  "ERROR member cleanup should leave started exact-TP work");
+        }
+        else
+        {
+            NS_TEST_ASSERT_MSG_EQ(m_transaction->HasWqeOperation(groupJetty, m_taskId),
+                                  false,
+                                  "Force member cleanup should erase the operation");
+            NS_TEST_ASSERT_MSG_EQ(m_memberTp->GetWqeSegmentVecSize(),
+                                  0u,
+                                  "Force member cleanup should remove started exact-TP work");
+        }
+
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(m_terminals.size(),
+                              1u,
+                              "Late exact-TP cleanup must not repeat WQE terminal");
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(m_controller->DestroyRtpTpGroup(m_groupIdentity)),
+            static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
+            "Active empty group should remain independently destroyable");
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(m_function->DestroyJetty(groupJetty)),
+            static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
+            "Unbound group Jetty should remain independently destroyable");
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(m_function->DestroyJetty(directJetty)),
+            static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
+            "Unrelated direct Jetty should remain independently destroyable");
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    void ObserveFirstPacket(uint32_t,
+                            uint32_t taskId,
+                            uint32_t,
+                            uint32_t,
+                            uint32_t,
+                            uint32_t,
+                            uint32_t)
+    {
+        if (taskId == m_taskId && !m_started)
+        {
+            m_started = true;
+            Simulator::Stop(NanoSeconds(1));
+        }
+    }
+
+    void ObserveTerminal(UbWqeCompletion completion)
+    {
+        if (completion.wqeId == m_taskId)
+        {
+            m_terminals.push_back(completion);
+        }
+    }
+
+    UbDestroyReason m_reason;
+    Ptr<UbController> m_controller;
+    Ptr<UbFunction> m_function;
+    Ptr<UbTransaction> m_transaction;
+    Ptr<UbLifecycleCoordinator> m_coordinator;
+    Ptr<UbTransportGroup> m_group;
+    Ptr<UbTransportChannel> m_memberTp;
+    Ptr<UbTransportChannel> m_directTp;
+    UbLifecycleResourceIdentity m_groupIdentity;
+    UbLifecycleResourceIdentity m_directIdentity;
+    uint32_t m_taskId{0};
+    bool m_started{false};
+    std::vector<UbWqeCompletion> m_terminals;
+};
+
+#ifndef _WIN32
+class UbLifecycleReentrantTypedTpgCleanupTest : public TestCase
+{
+  public:
+    UbLifecycleReentrantTypedTpgCleanupTest(bool destroyOtherGroup,
+                                            const std::string& scenarioName)
+        : TestCase("UnifiedBus - reentrant typed cleanup " + scenarioName),
+          m_destroyOtherGroup(destroyOtherGroup)
+    {
+    }
+
+    void DoRun() override
+    {
+        const int status = RunInChildProcess([this]() { RunScenario(); });
+        NS_TEST_ASSERT_MSG_EQ(WIFEXITED(status),
+                              1,
+                              "Reentrant typed cleanup must not abort or crash");
+        if (WIFEXITED(status))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(status),
+                                  0,
+                                  "Reentrant typed cleanup must finalize each exact group once");
+        }
+    }
+
+  private:
+    void RunScenario()
+    {
+        Config::Reset();
+        Config::SetDefault("ns3::UbTransportChannel::DefaultMaxWqeSegNum",
+                           UintegerValue(0));
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        InstallAdditionalTpPair(topo, 303, 404);
+        InstallAdditionalTpPair(topo, 305, 406);
+        InstallAdditionalTpPair(topo, 307, 408);
+        m_controller = topo.sender->GetObject<UbController>();
+        m_function = m_controller->GetUbFunction();
+        m_transaction = m_controller->GetUbTransaction();
+        m_coordinator = UbLifecycleCoordinator::GetOrCreate(topo.sender);
+        constexpr uint32_t firstJetty = kUrmaWriteRegressionJettyNum;
+        constexpr uint32_t secondJetty = kUrmaWriteRegressionJettyNum + 1;
+        m_function->CreateJetty(topo.sender->GetId(), topo.receiver->GetId(), firstJetty);
+        if (m_destroyOtherGroup)
+        {
+            m_function->CreateJetty(topo.sender->GetId(),
+                                    topo.receiver->GetId(),
+                                    secondJetty);
+        }
+        if (!m_transaction->JettyBindTp(topo.sender->GetId(),
+                                        topo.receiver->GetId(),
+                                        firstJetty,
+                                        true,
+                                        {kUrmaWriteRegressionSenderTpn, 303}))
+        {
+            std::_Exit(1);
+        }
+        const UbRtpTransportReference* firstReference =
+            m_transaction->FindRtpTransportReference(firstJetty);
+        if (firstReference == nullptr)
+        {
+            std::_Exit(2);
+        }
+        m_firstGroupIdentity = firstReference->GetIdentity();
+        if (m_destroyOtherGroup)
+        {
+            if (!m_transaction->JettyBindTp(topo.sender->GetId(),
+                                            topo.receiver->GetId(),
+                                            secondJetty,
+                                            true,
+                                            {305, 307}))
+            {
+                std::_Exit(3);
+            }
+            const UbRtpTransportReference* secondReference =
+                m_transaction->FindRtpTransportReference(secondJetty);
+            if (secondReference == nullptr)
+            {
+                std::_Exit(4);
+            }
+            m_secondGroupIdentity = secondReference->GetIdentity();
+        }
+        m_function->GetJetty(firstJetty)->SetWqeCompletionCallback(
+            MakeCallback(&UbLifecycleReentrantTypedTpgCleanupTest::ObserveTerminal, this));
+        if (m_destroyOtherGroup)
+        {
+            m_function->GetJetty(secondJetty)->SetWqeCompletionCallback(
+                MakeCallback(&UbLifecycleReentrantTypedTpgCleanupTest::ObserveTerminal, this));
+        }
+        m_firstTask = kUrmaWriteRegressionTaskId + 94;
+        m_secondTask = kUrmaWriteRegressionTaskId + 95;
+        Ptr<UbWqe> firstWqe = m_function->CreateWqe(topo.sender->GetId(),
+                                                    topo.receiver->GetId(),
+                                                    64,
+                                                    m_firstTask,
+                                                    TaOpcode::TA_OPCODE_WRITE);
+        if (m_function->SubmitWqe(firstWqe, firstJetty).status !=
+            UbWqeSubmissionStatus::ACCEPTED)
+        {
+            std::_Exit(5);
+        }
+        if (m_destroyOtherGroup)
+        {
+            Ptr<UbWqe> secondWqe = m_function->CreateWqe(topo.sender->GetId(),
+                                                         topo.receiver->GetId(),
+                                                         64,
+                                                         m_secondTask,
+                                                         TaOpcode::TA_OPCODE_WRITE);
+            if (m_function->SubmitWqe(secondWqe, secondJetty).status !=
+                UbWqeSubmissionStatus::ACCEPTED)
+            {
+                std::_Exit(6);
+            }
+        }
+        if (m_coordinator->GetSnapshot(m_firstGroupIdentity).activeTransportUseLeases != 1 ||
+            (m_destroyOtherGroup &&
+             m_coordinator->GetSnapshot(m_secondGroupIdentity).activeTransportUseLeases != 1))
+        {
+            std::_Exit(7);
+        }
+
+        const UbDestroyStatus firstStatus =
+            m_controller->DestroyRtpTpGroup(m_firstGroupIdentity, UbDestroyReason::ERROR);
+        if (firstStatus != UbDestroyStatus::COMPLETED ||
+            m_nestedStatus != UbDestroyStatus::COMPLETED ||
+            m_firstTerminalCount != 1 ||
+            (m_destroyOtherGroup && m_secondTerminalCount != 1) ||
+            m_controller->ResolveRtpTpGroup(m_firstGroupIdentity) != nullptr ||
+            (m_destroyOtherGroup &&
+             m_controller->ResolveRtpTpGroup(m_secondGroupIdentity) != nullptr))
+        {
+            std::_Exit(8);
+        }
+        const UbLifecycleResourceSnapshot firstSnapshot =
+            m_coordinator->GetSnapshot(m_firstGroupIdentity);
+        if (!firstSnapshot.retired || firstSnapshot.successfulTerminals != 1 ||
+            firstSnapshot.activeTransportUseLeases != 0)
+        {
+            std::_Exit(9);
+        }
+        if (m_destroyOtherGroup)
+        {
+            const UbLifecycleResourceSnapshot secondSnapshot =
+                m_coordinator->GetSnapshot(m_secondGroupIdentity);
+            if (!secondSnapshot.retired || secondSnapshot.successfulTerminals != 1 ||
+                secondSnapshot.activeTransportUseLeases != 0 ||
+                m_transaction->HasWqeOperation(secondJetty, m_secondTask))
+            {
+                std::_Exit(10);
+            }
+        }
+        if (m_transaction->HasWqeOperation(firstJetty, m_firstTask) ||
+            m_controller->DestroyRtpTpGroup(m_firstGroupIdentity,
+                                            UbDestroyReason::ERROR) !=
+                UbDestroyStatus::NOT_FOUND ||
+            (m_destroyOtherGroup &&
+             m_controller->DestroyRtpTpGroup(m_secondGroupIdentity,
+                                             UbDestroyReason::ERROR) !=
+                 UbDestroyStatus::NOT_FOUND))
+        {
+            std::_Exit(11);
+        }
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+    void ObserveTerminal(UbWqeCompletion completion)
+    {
+        if (completion.wqeId == m_firstTask)
+        {
+            ++m_firstTerminalCount;
+            if (m_firstTerminalCount == 1)
+            {
+                const UbLifecycleResourceIdentity& nestedIdentity =
+                    m_destroyOtherGroup ? m_secondGroupIdentity : m_firstGroupIdentity;
+                m_nestedStatus =
+                    m_controller->DestroyRtpTpGroup(nestedIdentity, UbDestroyReason::ERROR);
+            }
+            return;
+        }
+        if (completion.wqeId == m_secondTask)
+        {
+            ++m_secondTerminalCount;
+        }
+    }
+
+    bool m_destroyOtherGroup;
+    Ptr<UbController> m_controller;
+    Ptr<UbFunction> m_function;
+    Ptr<UbTransaction> m_transaction;
+    Ptr<UbLifecycleCoordinator> m_coordinator;
+    UbLifecycleResourceIdentity m_firstGroupIdentity;
+    UbLifecycleResourceIdentity m_secondGroupIdentity;
+    UbDestroyStatus m_nestedStatus{UbDestroyStatus::NOT_FOUND};
+    uint32_t m_firstTask{0};
+    uint32_t m_secondTask{0};
+    uint32_t m_firstTerminalCount{0};
+    uint32_t m_secondTerminalCount{0};
+};
+#endif
+
 class UbLifecycleControllerDisposeForceCleansCanonicalTpgTest : public TestCase
 {
   public:
@@ -20898,6 +21334,20 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
                     UbDestroyReason::SIMULATION_STOP,
                     "simulation-stop"),
                 TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleTypedLastTpgMemberRemovalTerminatesActiveUseTest(
+                    UbDestroyReason::ERROR,
+                    "error"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleTypedLastTpgMemberRemovalTerminatesActiveUseTest(
+                    UbDestroyReason::SIMULATION_STOP,
+                    "simulation-stop"),
+                TestCase::Duration::QUICK);
+#ifndef _WIN32
+    AddTestCase(new UbLifecycleReentrantTypedTpgCleanupTest(false, "repeats same group"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleReentrantTypedTpgCleanupTest(true, "destroys another group"),
+                TestCase::Duration::QUICK);
+#endif
     AddTestCase(new UbLifecycleControllerDisposeForceCleansCanonicalTpgTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleMultiSegmentTpgRoundRobinPinsGenerationsTest(),
