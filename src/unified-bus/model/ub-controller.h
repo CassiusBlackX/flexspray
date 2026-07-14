@@ -13,6 +13,7 @@
 #include "protocol/ub-datalink.h"
 #include "protocol/ub-ctp.h"
 #include "ns3/ub-tp-connection-manager.h"
+#include "ns3/ub-transport-channel-manager.h"
 
 
 using namespace utils;
@@ -59,7 +60,9 @@ public:
      * @brief destroy tp instance
      * @param tpn tpn number
      **/
-    void DestroyTp(uint32_t tpn);
+    UbDestroyStatus DestroyTp(uint32_t tpn,
+                              UbDestroyReason reason = UbDestroyReason::EXPLICIT,
+                              UbDestroyCallback callback = {});
 
     Ptr<UbTransportGroup> CreateRtpTpGroup(
         const std::vector<Ptr<UbTransportChannel>>& members,
@@ -164,7 +167,7 @@ public:
                                              UbPriority priority);
 
     std::map<uint32_t, Ptr<UbTransportChannel>> GetTpnMap() const;
-    uint32_t GetTransportCountForTest() const { return m_numToTp.size(); }
+    uint32_t GetTransportCountForTest() const;
 
     void SetTpConnManager(Ptr<TpConnectionManager> conn)
     {
@@ -189,7 +192,6 @@ public:
     }
 private:
   void DoDispose() override;
-  Ptr<UbTransportChannel> CreateReservedTpEndpointLocked(uint32_t tpn);
   void FinalizeRtpTpGroupMemberRemoval(Ptr<UbTransportGroup> group, uint32_t index);
   void FinalizeRtpTpGroupDestroy(Ptr<UbTransportGroup> group);
 
@@ -199,9 +201,7 @@ private:
   CtpPacketTimingCallback m_ctpFirstPacketSendsCallback;
   CtpPacketTimingCallback m_ctpLastPacketAcksCallback;
   // Resource storage
-  std::map<uint32_t, Ptr<UbTransportChannel>>
-      m_numToTp{}; // 协议规定TPH中的TP number，在生成TP时，赋值为m_transports_count
-  uint32_t m_transportsCount{0}; // increment only，用于标识tpn
+  Ptr<UbTransportChannelManager> m_transportChannelManager;
   uint64_t m_nextRtpTpGroupId{0};
   std::map<uint64_t, Ptr<UbTransportGroup>> m_rtpTpGroups{};
   std::map<uint32_t, uint64_t> m_rtpTpGroupByTpn{};

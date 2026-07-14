@@ -96,6 +96,7 @@ public:
 
     // 发送端TP在发送工作清空后进入空闲态
     virtual void OnSenderTransportIdle() {}
+    virtual void OnTpDestroyRequested() {}
 
     // 绑定switch，初始化参数
     virtual void OnSwitchAttached(Ptr<UbSwitch> sw);

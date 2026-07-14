@@ -205,6 +205,9 @@ class UbLifecycleCoordinator : public Object
     void RecordSuccessfulTerminal(const UbLifecycleResourceIdentity& identity);
     void RecordWorkTerminal(const UbLifecycleResourceIdentity& identity, UbWorkOutcome outcome);
     bool IsResourceActive(const UbLifecycleResourceIdentity& identity) const;
+    void SetResourceStateChangedCallback(
+        const UbLifecycleResourceIdentity& identity,
+        Callback<void, UbLifecycleResourceIdentity> callback);
 
     UbLifecycleResourceIdentity OpenPacketOwner(UbLifecycleResourceKind kind, uint64_t localId);
     void RetirePacketOwner(const UbLifecycleResourceIdentity& identity);
@@ -233,6 +236,7 @@ class UbLifecycleCoordinator : public Object
         UbLifecycleResourceSnapshot snapshot;
         std::set<uint64_t> activeAttempts;
         std::map<uint64_t, UbLifecycleLeaseIdentity> activeLeases;
+        Callback<void, UbLifecycleResourceIdentity> stateChangedCallback;
     };
 
     static bool TryReadIdentity(Ptr<const Packet> packet, UbPacketAttemptIdentity& identity);

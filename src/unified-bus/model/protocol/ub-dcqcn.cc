@@ -511,13 +511,14 @@ UbHostDcqcn::OnSenderTransportIdle()
     CancelTrackedEvent(m_alphaEvent, m_alphaTrackedEvents);
     CancelTrackedEvent(m_pacingWakeupEvent, m_pacingTrackedEvents);
     m_senderStarted = false;
-    m_alpha = 1.0;
-    m_currentRate = m_initialRate;
-    m_targetRate = m_initialRate;
-    m_timeRecoveryEvents = 0;
-    m_byteRecoveryEvents = 0;
-    m_bytesSinceLastIncrease = 0;
     m_nextAvailableSendTime = Simulator::Now();
+}
+
+void
+UbHostDcqcn::OnTpDestroyRequested()
+{
+    CancelTrackedEvent(m_pendingCnpEvent, m_pendingCnpTrackedEvents);
+    OnSenderTransportIdle();
 }
 
 void
