@@ -87,12 +87,12 @@ The following contract applies to every ticket:
 
 **Blocked by:** T04 Resolve direct TP and TPG references through one RTP path.
 
-- [ ] Temporarily full members cause deferred admission without advancing RR, offset, or TASSN state.
-- [ ] One capacity transition produces at most one pending wakeup per affected admission domain.
-- [ ] Shared direct and TPG-selected traffic use the same TP capacity, queue, PSN, retransmission, and congestion state.
-- [ ] Member retirement excludes new selection but never migrates an accepted segment or destroys the member TP.
-- [ ] Removing the last member cannot deadlock an operation that still holds a TPG-use lease.
-- [ ] Focused backpressure and member-lifecycle tests plus targeted shared/multi-TP scenarios report fairness, starvation, event rate, and throughput without advancing state on deferred admission.
+- [x] Temporarily full members cause deferred admission without advancing RR, offset, or TASSN state.
+- [x] One capacity transition produces at most one pending wakeup per affected admission domain.
+- [x] Shared direct and TPG-selected traffic use the same TP capacity, queue, PSN, retransmission, and congestion state.
+- [x] Member retirement excludes new selection but never migrates an accepted segment or destroys the member TP.
+- [x] Removing the last member cannot deadlock an operation that still holds a TPG-use lease.
+- [x] Focused backpressure and member-lifecycle tests plus targeted shared/multi-TP scenarios report fairness, starvation, event rate, and throughput without advancing state on deferred admission.
 
 ## Task 06: Introduce a descriptor-backed GBN transmit buffer
 
