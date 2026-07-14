@@ -672,31 +672,53 @@ UbTransportChannel::BuildNextDataSendContext(NewDataSendContext& ctx)
     return false;
 }
 
-void
-UbTransportChannel::NotifyNewDataPacketSent(const NewDataSendContext& ctx,
-                                            Ptr<Packet> packet)
+UbGbnPacketDescriptor
+UbTransportChannel::BuildGbnPacketDescriptor(const NewDataSendContext& ctx,
+                                             uint64_t logicalPsn) const
 {
-    // TODO: Keep Notify* helpers as logging/trace notifications only. Retransmission
-    // and congestion-control state updates should live at the actual send trigger.
-    if (IsRetransEnabled()) {
-        m_retrans->OnNewDataPacketSent(m_psnSndNxt,
-                                       packet,
-                                       ctx.payloadBytes);
+    NS_ABORT_MSG_IF(ctx.segment == nullptr, "RTP DATA descriptor requires an exact segment");
+    UbGbnPacketDescriptor descriptor;
+    descriptor.logicalPsn = logicalPsn;
+    descriptor.packetOffsetBytes = static_cast<uint32_t>(ctx.segment->GetSize() -
+                                                         ctx.segment->GetBytesLeft());
+    descriptor.progressBytes = ctx.progressBytes;
+    descriptor.payloadBytes = ctx.payloadBytes;
+    descriptor.wireLengthBytes = ctx.wireLengthBytes;
+    descriptor.taskId = ctx.segment->GetTaskId();
+    descriptor.wqeSize = ctx.segment->GetWqeSize();
+    descriptor.taOpcode = ctx.segment->GetType();
+    descriptor.segmentKind = ctx.segment->GetSegmentKind();
+    descriptor.taSsn = ctx.segment->GetTaSsn();
+    descriptor.requestTaSsn = ctx.segment->GetRequestTassn();
+    descriptor.order = ctx.segment->GetOrderType();
+    descriptor.originJettyNum = ctx.segment->GetOriginJettyNum();
+    descriptor.tpMsn = ctx.segment->GetTpMsn();
+    descriptor.firstPacket = ctx.segment->GetBytesLeft() == ctx.totalProgressBytes;
+    descriptor.lastPacket = ctx.segment->GetBytesLeft() == ctx.progressBytes;
+    descriptor.hasCorrelation = ctx.segment->HasTransactionCorrelation();
+    if (descriptor.hasCorrelation) {
+        descriptor.correlation = ctx.segment->GetTransactionCorrelation();
     }
+    return descriptor;
+}
 
-    m_congestionCtrl->OnSenderDataPacketSent(UbTpPsnSequence::ToWire(m_psnSndNxt),
-                                             ctx.progressBytes);
+void
+UbTransportChannel::NotifyDataPacketSent(const UbGbnPacketDescriptor& descriptor,
+                                         Ptr<Packet> packet)
+{
+    m_congestionCtrl->OnSenderDataPacketSent(UbTpPsnSequence::ToWire(descriptor.logicalPsn),
+                                             descriptor.progressBytes);
 
-    if (ctx.segment->GetBytesLeft() == ctx.totalProgressBytes) {
-        FirstPacketSendsNotify(m_nodeId, ctx.segment->GetTaskId(), m_tpn, m_dstTpn,
-                               UbTpMsnSequence::ToWire(ctx.segment->GetTpMsn()),
-                               UbTpPsnSequence::ToWire(m_psnSndNxt),
+    if (descriptor.firstPacket) {
+        FirstPacketSendsNotify(m_nodeId, descriptor.taskId, m_tpn, m_dstTpn,
+                               UbTpMsnSequence::ToWire(descriptor.tpMsn),
+                               UbTpPsnSequence::ToWire(descriptor.logicalPsn),
                                m_sport);
     }
-    if (ctx.segment->GetBytesLeft() == ctx.progressBytes) {
-        LastPacketSendsNotify(m_nodeId, ctx.segment->GetTaskId(), m_tpn, m_dstTpn,
-                              UbTpMsnSequence::ToWire(ctx.segment->GetTpMsn()),
-                              UbTpPsnSequence::ToWire(m_psnSndNxt),
+    if (descriptor.lastPacket) {
+        LastPacketSendsNotify(m_nodeId, descriptor.taskId, m_tpn, m_dstTpn,
+                              UbTpMsnSequence::ToWire(descriptor.tpMsn),
+                              UbTpPsnSequence::ToWire(descriptor.logicalPsn),
                               m_sport);
     }
 
@@ -704,12 +726,12 @@ UbTransportChannel::NotifyNewDataPacketSent(const NewDataSendContext& ctx,
               << " PacketUid: " << packet->GetUid()
               << " Tpn: " << m_tpn
               << " DstTpn: " << m_dstTpn
-              << " Psn: " << m_psnSndNxt
+              << " Psn: " << descriptor.logicalPsn
               << " PacketType: Packet"
               << " Src: " << m_src
               << " Dst: " << m_dest
               << " PacketSize: " << packet->GetSize()
-              << " TaskId: " << ctx.segment->GetTaskId());
+              << " TaskId: " << descriptor.taskId);
 }
 
 void
@@ -746,12 +768,26 @@ UbTransportChannel::AdvanceNewDataSendState(const NewDataSendContext& ctx,
 Ptr<Packet>
 UbTransportChannel::SendNewDataPacket(const NewDataSendContext& ctx)
 {
-    Ptr<Packet> packet = GenDataPacket(ctx.segment,
-                                       ctx.payloadBytes,
-                                       ctx.wireLengthBytes,
-                                       ctx.progressBytes);
-    NotifyNewDataPacketSent(ctx, packet);
+    const UbGbnPacketDescriptor descriptor = BuildGbnPacketDescriptor(ctx, m_psnSndNxt);
+    Ptr<Packet> packet = BuildRtpDataPacket(descriptor);
+    if (IsRetransEnabled()) {
+        m_retrans->OnNewDataPacketSent(descriptor, packet);
+    }
+    NotifyDataPacketSent(descriptor, packet);
     AdvanceNewDataSendState(ctx, packet);
+    return packet;
+}
+
+Ptr<Packet>
+UbTransportChannel::SendGbnRetransmission(const UbGbnPacketDescriptor& descriptor)
+{
+    if (m_congestionCtrl->IsCcLimited(descriptor.progressBytes)) {
+        m_sendWindowLimited = true;
+        return nullptr;
+    }
+    Ptr<Packet> packet = BuildRtpDataPacket(descriptor);
+    NotifyDataPacketSent(descriptor, packet);
+    m_retrans->StartTimerIfNeeded();
     return packet;
 }
 
@@ -789,6 +825,9 @@ Ptr<Packet> UbTransportChannel::GetNextPacket()
                 m_headArrivalTime = Simulator::Now();
             }
             return packet;
+        }
+        if (m_retrans->HasPendingGbnRetransmission()) {
+            return nullptr;
         }
         if (HasPendingSelectiveRetransmissionWork()) {
             return nullptr;
@@ -881,6 +920,9 @@ uint32_t UbTransportChannel::GetNextPacketSize()
     if (!m_ackQ.empty()) {
         return m_ackQ.front()->GetSize();
     }
+    if (m_retrans->HasPendingGbnRetransmission()) {
+        return m_retrans->GetNextGbnRetransmissionPayloadBytes() + headerSize;
+    }
     const uint32_t selectiveRetransmissionSize =
         HasPendingSelectiveRetransmissionWork()
             ? m_retrans->GetNextSelectiveRetransmissionSize()
@@ -905,50 +947,58 @@ Ptr<Packet> UbTransportChannel::GenDataPacket(Ptr<UbWqeSegment> wqeSegment,
                                               uint32_t wireLengthBytes,
                                               uint32_t progressBytes)
 {
-    Ptr<Packet> p = Create<Packet>(payloadSize);
-    UbFlowTag flowTag(wqeSegment->GetTaskId(), wqeSegment->GetWqeSize());
+    NewDataSendContext ctx;
+    ctx.segment = wqeSegment;
+    ctx.progressBytes = progressBytes;
+    ctx.payloadBytes = payloadSize;
+    ctx.wireLengthBytes = wireLengthBytes;
+    ctx.totalProgressBytes = GetTotalProgressBytes(wqeSegment);
+    return BuildRtpDataPacket(BuildGbnPacketDescriptor(ctx, m_psnSndNxt));
+}
+
+Ptr<Packet>
+UbTransportChannel::BuildRtpDataPacket(const UbGbnPacketDescriptor& descriptor)
+{
+    Ptr<Packet> p = Create<Packet>(descriptor.payloadBytes);
+    UbFlowTag flowTag(descriptor.taskId, descriptor.wqeSize);
     p->AddPacketTag(flowTag);
-    if (wqeSegment->HasTransactionCorrelation())
+    if (descriptor.hasCorrelation)
     {
         UbTransactionCorrelationTag correlationTag;
-        correlationTag.SetIdentity(wqeSegment->GetTransactionCorrelation());
+        correlationTag.SetIdentity(descriptor.correlation);
         p->AddPacketTag(correlationTag);
     }
     // add UbMAExtTah
     UbMAExtTah MAExtTaHeader;
-    MAExtTaHeader.SetLength(wireLengthBytes);
+    MAExtTaHeader.SetLength(descriptor.wireLengthBytes);
     p->AddHeader(MAExtTaHeader);
     // add TaHeader
     UbTransactionHeader TaHeader;
-    TaHeader.SetTaOpcode(wqeSegment->GetType());
+    TaHeader.SetTaOpcode(descriptor.taOpcode);
     const uint16_t wireIniTaSsn =
-        wqeSegment->GetSegmentKind() == UbTransactionSegmentKind::RESPONSE
-            ? UbTaSsnSequence::ToWire(wqeSegment->GetRequestTassn())
-            : UbTaSsnSequence::ToWire(wqeSegment->GetTaSsn());
+        descriptor.segmentKind == UbTransactionSegmentKind::RESPONSE
+            ? UbTaSsnSequence::ToWire(descriptor.requestTaSsn)
+            : UbTaSsnSequence::ToWire(descriptor.taSsn);
     TaHeader.SetIniTaSsn(wireIniTaSsn);
-    TaHeader.SetOrder(wqeSegment->GetOrderType());
+    TaHeader.SetOrder(descriptor.order);
     TaHeader.SetIniRcType(0x01);
-    TaHeader.SetIniRcId(wqeSegment->GetOriginJettyNum());
+    TaHeader.SetIniRcId(descriptor.originJettyNum);
     p->AddHeader(TaHeader);
     // add TpHeader
     UbTransportHeader TpHeader;
-    if (wqeSegment->GetBytesLeft() == progressBytes) {
-        TpHeader.SetLastPacket(true); // last packet
-    } else {
-        TpHeader.SetLastPacket(false); // not last packet
-    }
+    TpHeader.SetLastPacket(descriptor.lastPacket);
     TpHeader.SetTPOpcode(0x1);
     TpHeader.SetNLP(0x0);
     TpHeader.SetSrcTpn(m_tpn);
     TpHeader.SetDestTpn(m_dstTpn);
     TpHeader.SetAckRequest(1);
     TpHeader.SetErrorFlag(0);
-    TpHeader.SetPsn(UbTpPsnSequence::ToWire(m_psnSndNxt));
-    TpHeader.SetTpMsn(UbTpMsnSequence::ToWire(wqeSegment->GetTpMsn()));
+    TpHeader.SetPsn(UbTpPsnSequence::ToWire(descriptor.logicalPsn));
+    TpHeader.SetTpMsn(UbTpMsnSequence::ToWire(descriptor.tpMsn));
     p->AddHeader(TpHeader);
     // Packet-spray hashing must be derived from packet identity, not from the order in which
     // worker threads happen to call this function.
-    m_lbHashSalt = m_usePacketSpray ? UbTpPsnSequence::ToWire(m_psnSndNxt) : 0;
+    m_lbHashSalt = m_usePacketSpray ? UbTpPsnSequence::ToWire(descriptor.logicalPsn) : 0;
     UbPort::AddUdpHeader(p, this);
     // add ipv4 header
     UbPort::AddIpv4Header(p, this);
@@ -1156,7 +1206,10 @@ UbTransportChannel::RetainSentPsnForTest(uint64_t psn, uint32_t payloadBytes)
     tpHeader.SetDestTpn(m_dstTpn);
     tpHeader.SetPsn(UbTpPsnSequence::ToWire(psn));
     packet->AddHeader(tpHeader);
-    m_retrans->OnNewDataPacketSent(psn, packet, payloadBytes);
+    UbGbnPacketDescriptor descriptor;
+    descriptor.logicalPsn = psn;
+    descriptor.payloadBytes = payloadBytes;
+    m_retrans->OnNewDataPacketSent(descriptor, packet);
     m_psnSndNxt = std::max(m_psnSndNxt, psn + 1);
 }
 
@@ -1188,6 +1241,52 @@ uint32_t
 UbTransportChannel::GetPsnRetransmitCountForTest(uint64_t psn) const
 {
     return m_retrans->GetPsnRetransmitCountForTest(psn);
+}
+
+uint32_t
+UbTransportChannel::GetGbnDescriptorCountForTest() const
+{
+    return m_retrans->GetGbnDescriptorCountForTest();
+}
+
+bool
+UbTransportChannel::HasGbnDescriptorForTest(uint64_t psn) const
+{
+    return m_retrans->HasGbnDescriptorForTest(psn);
+}
+
+uint64_t
+UbTransportChannel::GetGbnRetransmissionCursorForTest() const
+{
+    return m_retrans->GetGbnRetransmissionCursorForTest();
+}
+
+void
+UbTransportChannel::RetainGbnDescriptorForTest(uint64_t psn)
+{
+    UbGbnPacketDescriptor descriptor;
+    descriptor.logicalPsn = psn;
+    m_retrans->RetainGbnDescriptorForTest(descriptor);
+}
+
+bool
+UbTransportChannel::IsRetransTimerRunningForTest() const
+{
+    return m_retrans->HasTimerRunning();
+}
+
+uint64_t
+UbTransportChannel::GetSegmentBytesLeftForTest(uint32_t taskId) const
+{
+    const auto segment = std::find_if(m_wqeSegmentVector.begin(),
+                                      m_wqeSegmentVector.end(),
+                                      [taskId](const Ptr<UbWqeSegment>& candidate) {
+                                          return candidate != nullptr &&
+                                                 candidate->GetTaskId() == taskId;
+                                      });
+    NS_ABORT_MSG_IF(segment == m_wqeSegmentVector.end(),
+                    "Segment progress query references an unknown task");
+    return (*segment)->GetBytesLeft();
 }
 
 bool
@@ -1940,27 +2039,6 @@ void UbTransportChannel::RecvDataPacket(Ptr<Packet> p)
     CompleteInboundTaUnits(completedTaUnits);
 }
 
-void
-UbTransportChannel::ResetSegmentSendProgressFromPsn(uint64_t psn)
-{
-    for (size_t i = 0; i < m_wqeSegmentVector.size(); ++i) {
-        Ptr<UbWqeSegment> currentSegment = m_wqeSegmentVector[i];
-        const uint64_t segmentStart = currentSegment->GetPsnStart();
-        const uint64_t segmentEnd = segmentStart + currentSegment->GetPsnSize();
-        if (segmentEnd <= psn) {
-            continue;
-        }
-        if (segmentStart <= psn) {
-            const uint32_t resetSentBytes = (psn - segmentStart) * UB_MTU_BYTE;
-            currentSegment->ResetSentBytes(resetSentBytes);
-        } else {
-            currentSegment->ResetSentBytes();
-        }
-        NS_LOG_INFO("GBN fast retransmit,taskId: " << currentSegment->GetTaskId()
-                    << " psn: " << m_psnSndNxt);
-    }
-}
-
 void UbTransportChannel::ReTxTimeout()
 {
     const UbRetransTimeoutResult timeoutResult = m_retrans->OnTimeout();
@@ -2030,6 +2108,11 @@ UbTransportChannel::TryCancelUnsentWqeSegment(
 
     if (segment->HasStartedSending() || m_psnSndNxt > segment->GetPsnStart())
     {
+        if (IsRetransEnabled()) {
+            m_retrans->RetireGbnSegment(expectedCorrelation,
+                                        segment->GetPsnStart(),
+                                        segment->GetPsnStart() + segment->GetPsnSize());
+        }
         return UbWqeSegmentTerminalDisposition::RETAINED;
     }
 
@@ -2088,6 +2171,11 @@ UbTransportChannel::ForceRemoveRetainedWqeSegment(
         NS_ABORT_MSG_IF(m_psnSndUna < segmentEnd,
                         "Forced segment removal lost unacknowledged TP work");
         return UbWqeSegmentTerminalDisposition::TRANSPORT_CLEANED;
+    }
+    if (IsRetransEnabled()) {
+        m_retrans->RetireGbnSegment(expectedCorrelation,
+                                    segment->GetPsnStart(),
+                                    segment->GetPsnStart() + segment->GetPsnSize());
     }
     m_wqeSegmentVector.erase(retained);
     if (m_wqeSegmentVector.empty() && m_retrans != nullptr)
@@ -2222,6 +2310,9 @@ bool UbTransportChannel::HasPendingTransmitWork()
     if (!m_ackQ.empty()) {
         return true;
     }
+    if (IsRetransEnabled() && m_retrans->HasPendingGbnRetransmission()) {
+        return true;
+    }
     if (HasPendingSelectiveRetransmissionWork()) {
         return true;
     }
@@ -2237,6 +2328,14 @@ bool UbTransportChannel::IsLimited()
         return false;
     }
     if (!m_ackQ.empty()) {
+        return false;
+    }
+    if (IsRetransEnabled() && m_retrans->HasPendingGbnRetransmission()) {
+        if (m_congestionCtrl->IsCcLimited(
+                m_retrans->GetNextGbnRetransmissionProgressBytes())) {
+            m_sendWindowLimited = true;
+            return true;
+        }
         return false;
     }
     if (HasPendingSelectiveRetransmissionWork()) {

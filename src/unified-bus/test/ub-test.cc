@@ -777,6 +777,31 @@ public:
     uint32_t congestionNotificationCount{0};
 };
 
+class RecordingGbnHeaderCc : public UbCongestionControl
+{
+  public:
+    static TypeId GetTypeId()
+    {
+        static TypeId tid =
+            TypeId("ns3::RecordingGbnHeaderCc")
+                .SetParent<UbCongestionControl>()
+                .SetGroupName("UnifiedBus")
+                .AddConstructor<RecordingGbnHeaderCc>();
+        return tid;
+    }
+
+    void OnSenderPrepareIpBasedNetworkHeader(UbIpBasedNetworkHeader& header) override
+    {
+        ++prepareCount;
+        header.SetMode(0);
+        header.SetEnable(true);
+        header.SetHint(hint);
+    }
+
+    uint8_t hint{0};
+    uint32_t prepareCount{0};
+};
+
 Ptr<UbTransportChannel>
 CreateSelectiveReceiverTp(const LocalTpTopology& topo)
 {
@@ -3973,11 +3998,235 @@ public:
 
         txTp->SetPsnSndUnaForTest(0x1000000ull);
         txTp->SetPsnSndNxtForTest(0x1000004ull);
+        for (uint64_t psn = 0x1000000ull; psn < 0x1000004ull; ++psn)
+        {
+            txTp->RetainGbnDescriptorForTest(psn);
+        }
         txTp->RecvTpAck(BuildTpnakForSender(1));
 
         NS_TEST_ASSERT_MSG_EQ(txTp->GetPsnSndNxtForTest(),
-                              0x1000001ull,
-                              "wire TPNAK PSN 1 should reset GBN send next to logical 0x1000001");
+                              0x1000004ull,
+                              "wire TPNAK must preserve the logical first-never-sent PSN");
+        NS_TEST_ASSERT_MSG_EQ(
+            txTp->GetGbnRetransmissionCursorForTest(),
+            0x1000001ull,
+            "wire TPNAK PSN 1 should select logical descriptor 0x1000001 across wrap");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbGbnSenderIgnoresTpnakForRetiredDescriptorTest : public TestCase
+{
+  public:
+    UbGbnSenderIgnoresTpnakForRetiredDescriptorTest()
+        : TestCase("UnifiedBus - GBN sender ignores TPNAK for retired descriptor")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        Ptr<UbTransportChannel> transport = CreateObject<UbTransportChannel>();
+        transport->SetPsnSndUnaForTest(10);
+        transport->SetPsnSndNxtForTest(12);
+        UbRetransController retrans(*transport);
+        retrans.SetRetransEnable(true);
+        retrans.SetRetransmissionMode(UbRetransmissionMode::GBN);
+        retrans.SetFastRetransEnable(true);
+
+        UbTransactionCorrelationIdentity firstCorrelation;
+        firstCorrelation.operation.localId = 1;
+        UbGbnPacketDescriptor firstDescriptor;
+        firstDescriptor.logicalPsn = 10;
+        firstDescriptor.hasCorrelation = true;
+        firstDescriptor.correlation = firstCorrelation;
+        retrans.RetainGbnDescriptorForTest(firstDescriptor);
+
+        UbTransactionCorrelationIdentity retiredCorrelation;
+        retiredCorrelation.operation.localId = 2;
+        UbGbnPacketDescriptor retiredDescriptor;
+        retiredDescriptor.logicalPsn = 11;
+        retiredDescriptor.hasCorrelation = true;
+        retiredDescriptor.correlation = retiredCorrelation;
+        retrans.RetainGbnDescriptorForTest(retiredDescriptor);
+
+        UbTransportHeader firstNak;
+        firstNak.SetPsn(10);
+        NS_TEST_ASSERT_MSG_EQ(retrans.OnTransportNak(firstNak).triggerTransmit,
+                              true,
+                              "A retained descriptor should establish the initial GBN cursor");
+        retrans.RetireGbnSegment(retiredCorrelation, 11, 12);
+
+        UbTransportHeader retiredNak;
+        retiredNak.SetPsn(11);
+        NS_TEST_ASSERT_MSG_EQ(
+            retrans.OnTransportNak(retiredNak).triggerTransmit,
+            false,
+            "TPNAK for a typed-cleaned descriptor must not trigger a new transmission");
+        NS_TEST_ASSERT_MSG_EQ(
+            retrans.GetGbnRetransmissionCursorForTest(),
+            10u,
+            "Failed TPNAK selection must preserve an existing canonical retransmission cursor");
+
+        retrans.RetireGbnSegment(firstCorrelation, 10, 11);
+        NS_TEST_ASSERT_MSG_EQ(retrans.OnTransportNak(firstNak).triggerTransmit,
+                              false,
+                              "TPNAK must remain idle after its stale cursor is retired");
+        NS_TEST_ASSERT_MSG_EQ(
+            retrans.GetGbnRetransmissionCursorForTest(),
+            std::numeric_limits<uint64_t>::max(),
+            "Retiring the selected descriptor must clear the stale GBN cursor");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbGbnSenderCumulativeAckRetiresDescriptorsTest : public TestCase
+{
+  public:
+    UbGbnSenderCumulativeAckRetiresDescriptorsTest()
+        : TestCase("UnifiedBus - GBN cumulative ACK retires descriptor prefix")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(false));
+        Config::SetDefault("ns3::UbTransportChannel::EnableRetrans", BooleanValue(true));
+        Config::SetDefault("ns3::UbTransportChannel::RetransmissionMode",
+                           EnumValue(UbRetransmissionMode::GBN));
+
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbTransportChannel> txTp =
+            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        txTp->SetPsnSndUnaForTest(10);
+        txTp->SetPsnSndNxtForTest(14);
+        for (uint64_t psn = 10; psn < 14; ++psn)
+        {
+            txTp->RetainGbnDescriptorForTest(psn);
+        }
+
+        txTp->RecvTpAck(BuildTpackForSender(11));
+        NS_TEST_ASSERT_MSG_EQ(txTp->GetGbnDescriptorCountForTest(),
+                              2u,
+                              "Cumulative ACK should retire only the exact GBN prefix");
+        NS_TEST_ASSERT_MSG_EQ(txTp->HasGbnDescriptorForTest(10),
+                              false,
+                              "ACK through PSN 11 should retire PSN 10");
+        NS_TEST_ASSERT_MSG_EQ(txTp->HasGbnDescriptorForTest(12),
+                              true,
+                              "ACK through PSN 11 should retain PSN 12");
+
+        txTp->RecvTpAck(BuildTpackForSender(13));
+        NS_TEST_ASSERT_MSG_EQ(txTp->GetGbnDescriptorCountForTest(),
+                              0u,
+                              "Final cumulative ACK should retire all GBN descriptors");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbGbnFinalAckWithPendingTaResponseLeavesTimerStoppedTest : public TestCase
+{
+  public:
+    UbGbnFinalAckWithPendingTaResponseLeavesTimerStoppedTest()
+        : TestCase("UnifiedBus - final GBN ACK with pending TA response leaves timer stopped")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(false));
+        Config::SetDefault("ns3::UbTransportChannel::EnableRetrans", BooleanValue(true));
+        Config::SetDefault("ns3::UbTransportChannel::RetransmissionMode",
+                           EnumValue(UbRetransmissionMode::GBN));
+
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbTransportChannel> txTp =
+            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+
+        Ptr<UbWqeSegment> request = CreateObject<UbWqeSegment>();
+        request->SetSrc(topo.sender->GetId());
+        request->SetDest(topo.receiver->GetId());
+        request->SetSport(topo.senderPort->GetIfIndex());
+        request->SetDport(topo.receiverPort->GetIfIndex());
+        request->SetType(TaOpcode::TA_OPCODE_WRITE);
+        request->SetSize(64);
+        request->SetPriority(kUrmaWriteRegressionPriority);
+        request->SetTaskId(kUrmaWriteRegressionTaskId);
+        request->SetWqeSize(64);
+        request->SetJettyNum(kUrmaWriteRegressionJettyNum);
+        request->SetTaSsn(0);
+        request->SetOrderType(OrderType::ORDER_NO);
+        request->SetTpn(kUrmaWriteRegressionSenderTpn);
+        request->SetTpMsn(txTp->GetMsnCnt());
+        request->SetPsnStart(txTp->GetPsnCnt());
+        request->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
+        request->SetOriginJettyNum(kUrmaWriteRegressionJettyNum);
+        request->SetRequestTassn(0);
+        request->SetRequestOpcode(TaOpcode::TA_OPCODE_WRITE);
+        request->SetNeedsTransactionResponse(true);
+        request->SetResLenBytes(64);
+        request->SetPayloadBytes(64);
+        request->SetCarrierBytes(64);
+
+        txTp->UpdatePsnCnt(request->GetPsnSize());
+        txTp->UpDateMsnCnt(1);
+        txTp->PushWqeSegment(request);
+
+        Ptr<UbWqeSegment> response = CreateObject<UbWqeSegment>();
+        response->SetSrc(topo.sender->GetId());
+        response->SetDest(topo.receiver->GetId());
+        response->SetSport(topo.senderPort->GetIfIndex());
+        response->SetDport(topo.receiverPort->GetIfIndex());
+        response->SetType(TaOpcode::TA_OPCODE_TRANSACTION_ACK);
+        response->SetSize(1);
+        response->SetPriority(kUrmaWriteRegressionPriority);
+        response->SetTaskId(kUrmaWriteRegressionTaskId + 1);
+        response->SetWqeSize(1);
+        response->SetJettyNum(kUrmaWriteRegressionJettyNum);
+        response->SetTaSsn(1);
+        response->SetOrderType(OrderType::ORDER_NO);
+        response->SetTpn(kUrmaWriteRegressionSenderTpn);
+        response->SetTpMsn(txTp->GetMsnCnt());
+        response->SetPsnStart(txTp->GetPsnCnt());
+        response->SetSegmentKind(UbTransactionSegmentKind::RESPONSE);
+        response->SetOriginJettyNum(kUrmaWriteRegressionJettyNum);
+        response->SetRequestTassn(1);
+        response->SetRequestOpcode(TaOpcode::TA_OPCODE_WRITE);
+        response->SetNeedsTransactionResponse(false);
+        response->SetResLenBytes(0);
+        response->SetPayloadBytes(0);
+        response->SetCarrierBytes(1);
+        txTp->UpdatePsnCnt(response->GetPsnSize());
+        txTp->UpDateMsnCnt(1);
+        txTp->PushWqeSegment(response);
+        NS_TEST_ASSERT_MSG_NE(txTp->GetNextPacketForTest(),
+                              nullptr,
+                              "Initial DATA should start the retransmission timer");
+        NS_TEST_ASSERT_MSG_EQ(txTp->IsRetransTimerRunningForTest(),
+                              true,
+                              "Outstanding GBN descriptor should keep the timer running");
+
+        txTp->RecvTpAck(BuildTpackForSender(0));
+
+        NS_TEST_ASSERT_MSG_EQ(txTp->GetGbnDescriptorCountForTest(),
+                              0u,
+                              "Final cumulative ACK should retire the canonical descriptor");
+        NS_TEST_ASSERT_MSG_EQ(txTp->GetWqeSegmentVecSize(),
+                              1u,
+                              "Unsent transaction response should remain queued after the final DATA ACK");
+        NS_TEST_ASSERT_MSG_EQ(txTp->IsRetransTimerRunningForTest(),
+                              false,
+                              "No descriptor must mean no retransmission timer");
 
         Simulator::Destroy();
         Config::Reset();
@@ -10402,7 +10651,7 @@ class UbLifecycleTpgRetransmissionPinsResolvedTpGenerationTest : public TestCase
     void DoRun() override
     {
         Config::Reset();
-        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(false));
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(true));
         Config::SetDefault("ns3::UbTransportChannel::EnableRetrans", BooleanValue(true));
         Config::SetDefault("ns3::UbTransportChannel::RetransmissionMode",
                            EnumValue(UbRetransmissionMode::GBN));
@@ -10444,6 +10693,10 @@ class UbLifecycleTpgRetransmissionPinsResolvedTpGenerationTest : public TestCase
 
         m_firstTp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
         m_secondTp = controller->GetTpByTpn(303);
+        m_recordingCc = CreateObject<RecordingGbnHeaderCc>();
+        m_recordingCc->hint = kStableHint;
+        m_firstTp->SetCongestionControlForTest(m_recordingCc);
+        m_secondTp->SetCongestionControlForTest(m_recordingCc);
         m_firstTp->TraceConnectWithoutContext(
             "WqeSegmentSendsNotify",
             MakeCallback(
@@ -10502,11 +10755,42 @@ class UbLifecycleTpgRetransmissionPinsResolvedTpGenerationTest : public TestCase
                                   operation.operationIdentity,
                                   operation.segmentIdentities[0],
                                   0);
+        NS_TEST_ASSERT_MSG_EQ(m_resolvedTp->GetGbnDescriptorCountForTest(),
+                              1u,
+                              "Initial GBN send should retain one protocol descriptor");
+        NS_TEST_ASSERT_MSG_EQ(m_resolvedTp->HasGbnDescriptorForTest(0),
+                              true,
+                              "Initial GBN send should index its logical PSN");
+        NS_TEST_ASSERT_MSG_EQ(m_recordingCc->prepareCount,
+                              1u,
+                              "Initial send should prepare the dynamic network header once");
+        NS_TEST_ASSERT_MSG_EQ(GetNetworkHint(initialPacket),
+                              kStableHint,
+                              "Initial send should carry the recording CC state");
+        const uint64_t bytesLeftAfterInitial =
+            m_resolvedTp->GetSegmentBytesLeftForTest(kUrmaWriteRegressionTaskId);
+        std::vector<uint8_t> initialBytes(initialPacket->GetSize());
+        initialPacket->CopyData(initialBytes.data(), initialBytes.size());
+        UbFlowTag initialFlow;
+        NS_TEST_ASSERT_MSG_EQ(initialPacket->PeekPacketTag(initialFlow),
+                              true,
+                              "Initial packet should carry its flow tag");
+        UbPacketLifecycleTag initialLifecycle;
+        NS_TEST_ASSERT_MSG_EQ(initialPacket->PeekPacketTag(initialLifecycle),
+                              true,
+                              "Initial packet should register one lifecycle attempt");
 
         m_resolvedTp->RecvTpAck(BuildTpnakForSender(0));
         NS_TEST_ASSERT_MSG_EQ(m_resolvedTp->GetPsnSndNxtForTest(),
+                              1u,
+                              "TPNAK must not rewind the first-never-sent PSN");
+        NS_TEST_ASSERT_MSG_EQ(m_resolvedTp->GetGbnRetransmissionCursorForTest(),
                               0u,
-                              "TPNAK should drive the existing GBN reset path");
+                              "TPNAK should move the independent GBN retransmission cursor");
+        NS_TEST_ASSERT_MSG_EQ(
+            m_resolvedTp->GetSegmentBytesLeftForTest(kUrmaWriteRegressionTaskId),
+            bytesLeftAfterInitial,
+            "TPNAK must not rewind segment send progress");
         Ptr<Packet> retransmission = m_resolvedTp->GetNextPacketForTest();
         NS_TEST_ASSERT_MSG_NE(retransmission,
                               nullptr,
@@ -10514,6 +10798,32 @@ class UbLifecycleTpgRetransmissionPinsResolvedTpGenerationTest : public TestCase
         NS_TEST_ASSERT_MSG_NE(retransmission->GetUid(),
                               initialPacket->GetUid(),
                               "Retransmission should be a distinct physical packet attempt");
+        std::vector<uint8_t> retransmissionBytes(retransmission->GetSize());
+        retransmission->CopyData(retransmissionBytes.data(), retransmissionBytes.size());
+        const bool retransmissionBytesMatch = retransmissionBytes == initialBytes;
+        NS_TEST_ASSERT_MSG_EQ(retransmissionBytesMatch,
+                              true,
+                              "Unchanged dynamic CC state should reproduce identical wire bytes");
+        NS_TEST_ASSERT_MSG_EQ(m_recordingCc->prepareCount,
+                              2u,
+                              "Initial and TPNAK sends should each prepare the network header");
+        UbFlowTag retransmissionFlow;
+        NS_TEST_ASSERT_MSG_EQ(retransmission->PeekPacketTag(retransmissionFlow),
+                              true,
+                              "GBN retransmission should preserve its flow tag");
+        NS_TEST_ASSERT_MSG_EQ(retransmissionFlow.GetFlowId(),
+                              initialFlow.GetFlowId(),
+                              "GBN retransmission should preserve flow identity");
+        NS_TEST_ASSERT_MSG_EQ(retransmissionFlow.GetFlowSize(),
+                              initialFlow.GetFlowSize(),
+                              "GBN retransmission should preserve flow size");
+        UbPacketLifecycleTag retransmissionLifecycle;
+        NS_TEST_ASSERT_MSG_EQ(retransmission->PeekPacketTag(retransmissionLifecycle),
+                              true,
+                              "GBN retransmission should register a lifecycle attempt");
+        NS_TEST_ASSERT_MSG_NE(retransmissionLifecycle.GetIdentity(),
+                              initialLifecycle.GetIdentity(),
+                              "GBN retransmission should register a new physical lifecycle attempt");
         AssertPacketGenerationPin(retransmission,
                                   resolvedIdentity,
                                   operation.operationIdentity,
@@ -10529,16 +10839,65 @@ class UbLifecycleTpgRetransmissionPinsResolvedTpGenerationTest : public TestCase
                               0u,
                               "Retransmission must not advance another member's PSN state");
 
+        m_recordingCc->hint = kChangedHint;
+        m_resolvedTp->ReTxTimeout();
+        NS_TEST_ASSERT_MSG_EQ(m_resolvedTp->GetPsnSndNxtForTest(),
+                              1u,
+                              "RTO must not rewind the first-never-sent PSN");
+        NS_TEST_ASSERT_MSG_EQ(m_resolvedTp->GetGbnRetransmissionCursorForTest(),
+                              0u,
+                              "RTO should select sndUna through the independent GBN cursor");
+        Ptr<Packet> timeoutRetransmission = m_resolvedTp->GetNextPacketForTest();
+        NS_TEST_ASSERT_MSG_NE(timeoutRetransmission,
+                              nullptr,
+                              "RTO should rebuild the outstanding GBN descriptor");
+        std::vector<uint8_t> timeoutBytes(timeoutRetransmission->GetSize());
+        timeoutRetransmission->CopyData(timeoutBytes.data(), timeoutBytes.size());
+        const bool timeoutBytesMatch = timeoutBytes == initialBytes;
+        NS_TEST_ASSERT_MSG_EQ(timeoutBytesMatch,
+                              false,
+                              "Changed dynamic CC state should rebuild the network header");
+        NS_TEST_ASSERT_MSG_EQ(m_recordingCc->prepareCount,
+                              3u,
+                              "RTO should prepare the dynamic network header again");
+        NS_TEST_ASSERT_MSG_EQ(GetNetworkHint(timeoutRetransmission),
+                              kChangedHint,
+                              "RTO should carry the current CC hint rather than a frozen header");
+        NS_TEST_ASSERT_MSG_EQ(timeoutRetransmission->GetSize(),
+                              initialPacket->GetSize(),
+                              "Dynamic network fields must not change descriptor wire length");
+        AssertPacketGenerationPin(timeoutRetransmission,
+                                  resolvedIdentity,
+                                  operation.operationIdentity,
+                                  operation.segmentIdentities[0],
+                                  0);
+
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->DestroyJetty(kUrmaWriteRegressionJettyNum,
                                                          UbDestroyReason::SIMULATION_STOP)),
-            static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
-            "Forced cleanup should retire the pinned retransmission operation");
+                              static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
+                              "Forced cleanup should retire the pinned retransmission operation");
+        NS_TEST_ASSERT_MSG_EQ(m_resolvedTp->GetGbnDescriptorCountForTest(),
+                              0u,
+                              "Forced exact-segment cleanup should retire its GBN descriptor");
+        NS_TEST_ASSERT_MSG_EQ(m_resolvedTp->IsRetransTimerRunningForTest(),
+                              false,
+                              "Forced cleanup should cancel the empty GBN timer");
         Simulator::Destroy();
         Config::Reset();
     }
 
   private:
+    uint8_t GetNetworkHint(Ptr<Packet> packet)
+    {
+        Ptr<Packet> parsed = packet->Copy();
+        UbDatalinkPacketHeader datalinkHeader;
+        UbIpBasedNetworkHeader networkHeader;
+        parsed->RemoveHeader(datalinkHeader);
+        parsed->RemoveHeader(networkHeader);
+        return networkHeader.GetHint();
+    }
+
     void ObserveFirstAdmission(uint32_t, uint32_t taskId, uint32_t)
     {
         ObserveAdmission(m_firstTp, taskId);
@@ -10599,7 +10958,200 @@ class UbLifecycleTpgRetransmissionPinsResolvedTpGenerationTest : public TestCase
     Ptr<UbTransportChannel> m_firstTp;
     Ptr<UbTransportChannel> m_secondTp;
     Ptr<UbTransportChannel> m_resolvedTp;
+    Ptr<RecordingGbnHeaderCc> m_recordingCc;
+    static constexpr uint8_t kStableHint = 17;
+    static constexpr uint8_t kChangedHint = 34;
 };
+
+#ifndef _WIN32
+class UbLifecycleGbnRetransmissionTraceCleanupTest : public TestCase
+{
+  public:
+    UbLifecycleGbnRetransmissionTraceCleanupTest(UbDestroyReason reason,
+                                                 bool installReplacement,
+                                                 const std::string& scenario)
+        : TestCase("UnifiedBus - GBN retransmission trace cleanup " + scenario),
+          m_reason(reason),
+          m_installReplacement(installReplacement)
+    {
+    }
+
+    void DoRun() override
+    {
+        const int status = RunInChildProcess([this]() { RunScenario(); });
+        NS_TEST_ASSERT_MSG_EQ(WIFEXITED(status),
+                              1,
+                              "Reentrant GBN cleanup must not abort or access a retired descriptor");
+        if (WIFEXITED(status))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(status),
+                                  0,
+                                  "Reentrant GBN cleanup must preserve exact trace and descriptor "
+                                  "identity");
+        }
+    }
+
+  private:
+    void RunScenario()
+    {
+        Config::Reset();
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(false));
+        Config::SetDefault("ns3::UbTransportChannel::EnableRetrans", BooleanValue(true));
+        Config::SetDefault("ns3::UbTransportChannel::RetransmissionMode",
+                           EnumValue(UbRetransmissionMode::GBN));
+        Config::SetDefault("ns3::UbTransportChannel::EnableFastRetrans", BooleanValue(true));
+
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        m_function = controller->GetUbFunction();
+        m_transaction = controller->GetUbTransaction();
+        m_tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        m_function->CreateJetty(topo.sender->GetId(),
+                                topo.receiver->GetId(),
+                                kUrmaWriteRegressionJettyNum);
+        if (!m_transaction->JettyBindTp(topo.sender->GetId(),
+                                        topo.receiver->GetId(),
+                                        kUrmaWriteRegressionJettyNum,
+                                        false,
+                                        {kUrmaWriteRegressionSenderTpn}))
+        {
+            std::_Exit(1);
+        }
+        m_function->GetJetty(kUrmaWriteRegressionJettyNum)
+            ->SetWqeCompletionCallback(
+                MakeCallback(&UbLifecycleGbnRetransmissionTraceCleanupTest::ObserveTerminal,
+                             this));
+        m_tp->TraceConnectWithoutContext(
+            "WqeSegmentSendsNotify",
+            MakeCallback(&UbLifecycleGbnRetransmissionTraceCleanupTest::ObserveAdmission, this));
+
+        Ptr<UbWqe> wqe = m_function->CreateWqe(topo.sender->GetId(),
+                                               topo.receiver->GetId(),
+                                               64,
+                                               kUrmaWriteRegressionTaskId,
+                                               TaOpcode::TA_OPCODE_WRITE);
+        if (m_function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status !=
+            UbWqeSubmissionStatus::ACCEPTED)
+        {
+            std::_Exit(2);
+        }
+        Simulator::Run();
+        if (!m_admitted)
+        {
+            std::_Exit(3);
+        }
+
+        Ptr<Packet> initial = m_tp->GetNextPacketForTest();
+        if (initial == nullptr || !m_tp->HasGbnDescriptorForTest(0))
+        {
+            std::_Exit(4);
+        }
+        m_tp->RecvTpAck(BuildTpnakForSender(0));
+        m_tp->TraceConnectWithoutContext(
+            "FirstPacketSendsNotify",
+            MakeCallback(&UbLifecycleGbnRetransmissionTraceCleanupTest::ObserveFirstTrace, this));
+        m_tp->TraceConnectWithoutContext(
+            "LastPacketSendsNotify",
+            MakeCallback(&UbLifecycleGbnRetransmissionTraceCleanupTest::ObserveLastTrace, this));
+
+        Ptr<Packet> retransmission = m_tp->GetNextPacketForTest();
+        if (retransmission == nullptr || m_firstTraceCount != 1 || m_lastTraceCount != 1 ||
+            m_terminalCount != 1 || m_tp->HasGbnDescriptorForTest(0))
+        {
+            std::_Exit(5);
+        }
+        const UbWorkOutcome expected = m_reason == UbDestroyReason::ERROR
+                                           ? UbWorkOutcome::FAILED
+                                           : UbWorkOutcome::FLUSHED;
+        if (m_terminalOutcome != expected)
+        {
+            std::_Exit(6);
+        }
+        if (m_installReplacement)
+        {
+            if (!m_tp->HasGbnDescriptorForTest(kReplacementPsn))
+            {
+                std::_Exit(7);
+            }
+        }
+        else if (m_tp->GetGbnDescriptorCountForTest() != 0 ||
+                 m_tp->IsRetransTimerRunningForTest())
+        {
+            std::_Exit(8);
+        }
+        if (m_reason == UbDestroyReason::ERROR)
+        {
+            m_function->DestroyJetty(kUrmaWriteRegressionJettyNum,
+                                     UbDestroyReason::SIMULATION_STOP);
+        }
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+    void ObserveAdmission(uint32_t, uint32_t taskId, uint32_t)
+    {
+        if (taskId == kUrmaWriteRegressionTaskId)
+        {
+            m_admitted = true;
+            Simulator::Stop();
+        }
+    }
+
+    void ObserveFirstTrace(uint32_t,
+                           uint32_t taskId,
+                           uint32_t,
+                           uint32_t,
+                           uint32_t,
+                           uint32_t,
+                           uint32_t)
+    {
+        if (taskId != kUrmaWriteRegressionTaskId)
+        {
+            std::_Exit(9);
+        }
+        ++m_firstTraceCount;
+        m_function->DestroyJetty(kUrmaWriteRegressionJettyNum, m_reason);
+        if (m_installReplacement)
+        {
+            m_tp->RetainGbnDescriptorForTest(kReplacementPsn);
+        }
+    }
+
+    void ObserveLastTrace(uint32_t,
+                          uint32_t taskId,
+                          uint32_t,
+                          uint32_t,
+                          uint32_t,
+                          uint32_t,
+                          uint32_t)
+    {
+        if (taskId != kUrmaWriteRegressionTaskId)
+        {
+            std::_Exit(10);
+        }
+        ++m_lastTraceCount;
+    }
+
+    void ObserveTerminal(UbWqeCompletion completion)
+    {
+        ++m_terminalCount;
+        m_terminalOutcome = completion.outcome;
+    }
+
+    static constexpr uint64_t kReplacementPsn = 99;
+    UbDestroyReason m_reason;
+    bool m_installReplacement;
+    Ptr<UbFunction> m_function;
+    Ptr<UbTransaction> m_transaction;
+    Ptr<UbTransportChannel> m_tp;
+    bool m_admitted{false};
+    uint32_t m_firstTraceCount{0};
+    uint32_t m_lastTraceCount{0};
+    uint32_t m_terminalCount{0};
+    UbWorkOutcome m_terminalOutcome{UbWorkOutcome::COMPLETED};
+};
+#endif
 
 class UbLifecycleTpgRoundRobinPreservesCrossJettyInitialPhaseTest : public TestCase
 {
@@ -11355,11 +11907,8 @@ class UbLifecycleStartedTerminalRetainsCorrelationUntilResponseTest : public Tes
         m_transaction = controller->GetUbTransaction();
         m_tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
         m_coordinator = UbLifecycleCoordinator::GetOrCreate(topo.sender);
-        if (m_outcome == UbWorkOutcome::FAILED)
-        {
-            m_tp->SetRetransmissionMode(UbRetransmissionMode::GBN);
-            m_tp->SetRetransEnable(true);
-        }
+        m_tp->SetRetransmissionMode(UbRetransmissionMode::GBN);
+        m_tp->SetRetransEnable(true);
 
         for (uint32_t jettyNum : {kUrmaWriteRegressionJettyNum,
                                   kUrmaWriteRegressionJettyNum + 1})
@@ -11499,6 +12048,12 @@ class UbLifecycleStartedTerminalRetainsCorrelationUntilResponseTest : public Tes
         NS_TEST_ASSERT_MSG_EQ(m_terminals.size(),
                               1u,
                               "Application should observe A terminal exactly once immediately");
+        NS_TEST_ASSERT_MSG_EQ(m_tp->GetGbnDescriptorCountForTest(),
+                              0u,
+                              "Typed ERROR/cancel should retire A's exact GBN descriptor");
+        NS_TEST_ASSERT_MSG_EQ(m_tp->IsRetransTimerRunningForTest(),
+                              false,
+                              "Typed ERROR/cancel should cancel the empty GBN timer");
 
         Simulator::Stop(MilliSeconds(1));
         Simulator::Run();
@@ -21127,6 +21682,11 @@ UbTestSuite::UbTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbSenderUnwrapsPlainTpackAcrossWirePsnWrapTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbGbnSenderUnwrapsTpnakAcrossWirePsnWrapTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbGbnSenderIgnoresTpnakForRetiredDescriptorTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbGbnSenderCumulativeAckRetiresDescriptorsTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbGbnFinalAckWithPendingTaResponseLeavesTimerStoppedTest(),
+                TestCase::Duration::QUICK);
     AddTestCase(new UbSelectiveSenderCumulativeAckClearsRetainedStateTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbSelectiveAckedGapStateKeepsStateButSkipsRetransmitTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbSelectiveSenderRetransmitsRetainedMissingPacketTest(), TestCase::Duration::QUICK);
@@ -21406,6 +21966,22 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleStartedTerminalPendingForcedDrainTest(),
                 TestCase::Duration::QUICK);
+#ifndef _WIN32
+    AddTestCase(new UbLifecycleGbnRetransmissionTraceCleanupTest(UbDestroyReason::ERROR,
+                                                                false,
+                                                                "error"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleGbnRetransmissionTraceCleanupTest(
+                    UbDestroyReason::SIMULATION_STOP,
+                    false,
+                    "simulation-stop"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleGbnRetransmissionTraceCleanupTest(
+                    UbDestroyReason::SIMULATION_STOP,
+                    true,
+                    "replacement identity"),
+                TestCase::Duration::QUICK);
+#endif
     AddTestCase(new UbLifecycleResponseBearingTpAckBeforeTerminalTest(UbWorkOutcome::FAILED,
                                                                      "failed"),
                 TestCase::Duration::QUICK);
@@ -21543,6 +22119,11 @@ UbTransportRetransTestSuite::UbTransportRetransTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbSenderUnwrapsPlainTpackAcrossWirePsnWrapTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbGbnSenderUnwrapsTpnakAcrossWirePsnWrapTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbGbnSenderIgnoresTpnakForRetiredDescriptorTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbGbnSenderCumulativeAckRetiresDescriptorsTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbGbnFinalAckWithPendingTaResponseLeavesTimerStoppedTest(),
+                TestCase::Duration::QUICK);
     AddTestCase(new UbSelectiveSenderCumulativeAckClearsRetainedStateTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbSelectiveAckedGapStateKeepsStateButSkipsRetransmitTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbSelectiveSenderRetransmitsRetainedMissingPacketTest(), TestCase::Duration::QUICK);

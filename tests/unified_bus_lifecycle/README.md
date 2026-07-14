@@ -78,6 +78,41 @@ hard mismatch. The command reports the lexicographically first differing
 artifact and its first byte offset, then copies the complete reference and
 candidate trees into the new diagnostics directory.
 
+At a designated byte-comparison milestone, a reviewed structured exception
+manifest may approve explained differences:
+
+```bash
+python3 utils/unified_bus_baseline.py compare \
+  --rules tests/unified_bus_lifecycle/comparison-rules.json \
+  --case medium-multi-tp-retransmission \
+  --reference .openusim/unified-bus-lifecycle/reference/runs/local-single/medium-multi-tp-retransmission/run-1/case \
+  --candidate .openusim/unified-bus-lifecycle/candidate/t06-after-milestone-fix/case \
+  --diagnostics .openusim/unified-bus-lifecycle/diagnostics/t06-gate-final-v2 \
+  --ticket T06 \
+  --runtime local-single \
+  --exception-manifest tests/unified_bus_lifecycle/exceptions/t06-descriptor-gbn.json
+```
+
+Exact byte equality remains the default and prints `artifacts=identical`.
+Approved differences print `artifacts=approved-exceptions` only when the case,
+ticket, runtime, normalized reference, candidate, and diagnostics roots, root-review approval,
+approved cause set, specification, complete affected and unaffected path sets,
+hashes, first-byte offsets, old/new bytes, structured cause evidence, and artifact
+counts all match the current run. The user-approved policy permits a known,
+evidenced, acceptable difference; root review remains responsible for approving
+the concrete cause IDs recorded in each manifest. Each recorded byte is lowercase
+two-digit hex; a side that ends exactly at the first differing offset records
+JSON `null`. Every cause must describe its cause, impact, and independent
+structured evidence IDs, and at least one affected artifact must reference it.
+A cause's declared artifact set must exactly match those referencing artifacts.
+Milestone evidence records use one reusable schema that binds their ticket,
+runtime, current roots, affected artifacts, and structured claims. Independent
+comparison controls additionally bind their source commit and diagnostics roots,
+then reread the declared artifact to verify its hashes and first differing byte.
+Free-form summary-only evidence is rejected. Missing or new artifacts, stale
+evidence, and unexplained differences remain
+hard failures and preserve the same complete diagnostics trees.
+
 All generated artifacts were raw byte-stable across two accepted reference
 runs and are explicitly listed for raw byte equality. Every
 `canonical_only_artifacts` list is therefore explicitly empty.

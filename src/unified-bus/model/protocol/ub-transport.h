@@ -366,6 +366,12 @@ public:
     bool WasPsnSelectivelyReportedMissingForTest(uint64_t psn) const;
     bool HasRetainedPsnForTest(uint64_t psn) const;
     uint32_t GetPsnRetransmitCountForTest(uint64_t psn) const;
+    uint32_t GetGbnDescriptorCountForTest() const;
+    bool HasGbnDescriptorForTest(uint64_t psn) const;
+    uint64_t GetGbnRetransmissionCursorForTest() const;
+    void RetainGbnDescriptorForTest(uint64_t psn);
+    bool IsRetransTimerRunningForTest() const;
+    uint64_t GetSegmentBytesLeftForTest(uint32_t taskId) const;
 
     void SetBaseRto(Time rto);
     Time GetBaseRto() const;
@@ -390,7 +396,6 @@ public:
     uint64_t GetPsnSndNxt() const;
     void SetPsnSndNxt(uint64_t psn);
     uint64_t GetPsnRecvNxt() const;
-    void ResetSegmentSendProgressFromPsn(uint64_t psn);
     void TriggerTransportTransmit();
     bool IsCcLimitedForRetransmission(uint32_t payloadBytes) const;
     void SetSendWindowLimited(bool limited);
@@ -405,6 +410,8 @@ public:
     uint64_t GetMaxRcvPsnForRetrans() const;
     TpOpcode GetResponseOpcodeForRetrans(bool selectiveAck) const;
 private:
+    friend class UbGbnRetransStrategy;
+
     struct InboundTaUnitState
     {
         Ptr<UbWqeSegment> segment;
@@ -483,7 +490,11 @@ private:
     bool CanTrySendNewDataPacket();
     bool BuildNextDataSendContext(NewDataSendContext& ctx);
     Ptr<Packet> SendNewDataPacket(const NewDataSendContext& ctx);
-    void NotifyNewDataPacketSent(const NewDataSendContext& ctx, Ptr<Packet> packet);
+    UbGbnPacketDescriptor BuildGbnPacketDescriptor(const NewDataSendContext& ctx,
+                                                   uint64_t logicalPsn) const;
+    Ptr<Packet> BuildRtpDataPacket(const UbGbnPacketDescriptor& descriptor);
+    Ptr<Packet> SendGbnRetransmission(const UbGbnPacketDescriptor& descriptor);
+    void NotifyDataPacketSent(const UbGbnPacketDescriptor& descriptor, Ptr<Packet> packet);
     void AdvanceNewDataSendState(const NewDataSendContext& ctx, Ptr<Packet> packet);
     Ptr<UbTransaction> GetTransaction();
     Ptr<UbWqeSegment> TrackInboundTaPacket(const UbTransportHeader& tpHeader,

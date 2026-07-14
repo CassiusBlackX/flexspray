@@ -47,6 +47,28 @@ struct UbRetransTimeoutResult
     bool triggerTransmit{false};
 };
 
+struct UbGbnPacketDescriptor
+{
+    uint64_t logicalPsn{0};
+    UbTransactionCorrelationIdentity correlation;
+    bool hasCorrelation{false};
+    uint32_t packetOffsetBytes{0};
+    uint32_t progressBytes{0};
+    uint32_t payloadBytes{0};
+    uint32_t wireLengthBytes{0};
+    uint32_t taskId{0};
+    uint32_t wqeSize{0};
+    TaOpcode taOpcode{TaOpcode::TA_OPCODE_SEND};
+    UbTransactionSegmentKind segmentKind{UbTransactionSegmentKind::REQUEST};
+    uint32_t taSsn{0};
+    uint32_t requestTaSsn{0};
+    OrderType order{OrderType::ORDER_NO};
+    uint32_t originJettyNum{0};
+    uint64_t tpMsn{0};
+    bool firstPacket{false};
+    bool lastPacket{false};
+};
+
 class UbRetransStrategy
 {
 public:
@@ -58,14 +80,34 @@ class UbGbnRetransStrategy : public UbRetransStrategy
 public:
     explicit UbGbnRetransStrategy(UbRetransController& controller);
 
-    void PrepareRetransmissionFromPsn(uint64_t psn);
+    void RetainDescriptor(const UbGbnPacketDescriptor& descriptor);
+    bool PrepareRetransmissionFromPsn(uint64_t psn);
     bool HandleTpNak(uint64_t nakPsn);
+    Ptr<Packet> TryGetNextRetransmissionPacket();
+    bool HasPendingRetransmission() const;
+    uint32_t GetNextRetransmissionSize() const;
+    uint32_t GetNextRetransmissionProgressBytes() const;
+    uint32_t GetNextRetransmissionPayloadBytes() const;
+    bool HasOutstandingDescriptors() const;
+    void AcknowledgePrefix(uint64_t newSndUna);
+    void RetireSegment(const UbTransactionCorrelationIdentity& correlation,
+                       uint64_t psnStart,
+                       uint64_t psnEnd);
     UbRetransReceiveDecision OnDataPacketReceived(uint64_t psn);
     UbRetransTimeoutResult OnTimeout();
     void ClearNakSuppressionIfGapClosed(uint64_t recvNext);
+    uint32_t GetDescriptorCountForTest() const;
+    bool HasDescriptorForTest(uint64_t psn) const;
+    uint64_t GetRetransmissionCursorForTest() const;
+    void Clear();
 
 private:
+    void AdvanceRetransmissionCursor(const UbGbnPacketDescriptor& sentDescriptor);
+
     UbRetransController& m_controller;
+    std::map<uint64_t, UbGbnPacketDescriptor> m_descriptors;
+    std::optional<uint64_t> m_retransmitCursor;
+    uint64_t m_retransmitEnd{0};
     uint64_t m_lastNakPsn{std::numeric_limits<uint64_t>::max()};
 };
 
@@ -107,6 +149,7 @@ public:
     uint32_t GetNextRetransmissionSize() const;
     uint32_t GetNextRetransmissionPayloadBytes() const;
     uint32_t GetRetainedPayloadBytes(uint64_t psn) const;
+    bool HasOutstandingPackets() const;
 
     uint32_t GetPendingRetransmissionCountForTest() const;
     uint32_t GetRawRetransmissionQueueCountForTest() const;
@@ -188,6 +231,7 @@ public:
     void CancelTimer();
     UbRetransTimeoutResult OnTimeout();
     bool HasTimerRunning() const;
+    bool HasOutstandingRetransmissionState() const;
     UbRetransAckResult OnTransportNak(const UbTransportHeader& tph);
     UbRetransAckResult OnTransportSelectiveAck(const UbTransportHeader& tph,
                                                TpOpcode opcode,
@@ -197,10 +241,15 @@ public:
     UbRetransReceiveDecision OnDataPacketReceived(uint64_t psn);
     bool ResolveSelectiveAckBitmapBits(uint32_t& bits) const;
     UbRetransReceiveDecision BuildReceiveDecisionForCurrentState() const;
-    void OnNewDataPacketSent(uint64_t psn,
-                             Ptr<Packet> packet,
-                             uint32_t payloadBytes);
+    void OnNewDataPacketSent(const UbGbnPacketDescriptor& descriptor, Ptr<Packet> packet);
     Ptr<Packet> TryGetNextRetransmissionPacket();
+    bool HasPendingGbnRetransmission() const;
+    uint32_t GetNextGbnRetransmissionSize() const;
+    uint32_t GetNextGbnRetransmissionProgressBytes() const;
+    uint32_t GetNextGbnRetransmissionPayloadBytes() const;
+    void RetireGbnSegment(const UbTransactionCorrelationIdentity& correlation,
+                          uint64_t psnStart,
+                          uint64_t psnEnd);
     bool HasPendingSelectiveRetransmission() const;
     bool CanSendSelectiveRetransmission() const;
     uint32_t GetNextSelectiveRetransmissionSize() const;
@@ -210,6 +259,10 @@ public:
     bool WasPsnSelectivelyReportedMissingForTest(uint64_t psn) const;
     bool HasRetainedPsnForTest(uint64_t psn) const;
     uint32_t GetPsnRetransmitCountForTest(uint64_t psn) const;
+    uint32_t GetGbnDescriptorCountForTest() const;
+    bool HasGbnDescriptorForTest(uint64_t psn) const;
+    uint64_t GetGbnRetransmissionCursorForTest() const;
+    void RetainGbnDescriptorForTest(const UbGbnPacketDescriptor& descriptor);
     void ClearRetainedState();
     void ClearNakSuppressionIfGapClosed(uint64_t recvNext);
     UbTransportChannel& GetTransport();
