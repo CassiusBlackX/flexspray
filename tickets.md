@@ -20,6 +20,28 @@ The following contract applies to every ticket:
 - Validate new lifecycle-only output through schema, balance, generation, terminal-outcome, and causal-order invariants because no old counterpart exists.
 - Any intentional output difference requires an explicit exception manifest with old bytes, new bytes, first differing offset, exact cause, affected and unaffected behavior, Specification or characterization evidence, and approval. Each exception is narrow to the recorded artifact difference and applies to later milestones only while its cause and evidence remain unchanged. If the cause is uncertain, the impact is unacceptable, or approval is missing, the required or escalated comparison fails and must be brought to the user instead of being waived broadly.
 
+## Batch Implementation Policy
+
+This policy applies to every unfinished Unified Bus lifecycle ticket. At ticket start, create a
+ticket-level Reuse Plan against `main@ccf41b58`, then split work into the semantic batches required
+by actual behavior and risk. Two to four batches is common, not mandatory. Each batch submits one
+Batch Reuse Map and receives one root approval; approved mechanical callers may then migrate
+continuously, followed by one batch-level build, focused validation, and root review.
+
+Pause only on a re-approval trigger defined in `docs/agents/implementation-workflow.md`. If an agent
+exits or reaches a takeover threshold, the root agent may appoint a replacement to continue the
+recorded frontier. Every approval, diff scope, and validation result must be written to the current
+task brief so replacement does not depend on chat history.
+
+At ticket start, resolve its complete acceptance list below and the PRD into concrete commands,
+scenarios, and expected artifacts in the task brief. Any missing definition requires root approval.
+At ticket end, run that ticket-defined full acceptance suite, then create one implementation commit
+and one closeout commit. This does not mean every ticket runs repository-wide `./test.py`.
+
+The task brief is a local operational ledger, not long-term authority; it cannot relax this file,
+the PRD, or repository workflow. Existing blocking edges, per-ticket acceptance, and milestone
+requirements remain authoritative.
+
 ## Task 00: Freeze the current-main executable and two-tier acceptance corpus
 
 **What to build:** Create the immutable executable baseline, comparison harness, and bounded case corpus reused by later milestones and escalated review investigations.

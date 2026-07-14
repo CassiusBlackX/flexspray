@@ -29,6 +29,11 @@ The tracker uses the default five-role triage vocabulary. See `docs/agents/triag
 
 This is a single-context repository with one root `CONTEXT.md` and root-level ADRs. See `docs/agents/domain.md`.
 
+### Implementation workflow
+
+Engineering tickets use the repository-local
+[Matt implement extension](docs/agents/implementation-workflow.md).
+
 ## Skill Routing
 
 When the user wants help with Unified Bus / OpenUSim work in this repository, route by stage:

@@ -138,6 +138,41 @@ Current network results, completion semantics, scheduling behavior, routing deci
 - `【待验证】` Performance validation measures correctness accounting, deep verification, lifecycle detail trace, storage policies, and writer settings separately across sequential-unique, burst-concurrent, loss/retransmission, CTP, LDST, multi-TP, MTP, MPI, and mixed workloads. Report wall time, event count, allocation/object count, peak RSS, trace bytes, syscall count, descriptor pressure, and scaling.
 - Trace-off, summary, event, and detail runs must produce identical network results. Parsers reject missing metadata, unsupported schema versions, unknown enum mappings, and inconsistent MPI-rank schemas.
 
+## Implementation Execution Policy
+
+This policy applies to every Unified Bus lifecycle ticket after the current frontier, not only T08.
+T00-T07 are complete and must not be rolled back or redone. The pre-refactor behavior baseline is
+`main@ccf41b58`; before each ticket, inspect the corresponding old active path with:
+
+```bash
+git show ccf41b58:<path>
+git diff ccf41b58..HEAD -- <path>
+git log -S'<symbol>' --all --oneline
+git log -G'<pattern>' --all --oneline
+```
+
+The old active implementation is the default behavior reference. Preserve its branch conditions,
+state-update order, callback/trace/timer timing, header/tag construction order, ACK/RTO/queue/
+scheduler behavior, congestion accounting, output, and error behavior unless the ticket explicitly
+records an intentional change. Implement the lifecycle structure by direct reuse, minimal
+extraction, copy-and-adjust, and lifecycle-only adaptation in that order.
+
+One execution subagent normally owns each ticket; the root agent may appoint a replacement under
+the repository workflow's takeover conditions and must independently review all batches. Approve
+work as semantic batches using Batch Reuse Maps, never symbol by symbol, caller by caller, or line
+by line. Approval remains valid inside its recorded scope. Ordinary batches use focused validation;
+frozen comparison runs only at the milestones defined in Testing Decisions. The next ticket cannot
+start until the current ticket has implementation and closeout commits.
+
+For every ticket, the local task brief resolves its ticket-defined acceptance suite into concrete
+commands, scenarios, and expected artifacts. Missing details require root approval before the suite
+is treated as complete.
+
+Authority follows `AGENTS.md` -> `docs/agents/implementation-workflow.md` -> this PRD ->
+`tickets.md` -> current task brief. This feature policy may tighten the repository workflow. The
+task brief is only an operational ledger and cannot relax tracked policy or replace it as long-term
+authority.
+
 ## Out of Scope
 
 - Defining a new UB wire-level TP creation, close, reset, or teardown protocol.
