@@ -529,10 +529,35 @@ UbController::RemoveRtpTpGroupMember(
     const uint64_t useLeases = coordinator->GetSnapshot(groupIdentity).activeTransportUseLeases;
     if (useLeases != 0)
     {
-        if (reason != UbDestroyReason::EXPLICIT &&
-            reason != UbDestroyReason::PROTOCOL_COMPLETE)
+        if (reason == UbDestroyReason::ERROR ||
+            reason == UbDestroyReason::SIMULATION_STOP)
         {
-            return UbTpgMemberMutationStatus::REJECTED;
+            group->FreezeNewOperations();
+            if (m_transaction != nullptr)
+            {
+                const bool forceDrain = reason == UbDestroyReason::SIMULATION_STOP;
+                m_transaction->TerminateRtpTpGroupOperations(
+                    groupIdentity,
+                    forceDrain ? UbWorkOutcome::FLUSHED : UbWorkOutcome::FAILED,
+                    forceDrain);
+            }
+            const auto canonical = m_rtpTpGroups.find(groupIdentity.localId);
+            if (canonical == m_rtpTpGroups.end() || canonical->second != group ||
+                ResolveRtpTpGroup(groupIdentity) != group)
+            {
+                return UbTpgMemberMutationStatus::NOT_FOUND;
+            }
+            NS_ABORT_MSG_IF(
+                coordinator->GetSnapshot(groupIdentity).activeTransportUseLeases != 0,
+                "Typed last TPG member cleanup did not drain exact group use leases");
+            const int32_t currentIndex = group->FindMemberIndex(tpIdentity);
+            if (currentIndex < 0)
+            {
+                return UbTpgMemberMutationStatus::NOT_FOUND;
+            }
+            FinalizeRtpTpGroupMemberRemoval(group, static_cast<uint32_t>(currentIndex));
+            group->ResumeNewOperations();
+            return UbTpgMemberMutationStatus::REMOVED;
         }
         group->FreezeNewOperations();
         group->SetPendingLastMemberRemoval(tpIdentity);

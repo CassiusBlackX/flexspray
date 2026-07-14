@@ -881,24 +881,25 @@ UbTransaction::TerminateRtpTpGroupOperations(
 {
     NS_ABORT_MSG_IF(outcome == UbWorkOutcome::COMPLETED,
                     "TPG cleanup requires a terminal failure outcome");
-    NS_ABORT_MSG_IF(m_suppressedTpgOwnerProgress.has_value(),
-                    "TPG cleanup owner progress suppression cannot nest");
     struct OwnerProgressSuppressionGuard
     {
         OwnerProgressSuppressionGuard(
-            std::optional<UbLifecycleResourceIdentity>& suppressed,
+            std::vector<UbLifecycleResourceIdentity>& suppressed,
             const UbLifecycleResourceIdentity& identity)
-            : state(suppressed)
+            : state(suppressed), identity(identity)
         {
-            state = identity;
+            state.push_back(identity);
         }
 
         ~OwnerProgressSuppressionGuard()
         {
-            state.reset();
+            NS_ABORT_MSG_IF(state.empty() || state.back() != identity,
+                            "TPG cleanup owner progress suppression is unbalanced");
+            state.pop_back();
         }
 
-        std::optional<UbLifecycleResourceIdentity>& state;
+        std::vector<UbLifecycleResourceIdentity>& state;
+        UbLifecycleResourceIdentity identity;
     } suppression(m_suppressedTpgOwnerProgress, groupIdentity);
 
     std::vector<std::pair<uint32_t, uint32_t>> targets;
@@ -1336,11 +1337,13 @@ uint64_t UbTransaction::DeriveRemoteAddress(const Ptr<UbWqeSegment>& request) co
 
 void UbTransaction::TriggerTpTransmit(uint32_t jettyNum)
 {
-    if (m_suppressedTpgOwnerProgress.has_value())
+    if (!m_suppressedTpgOwnerProgress.empty())
     {
         const UbRtpTransportReference* reference = FindRtpTransportReference(jettyNum);
         if (reference != nullptr && !reference->IsDirectTp() &&
-            reference->GetIdentity() == *m_suppressedTpgOwnerProgress)
+            std::find(m_suppressedTpgOwnerProgress.begin(),
+                      m_suppressedTpgOwnerProgress.end(),
+                      reference->GetIdentity()) != m_suppressedTpgOwnerProgress.end())
         {
             return;
         }
@@ -1574,8 +1577,9 @@ UbTransaction::ReleaseTransportUseLease(OperationRecord& operation)
     m_coordinator->ReleaseLease(operation.transportUseLease);
     operation.transportUseLeaseHeld = false;
     if (tpgUse &&
-        (!m_suppressedTpgOwnerProgress.has_value() ||
-         *m_suppressedTpgOwnerProgress != groupIdentity))
+        std::find(m_suppressedTpgOwnerProgress.begin(),
+                  m_suppressedTpgOwnerProgress.end(),
+                  groupIdentity) == m_suppressedTpgOwnerProgress.end())
     {
         Ptr<UbController> controller = GetOwnerController();
         if (controller != nullptr)
@@ -1939,7 +1943,7 @@ void UbTransaction::DoDispose()
     m_serviceMode.clear();
     m_memoryStore.clear();
     m_operations.clear();
-    m_suppressedTpgOwnerProgress.reset();
+    m_suppressedTpgOwnerProgress.clear();
     m_coordinator = nullptr;
     m_function = nullptr;
     for (auto &it : m_jettyOrderedWqe) {
