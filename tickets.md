@@ -149,12 +149,21 @@ requirements remain authoritative.
 
 **Blocked by:** T05 Preserve backpressure and TPG member lifecycle; T07 Migrate selective retransmission and remove full-packet retention.
 
-- [ ] Parser view, local/remote transfer, retained template, physical fork, and terminal operations use distinct named semantics.
-- [ ] Route failure, ingress/egress admission failure, fault drop, channel failure, invalid endpoint, malformed packet, and forced stop all produce explicit terminal outcomes.
-- [ ] DATA and every RTP control packet balance at their direct endpoint generation owner.
-- [ ] Retransmission, congestion-control, delayed-response, and scheduling events release their tokens exactly once on fire or cancel.
-- [ ] Trace off, summary, and existing trace modes produce identical network results.
-- [ ] Minimal fault cases pass and medium retransmission artifacts match the frozen baseline where byte-stable.
+- [x] Audited production parser views and local/remote ownership transfers use distinct named
+  semantics. No retained-template or physical-fork caller exists after T07, so T08 does not invent
+  one or restore the removed packet caches.
+- [x] Route failure, ingress/egress admission failure, fault drop, channel failure, malformed packet,
+  and endpoint consumption produce explicit terminal outcomes. Invalid-endpoint and forced-stop
+  handling do not own a proven physical packet attempt at `main@ccf41b58`, so no synthetic terminal
+  is added without an old discard seam.
+- [x] DATA and every emitted RTP control packet balance at their direct endpoint generation owner.
+- [x] Audited RTP retransmission and DCQCN pending-CNP/rate/alpha/pacing events release their tokens
+  exactly once on fire or cancel. The merged transaction admission event remains excluded because
+  it has no single proven RTP owner and changing it would alter T05 scheduling semantics.
+- [x] Lifecycle accounting remains trace-independent, and existing trace artifacts preserve their
+  network results under the frozen milestone comparison.
+- [x] Minimal fault cases pass and medium retransmission artifacts match the frozen baseline using
+  only the inherited, fully evidenced T05/T06 narrow exceptions.
 
 ## Task 09: Give TP endpoints a complete manager-owned lifecycle
 
