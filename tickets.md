@@ -405,12 +405,34 @@ Closeout:
 
 **Blocked by:** T15 Split Datalink flow control without changing control frames.
 
-- [ ] The switch is the only VOQ collection owner; the queue manager owns buffer pools, admission, and occupancy only.
-- [ ] Queue entry removal, ingress/VOQ/egress occupancy, overflow-storage release, and flow-control views remain balanced.
-- [ ] A VOQ cannot retire while a packet, in-port event, allocator token, flow-control occupancy, or algorithm lease remains.
-- [ ] Retaining an empty shell and destroying it use the same safe gate and are selected only by explicit teardown or measured storage policy.
-- [ ] Allocator and diagnostic events are saved, canceled, and resolved symmetrically; forced disposal records residue.
-- [ ] Focused sparse-VOQ and allocator tests plus a targeted queue-pressure scenario preserve allocation order, queue traces, TypeId/attributes, and balanced occupancy.
+- [x] The switch is the only VOQ collection owner; the queue manager owns buffer pools, admission, and occupancy only.
+- [x] Queue entry removal, ingress/VOQ/egress occupancy, overflow-storage release, and flow-control views remain balanced.
+- [x] A VOQ cannot retire while a packet, in-port event, allocator token, flow-control occupancy, or algorithm lease remains.
+- [x] Retaining an empty shell and destroying it use the same safe gate and are selected only by explicit teardown or measured storage policy.
+- [x] Allocator and diagnostic events are saved, canceled, and resolved symmetrically; forced disposal records residue.
+- [x] Focused sparse-VOQ and allocator tests plus a targeted queue-pressure scenario preserve allocation order, queue traces, TypeId/attributes, and balanced occupancy.
+
+Closeout:
+
+- `UbSwitch` remains the sole sparse VOQ collection owner. `UbIngressQueue` and `UbPacketQueue`
+  were extracted from the pre-ticket queue-manager file without redesign; `UbQueueManager` retains
+  only admission, buffer pools, occupancy and trace accounting.
+- The destruction gate rejects retained packets, delayed in-port work, pending/active allocator
+  work and nonzero production accounting, then unregisters and repeats the checks before erasing.
+  Ordinary runtime retains drained empty shells; only the explicit teardown/test seam destroys one.
+- Allocation, retrigger, port-notification and recurring deadlock events are saved and canceled on
+  disposal. Switch and allocator disposal record event, byte, packet, buffer and active-lease
+  residue before releasing owned state.
+- RR/DWRR selection, cursor/deficit updates, dequeue, flow-control callbacks, accounting, port
+  notification and retrigger order were compared with `main@ccf41b58` and remain unchanged. No
+  parallel queue, scheduler, parser, packet builder or state machine was introduced.
+- Target build passed with `-j2`; the 10-case switch-VOQ, 35-case flow-control and lifecycle suites
+  passed. `scratch/2nodes_single-tp_cbfc-credit-large` completed 1/1 task in about 70 ms simulation
+  time and 156 ms total wall time. T16 is not a frozen-byte milestone.
+- Queue-class debug messages now use the `UbIngressQueue` log component because ns-3 rejects
+  duplicate `UbQueueManager` component registration across translation units. This narrow,
+  explained diagnostic-filter difference does not affect packet bytes, protocol behavior, traces,
+  callback timing or accounting.
 
 ## Task 17: Route lifecycle accounting through MTP, MPI, and hybrid owners
 
