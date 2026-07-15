@@ -203,12 +203,31 @@ Closeout:
 
 **Blocked by:** T09 Give TP endpoints a complete manager-owned lifecycle.
 
-- [ ] A connection generation owns exactly two endpoint slots with explicit unmaterialized, active, draining, and retired states.
-- [ ] A valid late packet for the closing generation creates or retains a drain-only endpoint before processing derived terminal or response work.
-- [ ] New application work is rejected while old DATA, ACK/NAK/SACK/CNP, transaction response, and required error handling can drain.
-- [ ] Repeated, simultaneous two-sided, and stronger-mode destroy requests share one monotonic drain/finalize flow.
-- [ ] Reservation indexes and both TPNs are released only after both slots retire; reuse creates a new connection generation.
-- [ ] Focused paired-teardown tests cover idle/active work, repeated and simultaneous requests, late packets, TPN release, reuse, output outcomes, and callback ordering.
+- [x] A connection generation owns exactly two endpoint slots with explicit unmaterialized, active, draining, and retired states.
+- [x] A valid late packet for the closing generation creates or retains a drain-only endpoint before processing derived terminal or response work.
+- [x] New application work is rejected while old DATA, ACK/NAK/SACK/CNP, transaction response, and required error handling can drain.
+- [x] Repeated, simultaneous two-sided, and stronger-mode destroy requests share one monotonic drain/finalize flow.
+- [x] Reservation indexes and both TPNs are released only after both slots retire; reuse creates a new connection generation.
+- [x] Focused paired-teardown tests cover idle/active work, repeated and simultaneous requests, late packets, TPN release, reuse, output outcomes, and callback ordering.
+
+Closeout:
+
+- `TpConnectionManager` retains the old reservation construction and local index orientation while
+  adding one source-owned canonical connection record, generation identity, and two fixed endpoint
+  slots. Packet ownership remains on the endpoint generation.
+- Either endpoint can request teardown. Repeated requests join the same callback list, stronger
+  reasons upgrade monotonically, and both local endpoint destroys reuse the T09 manager path.
+- The closing reservation remains available to the existing inbound channel-key validator. A valid
+  late inbound packet can materialize a drain-only endpoint, which rejects new application work and
+  retires through the same endpoint manager after the current handler.
+- Exact local views and empty index entries are removed only after both slots retire. Both TPNs are
+  then released, the connection identity and canonical record retire, and callbacks run after erase.
+  Reuse of the released TPN opens a newer connection generation.
+- Review against `main@ccf41b58` found no rewritten packet builder/parser, ACK/RTO, queue,
+  scheduler, or congestion-control algorithm and no idle/task-completion teardown caller.
+- Focused validation passed: targeted `unified-bus-test`/`test-runner` build,
+  `unified-bus-lifecycle`, `unified-bus-tp-reservation`, and diff check. T10 has no frozen byte
+  comparison.
 
 ## Task 11: Move CTP transaction progress into the Transaction owner
 
