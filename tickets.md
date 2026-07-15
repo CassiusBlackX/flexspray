@@ -440,12 +440,28 @@ Closeout:
 
 **Blocked by:** T10 Tear down a paired TP connection only after both slots drain; T12 Make CTP keys, queues, events, and finite children retire independently; T13 Close the LDST operation lifecycle; T14 Separate route storage from routing policy on the live packet path; T16 Balance VOQ ownership, allocator events, and queue disposal.
 
-- [ ] Only the execution owner mutates each resource generation's ledger and protocol container.
-- [ ] Remote terminal and destroy-completion records are delivered exactly once or rejected as duplicate/stale in diagnostic injection tests.
-- [ ] Drain-only slot creation is causally visible before terminal, response, or endpoint completion derived from the late packet.
-- [ ] Raw callbacks, mutable protocol objects, and direct peer-object mutation never cross LP/rank boundaries.
-- [ ] Unsupported control transport fails before enabling lifecycle functionality that needs remote confirmation.
-- [ ] Single-thread, MTP, MPI, and hybrid semantic artifacts match according to the frozen acceptance manifest; owner sequence and pending-record balance are reported.
+- [x] Only the execution owner mutates each resource generation's ledger and protocol container.
+- [x] Remote terminal and destroy-completion records are delivered exactly once or rejected as duplicate/stale in diagnostic injection tests.
+- [x] Drain-only slot creation is causally visible before terminal, response, or endpoint completion derived from the late packet.
+- [x] Raw callbacks, mutable protocol objects, and direct peer-object mutation never cross LP/rank boundaries.
+- [x] Unsupported control transport fails before enabling lifecycle functionality that needs remote confirmation.
+- [x] Single-thread, MTP, MPI, and hybrid semantic artifacts match according to the frozen acceptance manifest; owner sequence and pending-record balance are reported.
+
+- Fixed causal controls reuse the granted-time-window MPI pending-send, polling and visibility
+  paths. Task completion remains on tag 77, packet transfer remains on tag 0, and lifecycle control
+  uses tag 78 with rank-first and owner-LP-second dispatch.
+- Packet and TP lifecycle controls apply through the canonical owner with per-source sequence,
+  duplicate/stale rejection, buffered gap handling, local callback tokens, typed remote completion,
+  and two-view cleanup acknowledgement. T10 slot, destroy-reason, TPN reuse and callback-after-erase
+  behavior remains the local characterization oracle.
+- Targeted lifecycle, TP reservation, causal scheduling, MPI/hybrid control, remote-TP and minimal
+  quick-example suites passed. Builds, tests and simulations ran serially with build concurrency
+  limited to `-j2`.
+- The frozen root verified 369 files. Exact `parallel-all`, `local-mtp`, and `local-single`
+  candidates completed the cross-owner case in all four runtime modes. Each comparison had the
+  already-reviewed T05 same-timestamp `Sends`/`Completes` ordering change only; four runtime-bound
+  exception manifests approved that one byte-offset/hash pair while every other managed artifact
+  remained byte-identical.
 
 ## Task 18: Publish lifecycle trace schema and parser semantics
 
