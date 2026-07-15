@@ -6,6 +6,7 @@
 #include "ns3/event-id.h"
 #include "ns3/object.h"
 #include "ns3/packet.h"
+#include "ns3/simulator.h"
 #include "ns3/tag.h"
 
 #include <cstdint>
@@ -70,6 +71,20 @@ enum class UbPacketTerminal : uint8_t
     MALFORMED_PACKET = 7,
 };
 
+enum class UbLifecycleControlOperation : uint8_t
+{
+    PACKET_TRANSFER = 1,
+    PACKET_TERMINAL = 2,
+    ENDPOINT_MATERIALIZED = 3,
+    CONNECTION_DESTROY_REQUEST = 4,
+    ENDPOINT_DESTROY_REQUEST = 5,
+    ENDPOINT_DESTROYED = 6,
+    ERASE_CONNECTION_VIEW = 7,
+    ERASE_CONNECTION_VIEW_COMPLETE = 8,
+    CONNECTION_DESTROY_COMPLETE = 9,
+    CONNECTION_DESTROY_NOTICE = 10,
+};
+
 struct UbLifecycleResourceIdentity
 {
     uint32_t ownerNodeId{0};
@@ -104,6 +119,32 @@ struct UbPacketAttemptIdentity
     uint64_t attempt{0};
 
     bool operator==(const UbPacketAttemptIdentity&) const = default;
+};
+
+struct UbLifecycleControlRecord
+{
+    uint32_t sourceNodeId{0};
+    uint32_t targetNodeId{0};
+    uint64_t sequence{0};
+    int64_t visibleTs{0};
+    UbLifecycleControlOperation operation{UbLifecycleControlOperation::PACKET_TRANSFER};
+    UbLifecycleResourceIdentity resource;
+    UbPacketAttemptIdentity packet;
+    uint32_t nodeId{0};
+    uint32_t tpn{0};
+    uint64_t requestId{0};
+    uint64_t value{0};
+};
+
+struct UbParallelLifecycleSnapshot
+{
+    uint64_t ownerSequence{0};
+    uint64_t sent{0};
+    uint64_t received{0};
+    uint64_t applied{0};
+    uint64_t duplicate{0};
+    uint64_t stale{0};
+    uint64_t pending{0};
 };
 
 struct UbLifecycleLeaseIdentity
@@ -220,10 +261,15 @@ class UbLifecycleCoordinator : public Object
                                                   Ptr<Packet> packet);
     UbLifecycleResourceSnapshot GetSnapshot(const UbLifecycleResourceIdentity& owner) const;
 
-    static void ObservePacketTransfer(Ptr<Packet> packet, UbPacketTransfer transfer);
-    static void TerminatePacket(Ptr<Packet> packet, UbPacketTerminal terminal);
+    static void ObservePacketTransfer(Ptr<Packet> packet,
+                                      UbPacketTransfer transfer,
+                                      uint32_t sourceNodeId = Simulator::NO_CONTEXT);
+    static void TerminatePacket(Ptr<Packet> packet,
+                                UbPacketTerminal terminal,
+                                uint32_t sourceNodeId = Simulator::NO_CONTEXT);
 
   private:
+    friend class UbParallelLifecycleAdapter;
     struct ResourceKey
     {
         UbLifecycleResourceKind kind;
@@ -254,6 +300,49 @@ class UbLifecycleCoordinator : public Object
 
     uint32_t m_ownerNodeId{0};
     std::map<ResourceKey, ResourceState> m_resources;
+};
+
+class UbParallelLifecycleAdapter : public Object
+{
+  public:
+    static TypeId GetTypeId();
+    static Ptr<UbParallelLifecycleAdapter> GetOrCreate(Ptr<Node> node);
+
+    static void RoutePacketTransfer(const UbPacketAttemptIdentity& identity,
+                                    UbPacketTransfer transfer,
+                                    uint32_t sourceNodeId = Simulator::NO_CONTEXT);
+    static void RoutePacketTerminal(const UbPacketAttemptIdentity& identity,
+                                    UbPacketTerminal terminal,
+                                    uint32_t sourceNodeId = Simulator::NO_CONTEXT);
+    static bool RouteControl(UbLifecycleControlRecord record);
+    static bool IsExecutionOwner(uint32_t nodeId);
+
+    void InjectControlForTest(const UbLifecycleControlRecord& record);
+    UbParallelLifecycleSnapshot GetSnapshot() const;
+
+  private:
+    struct InboundSequence
+    {
+        uint64_t next{1};
+        std::map<uint64_t, UbLifecycleControlRecord> pending;
+    };
+
+    static uint32_t RequireSourceNodeId(uint32_t preferredNodeId = Simulator::NO_CONTEXT);
+    static void Route(UbLifecycleControlRecord record);
+    static void ReceiveAtTarget(UbLifecycleControlRecord record);
+    void Send(UbLifecycleControlRecord record);
+    void Receive(UbLifecycleControlRecord record);
+    bool Apply(const UbLifecycleControlRecord& record);
+
+    uint32_t m_nodeId{0};
+    uint64_t m_ownerSequence{0};
+    uint64_t m_sent{0};
+    uint64_t m_received{0};
+    uint64_t m_applied{0};
+    uint64_t m_duplicate{0};
+    uint64_t m_stale{0};
+    std::map<uint32_t, uint64_t> m_nextOutboundSequence;
+    std::map<uint32_t, InboundSequence> m_inbound;
 };
 
 class UbTrackedEventSet

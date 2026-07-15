@@ -303,6 +303,23 @@ NullMessageMpiInterface::SetTaskCompletionHandler(TaskCompletionHandler)
 }
 
 void
+NullMessageMpiInterface::SendCausalControl(const CausalControlRecord&)
+{
+    NS_ABORT_MSG("Causal control records are not implemented for NullMessageMpiInterface");
+}
+
+void
+NullMessageMpiInterface::SetCausalControlHandler(CausalControlHandler)
+{
+}
+
+bool
+NullMessageMpiInterface::SupportsCausalControl() const
+{
+    return false;
+}
+
+void
 NullMessageMpiInterface::SendNullMessage(const Time& guarantee_update,
                                          Ptr<RemoteChannelBundle> bundle)
 {

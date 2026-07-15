@@ -246,6 +246,79 @@ RunHybridMtpExample(const std::string& testFile,
     return {status, buffer.str()};
 }
 
+class CausalControlOrderingSystemTestCase : public TestCase
+{
+  public:
+    CausalControlOrderingSystemTestCase(const std::string& name,
+                                        const std::string& program,
+                                        const std::string& arguments,
+                                        const std::string& expected)
+        : TestCase(name),
+          m_program(program),
+          m_arguments(arguments),
+          m_expected(expected)
+    {
+    }
+
+    void DoRun() override
+    {
+        const std::string testFile = CreateTempDirFilename(GetName() + ".log");
+        const auto [status, output] = RunHybridMtpExample(testFile, m_program, m_arguments);
+        NS_TEST_ASSERT_MSG_EQ(status, 0, "causal-control scenario must complete: " << output);
+        NS_TEST_ASSERT_MSG_NE(output.find(m_expected),
+                              std::string::npos,
+                              "causal-control scenario must report its owner/time evidence: "
+                                  << output);
+    }
+
+  private:
+    std::string m_program;
+    std::string m_arguments;
+    std::string m_expected;
+};
+
+class CausalControlOrderingSystemTestSuite : public TestSuite
+{
+  public:
+    CausalControlOrderingSystemTestSuite(const std::string& name,
+                                         const std::string& program,
+                                         const std::string& arguments,
+                                         const std::string& expected)
+        : TestSuite(name, Type::SYSTEM)
+    {
+        AddTestCase(new CausalControlOrderingSystemTestCase(name, program, arguments, expected),
+                    TestCase::Duration::QUICK);
+    }
+};
+
+static CausalControlOrderingSystemTestSuite g_mpiCausalControl(
+    "mpi-causal-control-ordering",
+    "src/mpi/examples/causal-control-ordering",
+    "",
+    "TEST : 1 : PASSED receive-time=10 wrong-context=0 wrong-lp=0 value=12625313");
+static CausalControlOrderingSystemTestSuite g_hybridCausalControl(
+    "mpi-hybrid-causal-control-ordering",
+    "src/mpi/examples/causal-control-ordering",
+    "--hybrid",
+    "TEST : 1 : PASSED receive-time=10 wrong-context=0 wrong-lp=0 value=12625313");
+static CausalControlOrderingSystemTestSuite g_nullMessageCausalControl(
+    "mpi-null-message-causal-control-unsupported",
+    "src/mpi/examples/causal-control-ordering",
+    "--nullmsg",
+    "TEST : 1 : PASSED");
+static CausalControlOrderingSystemTestSuite g_mpiUbLifecycleControl(
+    "mpi-ub-lifecycle-parallel-control",
+    "src/unified-bus/examples/ub-lifecycle-parallel-control",
+    "",
+    "TEST : 0 : PASSED owner-seq=1 sent=0 received=1 applied=1 duplicate=0 stale=0 "
+    "pending=0 balance=0 terminal=1");
+static CausalControlOrderingSystemTestSuite g_hybridUbLifecycleControl(
+    "mpi-hybrid-ub-lifecycle-parallel-control",
+    "src/unified-bus/examples/ub-lifecycle-parallel-control",
+    "--hybrid",
+    "TEST : 0 : PASSED owner-seq=1 sent=0 received=1 applied=1 duplicate=0 stale=0 "
+    "pending=0 balance=0 terminal=1");
+
 class MpiRemoteTpRegressionSystemTestCase : public TestCase
 {
   public:

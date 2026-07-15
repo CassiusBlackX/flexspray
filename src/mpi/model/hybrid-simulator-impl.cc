@@ -114,6 +114,12 @@ HybridSimulatorImpl::BoundLookAhead(Time lookAhead)
     }
 }
 
+Time
+HybridSimulatorImpl::GetLookAhead() const
+{
+    return m_minLookahead;
+}
+
 void
 HybridSimulatorImpl::Destroy()
 {

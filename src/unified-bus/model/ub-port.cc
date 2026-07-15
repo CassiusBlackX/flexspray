@@ -69,7 +69,8 @@ bool UbEgressQueue::DoEnqueue(PacketEntry packetEntry)
                      << " bytes. Packet dropped (inPort=" << inPortId 
                      << " priority=" << (uint32_t)priority << ")");
         UbLifecycleCoordinator::TerminatePacket(pkt,
-                                                UbPacketTerminal::EGRESS_QUEUE_FULL);
+                                                UbPacketTerminal::EGRESS_QUEUE_FULL,
+                                                m_ownerNodeId);
         return false;
     }
     
@@ -77,7 +78,8 @@ bool UbEgressQueue::DoEnqueue(PacketEntry packetEntry)
     m_currentBytes += pktSize;  // 更新字节统计
     UbLifecycleCoordinator::ObservePacketTransfer(
         pkt,
-        UbPacketTransfer::EGRESS_QUEUE_ENQUEUE);
+        UbPacketTransfer::EGRESS_QUEUE_ENQUEUE,
+        m_ownerNodeId);
     m_traceUbEnqueue(pkt, static_cast<uint32_t>(m_currentBytes));
 
     NS_LOG_LOGIC ("[UbEgressQueue DoEnqueue] Egress Queue size: " << m_egressQ.size () 
@@ -141,7 +143,8 @@ PacketEntry UbEgressQueue::DoDequeue()
     m_currentBytes -= pktSize;  // 更新字节统计
     UbLifecycleCoordinator::ObservePacketTransfer(
         pkt,
-        UbPacketTransfer::EGRESS_QUEUE_DEQUEUE);
+        UbPacketTransfer::EGRESS_QUEUE_DEQUEUE,
+        m_ownerNodeId);
     m_traceUbDequeue(pkt, static_cast<uint32_t>(m_currentBytes));
 
     NS_LOG_LOGIC ("[UbEgressQueue DoDequeue] Egress Queue size: " << m_egressQ.size ()
@@ -304,6 +307,8 @@ UbPort::HasMpiReceive() const
 void UbPort::SetIfIndex(const uint32_t portId)
 {
     m_portId = portId;
+    NS_ABORT_MSG_IF(GetNode() == nullptr, "Unified Bus port index requires an attached node");
+    m_ubEQ->SetOwnerNodeId(GetNode()->GetId());
 }
 
 uint32_t UbPort::GetIfIndex() const

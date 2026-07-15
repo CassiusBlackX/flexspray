@@ -32,6 +32,7 @@ struct Connection {
     uint32_t tpn2;
     uint32_t priority;
     uint32_t metrics;
+    uint64_t reservationGeneration{0};
 };
 
 enum class EndpointSlotState : uint8_t
@@ -184,6 +185,8 @@ public:
                                       UbDestroyReason reason = UbDestroyReason::EXPLICIT,
                                       UbDestroyCallback callback = {});
 
+    static bool ApplyLifecycleControl(const UbLifecycleControlRecord& record);
+
     bool GetConnectionLifecycleSnapshot(uint32_t localTpn,
                                         ConnectionLifecycleSnapshot& snapshot) const;
     size_t GetCanonicalConnectionCountForTest() const;
@@ -224,20 +227,45 @@ private:
         UbDestroyReason reason{UbDestroyReason::EXPLICIT};
         UbLifecycleResourceIdentity identity;
         std::vector<UbDestroyCallback> callbacks;
+        std::vector<std::pair<uint32_t, uint64_t>> remoteCallbacks;
+        uint8_t erasedViews{0};
     };
 
-    void RegisterCanonicalConnectionLocked(const Connection& conn);
+    void RegisterCanonicalConnectionLocked(Connection& conn);
+    void AttachConnectionIdentityLocked(Connection& conn);
+    static UbLifecycleResourceIdentity GetConnectionIdentity(const Connection& connection);
+    bool MatchesCanonicalConnection(const UbLifecycleResourceIdentity& identity) const;
     bool NotifyEndpointMaterializedLocked(uint32_t localNodeId,
                                           uint32_t localTpn,
                                           EndpointSlotState state);
-    UbDestroyStatus DestroyConnectionOwned(uint32_t ownerTpn,
+    UbDestroyStatus DestroyConnectionOwned(const UbLifecycleResourceIdentity& identity,
                                            UbDestroyReason reason,
-                                           UbDestroyCallback callback);
-    void OnEndpointDestroyed(uint32_t ownerTpn,
+                                           UbDestroyCallback callback,
+                                           uint32_t callbackNodeId = UINT32_MAX,
+                                           uint64_t requestId = 0);
+    void RequestEndpointDestroy(const Connection& connection,
+                                const UbLifecycleResourceIdentity& identity,
+                                uint8_t slot,
+                                UbDestroyReason reason);
+    void RequestDestroyNotice(const Connection& connection,
+                              const UbLifecycleResourceIdentity& identity,
+                              uint8_t slot,
+                              UbDestroyReason reason,
+                              bool ownerObservedActive);
+    void OnLocalEndpointDestroyed(UbLifecycleResourceIdentity connectionIdentity,
+                                  uint8_t slot,
+                                  UbLifecycleResourceIdentity endpointIdentity,
+                                  UbDestroyStatus status);
+    void OnEndpointDestroyed(const UbLifecycleResourceIdentity& identity,
                              uint8_t slot,
-                             UbLifecycleResourceIdentity identity,
                              UbDestroyStatus status);
-    void TryFinalizeConnection(uint32_t ownerTpn);
+    void TryFinalizeConnection(const UbLifecycleResourceIdentity& identity);
+    void RequestEraseConnectionView(const Connection& connection,
+                                    const UbLifecycleResourceIdentity& identity,
+                                    uint8_t slot);
+    void OnConnectionViewErased(const UbLifecycleResourceIdentity& identity, uint8_t slot);
+    void CompleteFinalizeConnection(const UbLifecycleResourceIdentity& identity);
+    void CompleteRemoteDestroy(const UbLifecycleResourceIdentity& identity, uint64_t requestId);
     void EraseConnectionView(uint32_t localNodeId, uint32_t localTpn);
 
   // 为指定节点建立各种索引
@@ -283,6 +311,7 @@ private:
 
     // 索引6: (localNodeId, localTpn) -> connection
     std::map<std::pair<uint32_t, uint32_t>, Connection> m_localTpnIndex;
+    std::set<std::pair<uint32_t, uint32_t>> m_destroyRequestedViews;
 
     std::set<uint32_t> m_tpnList;
     std::set<uint32_t> m_reservedTpnList;
@@ -298,6 +327,13 @@ private:
     uint64_t m_nextConnectionGeneration{0};
     std::map<std::pair<uint32_t, uint32_t>, ConnectionLifecycleRecord>
         m_canonicalConnections;
+    struct PendingRemoteDestroy
+    {
+        UbLifecycleResourceIdentity identity;
+        UbDestroyCallback callback;
+    };
+    uint64_t m_nextRemoteDestroyRequestId{0};
+    std::map<uint64_t, PendingRemoteDestroy> m_pendingRemoteDestroyCallbacks;
 
   public:
     void SetOwnerNodeId(uint32_t nodeId) { m_ownerNodeId = nodeId; }

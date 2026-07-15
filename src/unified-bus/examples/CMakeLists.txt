@@ -22,6 +22,15 @@ build_lib_example(
 
 if(${ENABLE_MPI} AND ${ENABLE_MTP})
   build_lib_example(
+    NAME ub-lifecycle-parallel-control
+    SOURCE_FILES ub-lifecycle-parallel-control.cc
+    LIBRARIES_TO_LINK
+      ${libmpi}
+      ${libmtp}
+      ${libnetwork}
+  )
+
+  build_lib_example(
     NAME ub-mtp-remote-tp-regression
     SOURCE_FILES ub-mtp-remote-tp-regression.cc
     LIBRARIES_TO_LINK

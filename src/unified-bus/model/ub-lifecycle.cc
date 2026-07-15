@@ -4,6 +4,15 @@
 #include "ns3/abort.h"
 #include "ns3/node.h"
 #include "ns3/node-list.h"
+#include "ns3/simulator.h"
+#include "ns3/ub-tp-connection-manager.h"
+
+#ifdef NS3_MPI
+#include "ns3/mpi-interface.h"
+#endif
+#ifdef NS3_MTP
+#include "ns3/mtp-interface.h"
+#endif
 
 #include <algorithm>
 #include <limits>
@@ -15,6 +24,69 @@ namespace ns3
 NS_OBJECT_ENSURE_REGISTERED(UbPacketLifecycleTag);
 NS_OBJECT_ENSURE_REGISTERED(UbTransactionCorrelationTag);
 NS_OBJECT_ENSURE_REGISTERED(UbLifecycleCoordinator);
+NS_OBJECT_ENSURE_REGISTERED(UbParallelLifecycleAdapter);
+
+namespace
+{
+
+#ifdef NS3_MPI
+constexpr uint32_t UB_LIFECYCLE_CAUSAL_PROTOCOL = 0x55424c31;
+
+ParallelCommunicationInterface::CausalControlRecord
+EncodeLifecycleControl(const UbLifecycleControlRecord& record)
+{
+    ParallelCommunicationInterface::CausalControlRecord wire;
+    wire.targetNodeId = record.targetNodeId;
+    wire.protocol = UB_LIFECYCLE_CAUSAL_PROTOCOL;
+    wire.visibleTs = static_cast<uint64_t>(record.visibleTs);
+    wire.orderKey = record.sequence;
+    wire.payload[0] = record.sourceNodeId;
+    wire.payload[1] = static_cast<uint64_t>(record.operation);
+    wire.payload[2] = record.resource.ownerNodeId;
+    wire.payload[3] = static_cast<uint64_t>(record.resource.kind);
+    wire.payload[4] = record.resource.localId;
+    wire.payload[5] = record.resource.generation;
+    wire.payload[6] = record.nodeId;
+    wire.payload[7] = record.value;
+    wire.payload[8] = record.tpn;
+    wire.payload[9] = record.requestId;
+    wire.payload[10] = record.packet.attempt;
+    return wire;
+}
+
+UbLifecycleControlRecord
+DecodeLifecycleControl(const ParallelCommunicationInterface::CausalControlRecord& wire)
+{
+    NS_ABORT_MSG_IF(wire.protocol != UB_LIFECYCLE_CAUSAL_PROTOCOL,
+                    "Unknown Unified Bus lifecycle causal-control protocol");
+    UbLifecycleControlRecord record;
+    record.sourceNodeId = static_cast<uint32_t>(wire.payload[0]);
+    record.targetNodeId = wire.targetNodeId;
+    record.sequence = wire.orderKey;
+    record.visibleTs = static_cast<int64_t>(wire.visibleTs);
+    record.operation = static_cast<UbLifecycleControlOperation>(wire.payload[1]);
+    record.resource.ownerNodeId = static_cast<uint32_t>(wire.payload[2]);
+    record.resource.kind = static_cast<UbLifecycleResourceKind>(wire.payload[3]);
+    record.resource.localId = wire.payload[4];
+    record.resource.generation = wire.payload[5];
+    record.packet.owner = record.resource;
+    record.nodeId = static_cast<uint32_t>(wire.payload[6]);
+    record.value = wire.payload[7];
+    record.tpn = static_cast<uint32_t>(wire.payload[8]);
+    record.requestId = wire.payload[9];
+    record.packet.attempt = wire.payload[10];
+    return record;
+}
+
+void
+ReceiveLifecycleControl(const ParallelCommunicationInterface::CausalControlRecord& wire)
+{
+    UbParallelLifecycleAdapter::GetOrCreate(NodeList::GetNode(wire.targetNodeId))
+        ->InjectControlForTest(DecodeLifecycleControl(wire));
+}
+#endif
+
+} // namespace
 
 Ptr<Packet>
 CopyPacketView(Ptr<const Packet> packet)
@@ -201,6 +273,7 @@ UbLifecycleCoordinator::GetOrCreate(Ptr<Node> node)
     }
     NS_ABORT_MSG_IF(coordinator->m_ownerNodeId != node->GetId(),
                     "Lifecycle coordinator is aggregated on the wrong node");
+    UbParallelLifecycleAdapter::GetOrCreate(node);
     return coordinator;
 }
 
@@ -468,25 +541,294 @@ UbLifecycleCoordinator::Resolve(const UbPacketAttemptIdentity& identity)
 }
 
 void
-UbLifecycleCoordinator::ObservePacketTransfer(Ptr<Packet> packet, UbPacketTransfer transfer)
+UbLifecycleCoordinator::ObservePacketTransfer(Ptr<Packet> packet,
+                                              UbPacketTransfer transfer,
+                                              uint32_t sourceNodeId)
 {
     UbPacketAttemptIdentity identity;
     if (!TryReadIdentity(packet, identity))
     {
         return;
     }
-    Resolve(identity)->ObservePacketTransfer(identity, transfer);
+    UbParallelLifecycleAdapter::RoutePacketTransfer(identity, transfer, sourceNodeId);
 }
 
 void
-UbLifecycleCoordinator::TerminatePacket(Ptr<Packet> packet, UbPacketTerminal terminal)
+UbLifecycleCoordinator::TerminatePacket(Ptr<Packet> packet,
+                                        UbPacketTerminal terminal,
+                                        uint32_t sourceNodeId)
 {
     UbPacketAttemptIdentity identity;
     if (!TryReadIdentity(packet, identity))
     {
         return;
     }
-    Resolve(identity)->TerminatePacket(identity, terminal);
+    UbParallelLifecycleAdapter::RoutePacketTerminal(identity, terminal, sourceNodeId);
+}
+
+TypeId
+UbParallelLifecycleAdapter::GetTypeId()
+{
+    static TypeId tid = TypeId("ns3::UbParallelLifecycleAdapter")
+                            .SetParent<Object>()
+                            .SetGroupName("UnifiedBus")
+                            .AddConstructor<UbParallelLifecycleAdapter>();
+    return tid;
+}
+
+Ptr<UbParallelLifecycleAdapter>
+UbParallelLifecycleAdapter::GetOrCreate(Ptr<Node> node)
+{
+    NS_ABORT_MSG_IF(node == nullptr, "Parallel lifecycle adapter requires an owning node");
+    Ptr<UbParallelLifecycleAdapter> adapter = node->GetObject<UbParallelLifecycleAdapter>();
+    if (adapter == nullptr)
+    {
+        adapter = CreateObject<UbParallelLifecycleAdapter>();
+        adapter->m_nodeId = node->GetId();
+        node->AggregateObject(adapter);
+    }
+    NS_ABORT_MSG_IF(adapter->m_nodeId != node->GetId(),
+                    "Parallel lifecycle adapter is aggregated on the wrong node");
+#ifdef NS3_MPI
+    if (MpiInterface::IsEnabled())
+    {
+        MpiInterface::SetCausalControlHandler(&ReceiveLifecycleControl);
+    }
+#endif
+    return adapter;
+}
+
+bool
+UbParallelLifecycleAdapter::IsExecutionOwner(uint32_t nodeId)
+{
+    NS_ABORT_MSG_IF(nodeId >= NodeList::GetNNodes(),
+                    "Lifecycle control references an unknown owner node");
+#ifdef NS3_MPI
+    if (MpiInterface::IsEnabled() &&
+        NodeList::GetNode(nodeId)->GetSystemId() != MpiInterface::GetSystemId())
+    {
+        return false;
+    }
+#endif
+#ifdef NS3_MTP
+    if (MtpInterface::isEnabled())
+    {
+        LogicalProcess* current = MtpInterface::GetSystem();
+        NS_ABORT_MSG_IF(current == nullptr,
+                        "Lifecycle owner check requires an active MTP logical process");
+        if (MtpInterface::RequireNodeLocalLpId(nodeId) != current->GetSystemId())
+        {
+            return false;
+        }
+    }
+#endif
+    return true;
+}
+
+uint32_t
+UbParallelLifecycleAdapter::RequireSourceNodeId(uint32_t preferredNodeId)
+{
+    const uint32_t sourceNodeId = preferredNodeId == Simulator::NO_CONTEXT
+                                      ? Simulator::GetContext()
+                                      : preferredNodeId;
+    NS_ABORT_MSG_IF(sourceNodeId == Simulator::NO_CONTEXT || sourceNodeId >= NodeList::GetNNodes(),
+                    "Cross-owner lifecycle control requires a source node context");
+    return sourceNodeId;
+}
+
+void
+UbParallelLifecycleAdapter::RoutePacketTransfer(const UbPacketAttemptIdentity& identity,
+                                                UbPacketTransfer transfer,
+                                                uint32_t sourceNodeId)
+{
+    if (IsExecutionOwner(identity.owner.ownerNodeId))
+    {
+        UbLifecycleCoordinator::Resolve(identity)->ObservePacketTransfer(identity, transfer);
+        return;
+    }
+    UbLifecycleControlRecord record;
+    record.sourceNodeId = RequireSourceNodeId(sourceNodeId);
+    record.targetNodeId = identity.owner.ownerNodeId;
+    record.operation = UbLifecycleControlOperation::PACKET_TRANSFER;
+    record.resource = identity.owner;
+    record.packet = identity;
+    record.value = static_cast<uint64_t>(transfer);
+    Route(record);
+}
+
+void
+UbParallelLifecycleAdapter::RoutePacketTerminal(const UbPacketAttemptIdentity& identity,
+                                                UbPacketTerminal terminal,
+                                                uint32_t sourceNodeId)
+{
+    if (IsExecutionOwner(identity.owner.ownerNodeId))
+    {
+        UbLifecycleCoordinator::Resolve(identity)->TerminatePacket(identity, terminal);
+        return;
+    }
+    UbLifecycleControlRecord record;
+    record.sourceNodeId = RequireSourceNodeId(sourceNodeId);
+    record.targetNodeId = identity.owner.ownerNodeId;
+    record.operation = UbLifecycleControlOperation::PACKET_TERMINAL;
+    record.resource = identity.owner;
+    record.packet = identity;
+    record.value = static_cast<uint64_t>(terminal);
+    Route(record);
+}
+
+void
+UbParallelLifecycleAdapter::Route(UbLifecycleControlRecord record)
+{
+    GetOrCreate(NodeList::GetNode(record.sourceNodeId))->Send(record);
+}
+
+bool
+UbParallelLifecycleAdapter::RouteControl(UbLifecycleControlRecord record)
+{
+    if (IsExecutionOwner(record.targetNodeId))
+    {
+        return GetOrCreate(NodeList::GetNode(record.targetNodeId))->Apply(record);
+    }
+    record.sourceNodeId = RequireSourceNodeId();
+    Route(record);
+    return true;
+}
+
+void
+UbParallelLifecycleAdapter::Send(UbLifecycleControlRecord record)
+{
+    record.sequence = ++m_nextOutboundSequence[record.targetNodeId];
+    ++m_sent;
+#ifdef NS3_MPI
+    if (MpiInterface::IsEnabled() &&
+        NodeList::GetNode(record.targetNodeId)->GetSystemId() != MpiInterface::GetSystemId())
+    {
+        NS_ABORT_MSG_IF(!MpiInterface::SupportsCausalControl(),
+                        "Active MPI transport does not support lifecycle causal control");
+        record.visibleTs =
+            (Simulator::Now() + MpiInterface::GetCausalControlLookAhead()).GetInteger();
+        MpiInterface::SendCausalControl(EncodeLifecycleControl(record));
+        return;
+    }
+#endif
+#ifdef NS3_MTP
+    if (MtpInterface::isEnabled())
+    {
+        record.visibleTs = Simulator::Now().GetInteger();
+        Simulator::ScheduleWithContext(record.targetNodeId,
+                                       TimeStep(0),
+                                       &UbParallelLifecycleAdapter::ReceiveAtTarget,
+                                       record);
+        return;
+    }
+#endif
+    NS_ABORT_MSG("Cross-owner lifecycle control has no supported transport");
+}
+
+void
+UbParallelLifecycleAdapter::ReceiveAtTarget(UbLifecycleControlRecord record)
+{
+    GetOrCreate(NodeList::GetNode(record.targetNodeId))->Receive(record);
+}
+
+void
+UbParallelLifecycleAdapter::InjectControlForTest(const UbLifecycleControlRecord& record)
+{
+    Receive(record);
+}
+
+void
+UbParallelLifecycleAdapter::Receive(UbLifecycleControlRecord record)
+{
+    NS_ABORT_MSG_IF(record.targetNodeId != m_nodeId,
+                    "Lifecycle control was delivered to the wrong target adapter");
+    NS_ABORT_MSG_IF(!IsExecutionOwner(m_nodeId),
+                    "Lifecycle control was not delivered to the target execution owner");
+    ++m_received;
+    InboundSequence& inbound = m_inbound[record.sourceNodeId];
+    if (record.sequence < inbound.next)
+    {
+        ++m_stale;
+        return;
+    }
+    if (record.sequence > inbound.next)
+    {
+        if (!inbound.pending.emplace(record.sequence, record).second)
+        {
+            ++m_duplicate;
+        }
+        return;
+    }
+
+    while (true)
+    {
+        if (Apply(record))
+        {
+            ++m_applied;
+            ++m_ownerSequence;
+        }
+        else
+        {
+            ++m_stale;
+        }
+        ++inbound.next;
+        auto pending = inbound.pending.find(inbound.next);
+        if (pending == inbound.pending.end())
+        {
+            break;
+        }
+        record = pending->second;
+        inbound.pending.erase(pending);
+    }
+}
+
+bool
+UbParallelLifecycleAdapter::Apply(const UbLifecycleControlRecord& record)
+{
+    switch (record.operation)
+    {
+    case UbLifecycleControlOperation::PACKET_TRANSFER:
+    {
+        Ptr<UbLifecycleCoordinator> coordinator = UbLifecycleCoordinator::Resolve(record.packet);
+        if (!coordinator->IsResourceActive(record.packet.owner))
+        {
+            return false;
+        }
+        coordinator->ObservePacketTransfer(record.packet,
+                                           static_cast<UbPacketTransfer>(record.value));
+        return true;
+    }
+    case UbLifecycleControlOperation::PACKET_TERMINAL:
+    {
+        Ptr<UbLifecycleCoordinator> coordinator = UbLifecycleCoordinator::Resolve(record.packet);
+        if (!coordinator->IsResourceActive(record.packet.owner))
+        {
+            return false;
+        }
+        coordinator->TerminatePacket(record.packet, static_cast<UbPacketTerminal>(record.value));
+        return true;
+    }
+    default:
+        return utils::TpConnectionManager::ApplyLifecycleControl(record);
+    }
+}
+
+UbParallelLifecycleSnapshot
+UbParallelLifecycleAdapter::GetSnapshot() const
+{
+    UbParallelLifecycleSnapshot snapshot;
+    snapshot.ownerSequence = m_ownerSequence;
+    snapshot.sent = m_sent;
+    snapshot.received = m_received;
+    snapshot.applied = m_applied;
+    snapshot.duplicate = m_duplicate;
+    snapshot.stale = m_stale;
+    for (const auto& [source, inbound] : m_inbound)
+    {
+        (void)source;
+        snapshot.pending += inbound.pending.size();
+    }
+    return snapshot;
 }
 
 UbLifecycleCoordinator::ResourceState&

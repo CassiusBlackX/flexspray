@@ -108,6 +108,7 @@ MtpInterface::Enable(const uint32_t threadCount, const uint32_t systemCount)
     g_systemCount = systemCount;
     g_manualPartition = systemCount > 0;
     g_nodeLocalLpIdsFrozen = false;
+    g_enabled = true;
 
     // allocate systems
     g_systems = new LogicalProcess[g_systemCount + 1]; // include the public LP

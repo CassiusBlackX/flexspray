@@ -273,6 +273,12 @@ DistributedSimulatorImpl::BoundLookAhead(const Time lookAhead)
     }
 }
 
+Time
+DistributedSimulatorImpl::GetLookAhead() const
+{
+    return m_lookAhead;
+}
+
 void
 DistributedSimulatorImpl::SetScheduler(ObjectFactory schedulerFactory)
 {
