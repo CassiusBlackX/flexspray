@@ -28,6 +28,7 @@ enum class UbLifecycleResourceKind : uint8_t
     JETTY = 5,
     RTP_TPG = 6,
     RTP_CONNECTION = 7,
+    CTP_SERVICE = 8,
 };
 
 enum class UbLifecycleLeaseKind : uint8_t

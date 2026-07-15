@@ -92,6 +92,10 @@ UbController::DoDispose()
                         << m_rtpTpGroups.size()
                         << ", member-index=" << m_rtpTpGroupByTpn.size());
 
+    if (m_ctpTransportService != nullptr)
+    {
+        m_ctpTransportService->Dispose();
+    }
     m_ctpTransportService = nullptr;
     if (m_function != nullptr)
     {

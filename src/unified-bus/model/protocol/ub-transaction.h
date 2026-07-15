@@ -127,6 +127,9 @@ namespace ns3 {
         UbCtpTransactionState& GetOrCreateCtpTransactionState(const UbCtpEntityKey& key);
         UbCtpTransactionState* FindCtpTransactionState(const UbCtpEntityKey& key);
         const UbCtpTransactionState* FindCtpTransactionState(const UbCtpEntityKey& key) const;
+        void RetainCtpCompletionEvent(const UbCtpEntityKey& key);
+        void ReleaseCtpCompletionEvent(const UbCtpEntityKey& key);
+        bool TryRetireCtpTransactionState(const UbCtpEntityKey& key);
 
         bool ProcessWqeSegmentComplete(Ptr<UbWqeSegment> wqeSegment);
         void HandleInboundTaUnit(uint32_t localTpn, Ptr<UbWqeSegment> segment);
@@ -404,6 +407,7 @@ namespace ns3 {
 
         std::map<std::pair<uint32_t, uint32_t>, OperationRecord> m_operations;
         std::map<UbCtpEntityKey, UbCtpTransactionState> m_ctpTransactionStates;
+        std::map<UbCtpEntityKey, uint32_t> m_ctpNextTaSsn;
         std::map<AdmissionDomainKey, AdmissionDomainState> m_admissionDomains;
         std::vector<UbLifecycleResourceIdentity> m_suppressedTpgOwnerProgress;
     };

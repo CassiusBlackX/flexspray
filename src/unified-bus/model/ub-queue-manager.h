@@ -29,7 +29,8 @@ constexpr uint32_t DEFAULT_PAPER_DYNAMIC_PFC_PRIORITY_COUNT = 8;
 enum class IngressQueueType {
     VOQ,        // Virtual Output Queue - 转发数据包队列
     TP,         // Transport Channel - 传输层可靠通道
-    BASE        // 基类默认值 - 不应出现在运行时
+    BASE,       // 基类默认值 - 不应出现在运行时
+    CTP         // Compact Transport Protocol - 本地完整报文发送队列
 };
 
 struct UbIngressQueueOccupancy {

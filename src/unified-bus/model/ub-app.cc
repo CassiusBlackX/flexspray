@@ -242,8 +242,7 @@ UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
     controller->GetUbTransaction()->SetTransactionServiceMode(jettyNum, TransactionServiceMode::ROI);
     jetty->SetNodeId(GetNode()->GetId());
 
-    UbCtpEntityKey key{.srcNodeId = task.sourceNode,
-                       .srcEntityId = srcEntityId,
+    UbCtpEntityKey key{.srcEntityId = srcEntityId,
                        .dstNodeId = task.destNode,
                        .dstEntityId = dstEntityId,
                        .vl = vl};
