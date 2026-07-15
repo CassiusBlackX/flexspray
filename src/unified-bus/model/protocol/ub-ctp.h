@@ -2,6 +2,7 @@
 #ifndef UB_CTP_H
 #define UB_CTP_H
 
+#include "ns3/callback.h"
 #include "ns3/node.h"
 #include "ns3/nstime.h"
 #include "ns3/object.h"
@@ -10,6 +11,7 @@
 #include "ns3/simple-ref-count.h"
 #include "ns3/traced-callback.h"
 #include "ns3/ub-datatype.h"
+#include "ns3/ub-lifecycle.h"
 #include "ns3/ub-queue-manager.h"
 #include "ns3/ub-sliding-bitmap-window.h"
 #include "ns3/ub-tag.h"
@@ -38,7 +40,6 @@ struct RoutingKey;
 
 struct UbCtpEntityKey
 {
-    uint32_t srcNodeId{0};
     uint32_t srcEntityId{0};
     uint32_t dstNodeId{0};
     uint32_t dstEntityId{0};
@@ -50,8 +51,6 @@ struct UbCtpEntityKey
 
 struct UbCtpCongestionKey
 {
-    uint32_t srcNodeId{0};
-    uint32_t srcEntityId{0};
     uint32_t dstNodeId{0};
     uint32_t dstEntityId{0};
     uint8_t vl{0};
@@ -76,7 +75,8 @@ class UbCtpTransactionContext : public SimpleRefCount<UbCtpTransactionContext>
 {
   public:
     explicit UbCtpTransactionContext(UbCtpEntityKey key = {},
-                                     uint32_t ackWindowCapacity = UB_JETTY_TASSN_OOO_THRESHOLD);
+                                     uint32_t ackWindowCapacity = UB_JETTY_TASSN_OOO_THRESHOLD,
+                                     uint32_t initialSequence = 0);
     bool CanAdmit(uint32_t sequence) const;
     bool TryAdmit(uint32_t sequence);
     void MarkTaAck(uint32_t sequence);
@@ -119,6 +119,7 @@ struct UbCtpTransactionState
     std::map<uint32_t, Ptr<UbWqeSegment>> outstandingSegments;
     std::map<Ptr<UbWqeSegment>, uint32_t> segmentOutstandingPackets;
     std::map<uint32_t, UbCtpInboundTaUnit> inboundTaUnits;
+    uint32_t pendingCompletionEvents{0};
 };
 
 class UbCtpEntityState
@@ -146,39 +147,18 @@ enum class UbCtpQueueClass : uint8_t
     CNP = 2,
 };
 
-class UbCompactTransportChannel : public UbIngressQueue
+class UbCtpTxQueue : public UbIngressQueue
 {
   public:
     static TypeId GetTypeId(void);
-    UbCompactTransportChannel();
-    ~UbCompactTransportChannel() override;
+    UbCtpTxQueue();
+    ~UbCtpTxQueue() override;
 
     IngressQueueType GetIngressQueueType() override;
     bool IsEmpty() override;
     Ptr<Packet> GetNextPacket() override;
     uint32_t GetNextPacketSize() override;
-    void SetCtpEntity(Ptr<Node> node,
-                      const UbCtpEntityKey& key,
-                      uint32_t outPort,
-                      uint32_t dstPortHint,
-                      UbCtpEntityState* state);
-    void SetExperimentTaAckPacketBytes(uint32_t packetBytes);
-    Ptr<Packet> BuildDataPacket(Ptr<UbWqeSegment> segment,
-                                uint32_t taSsn,
-                                uint32_t progressBytes,
-                                uint8_t loadBalanceSalt) const;
-    Ptr<Packet> BuildResponsePacket(Ptr<UbWqeSegment> response,
-                                    uint32_t taSsn,
-                                    uint32_t progressBytes,
-                                    uint8_t loadBalanceSalt) const;
-    void EnqueueDataPacket(Ptr<UbWqeSegment> segment,
-                           uint32_t taSsn,
-                           uint32_t progressBytes,
-                           uint8_t loadBalanceSalt);
-    void EnqueueResponsePacket(Ptr<UbWqeSegment> response,
-                               uint32_t taSsn,
-                               uint32_t progressBytes,
-                               uint8_t loadBalanceSalt);
+    void SetEmptyCallback(Callback<void, Ptr<UbCtpTxQueue>> callback);
     void EnqueueData(Ptr<Packet> packet);
     void EnqueueAck(Ptr<Packet> packet);
     void EnqueueCnp(Ptr<Packet> packet);
@@ -193,12 +173,7 @@ class UbCompactTransportChannel : public UbIngressQueue
     std::queue<Ptr<Packet>>* GetPriorityQueue();
     void EnqueueToClass(UbCtpQueueClass queueClass, Ptr<Packet> packet);
 
-    Ptr<Node> m_node;
-    UbCtpEntityKey m_key;
-    uint32_t m_outPort{0};
-    uint32_t m_dstPortHint{UINT32_MAX};
-    UbCtpEntityState* m_state{nullptr};
-    uint32_t m_experimentTaAckPacketBytes{0};
+    Callback<void, Ptr<UbCtpTxQueue>> m_emptyCallback;
     std::queue<Ptr<Packet>> m_dataQueue;
     std::queue<Ptr<Packet>> m_ackQueue;
     std::queue<Ptr<Packet>> m_cnpQueue;
@@ -247,10 +222,10 @@ class UbCtpTransportService : public Object
     void RecordCnpForTest(const UbCtpEntityKey& key);
     uint32_t GetQueueCount() const;
     uint32_t GetCongestionStateCountForTest() const;
-    Ptr<UbCompactTransportChannel> GetOrCreateQueue(const UbCtpEntityKey& key,
-                                                     uint32_t outPort,
-                                                     uint32_t priority);
-    void RegisterQueueForTest(Ptr<UbCompactTransportChannel> queue,
+    Ptr<UbCtpTxQueue> GetOrCreateQueue(const UbCtpEntityKey& key,
+                                       uint32_t outPort,
+                                       uint32_t priority);
+    void RegisterQueueForTest(Ptr<UbCtpTxQueue> queue,
                               uint32_t outPort,
                               uint32_t priority);
     bool AdmitSegmentForTest(Ptr<UbWqeSegment> segment,
@@ -263,6 +238,7 @@ class UbCtpTransportService : public Object
                                          uint32_t priority) const;
     uint32_t GetRegisteredQueueCountForTest() const;
     bool IsPacketTraceEnabledForTest() const;
+    const UbLifecycleResourceIdentity& GetPacketLifecycleOwnerForTest() const;
 
   private:
     using QueueKey = std::tuple<UbCtpEntityKey, uint32_t, uint32_t>;
@@ -274,7 +250,8 @@ class UbCtpTransportService : public Object
                                          UbCtpEntityState& state,
                                          const UbCtpEntityKey& packetKey,
                                          uint32_t taSsn,
-                                         uint32_t progressBytes);
+                                         uint32_t progressBytes,
+                                         uint8_t loadBalanceSalt);
     void PadTaAckPacketForExperiment(Ptr<Packet> packet) const;
     bool SendAdmittedFragment(Ptr<UbWqeSegment> segment,
                               UbCtpEntityState& state,
@@ -298,9 +275,17 @@ class UbCtpTransportService : public Object
                            uint16_t loadBalanceSalt);
     uint16_t NextLoadBalanceSalt(UbCtpEntityState& state, const UbCtpEntityKey& routeKey);
     uint32_t ResolveDestinationPortHint(const UbCtpEntityKey& key) const;
-    void RegisterQueueIfNeeded(Ptr<UbCompactTransportChannel> queue,
+    void RegisterQueueIfNeeded(Ptr<UbCtpTxQueue> queue,
                                uint32_t outPort,
                                uint32_t priority);
+    void RetireEmptyQueue(Ptr<UbCtpTxQueue> queue);
+    void RegisterPacketBirth(Ptr<Packet> packet);
+    void RunTrackedCompleteFromTaAck(UbCtpEntityKey key,
+                                     uint32_t taSsn,
+                                     Ptr<UbWqeSegment> response,
+                                     uint64_t token);
+    void CancelTrackedCompleteFromTaAck(UbCtpEntityKey key);
+    void TryRetireTransactionState(const UbCtpEntityKey& key);
     bool SendResponseSegment(Ptr<UbWqeSegment> response, UbCtpEntityState& state);
     void CompleteFromTaAck(const UbCtpEntityKey& key,
                            uint32_t taSsn,
@@ -355,8 +340,11 @@ class UbCtpTransportService : public Object
                           uint32_t flowBytes = UINT32_MAX,
                           uint32_t flowSize = UINT32_MAX,
                           uint32_t outPort = UINT32_MAX) const;
+    void DoDispose() override;
 
     Ptr<Node> m_node;
+    UbLifecycleResourceIdentity m_packetLifecycleOwner;
+    UbTrackedEventSet m_delayedTaAckEvents;
     UbCtpRoutingPolicy m_defaultRoutingPolicy;
     bool m_pktTraceEnabled{false};
     uint32_t m_boundOutPortCount{0};
@@ -375,8 +363,8 @@ class UbCtpTransportService : public Object
     std::map<UbCtpEntityKey, uint32_t> m_srcPortHints;
     std::map<UbCtpEntityKey, uint32_t> m_dstPortHints;
     std::map<UbCtpEntityKey, UbCtpEntityState> m_entityStates;
-    std::map<QueueKey, Ptr<UbCompactTransportChannel>> m_queues;
-    std::set<Ptr<UbCompactTransportChannel>> m_registeredQueues;
+    std::map<QueueKey, Ptr<UbCtpTxQueue>> m_queues;
+    std::set<Ptr<UbCtpTxQueue>> m_registeredQueues;
     std::map<UbCtpCongestionKey, uint32_t> m_congestionSignals;
     TracedCallback<uint32_t,
                    uint32_t,

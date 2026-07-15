@@ -31,7 +31,7 @@ namespace ns3
 {
 
 NS_LOG_COMPONENT_DEFINE("UbCtpTransportService");
-NS_OBJECT_ENSURE_REGISTERED(UbCompactTransportChannel);
+NS_OBJECT_ENSURE_REGISTERED(UbCtpTxQueue);
 NS_OBJECT_ENSURE_REGISTERED(UbCtpTransportService);
 
 namespace
@@ -58,13 +58,13 @@ CalcCompactLength(uint32_t bytes)
 }
 
 uint16_t
-EntityLoadBalanceSalt(const UbCtpEntityKey& key)
+EntityLoadBalanceSalt(uint32_t srcNodeId, const UbCtpEntityKey& key)
 {
     uint8_t buf[17];
-    buf[0] = static_cast<uint8_t>((key.srcNodeId >> 24) & 0xff);
-    buf[1] = static_cast<uint8_t>((key.srcNodeId >> 16) & 0xff);
-    buf[2] = static_cast<uint8_t>((key.srcNodeId >> 8) & 0xff);
-    buf[3] = static_cast<uint8_t>(key.srcNodeId & 0xff);
+    buf[0] = static_cast<uint8_t>((srcNodeId >> 24) & 0xff);
+    buf[1] = static_cast<uint8_t>((srcNodeId >> 16) & 0xff);
+    buf[2] = static_cast<uint8_t>((srcNodeId >> 8) & 0xff);
+    buf[3] = static_cast<uint8_t>(srcNodeId & 0xff);
     buf[4] = static_cast<uint8_t>((key.dstNodeId >> 24) & 0xff);
     buf[5] = static_cast<uint8_t>((key.dstNodeId >> 16) & 0xff);
     buf[6] = static_cast<uint8_t>((key.dstNodeId >> 8) & 0xff);
@@ -108,6 +108,7 @@ PadTaAckPacketForExperiment(Ptr<Packet> packet, uint32_t experimentTaAckPacketBy
 
 Ptr<Packet>
 BuildCtpPacket(Ptr<UbWqeSegment> segment,
+               uint32_t srcNodeId,
                const UbCtpEntityKey& key,
                uint32_t dstPortHint,
                uint32_t taSsn,
@@ -167,7 +168,7 @@ BuildCtpPacket(Ptr<UbWqeSegment> segment,
     packet->AddHeader(ctpHeader);
 
     UbCna16NetworkHeader cnaHeader;
-    cnaHeader.SetScna(static_cast<uint16_t>(utils::NodeIdToCna16(key.srcNodeId)));
+    cnaHeader.SetScna(static_cast<uint16_t>(utils::NodeIdToCna16(srcNodeId)));
     const uint32_t dstCna =
         dstPortHint == UINT32_MAX ? utils::NodeIdToCna16(key.dstNodeId)
                                   : utils::NodeIdToCna16(key.dstNodeId, dstPortHint);
@@ -193,40 +194,35 @@ BuildCtpPacket(Ptr<UbWqeSegment> segment,
 bool
 UbCtpEntityKey::operator<(const UbCtpEntityKey& other) const
 {
-    return std::tie(srcNodeId, srcEntityId, dstNodeId, dstEntityId, vl) <
-           std::tie(other.srcNodeId,
-                    other.srcEntityId,
-                    other.dstNodeId,
-                    other.dstEntityId,
-                    other.vl);
+    return std::tie(srcEntityId, dstNodeId, dstEntityId, vl) <
+           std::tie(other.srcEntityId, other.dstNodeId, other.dstEntityId, other.vl);
 }
 
 bool
 UbCtpEntityKey::operator==(const UbCtpEntityKey& other) const
 {
-    return srcNodeId == other.srcNodeId && srcEntityId == other.srcEntityId &&
-           dstNodeId == other.dstNodeId && dstEntityId == other.dstEntityId && vl == other.vl;
+    return srcEntityId == other.srcEntityId && dstNodeId == other.dstNodeId &&
+           dstEntityId == other.dstEntityId && vl == other.vl;
 }
 
 bool
 UbCtpCongestionKey::operator<(const UbCtpCongestionKey& other) const
 {
-    return std::tie(srcNodeId, srcEntityId, dstNodeId, dstEntityId, vl) <
-           std::tie(other.srcNodeId,
-                    other.srcEntityId,
-                    other.dstNodeId,
-                    other.dstEntityId,
-                    other.vl);
+    return std::tie(dstNodeId, dstEntityId, vl) <
+           std::tie(other.dstNodeId, other.dstEntityId, other.vl);
 }
 
 UbCtpTransactionContext::UbCtpTransactionContext(UbCtpEntityKey key,
-                                                 uint32_t ackWindowCapacity)
-    : m_key(key)
+                                                 uint32_t ackWindowCapacity,
+                                                 uint32_t initialSequence)
+    : m_key(key),
+      m_sendNext(initialSequence),
+      m_completeUna(initialSequence)
 {
     NS_ABORT_MSG_IF(ackWindowCapacity == 0,
                     "CTP transaction context requires a non-zero ack window");
     m_ackWindow.Resize(ackWindowCapacity);
-    m_ackWindow.Reset(0);
+    m_ackWindow.Reset(initialSequence);
 }
 
 bool
@@ -354,33 +350,33 @@ UbCtpEntityState::GetOutPorts() const
 }
 
 TypeId
-UbCompactTransportChannel::GetTypeId(void)
+UbCtpTxQueue::GetTypeId(void)
 {
-    static TypeId tid = TypeId("ns3::UbCompactTransportChannel")
+    static TypeId tid = TypeId("ns3::UbCtpTxQueue")
                             .SetParent<UbIngressQueue>()
                             .SetGroupName("UnifiedBus")
-                            .AddConstructor<UbCompactTransportChannel>();
+                            .AddConstructor<UbCtpTxQueue>();
     return tid;
 }
 
-UbCompactTransportChannel::UbCompactTransportChannel() = default;
+UbCtpTxQueue::UbCtpTxQueue() = default;
 
-UbCompactTransportChannel::~UbCompactTransportChannel() = default;
+UbCtpTxQueue::~UbCtpTxQueue() = default;
 
 IngressQueueType
-UbCompactTransportChannel::GetIngressQueueType()
+UbCtpTxQueue::GetIngressQueueType()
 {
-    return IngressQueueType::TP;
+    return IngressQueueType::CTP;
 }
 
 bool
-UbCompactTransportChannel::IsEmpty()
+UbCtpTxQueue::IsEmpty()
 {
     return m_cnpQueue.empty() && m_ackQueue.empty() && m_dataQueue.empty();
 }
 
 Ptr<Packet>
-UbCompactTransportChannel::GetNextPacket()
+UbCtpTxQueue::GetNextPacket()
 {
     std::queue<Ptr<Packet>>* queue = GetPriorityQueue();
     if (queue == nullptr)
@@ -394,134 +390,67 @@ UbCompactTransportChannel::GetNextPacket()
     {
         m_headArrivalTime = Simulator::Now();
     }
+    else if (!m_emptyCallback.IsNull())
+    {
+        Callback<void, Ptr<UbCtpTxQueue>> callback = m_emptyCallback;
+        Ptr<UbCtpTxQueue> self = this;
+        Simulator::ScheduleNow([callback, self]() { callback(self); });
+    }
     return packet;
 }
 
 uint32_t
-UbCompactTransportChannel::GetNextPacketSize()
+UbCtpTxQueue::GetNextPacketSize()
 {
     const std::queue<Ptr<Packet>>* queue = GetPriorityQueue();
     return queue == nullptr ? 0 : queue->front()->GetSize();
 }
 
 void
-UbCompactTransportChannel::SetCtpEntity(Ptr<Node> node,
-                                        const UbCtpEntityKey& key,
-                                        uint32_t outPort,
-                                        uint32_t dstPortHint,
-                                        UbCtpEntityState* state)
+UbCtpTxQueue::SetEmptyCallback(Callback<void, Ptr<UbCtpTxQueue>> callback)
 {
-    m_node = node;
-    m_key = key;
-    m_outPort = outPort;
-    m_dstPortHint = dstPortHint;
-    m_state = state;
-    SetOutPortId(outPort);
-    SetInPortId(outPort);
-    SetIngressPriority(key.vl);
+    m_emptyCallback = callback;
 }
 
 void
-UbCompactTransportChannel::SetExperimentTaAckPacketBytes(uint32_t packetBytes)
-{
-    NS_ABORT_MSG_IF(packetBytes > UB_MTU_BYTE,
-                    "ExperimentTaAckPacketBytes must not exceed UB_MTU_BYTE");
-    m_experimentTaAckPacketBytes = packetBytes;
-}
-
-Ptr<Packet>
-UbCompactTransportChannel::BuildDataPacket(Ptr<UbWqeSegment> segment,
-                                           uint32_t taSsn,
-                                           uint32_t progressBytes,
-                                           uint8_t loadBalanceSalt) const
-{
-    NS_ABORT_MSG_IF(m_state == nullptr, "CTP compact channel requires entity state");
-    return BuildCtpPacket(segment,
-                          m_key,
-                          m_dstPortHint,
-                          taSsn,
-                          progressBytes,
-                          m_state->Tx().routing,
-                          loadBalanceSalt);
-}
-
-Ptr<Packet>
-UbCompactTransportChannel::BuildResponsePacket(Ptr<UbWqeSegment> response,
-                                               uint32_t taSsn,
-                                               uint32_t progressBytes,
-                                               uint8_t loadBalanceSalt) const
-{
-    Ptr<Packet> packet = BuildDataPacket(response, taSsn, progressBytes, loadBalanceSalt);
-    PadTaAckPacketForExperiment(packet, m_experimentTaAckPacketBytes);
-    return packet;
-}
-
-void
-UbCompactTransportChannel::EnqueueDataPacket(Ptr<UbWqeSegment> segment,
-                                             uint32_t taSsn,
-                                             uint32_t progressBytes,
-                                             uint8_t loadBalanceSalt)
-{
-    EnqueueData(BuildDataPacket(segment, taSsn, progressBytes, loadBalanceSalt));
-}
-
-void
-UbCompactTransportChannel::EnqueueResponsePacket(Ptr<UbWqeSegment> response,
-                                                 uint32_t taSsn,
-                                                 uint32_t progressBytes,
-                                                 uint8_t loadBalanceSalt)
-{
-    NS_ABORT_MSG_IF(response == nullptr, "CTP response packet requires segment");
-    Ptr<Packet> packet = BuildResponsePacket(response, taSsn, progressBytes, loadBalanceSalt);
-    if (response->GetType() == TaOpcode::TA_OPCODE_TRANSACTION_ACK)
-    {
-        EnqueueAck(packet);
-    }
-    else
-    {
-        EnqueueData(packet);
-    }
-}
-
-void
-UbCompactTransportChannel::EnqueueData(Ptr<Packet> packet)
+UbCtpTxQueue::EnqueueData(Ptr<Packet> packet)
 {
     EnqueueToClass(UbCtpQueueClass::DATA, packet);
 }
 
 void
-UbCompactTransportChannel::EnqueueAck(Ptr<Packet> packet)
+UbCtpTxQueue::EnqueueAck(Ptr<Packet> packet)
 {
     EnqueueToClass(UbCtpQueueClass::ACK, packet);
 }
 
 void
-UbCompactTransportChannel::EnqueueCnp(Ptr<Packet> packet)
+UbCtpTxQueue::EnqueueCnp(Ptr<Packet> packet)
 {
     EnqueueToClass(UbCtpQueueClass::CNP, packet);
 }
 
 void
-UbCompactTransportChannel::Enqueue(Ptr<Packet> packet)
+UbCtpTxQueue::Enqueue(Ptr<Packet> packet)
 {
     EnqueueData(packet);
 }
 
 Ptr<Packet>
-UbCompactTransportChannel::PeekNextPacket() const
+UbCtpTxQueue::PeekNextPacket() const
 {
     const std::queue<Ptr<Packet>>* queue = GetPriorityQueue();
     return queue == nullptr ? nullptr : queue->front();
 }
 
 uint32_t
-UbCompactTransportChannel::GetQueuedPacketCountForTest() const
+UbCtpTxQueue::GetQueuedPacketCountForTest() const
 {
     return static_cast<uint32_t>(m_dataQueue.size() + m_ackQueue.size() + m_cnpQueue.size());
 }
 
 std::queue<Ptr<Packet>>&
-UbCompactTransportChannel::QueueForClass(UbCtpQueueClass queueClass)
+UbCtpTxQueue::QueueForClass(UbCtpQueueClass queueClass)
 {
     switch (queueClass)
     {
@@ -536,7 +465,7 @@ UbCompactTransportChannel::QueueForClass(UbCtpQueueClass queueClass)
 }
 
 const std::queue<Ptr<Packet>>&
-UbCompactTransportChannel::QueueForClass(UbCtpQueueClass queueClass) const
+UbCtpTxQueue::QueueForClass(UbCtpQueueClass queueClass) const
 {
     switch (queueClass)
     {
@@ -551,14 +480,14 @@ UbCompactTransportChannel::QueueForClass(UbCtpQueueClass queueClass) const
 }
 
 std::queue<Ptr<Packet>>*
-UbCompactTransportChannel::GetPriorityQueue()
+UbCtpTxQueue::GetPriorityQueue()
 {
     return const_cast<std::queue<Ptr<Packet>>*>(
-        static_cast<const UbCompactTransportChannel*>(this)->GetPriorityQueue());
+        static_cast<const UbCtpTxQueue*>(this)->GetPriorityQueue());
 }
 
 const std::queue<Ptr<Packet>>*
-UbCompactTransportChannel::GetPriorityQueue() const
+UbCtpTxQueue::GetPriorityQueue() const
 {
     if (!m_cnpQueue.empty())
     {
@@ -576,7 +505,7 @@ UbCompactTransportChannel::GetPriorityQueue() const
 }
 
 void
-UbCompactTransportChannel::EnqueueToClass(UbCtpQueueClass queueClass, Ptr<Packet> packet)
+UbCtpTxQueue::EnqueueToClass(UbCtpQueueClass queueClass, Ptr<Packet> packet)
 {
     NS_ABORT_MSG_IF(packet == nullptr, "Cannot enqueue null CTP packet");
     if (IsEmpty())
@@ -698,7 +627,14 @@ UbCtpTransportService::~UbCtpTransportService() = default;
 void
 UbCtpTransportService::SetNode(Ptr<Node> node)
 {
+    NS_ABORT_MSG_IF(node == nullptr, "CTP service requires an owning node");
+    NS_ABORT_MSG_IF(m_node != nullptr && m_node != node,
+                    "CTP service cannot move between owning nodes");
     m_node = node;
+    Ptr<UbLifecycleCoordinator> coordinator = UbLifecycleCoordinator::GetOrCreate(node);
+    m_packetLifecycleOwner =
+        coordinator->OpenPacketOwner(UbLifecycleResourceKind::CTP_SERVICE, 0);
+    m_delayedTaAckEvents.Init(coordinator);
 }
 
 Ptr<Node>
@@ -820,7 +756,7 @@ UbCtpTransportService::HasTransactionContextForTesting(const UbCtpEntityKey& key
     return transaction != nullptr && transaction->FindCtpTransactionState(key) != nullptr;
 }
 
-Ptr<UbCompactTransportChannel>
+Ptr<UbCtpTxQueue>
 UbCtpTransportService::GetOrCreateQueue(const UbCtpEntityKey& key,
                                         uint32_t outPort,
                                         uint32_t priority)
@@ -832,10 +768,12 @@ UbCtpTransportService::GetOrCreateQueue(const UbCtpEntityKey& key,
         return it->second;
     }
 
-    Ptr<UbCompactTransportChannel> queue = CreateObject<UbCompactTransportChannel>();
+    Ptr<UbCtpTxQueue> queue = CreateObject<UbCtpTxQueue>();
     UbCtpEntityState& state = GetOrCreateEntityState(key);
-    queue->SetCtpEntity(m_node, key, outPort, ResolveDestinationPortHint(key), &state);
-    queue->SetExperimentTaAckPacketBytes(m_experimentTaAckPacketBytes);
+    queue->SetOutPortId(outPort);
+    queue->SetInPortId(outPort);
+    queue->SetIngressPriority(priority);
+    queue->SetEmptyCallback(MakeCallback(&UbCtpTransportService::RetireEmptyQueue, this));
     m_queues.emplace(queueKey, queue);
     state.AddOutPort(outPort);
     return queue;
@@ -856,7 +794,13 @@ UbCtpTransportService::BuildDataPacket(Ptr<UbWqeSegment> segment, const UbCtpEnt
             : static_cast<uint32_t>(segment->GetBytesLeft());
     const UbCtpEntityKey packetKey = MakeTxKeyForSegment(key, segment);
     UbCtpEntityState& state = GetOrCreateEntityState(packetKey);
-    return BuildDataPacketWithTaSsn(segment, state, packetKey, taSsn, progressBytes);
+    const uint16_t lbSalt = NextLoadBalanceSalt(state, packetKey);
+    return BuildDataPacketWithTaSsn(segment,
+                                    state,
+                                    packetKey,
+                                    taSsn,
+                                    progressBytes,
+                                    static_cast<uint8_t>(lbSalt & 0xff));
 }
 
 Ptr<Packet>
@@ -864,16 +808,17 @@ UbCtpTransportService::BuildDataPacketWithTaSsn(Ptr<UbWqeSegment> segment,
                                                 UbCtpEntityState& state,
                                                 const UbCtpEntityKey& packetKey,
                                                 uint32_t taSsn,
-                                                uint32_t progressBytes)
+                                                uint32_t progressBytes,
+                                                uint8_t loadBalanceSalt)
 {
-    const uint16_t lbSalt = NextLoadBalanceSalt(state, packetKey);
     Ptr<Packet> packet = BuildCtpPacket(segment,
+                                        m_node->GetId(),
                                         packetKey,
                                         ResolveDestinationPortHint(packetKey),
                                         taSsn,
                                         progressBytes,
                                         state.Tx().routing,
-                                        static_cast<uint8_t>(lbSalt & 0xff));
+                                        loadBalanceSalt);
     PadTaAckPacketForExperiment(packet);
     return packet;
 }
@@ -922,6 +867,7 @@ UbCtpTransportService::AddCtpNetworkHeaders(Ptr<Packet> packet,
     empty->SetPayloadBytes(packet->GetSize());
     empty->SetCarrierBytes(packet->GetSize());
     Ptr<Packet> headers = BuildCtpPacket(empty,
+                                         m_node->GetId(),
                                          key,
                                          ResolveDestinationPortHint(key),
                                          0,
@@ -1087,9 +1033,16 @@ UbCtpTransportService::SendAdmittedFragment(Ptr<UbWqeSegment> segment,
 
     const uint16_t lbSalt = NextLoadBalanceSalt(state, packetKey);
     const uint32_t outPort = SelectOutPort(state, packetKey, lbSalt);
-    Ptr<UbCompactTransportChannel> queue = GetOrCreateQueue(packetKey, outPort, packetKey.vl);
+    Ptr<Packet> packet = BuildDataPacketWithTaSsn(segment,
+                                                  state,
+                                                  packetKey,
+                                                  taSsn,
+                                                  progressBytes,
+                                                  static_cast<uint8_t>(lbSalt & 0xff));
+    RegisterPacketBirth(packet);
+    Ptr<UbCtpTxQueue> queue = GetOrCreateQueue(packetKey, outPort, packetKey.vl);
     RegisterQueueIfNeeded(queue, outPort, packetKey.vl);
-    queue->EnqueueDataPacket(segment, taSsn, progressBytes, static_cast<uint8_t>(lbSalt & 0xff));
+    queue->EnqueueData(packet);
     FirstPacketSendsNotify(segment->GetTaskId(),
                            packetKey,
                            taSsn,
@@ -1256,17 +1209,18 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t receive
         return false;
     }
 
-    UbCtpEntityKey forwardKey{.srcNodeId = utils::Cna16ToNodeId(cnaHeader.GetScna()),
-                              .srcEntityId = srcEntityId,
-                              .dstNodeId = utils::Cna16ToNodeId(cnaHeader.GetDcna()),
-                              .dstEntityId = dstEntityId,
-                              .vl = cnaHeader.GetServiceLevel()};
-    UbCtpEntityState& forwardState = GetOrCreateEntityState(forwardKey);
-    ++forwardState.Rx().receivedPackets;
+    const uint32_t wireSrcNodeId = utils::Cna16ToNodeId(cnaHeader.GetScna());
+    const uint32_t wireDstNodeId = utils::Cna16ToNodeId(cnaHeader.GetDcna());
+    UbCtpEntityKey localKey{.srcEntityId = dstEntityId,
+                            .dstNodeId = wireSrcNodeId,
+                            .dstEntityId = srcEntityId,
+                            .vl = cnaHeader.GetServiceLevel()};
+    UbCtpEntityState& localState = GetOrCreateEntityState(localKey);
+    ++localState.Rx().receivedPackets;
 
     if (ctpHeader.GetTPOpcode() == static_cast<uint8_t>(CtpOpcode::CTP_CNP))
     {
-        RecordCnpForTest(forwardKey);
+        RecordCnpForTest(localKey);
         return true;
     }
 
@@ -1290,22 +1244,17 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t receive
             UbPacketTraceTag traceTag;
             copy->PeekPacketTag(traceTag);
             CtpRecvNotify(packet->GetUid(),
-                          forwardKey,
+                          localKey,
                           ackHeader.GetIniTaSsn(),
                           PacketType::ACK,
                           copy->GetSize(),
                           flowTag.GetFlowId(),
                           traceTag);
 
-            UbCtpEntityKey reverseKey{.srcNodeId = forwardKey.dstNodeId,
-                                      .srcEntityId = forwardKey.dstEntityId,
-                                      .dstNodeId = forwardKey.srcNodeId,
-                                      .dstEntityId = forwardKey.srcEntityId,
-                                      .vl = forwardKey.vl};
             Ptr<UbWqeSegment> response = CreateObject<UbWqeSegment>();
-            response->SetSrc(forwardKey.srcNodeId);
-            response->SetDest(forwardKey.dstNodeId);
-            response->SetPriority(forwardKey.vl);
+            response->SetSrc(wireSrcNodeId);
+            response->SetDest(wireDstNodeId);
+            response->SetPriority(localKey.vl);
             response->SetTaskId(flowTag.GetFlowId());
             response->SetWqeSize(flowTag.GetFlowSize());
             response->SetJettyNum(ackHeader.GetIniTaSsn());
@@ -1331,7 +1280,7 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t receive
                                               static_cast<uint8_t>(TaOpcode::TA_OPCODE_TRANSACTION_ACK)
                                           ? 1
                                           : copy->GetSize());
-            CompleteFromTaAck(reverseKey, ackHeader.GetIniTaSsn(), response);
+            CompleteFromTaAck(localKey, ackHeader.GetIniTaSsn(), response);
             return true;
         }
     }
@@ -1358,7 +1307,7 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t receive
     UbPacketTraceTag traceTag;
     packet->PeekPacketTag(traceTag);
     CtpRecvNotify(packet->GetUid(),
-                  forwardKey,
+                  localKey,
                   taHeader.GetIniTaSsn(),
                   PacketType::PACKET,
                   copy->GetSize(),
@@ -1371,13 +1320,13 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t receive
         receivePort = utils::Cna16ToPortId(cnaHeader.GetDcna());
     }
 
-    Ptr<UbWqeSegment> request = TrackInboundTaPacket(forwardState,
+    Ptr<UbWqeSegment> request = TrackInboundTaPacket(localState,
                                                      taHeader,
                                                      maHeader,
                                                      taOpcode,
-                                                     forwardKey.srcNodeId,
-                                                     forwardKey.dstNodeId,
-                                                     forwardKey.vl,
+                                                     wireSrcNodeId,
+                                                     wireDstNodeId,
+                                                     localKey.vl,
                                                      copy->GetSize(),
                                                      flowTag.GetFlowId(),
                                                      flowTag.GetFlowSize());
@@ -1391,21 +1340,17 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t receive
     {
         return true;
     }
-    ++forwardState.Rx().generatedResponses;
+    ++localState.Rx().generatedResponses;
 
-    UbCtpEntityKey responseKey{.srcNodeId = forwardKey.dstNodeId,
-                               .srcEntityId = forwardKey.dstEntityId,
-                               .dstNodeId = forwardKey.srcNodeId,
-                               .dstEntityId = forwardKey.srcEntityId,
-                               .vl = forwardKey.vl};
     if (!linkHeader.GetLoadBalanceMode() && receivePort < 15)
     {
-        SetSourcePortHint(responseKey, receivePort);
+        SetSourcePortHint(localKey, receivePort);
     }
-    UbCtpEntityState& responseState = GetOrCreateEntityState(responseKey);
-    responseState.Tx().routing.useShortestPaths = linkHeader.GetRoutingPolicy();
-    responseState.Tx().routing.usePacketSpray = linkHeader.GetLoadBalanceMode();
-    return SendResponseSegment(response, responseState);
+    localState.Tx().routing.useShortestPaths = linkHeader.GetRoutingPolicy();
+    localState.Tx().routing.usePacketSpray = linkHeader.GetLoadBalanceMode();
+    const bool sent = SendResponseSegment(response, localState);
+    TryRetireTransactionState(localKey);
+    return sent;
 }
 
 Ptr<UbWqeSegment>
@@ -1484,7 +1429,7 @@ UbCtpTransportService::TrackInboundTaPacket(UbCtpEntityState& state,
 }
 
 void
-UbCtpTransportService::RegisterQueueForTest(Ptr<UbCompactTransportChannel> queue,
+UbCtpTransportService::RegisterQueueForTest(Ptr<UbCtpTxQueue> queue,
                                             uint32_t outPort,
                                             uint32_t priority)
 {
@@ -1512,9 +1457,7 @@ UbCtpTransportService::CompleteFromTaAckForTest(const UbCtpEntityKey& key, uint3
 void
 UbCtpTransportService::RecordCnpForTest(const UbCtpEntityKey& key)
 {
-    UbCtpCongestionKey congestionKey{.srcNodeId = key.srcNodeId,
-                                     .srcEntityId = key.srcEntityId,
-                                     .dstNodeId = key.dstNodeId,
+    UbCtpCongestionKey congestionKey{.dstNodeId = key.dstNodeId,
                                      .dstEntityId = key.dstEntityId,
                                      .vl = key.vl};
     ++m_congestionSignals[congestionKey];
@@ -1530,6 +1473,14 @@ uint32_t
 UbCtpTransportService::GetCongestionStateCountForTest() const
 {
     return static_cast<uint32_t>(m_congestionSignals.size());
+}
+
+const UbLifecycleResourceIdentity&
+UbCtpTransportService::GetPacketLifecycleOwnerForTest() const
+{
+    NS_ABORT_MSG_IF(m_packetLifecycleOwner.generation == 0,
+                    "CTP packet lifecycle owner is not initialized");
+    return m_packetLifecycleOwner;
 }
 
 uint32_t
@@ -1559,7 +1510,7 @@ UbCtpTransportService::SelectOutPort(UbCtpEntityState& state,
 
     const uint32_t dstPort = ResolveDestinationPortHint(routeKey);
     RoutingKey rtKey;
-    rtKey.sip = utils::NodeIdToIp(routeKey.srcNodeId).Get();
+    rtKey.sip = utils::NodeIdToIp(m_node->GetId()).Get();
     rtKey.dip = dstPort == UINT32_MAX ? utils::NodeIdToIp(routeKey.dstNodeId).Get()
                                       : utils::NodeIdToIp(routeKey.dstNodeId, dstPort).Get();
     rtKey.sport = loadBalanceSalt;
@@ -1586,7 +1537,7 @@ UbCtpTransportService::NextLoadBalanceSalt(UbCtpEntityState& state, const UbCtpE
 {
     if (!state.Tx().routing.usePacketSpray)
     {
-        return EntityLoadBalanceSalt(routeKey);
+        return EntityLoadBalanceSalt(m_node->GetId(), routeKey);
     }
     return static_cast<uint16_t>(state.Tx().routing.nextSprayIndex++);
 }
@@ -1610,7 +1561,7 @@ UbCtpTransportService::ResolveDestinationPortHint(const UbCtpEntityKey& key) con
 }
 
 void
-UbCtpTransportService::RegisterQueueIfNeeded(Ptr<UbCompactTransportChannel> queue,
+UbCtpTransportService::RegisterQueueIfNeeded(Ptr<UbCtpTxQueue> queue,
                                              uint32_t outPort,
                                              uint32_t priority)
 {
@@ -1626,6 +1577,42 @@ UbCtpTransportService::RegisterQueueIfNeeded(Ptr<UbCompactTransportChannel> queu
     NS_ABORT_MSG_IF(sw == nullptr, "CTP queue registration requires UbSwitch");
     sw->RegisterTpWithAllocator(queue, outPort, priority);
     m_registeredQueues.insert(queue);
+}
+
+void
+UbCtpTransportService::RetireEmptyQueue(Ptr<UbCtpTxQueue> queue)
+{
+    if (queue == nullptr || !queue->IsEmpty())
+    {
+        return;
+    }
+
+    auto queueIt = std::find_if(m_queues.begin(),
+                                m_queues.end(),
+                                [&queue](const auto& entry) { return entry.second == queue; });
+    if (queueIt == m_queues.end())
+    {
+        return;
+    }
+
+    auto registeredIt = m_registeredQueues.find(queue);
+    if (registeredIt != m_registeredQueues.end())
+    {
+        Ptr<UbSwitch> sw = m_node == nullptr ? nullptr : m_node->GetObject<UbSwitch>();
+        NS_ABORT_MSG_IF(sw == nullptr, "CTP queue retirement requires UbSwitch");
+        sw->RemoveTpFromAllocator(queue);
+        m_registeredQueues.erase(registeredIt);
+    }
+    m_queues.erase(queueIt);
+}
+
+void
+UbCtpTransportService::RegisterPacketBirth(Ptr<Packet> packet)
+{
+    NS_ABORT_MSG_IF(m_node == nullptr || m_packetLifecycleOwner.generation == 0,
+                    "CTP packet birth requires an initialized service owner");
+    UbLifecycleCoordinator::GetOrCreate(m_node)->RegisterPacketAttempt(m_packetLifecycleOwner,
+                                                                       packet);
 }
 
 bool
@@ -1644,9 +1631,16 @@ UbCtpTransportService::SendResponseSegment(Ptr<UbWqeSegment> response, UbCtpEnti
     {
         const uint16_t lbSalt = NextLoadBalanceSalt(state, key);
         const uint32_t outPort = SelectOutPort(state, key, lbSalt);
-        Ptr<UbCompactTransportChannel> queue = GetOrCreateQueue(key, outPort, key.vl);
+        Ptr<Packet> packet = BuildDataPacketWithTaSsn(response,
+                                                      state,
+                                                      key,
+                                                      taSsn,
+                                                      0,
+                                                      static_cast<uint8_t>(lbSalt & 0xff));
+        RegisterPacketBirth(packet);
+        Ptr<UbCtpTxQueue> queue = GetOrCreateQueue(key, outPort, key.vl);
         RegisterQueueIfNeeded(queue, outPort, key.vl);
-        queue->EnqueueResponsePacket(response, taSsn, 0, static_cast<uint8_t>(lbSalt & 0xff));
+        queue->EnqueueAck(packet);
 
         Ptr<UbPort> port = DynamicCast<UbPort>(m_node->GetDevice(outPort));
         NS_ABORT_MSG_IF(port == nullptr, "CTP response send requires valid out port");
@@ -1659,12 +1653,16 @@ UbCtpTransportService::SendResponseSegment(Ptr<UbWqeSegment> response, UbCtpEnti
         const uint32_t progressBytes = static_cast<uint32_t>(response->GetBytesLeft());
         const uint16_t lbSalt = NextLoadBalanceSalt(state, key);
         const uint32_t outPort = SelectOutPort(state, key, lbSalt);
-        Ptr<UbCompactTransportChannel> queue = GetOrCreateQueue(key, outPort, key.vl);
+        Ptr<Packet> packet = BuildDataPacketWithTaSsn(response,
+                                                      state,
+                                                      key,
+                                                      taSsn,
+                                                      progressBytes,
+                                                      static_cast<uint8_t>(lbSalt & 0xff));
+        RegisterPacketBirth(packet);
+        Ptr<UbCtpTxQueue> queue = GetOrCreateQueue(key, outPort, key.vl);
         RegisterQueueIfNeeded(queue, outPort, key.vl);
-        queue->EnqueueResponsePacket(response,
-                                     taSsn,
-                                     progressBytes,
-                                     static_cast<uint8_t>(lbSalt & 0xff));
+        queue->EnqueueData(packet);
         response->UpdateSentBytes(progressBytes);
 
         Ptr<UbPort> port = DynamicCast<UbPort>(m_node->GetDevice(outPort));
@@ -1684,15 +1682,63 @@ UbCtpTransportService::CompleteFromTaAck(const UbCtpEntityKey& key,
     {
         GetOrCreateEntityState(key);
         TraceWindowEvent(key, "taack-delay", taSsn, *GetTransactionState(key).context);
-        Simulator::Schedule(m_delayTaAckTime,
-                            &UbCtpTransportService::CompleteFromTaAckNow,
-                            this,
-                            key,
-                            taSsn,
-                            response);
+        const uint64_t token = m_delayedTaAckEvents.Track(m_packetLifecycleOwner);
+        GetTransactionOwner()->RetainCtpCompletionEvent(key);
+        EventId event = Simulator::Schedule(m_delayTaAckTime,
+                                            &UbCtpTransportService::RunTrackedCompleteFromTaAck,
+                                            this,
+                                            key,
+                                            taSsn,
+                                            response,
+                                            token);
+        m_delayedTaAckEvents.Attach(
+            m_packetLifecycleOwner,
+            token,
+            event,
+            MakeCallback(&UbCtpTransportService::CancelTrackedCompleteFromTaAck, this).Bind(key));
         return;
     }
     CompleteFromTaAckNow(key, taSsn, response);
+    TryRetireTransactionState(key);
+    const UbCtpEntityKey sourceGroupKey = MakeSourceGroupKeyForRequest(key);
+    if (!(sourceGroupKey == key))
+    {
+        TryRetireTransactionState(sourceGroupKey);
+    }
+}
+
+void
+UbCtpTransportService::CancelTrackedCompleteFromTaAck(UbCtpEntityKey key)
+{
+    GetTransactionOwner()->ReleaseCtpCompletionEvent(key);
+    TryRetireTransactionState(key);
+}
+
+void
+UbCtpTransportService::RunTrackedCompleteFromTaAck(UbCtpEntityKey key,
+                                                   uint32_t taSsn,
+                                                   Ptr<UbWqeSegment> response,
+                                                   uint64_t token)
+{
+    if (!m_delayedTaAckEvents.Begin(m_packetLifecycleOwner, token))
+    {
+        return;
+    }
+    CompleteFromTaAckNow(key, taSsn, response);
+    m_delayedTaAckEvents.Resolve(m_packetLifecycleOwner, token);
+    GetTransactionOwner()->ReleaseCtpCompletionEvent(key);
+    TryRetireTransactionState(key);
+    const UbCtpEntityKey sourceGroupKey = MakeSourceGroupKeyForRequest(key);
+    if (!(sourceGroupKey == key))
+    {
+        TryRetireTransactionState(sourceGroupKey);
+    }
+}
+
+void
+UbCtpTransportService::TryRetireTransactionState(const UbCtpEntityKey& key)
+{
+    GetTransactionOwner()->TryRetireCtpTransactionState(key);
 }
 
 void
@@ -1781,6 +1827,26 @@ UbCtpTransportService::CompleteFromTaAckNow(const UbCtpEntityKey& key,
     {
         DrainJettys(*state);
     }
+}
+
+void
+UbCtpTransportService::DoDispose()
+{
+    if (m_packetLifecycleOwner.generation != 0)
+    {
+        const std::vector<Callback<void>> cleanups =
+            m_delayedTaAckEvents.CancelPending(m_packetLifecycleOwner);
+        for (const Callback<void>& cleanup : cleanups)
+        {
+            cleanup();
+        }
+    }
+    if (m_delayedTaAckEvents.IsEmpty())
+    {
+        m_delayedTaAckEvents.Clear();
+    }
+    m_node = nullptr;
+    Object::DoDispose();
 }
 
 std::map<uint32_t, Ptr<UbWqeSegment>>::iterator
@@ -1875,7 +1941,7 @@ UbCtpTransportService::FirstPacketSendsNotify(uint32_t taskId,
 {
     m_traceFirstPacketSendsNotify(m_node == nullptr ? UINT32_MAX : m_node->GetId(),
                                   taskId,
-                                  key.srcNodeId,
+                                  m_node == nullptr ? UINT32_MAX : m_node->GetId(),
                                   key.dstNodeId,
                                   key.srcEntityId,
                                   key.dstEntityId,
@@ -1895,7 +1961,7 @@ UbCtpTransportService::LastPacketACKsNotify(uint32_t taskId,
 {
     m_traceLastPacketACKsNotify(m_node == nullptr ? UINT32_MAX : m_node->GetId(),
                                 taskId,
-                                key.srcNodeId,
+                                m_node == nullptr ? UINT32_MAX : m_node->GetId(),
                                 key.dstNodeId,
                                 key.srcEntityId,
                                 key.dstEntityId,
@@ -1916,10 +1982,10 @@ UbCtpTransportService::CtpRecvNotify(uint32_t packetUid,
                                      UbPacketTraceTag traceTag)
 {
     m_ctpRecvNotify(packetUid,
-                    key.srcNodeId,
                     key.dstNodeId,
-                    key.srcEntityId,
+                    m_node == nullptr ? UINT32_MAX : m_node->GetId(),
                     key.dstEntityId,
+                    key.srcEntityId,
                     static_cast<uint32_t>(key.vl),
                     taSsn,
                     type,
@@ -1936,7 +2002,7 @@ UbCtpTransportService::ShouldTraceWindow(const UbCtpEntityKey& key) const
         return false;
     }
     if (m_windowTraceSrcNode != std::numeric_limits<uint32_t>::max() &&
-        key.srcNodeId != m_windowTraceSrcNode)
+        (m_node == nullptr || m_node->GetId() != m_windowTraceSrcNode))
     {
         return false;
     }
@@ -1966,7 +2032,7 @@ UbCtpTransportService::ShouldDelayTaAck(const UbCtpEntityKey& key, uint32_t taSs
     {
         return false;
     }
-    if (key.srcNodeId != m_delayTaAckSrcNode)
+    if (m_node == nullptr || m_node->GetId() != m_delayTaAckSrcNode)
     {
         return false;
     }
@@ -1993,7 +2059,7 @@ UbCtpTransportService::TraceWindowEvent(const UbCtpEntityKey& key,
     std::ostringstream oss;
     oss << "CTP WINDOW"
         << " event: " << event
-        << " src: " << key.srcNodeId
+        << " src: " << m_node->GetId()
         << " srcEntity: " << key.srcEntityId
         << " dst: " << key.dstNodeId
         << " dstEntity: " << key.dstEntityId
@@ -2027,7 +2093,7 @@ UbCtpTransportService::TraceDetailEvent(const UbCtpEntityKey& key,
     std::ostringstream oss;
     oss << "CTP DETAIL"
         << " event: " << event
-        << " src: " << key.srcNodeId
+        << " src: " << m_node->GetId()
         << " srcEntity: " << key.srcEntityId
         << " dst: " << key.dstNodeId
         << " dstEntity: " << key.dstEntityId

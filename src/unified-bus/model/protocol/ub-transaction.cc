@@ -473,8 +473,13 @@ UbTransaction::GetOrCreateCtpTransactionState(const UbCtpEntityKey& key)
     auto [it, inserted] = m_ctpTransactionStates.try_emplace(key);
     if (inserted)
     {
-        it->second.context =
-            Create<UbCtpTransactionContext>(key, UB_JETTY_TASSN_OOO_THRESHOLD);
+        const auto cursor = m_ctpNextTaSsn.find(key);
+        const uint32_t initialSequence =
+            cursor == m_ctpNextTaSsn.end() ? 0 : cursor->second;
+        it->second.context = Create<UbCtpTransactionContext>(
+            key,
+            UB_JETTY_TASSN_OOO_THRESHOLD,
+            initialSequence);
     }
     return it->second;
 }
@@ -491,6 +496,48 @@ UbTransaction::FindCtpTransactionState(const UbCtpEntityKey& key)
 {
     const auto it = m_ctpTransactionStates.find(key);
     return it == m_ctpTransactionStates.end() ? nullptr : &it->second;
+}
+
+void
+UbTransaction::RetainCtpCompletionEvent(const UbCtpEntityKey& key)
+{
+    ++GetOrCreateCtpTransactionState(key).pendingCompletionEvents;
+}
+
+void
+UbTransaction::ReleaseCtpCompletionEvent(const UbCtpEntityKey& key)
+{
+    UbCtpTransactionState* state = FindCtpTransactionState(key);
+    NS_ABORT_MSG_IF(state == nullptr || state->pendingCompletionEvents == 0,
+                    "CTP completion event release would underflow");
+    --state->pendingCompletionEvents;
+}
+
+bool
+UbTransaction::TryRetireCtpTransactionState(const UbCtpEntityKey& key)
+{
+    auto state = m_ctpTransactionStates.find(key);
+    if (state == m_ctpTransactionStates.end())
+    {
+        return true;
+    }
+    const bool activeOperation = std::any_of(
+        m_operations.begin(),
+        m_operations.end(),
+        [&key](const auto& entry) { return entry.second.ctp && entry.second.ctpKey == key; });
+    const UbCtpTransactionState& transactionState = state->second;
+    if (activeOperation || !transactionState.pendingSegments.empty() ||
+        !transactionState.outstandingSegments.empty() ||
+        !transactionState.segmentOutstandingPackets.empty() ||
+        !transactionState.inboundTaUnits.empty() || transactionState.pendingCompletionEvents != 0 ||
+        transactionState.context == nullptr ||
+        transactionState.context->GetOutstandingCount() != 0)
+    {
+        return false;
+    }
+    m_ctpNextTaSsn[key] = transactionState.context->GetSendNext();
+    m_ctpTransactionStates.erase(state);
+    return true;
 }
 
 bool UbTransaction::IsUrmaReadWriteRequest(const Ptr<UbWqeSegment>& segment)
@@ -1802,6 +1849,7 @@ void UbTransaction::WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe, UbWorkOutcome o
                     "WqeFinish references an unknown, duplicate, or stale direct WQE");
     if (operation != m_operations.end() && operation->second.ctp)
     {
+        const UbCtpEntityKey ctpKey = operation->second.ctpKey;
         const UbLifecycleResourceIdentity wqeIdentity = operation->second.wqeIdentity;
         auto transactionState = m_ctpTransactionStates.find(operation->second.ctpKey);
         if (transactionState != m_ctpTransactionStates.end())
@@ -1856,6 +1904,10 @@ void UbTransaction::WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe, UbWorkOutcome o
                                                       wqe->GetWqeId(),
                                                       wqeIdentity,
                                                       outcome);
+        if (outcome != UbWorkOutcome::COMPLETED)
+        {
+            TryRetireCtpTransactionState(ctpKey);
+        }
         return;
     }
     bool hadLifecycleOperation = false;
@@ -2103,6 +2155,7 @@ void UbTransaction::DoDispose()
     }
     m_tpRelatedRemoteRequests.clear();
     m_ctpTransactionStates.clear();
+    m_ctpNextTaSsn.clear();
     m_tpRRIndex.clear();
     m_random = nullptr;
     m_serviceMode.clear();

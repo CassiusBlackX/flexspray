@@ -213,6 +213,8 @@ void UbSwitchAllocator::CheckDeadlock()
                             } else {
                                 ss << " QueueType:TP (Cast Failed)";
                             }
+                        } else if (queue->GetIngressQueueType() == IngressQueueType::CTP) {
+                            ss << " QueueType:CTP";
                         } else {
                             ss << " QueueType:Unknown(" << (int)queue->GetIngressQueueType() << ")";
                         }
@@ -314,6 +316,7 @@ void UbRoundRobinAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
 
         // Packet moved from VOQ to EgressQueue, notify Switch to update buffer statistics
         if (ingressQueue->GetIngressQueueType() != IngressQueueType::TP &&
+            ingressQueue->GetIngressQueueType() != IngressQueueType::CTP &&
             !ingressQueue->IsGeneratedDataPacket()) {
             // Forwarded packet (not locally generated)
             auto node = NodeList::GetNode(m_nodeId);
@@ -548,6 +551,7 @@ void UbDwrrAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
 
                 // Packet moved from VOQ to EgressQueue, notify Switch to update buffer statistics
                 if (q->GetIngressQueueType() != IngressQueueType::TP &&
+                    q->GetIngressQueueType() != IngressQueueType::CTP &&
                     !q->IsGeneratedDataPacket()) {
                     // Forwarded packet (not locally generated)
                     auto node = NodeList::GetNode(m_nodeId);
