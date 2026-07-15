@@ -697,7 +697,6 @@ void
 UbCtpTransportService::SetNode(Ptr<Node> node)
 {
     m_node = node;
-    ValidateRoutingConfiguration();
 }
 
 Ptr<Node>
@@ -726,12 +725,6 @@ UbCtpTransportService::ValidateRoutingType(RoutingType routingType, const std::s
         return;
     }
     sw->GetRoutingProcess()->ValidateRoutingType(routingType, owner);
-}
-
-void
-UbCtpTransportService::ValidateRoutingConfiguration() const
-{
-    ValidateRoutingType(m_defaultRoutingPolicy.routingType, "CTP default routing policy");
 }
 
 void

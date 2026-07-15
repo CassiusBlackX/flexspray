@@ -10536,16 +10536,24 @@ class UbInvalidProgrammaticRoutingMatrixIsRejectedAtObjectBoundariesTest : publi
             },
             "RTP transport configuration");
 
-        expectAbort(
-            []() {
-                Ptr<Node> node = CreateObject<Node>();
-                InitNode(node, UB_DEVICE, 1);
-                node->GetObject<UbSwitch>()->GetRoutingProcess()->SetAttribute(
-                    "MultipathSelector",
-                    EnumValue(MultipathSelector::ADAPTIVE));
+        const int deferredCtpPolicyStatus = RunInChildProcess([]() {
+            Ptr<Node> node = CreateObject<Node>();
+            InitNode(node, UB_DEVICE, 1);
+            node->GetObject<UbSwitch>()->GetRoutingProcess()->SetAttribute(
+                "MultipathSelector",
+                EnumValue(MultipathSelector::ADAPTIVE));
+            Ptr<UbCtpTransportService> service =
                 node->GetObject<UbController>()->GetCtpTransportService();
-            },
-            "CTP default routing policy configuration");
+            service->SetRoutingType(RoutingType::PER_PACKET_SHORTEST_PATHS);
+        });
+        NS_TEST_ASSERT_MSG_EQ(
+            WIFEXITED(deferredCtpPolicyStatus),
+            1,
+            "CTP service creation must defer validation until the app assigns its routing policy");
+        NS_TEST_ASSERT_MSG_EQ(
+            WEXITSTATUS(deferredCtpPolicyStatus),
+            0,
+            "a valid app-provided CTP routing policy must replace the unbound service default");
 
         expectAbort(
             []() {

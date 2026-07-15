@@ -202,7 +202,6 @@ class UbCtpTransportService : public Object
     void SetNode(Ptr<Node> node);
     Ptr<Node> GetNode() const;
     void SetRoutingType(RoutingType routingType);
-    void ValidateRoutingConfiguration() const;
     void SetBoundOutPortCountForTest(uint32_t boundOutPortCount);
     void SetExperimentTaAckPacketBytesForTest(uint32_t packetBytes);
     void SetSourcePortHint(const UbCtpEntityKey& key, uint32_t port);

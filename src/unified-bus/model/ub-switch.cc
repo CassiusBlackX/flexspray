@@ -245,11 +245,6 @@ void UbSwitch::InitRoutingProcess(Ptr<Node> node)
         {
             function->GetUbLdstApi()->ValidateRoutingConfiguration();
         }
-        Ptr<UbCtpTransportService> ctp = controller->PeekCtpTransportService();
-        if (ctp != nullptr)
-        {
-            ctp->ValidateRoutingConfiguration();
-        }
     }
 }
 /**
