@@ -20770,7 +20770,7 @@ class UbPacketSprayUsesEvenRoundRobinAcrossEqualPortsTest : public TestCase
             counts[port] = 0;
         }
 
-        for (uint32_t spraySalt = 1; spraySalt <= 977; ++spraySalt)
+        for (uint32_t spraySalt = 0; spraySalt < 977; ++spraySalt)
         {
             rtKey.sport = static_cast<uint16_t>(spraySalt);
             bool selectedShortestPath = false;
@@ -20782,8 +20782,26 @@ class UbPacketSprayUsesEvenRoundRobinAcrossEqualPortsTest : public TestCase
             NS_TEST_ASSERT_MSG_EQ((counts.count(static_cast<uint16_t>(outPort)) == 1),
                                   true,
                                   "Packet spray must select one of the configured equal-cost ports");
+            NS_TEST_ASSERT_MSG_EQ(outPort,
+                                  equalPorts[spraySalt % equalPorts.size()],
+                                  "Packet spray must advance in strict candidate order");
             counts[static_cast<uint16_t>(outPort)]++;
         }
+
+        rtKey.sport = 17;
+        bool originalFlowShortest = false;
+        const int originalFlowPort = routing->GetOutPort(rtKey, originalFlowShortest);
+        rtKey.sip = NodeIdToIp(9).Get();
+        rtKey.dport = 31;
+        rtKey.priority = 6;
+        bool changedFlowShortest = false;
+        const int changedFlowPort = routing->GetOutPort(rtKey, changedFlowShortest);
+        NS_TEST_ASSERT_MSG_EQ(changedFlowPort,
+                              originalFlowPort,
+                              "Strict RR must not randomize its start from flow fields");
+        NS_TEST_ASSERT_MSG_EQ(changedFlowShortest,
+                              originalFlowShortest,
+                              "Flow fields must not change strict-RR path classification");
 
         uint32_t minCount = std::numeric_limits<uint32_t>::max();
         uint32_t maxCount = 0;
