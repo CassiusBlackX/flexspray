@@ -283,6 +283,9 @@ If the user requests a value for an enum parameter, verify it against the C++ so
 
 ## Routing Intent Slot → Route Generation
 
+Use `routing-strategy-selection.md` to choose a scenario-appropriate profile. This section owns the
+mechanical mapping from the confirmed profile to case attributes and route generation.
+
 - `routing_type` maps to the `RoutingType` attribute on `UbApp`, `UbTransportChannel`, and `UbLdstApi` as applicable:
   - `PER_FLOW_ALL_PATHS` = RT bits `00`
   - `PER_PACKET_ALL_PATHS` = RT bits `01`

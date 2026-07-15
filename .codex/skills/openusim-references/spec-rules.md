@@ -40,9 +40,9 @@ Users may describe any planning slot in natural language rather than concrete va
 | Workload | communication primitives (AllReduce, P2P, ...) + phase ordering + data sizes → traffic.csv rows |
 | Network overrides | ns3 attribute key + value |
 | Observability | named tier or individual trace-switch settings |
-| Routing intent | algorithm choice + path-source choice |
+| Routing intent | routing type + compatible selector + path-source choice |
 
-2. **Search the matching reference for concrete options.** Each slot has a reference doc (`topology-options.md`, `workload-options.md`, `spec-to-toolchain.md`, `trace-observability.md`). If the user's intent matches an option in the reference, present it for confirmation.
+2. **Search the matching reference for concrete options.** Each slot has a reference doc (`topology-options.md`, `workload-options.md`, `routing-strategy-selection.md`, `spec-to-toolchain.md`, `trace-observability.md`). If the user's intent matches an option in the reference, present it for confirmation. Use `routing-strategy-selection.md` for strategy choice and `spec-to-toolchain.md` for concrete attribute/tool mapping.
 
 3. **If multiple mappings are possible, present the choices.** Do not pick one silently.
 
