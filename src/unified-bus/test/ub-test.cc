@@ -21075,6 +21075,180 @@ class UbSwitchCreatesVoqsOnDemandTest : public TestCase
     }
 };
 
+class UbSwitchRetainsThenExplicitlyDestroysDrainedVoqTest : public TestCase
+{
+  public:
+    UbSwitchRetainsThenExplicitlyDestroysDrainedVoqTest()
+        : TestCase("UnifiedBus - drained VOQ uses the explicit safe destruction gate")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Config::Reset();
+        auto fixture = CreateMultiPortSwitchFixture(FcType::NONE,
+                                                    /*portsNum*/ 2,
+                                                    /*reserveBytes*/ 256,
+                                                    /*sharedPoolBytes*/ 0,
+                                                    /*headroomPerPortBytes*/ 0,
+                                                    /*resumeGapBytes*/ 16,
+                                                    /*alphaShift*/ 0,
+                                                    {});
+        constexpr uint32_t kInPort = 0;
+        constexpr uint32_t kOutPort = 1;
+        constexpr uint32_t kPriority = 1;
+        constexpr uint32_t kPacketBytes = 120;
+
+        fixture.sw->SendPacket(Create<Packet>(kPacketBytes), kInPort, kOutPort, kPriority);
+        NS_TEST_ASSERT_MSG_EQ(fixture.sw->TryDestroyVoqForTest(kOutPort, kPriority, kInPort),
+                              false,
+                              "A VOQ retaining a packet must not be destroyed");
+
+        fixture.sw->GetAllocator()->AllocateNextPacket(fixture.ports[kOutPort]);
+        fixture.ports[kOutPort]->SetFaultCallBack(MakeCallback(&ConsumeEgressPacketForTest));
+        Simulator::Stop(NanoSeconds(11));
+        Simulator::Run();
+
+        NS_TEST_ASSERT_MSG_EQ(fixture.sw->GetVoqPacketCountForTest(kOutPort, kPriority, kInPort),
+                              0u,
+                              "The allocator should drain the packet through the production path");
+        NS_TEST_ASSERT_MSG_EQ(fixture.sw->HasVoqForTest(kOutPort, kPriority, kInPort),
+                              true,
+                              "Ordinary runtime should retain the drained empty shell");
+        NS_TEST_ASSERT_MSG_EQ(fixture.sw->TryDestroyVoqForTest(kOutPort, kPriority, kInPort),
+                              true,
+                              "A drained quiet VOQ should unregister and erase through one gate");
+        NS_TEST_ASSERT_MSG_EQ(fixture.sw->HasVoqForTest(kOutPort, kPriority, kInPort),
+                              false,
+                              "Successful explicit destruction should remove switch-owned storage");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbSwitchVoqDestroyGateBlocksAllocatorAndAccountingTest : public TestCase
+{
+  public:
+    UbSwitchVoqDestroyGateBlocksAllocatorAndAccountingTest()
+        : TestCase("UnifiedBus - VOQ destruction waits for allocator and accounting gates")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Config::Reset();
+        auto fixture = CreateMultiPortSwitchFixture(FcType::NONE,
+                                                    /*portsNum*/ 2,
+                                                    /*reserveBytes*/ 256,
+                                                    /*sharedPoolBytes*/ 0,
+                                                    /*headroomPerPortBytes*/ 0,
+                                                    /*resumeGapBytes*/ 16,
+                                                    /*alphaShift*/ 0,
+                                                    {});
+        constexpr uint32_t kInPort = 0;
+        constexpr uint32_t kOutPort = 1;
+        constexpr uint32_t kPriority = 1;
+        constexpr uint32_t kPacketBytes = 120;
+
+        fixture.sw->SendPacket(Create<Packet>(kPacketBytes), kInPort, kOutPort, kPriority);
+        fixture.sw->GetAllocator()->AllocateNextPacket(fixture.ports[kOutPort]);
+        fixture.ports[kOutPort]->SetFaultCallBack(MakeCallback(&ConsumeEgressPacketForTest));
+        Simulator::Stop(NanoSeconds(11));
+        Simulator::Run();
+
+        fixture.sw->GetAllocator()->TriggerAllocator(fixture.ports[kOutPort]);
+        NS_TEST_ASSERT_MSG_EQ(
+            fixture.sw->TryDestroyVoqForTest(kOutPort, kPriority, kInPort),
+            false,
+            "A pending allocation token for the output port must retain the empty VOQ");
+
+        Simulator::Stop(Simulator::Now() + NanoSeconds(11));
+        Simulator::Run();
+
+        fixture.queueManager->PushToVoq(kInPort, kOutPort, kPriority, kPacketBytes);
+        NS_TEST_ASSERT_MSG_EQ(fixture.sw->TryDestroyVoqForTest(kOutPort, kPriority, kInPort),
+                              false,
+                              "Nonzero production accounting must retain an empty VOQ shell");
+        fixture.queueManager->PopFromVoq(kInPort, kOutPort, kPriority, kPacketBytes);
+
+        NS_TEST_ASSERT_MSG_EQ(fixture.sw->TryDestroyVoqForTest(kOutPort, kPriority, kInPort),
+                              true,
+                              "The same gate should erase after allocator and accounting resolve");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbSwitchDisposeCancelsOwnedQueueEventsAndRecordsResidueTest : public TestCase
+{
+  public:
+    UbSwitchDisposeCancelsOwnedQueueEventsAndRecordsResidueTest()
+        : TestCase("UnifiedBus - switch disposal cancels queue events and records residue")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Config::Reset();
+        auto fixture = CreateMultiPortSwitchFixture(FcType::NONE,
+                                                    /*portsNum*/ 2,
+                                                    /*reserveBytes*/ 256,
+                                                    /*sharedPoolBytes*/ 0,
+                                                    /*headroomPerPortBytes*/ 0,
+                                                    /*resumeGapBytes*/ 16,
+                                                    /*alphaShift*/ 0,
+                                                    {});
+        constexpr uint32_t kInPort = 0;
+        constexpr uint32_t kOutPort = 1;
+        constexpr uint32_t kPriority = 1;
+        constexpr uint32_t kPacketBytes = 120;
+
+        fixture.sw->SetAttribute("InPortProcessingDelay", TimeValue(MicroSeconds(3)));
+        fixture.sw->SendPacket(Create<Packet>(kPacketBytes), kInPort, kOutPort, kPriority);
+        Ptr<UbSwitchAllocator> allocator = fixture.sw->GetAllocator();
+        allocator->TriggerAllocator(fixture.ports[kOutPort]);
+
+        NS_TEST_ASSERT_MSG_EQ(fixture.sw->GetPendingInPortProcessingEventCountForTest(),
+                              1u,
+                              "The delayed packet should be owned by one saved switch event");
+        NS_TEST_ASSERT_MSG_EQ((allocator->GetPendingEventCountForTest() >= 2),
+                              true,
+                              "Allocator should own its deadlock and allocation events");
+        NS_TEST_ASSERT_MSG_EQ(fixture.sw->TryDestroyVoqForTest(kOutPort, kPriority, kInPort),
+                              false,
+                              "A delayed packet must not create or destroy a VOQ before completion");
+
+        fixture.sw->Dispose();
+
+        NS_TEST_ASSERT_MSG_EQ(fixture.sw->GetForcedInPortEventResidueForTest(),
+                              1u,
+                              "Forced switch disposal should report the delayed event residue");
+        NS_TEST_ASSERT_MSG_EQ(fixture.sw->GetForcedInPortByteResidueForTest(),
+                              static_cast<uint64_t>(kPacketBytes),
+                              "Forced switch disposal should report retained packet bytes");
+        NS_TEST_ASSERT_MSG_EQ(fixture.sw->GetForcedVoqPacketResidueForTest(),
+                              0u,
+                              "The delayed packet should not be misreported as VOQ residue");
+        NS_TEST_ASSERT_MSG_EQ(fixture.sw->GetForcedBufferedByteResidueForTest(),
+                              static_cast<uint64_t>(kPacketBytes),
+                              "Forced switch disposal should report total buffered residue");
+        NS_TEST_ASSERT_MSG_EQ((allocator->GetForcedEventResidueForTest() >= 2),
+                              true,
+                              "Forced allocator disposal should report all pending event residue");
+        NS_TEST_ASSERT_MSG_EQ(allocator->GetPendingEventCountForTest(),
+                              0u,
+                              "Allocator disposal should cancel and release every saved event");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
 class UbVoqAllocatorPreservesIngressQueueSlotPhaseTest : public TestCase
 {
   public:
@@ -24071,6 +24245,12 @@ UbTestSuite::UbTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbBusyPortArrivalPrefetchesNextPacketTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbSwitchCreatesVoqsOnDemandTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbSwitchRetainsThenExplicitlyDestroysDrainedVoqTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbSwitchVoqDestroyGateBlocksAllocatorAndAccountingTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbSwitchDisposeCancelsOwnedQueueEventsAndRecordsResidueTest(),
+                TestCase::Duration::QUICK);
     AddTestCase(new UbVoqAllocatorPreservesIngressQueueSlotPhaseTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDwrrAllocatorPreservesIngressQueueSlotsAcrossVlTest(),
                 TestCase::Duration::QUICK);
@@ -24704,6 +24884,12 @@ UbSwitchVoqTestSuite::UbSwitchVoqTestSuite()
     AddTestCase(new UbRoundRobinAllocatorSeedsDifferentInitialPhasesPerOutPortTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbSwitchCreatesVoqsOnDemandTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbSwitchRetainsThenExplicitlyDestroysDrainedVoqTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbSwitchVoqDestroyGateBlocksAllocatorAndAccountingTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbSwitchDisposeCancelsOwnedQueueEventsAndRecordsResidueTest(),
+                TestCase::Duration::QUICK);
     AddTestCase(new UbVoqAllocatorPreservesIngressQueueSlotPhaseTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDwrrAllocatorPreservesIngressQueueSlotsAcrossVlTest(),
                 TestCase::Duration::QUICK);

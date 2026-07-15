@@ -105,6 +105,12 @@ public:
     static bool IsValidVoqIndices(uint32_t outPort, uint32_t priority, uint32_t inPort, uint32_t portsNum, uint32_t vlNum);
     uint64_t GetAllocatedVoqCountForTest() const;
     bool HasVoqForTest(uint32_t outPort, uint32_t priority, uint32_t inPort) const;
+    bool TryDestroyVoqForTest(uint32_t outPort, uint32_t priority, uint32_t inPort);
+    uint32_t GetPendingInPortProcessingEventCountForTest() const;
+    uint32_t GetForcedInPortEventResidueForTest() const { return m_forcedInPortEventResidue; }
+    uint64_t GetForcedInPortByteResidueForTest() const { return m_forcedInPortByteResidue; }
+    uint64_t GetForcedVoqPacketResidueForTest() const { return m_forcedVoqPacketResidue; }
+    uint64_t GetForcedBufferedByteResidueForTest() const { return m_forcedBufferedByteResidue; }
     void RemoveTpFromAllocator(Ptr<UbIngressQueue> tp);
     Ptr<UbSwitchAllocator> GetAllocator();
     Ipv4Address GetNodeIpv4Addr(){return m_Ipv4Addr;}
@@ -175,6 +181,15 @@ private:
         std::vector<std::vector<VirtualOutputQueueEntry>> groups;
     };
 
+    struct InPortProcessingEvent
+    {
+        EventId event;
+        uint32_t inPort;
+        uint32_t outPort;
+        uint32_t priority;
+        uint32_t packetBytes;
+    };
+
     void LastPacketTraversesNotify(uint32_t nodeId, UbTransportHeader ubTpHeader);
 
     void VoqInit();
@@ -184,6 +199,9 @@ private:
                                           uint32_t inPort) const;
     Ptr<UbPacketQueue>* GetOrCreateVoqSlot(VirtualOutputQueueGroupKey groupKey,
                                            uint32_t inPort);
+    bool TryDestroyEmptyVoq(uint32_t outPort, uint32_t priority, uint32_t inPort);
+    bool HasPendingInPortWork(uint32_t outPort, uint32_t priority, uint32_t inPort) const;
+    void PruneResolvedInPortEvents();
     void ReceivePacket(Ptr<UbPort> port, Ptr<Packet> p);
 
     void HandleURMADataPacket(Ptr<UbPort> port, Ptr<Packet> packet);
@@ -231,7 +249,11 @@ private:
     Ptr<UbSwitchAllocator> m_allocator;
     uint32_t m_vlNum = 16;
     Time m_inPortProcessingDelay {NanoSeconds(0)};
-    std::vector<EventId> m_inPortProcessingEvents;
+    std::vector<InPortProcessingEvent> m_inPortProcessingEvents;
+    uint32_t m_forcedInPortEventResidue = 0;
+    uint64_t m_forcedInPortByteResidue = 0;
+    uint64_t m_forcedVoqPacketResidue = 0;
+    uint64_t m_forcedBufferedByteResidue = 0;
     VirtualOutputQueueStorage m_voq; // on-demand VOQ groups keyed by outPort/priority
     Ptr<UbRoutingProcess> m_routingProcess;   // Router Model
 
