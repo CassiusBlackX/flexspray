@@ -272,13 +272,36 @@ Closeout:
 
 **Blocked by:** T01 Establish a single-TP packet lifecycle tracer bullet; T11 Move CTP transaction progress into the Transaction owner.
 
-- [ ] Entity keys are node-local directed communication keys and congestion keys aggregate only destination node, destination Entity, and VL.
-- [ ] Sharing and isolation tests cover source Entity, destination node, destination Entity, VL, and reverse-packet normalization.
-- [ ] Transmit queues contain complete packets and no raw pointer to cacheable Entity or Transaction state.
-- [ ] DATA, ACK, and CNP priority, packet terminal accounting, queue registration, and tracked events balance independently.
-- [ ] Empty queue and completed Transaction state can retire while the CTP service and allowed cacheable policy state persist.
-- [ ] Loss without lower-layer recovery remains explicitly unresolved rather than being hidden by forced cleanup.
-- [ ] At the CTP milestone, the verified frozen baseline byte-matches all applicable CTP task, packet, queue, throughput, and canonical artifacts.
+- [x] Entity keys are node-local directed communication keys and congestion keys aggregate only destination node, destination Entity, and VL.
+- [x] Sharing and isolation tests cover source Entity, destination node, destination Entity, VL, and reverse-packet normalization.
+- [x] Transmit queues contain complete packets and no raw pointer to cacheable Entity or Transaction state.
+- [x] DATA, ACK, and CNP priority, packet terminal accounting, queue registration, and tracked events balance independently.
+- [x] Empty queue and completed Transaction state can retire while the CTP service and allowed cacheable policy state persist.
+- [x] Loss without lower-layer recovery remains explicitly unresolved rather than being hidden by forced cleanup.
+- [x] At the CTP milestone, the verified frozen baseline byte-matches all applicable CTP task, packet, queue, throughput, and canonical artifacts.
+
+Closeout:
+
+- `UbCtpEntityKey` is local to its node-scoped service and `UbCtpCongestionKey` aggregates only
+  destination node, destination Entity, and VL. Existing production parsing characterizes
+  source-Entity sharing, destination/VL isolation, and reverse normalization.
+- The pre-refactor `BuildCtpPacket` block remains the sole CTP packet builder. `UbCtpTxQueue`
+  stores only complete DATA/ACK/CNP packets, preserves CNP > ACK > DATA priority, and unregisters
+  from the allocator before an empty queue is erased.
+- The persistent CTP service owns packet accounting without gaining a channel teardown API.
+  Complete DATA and ACK packets register before enqueue; local consumption and route failure use
+  typed terminals at the existing switch seams.
+- Delayed TAACK uses the common tracked-event sequence and a per-key Transaction hold. Completion
+  and disposal cancellation each release the token once; cancellation preserves unresolved work.
+- `UbTransaction` retires finite CTP records only after operations, segment containers, inbound
+  units, delayed events, and window occupancy drain. A compact cursor preserves TASSN continuity,
+  while Entity routing and congestion policy may remain cached in the service.
+- Focused validation passed: targeted build, 13-case CTP lifecycle, 17-case CTP Transaction,
+  lifecycle, switch-VOQ, and flow-control suites. The 16-task multi-Entity READ/WRITE scenario
+  completed eight WRITE and eight READ tasks.
+- The frozen root verified 369 files. The current `local-single`
+  `medium-ctp-entity-vl-pressure` candidate completed 4/4 tasks and compared
+  `artifacts=identical`; no exception was required.
 
 ## Task 13: Close the LDST operation lifecycle
 
