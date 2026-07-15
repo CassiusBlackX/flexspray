@@ -1008,8 +1008,8 @@ UbTransportChannel::BuildRtpDataPacket(const UbGbnPacketDescriptor& descriptor)
     TpHeader.SetPsn(UbTpPsnSequence::ToWire(descriptor.logicalPsn));
     TpHeader.SetTpMsn(UbTpMsnSequence::ToWire(descriptor.tpMsn));
     p->AddHeader(TpHeader);
-    // Packet-spray hashing must be derived from packet identity, not from the order in which
-    // worker threads happen to call this function.
+    // The packet-spray RR step must come from packet identity, not from the order in which worker
+    // threads happen to call this function.
     m_lbHashSalt = m_usePacketSpray ? UbTpPsnSequence::ToWire(descriptor.logicalPsn) : 0;
     UbPort::AddUdpHeader(p, this);
     // add ipv4 header

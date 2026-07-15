@@ -108,15 +108,14 @@ UbRoutingPolicy::SelectHash(const RoutingKey& key,
         return -1;
     }
 
-    const uint32_t salt = utils::NodeIdToIp(nodeId).Get();
     uint64_t selection = 0;
     if (key.usePacketSpray)
     {
-        const uint64_t flowBase = CalcHash(key.sip, key.dip, 0, key.dport, key.priority, salt);
-        selection = flowBase + key.sport;
+        selection = key.sport;
     }
     else
     {
+        const uint32_t salt = utils::NodeIdToIp(nodeId).Get();
         selection = key.hashIncludesTransportPorts
                         ? CalcHash(key.sip,
                                    key.dip,
