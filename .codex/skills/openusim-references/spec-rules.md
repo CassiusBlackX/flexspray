@@ -98,8 +98,10 @@ Use a small stable per-case structure so every stage skill can find the same fac
 - phase_delay (optional, default: 0)
 
 ## Routing Intent
-- routing_algorithm (`HASH` or `ADAPTIVE`)
-- whether only shortest-path candidates are allowed
+- routing_type (`PER_FLOW_ALL_PATHS`, `PER_PACKET_ALL_PATHS`,
+  `PER_FLOW_SHORTEST_PATHS`, or `PER_PACKET_SHORTEST_PATHS`)
+- multipath_selector (`HASH64`, `CRC32`, `TOEPLITZ`, `ROUND_ROBIN`, `ADAPTIVE`,
+  or `INGRESS_PORT_STRIPE`, subject to the routing-type compatibility matrix)
 - whether route generation is auto-path-finder or manual-route-table
 - any bounded routing constraints that must survive handoff
 
@@ -281,7 +283,7 @@ Use toolchain-native parameter names in the spec to avoid translation ambiguity:
 
 The skill-layer toolchain validates parameter **keys** against the runtime catalog but does not validate parameter **values**. To reduce the risk of invalid values reaching ns-3:
 
-- For enum parameters (e.g. `FlowControl`, `RoutingAlgorithm`, `VlScheduler`), verify the value against the catalog entry's `description` field or the C++ source `MakeEnumChecker(...)`. See `spec-to-toolchain.md` "Parameter value validation boundary" for the source-of-truth table.
+- For enum parameters (e.g. `FlowControl`, `RoutingType`, `MultipathSelector`, `VlScheduler`), verify the value against the catalog entry's `description` field or the C++ source `MakeEnumChecker(...)`. See `spec-to-toolchain.md` "Parameter value validation boundary" for the source-of-truth table.
 - For `traffic.csv` `opType` values, verify against `TaOpcodeMap` in `src/unified-bus/model/ub-app.h`.
 - Do not hardcode a fixed list of valid values in the spec or in agent logic — always consult the code or catalog as the authoritative source.
 

@@ -2,7 +2,10 @@
 #ifndef UB_ROUTING_PROCESS_H
 #define UB_ROUTING_PROCESS_H
 
+#include "ns3/ub-datatype.h"
 #include "ns3/node.h"
+
+#include <array>
 #include <map>
 #include <set>
 namespace ns3 {
@@ -20,9 +23,7 @@ struct RoutingKey {
     uint16_t sport;      // UDP源端口，或者LB字段
     uint16_t dport;      // 目的端口，一般UDP为固定值4792；LDST CFG=9 一般拿不到这个值，写0
     uint8_t priority;    // 优先级
-    bool useShortestPath;
-    bool usePacketSpray;
-    bool hashIncludesTransportPorts{false};
+    RoutingType routingType{RoutingType::PER_FLOW_SHORTEST_PATHS};
 };
 
 /**
@@ -62,7 +63,9 @@ public:
     void GetNonShortestCandidates(uint32_t &dip, uint16_t inPortId, std::vector<uint16_t>& outPorts);
     int GetOutPort(RoutingKey &rtKey, bool &selectedShortestPath, uint16_t inPort = UINT16_MAX);
     int SelectOutPort(RoutingKey &rtKey, const std::vector<uint16_t>& shortestPorts, 
-                      const std::vector<uint16_t>& nonShortestPorts, bool &selectedShortestPath);
+                      const std::vector<uint16_t>& nonShortestPorts, bool &selectedShortestPath,
+                      uint16_t inPort = UINT16_MAX);
+    void ValidateRoutingType(RoutingType routingType, const std::string& owner) const;
     // 自适应路由策略
     int SelectAdaptiveOutPort(RoutingKey &rtKey, const std::vector<uint16_t>& shortestPorts,
                               const std::vector<uint16_t>& nonShortestPorts, bool &selectedShortestPath);
@@ -84,15 +87,12 @@ private:
         }
     };
 
-    // 操作类型枚举
-    enum class UbRoutingAlgorithm : uint8_t {
-        HASH = 0,   // Hash-based routing
-        ADAPTIVE = 1   // Adaptive routing
-    };
-
-    uint32_t m_nodeId;
-    UbRoutingAlgorithm m_routingAlgorithm = UbRoutingAlgorithm::HASH;
-    uint64_t CalcHash(uint32_t sip, uint32_t dip, uint16_t sport, uint16_t dport, uint8_t priority, uint32_t salt);
+    uint32_t m_nodeId{0};
+    MultipathSelector m_multipathSelector = MultipathSelector::HASH64;
+    std::array<uint8_t, 17> BuildHashBytes(const RoutingKey& rtKey) const;
+    uint32_t CalcCrc32(const std::array<uint8_t, 17>& bytes) const;
+    uint32_t CalcToeplitzHash(const std::array<uint8_t, 17>& bytes) const;
+    std::unordered_map<std::vector<uint16_t>, uint64_t, VectorHash> m_rrNextIndexByCandidates;
     std::shared_ptr<std::vector<uint16_t> > GetOrCreatePortSet(const std::vector<uint16_t>& ports);
     void AddRouteRange(RouteRangeByPortMap& routeRangesByPort,
                        uint32_t startNodeId,

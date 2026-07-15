@@ -181,8 +181,7 @@ BuildCtpPacket(Ptr<UbWqeSegment> segment,
                                 false,
                                 key.vl,
                                 key.vl,
-                                routing.usePacketSpray,
-                                routing.useShortestPaths,
+                                routing.routingType,
                                 UbDatalinkHeaderConfig::PACKET_CNA16);
     return packet;
 }
@@ -698,6 +697,7 @@ void
 UbCtpTransportService::SetNode(Ptr<Node> node)
 {
     m_node = node;
+    ValidateRoutingConfiguration();
 }
 
 Ptr<Node>
@@ -707,15 +707,31 @@ UbCtpTransportService::GetNode() const
 }
 
 void
-UbCtpTransportService::SetUseShortestPaths(bool useShortestPaths)
+UbCtpTransportService::SetRoutingType(RoutingType routingType)
 {
-    m_defaultRoutingPolicy.useShortestPaths = useShortestPaths;
+    ValidateRoutingType(routingType, "CTP default routing policy");
+    m_defaultRoutingPolicy.routingType = routingType;
 }
 
 void
-UbCtpTransportService::SetUsePacketSpray(bool usePacketSpray)
+UbCtpTransportService::ValidateRoutingType(RoutingType routingType, const std::string& owner) const
 {
-    m_defaultRoutingPolicy.usePacketSpray = usePacketSpray;
+    if (m_node == nullptr)
+    {
+        return;
+    }
+    Ptr<UbSwitch> sw = m_node->GetObject<UbSwitch>();
+    if (sw == nullptr || sw->GetRoutingProcess() == nullptr)
+    {
+        return;
+    }
+    sw->GetRoutingProcess()->ValidateRoutingType(routingType, owner);
+}
+
+void
+UbCtpTransportService::ValidateRoutingConfiguration() const
+{
+    ValidateRoutingType(m_defaultRoutingPolicy.routingType, "CTP default routing policy");
 }
 
 void
@@ -776,12 +792,11 @@ UbCtpTransportService::GetOrCreateEntityState(const UbCtpEntityKey& key)
 
 void
 UbCtpTransportService::ConfigureRoutingPolicy(const UbCtpEntityKey& key,
-                                              bool useShortestPaths,
-                                              bool usePacketSpray)
+                                              RoutingType routingType)
 {
+    ValidateRoutingType(routingType, "CTP entity routing policy");
     UbCtpEntityState& state = GetOrCreateEntityState(key);
-    state.Tx().routing.useShortestPaths = useShortestPaths;
-    state.Tx().routing.usePacketSpray = usePacketSpray;
+    state.Tx().routing.routingType = routingType;
 }
 
 uint32_t
@@ -884,8 +899,7 @@ UbCtpTransportService::AddCtpNetworkHeaders(Ptr<Packet> packet,
                          key,
                          opcode,
                          loadBalanceSalt,
-                         m_defaultRoutingPolicy.useShortestPaths,
-                         m_defaultRoutingPolicy.usePacketSpray);
+                         m_defaultRoutingPolicy.routingType);
 }
 
 void
@@ -893,11 +907,9 @@ UbCtpTransportService::AddCtpNetworkHeaders(Ptr<Packet> packet,
                                             const UbCtpEntityKey& key,
                                             CtpOpcode opcode,
                                             uint8_t loadBalanceSalt,
-                                            bool useShortestPaths,
-                                            bool usePacketSpray)
+                                            RoutingType routingType)
 {
-    UbCtpRoutingPolicy routing{.useShortestPaths = useShortestPaths,
-                               .usePacketSpray = usePacketSpray,
+    UbCtpRoutingPolicy routing{.routingType = routingType,
                                .nextSprayIndex = 0};
     Ptr<UbWqeSegment> empty = CreateObject<UbWqeSegment>();
     empty->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
@@ -964,8 +976,7 @@ UbCtpTransportService::StartJetty(Ptr<UbJetty> jetty, const UbCtpEntityKey& key)
         jettys.push_back(jetty);
     }
     UbCtpEntityState& state = GetOrCreateEntityState(key);
-    state.Tx().routing.useShortestPaths = m_defaultRoutingPolicy.useShortestPaths;
-    state.Tx().routing.usePacketSpray = m_defaultRoutingPolicy.usePacketSpray;
+    state.Tx().routing.routingType = m_defaultRoutingPolicy.routingType;
     DrainJettys(state);
 }
 
@@ -1315,13 +1326,12 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t receive
                                .dstNodeId = forwardKey.srcNodeId,
                                .dstEntityId = forwardKey.srcEntityId,
                                .vl = forwardKey.vl};
-    if (!linkHeader.GetLoadBalanceMode() && receivePort < 15)
+    if (!RoutingTypeIsPerPacket(linkHeader.GetRoutingType()) && receivePort < 15)
     {
         SetSourcePortHint(responseKey, receivePort);
     }
     UbCtpEntityState& responseState = GetOrCreateEntityState(responseKey);
-    responseState.Tx().routing.useShortestPaths = linkHeader.GetRoutingPolicy();
-    responseState.Tx().routing.usePacketSpray = linkHeader.GetLoadBalanceMode();
+    responseState.Tx().routing.routingType = linkHeader.GetRoutingType();
     return SendResponseSegment(response, responseState);
 }
 
@@ -1450,7 +1460,8 @@ UbCtpTransportService::SelectOutPort(UbCtpEntityState& state,
     NS_ABORT_MSG_IF(m_node == nullptr, "CTP send requires a source node");
 
     auto sourceHint = m_srcPortHints.find(routeKey);
-    if (!state.Tx().routing.usePacketSpray && sourceHint != m_srcPortHints.end())
+    if (!RoutingTypeIsPerPacket(state.Tx().routing.routingType) &&
+        sourceHint != m_srcPortHints.end())
     {
         const uint32_t outPort = sourceHint->second;
         NS_ABORT_MSG_IF(outPort >= m_node->GetNDevices(),
@@ -1475,9 +1486,7 @@ UbCtpTransportService::SelectOutPort(UbCtpEntityState& state,
     rtKey.sport = loadBalanceSalt;
     rtKey.dport = dstPort == UINT32_MAX ? 0 : static_cast<uint16_t>(dstPort);
     rtKey.priority = routeKey.vl;
-    rtKey.useShortestPath = state.Tx().routing.useShortestPaths;
-    rtKey.usePacketSpray = state.Tx().routing.usePacketSpray;
-    rtKey.hashIncludesTransportPorts = true;
+    rtKey.routingType = state.Tx().routing.routingType;
 
     bool selectedShortestPath = false;
     const int outPort = routing->GetOutPort(rtKey, selectedShortestPath);
@@ -1494,7 +1503,7 @@ UbCtpTransportService::SelectOutPort(UbCtpEntityState& state,
 uint16_t
 UbCtpTransportService::NextLoadBalanceSalt(UbCtpEntityState& state, const UbCtpEntityKey& routeKey)
 {
-    if (!state.Tx().routing.usePacketSpray)
+    if (!RoutingTypeIsPerPacket(state.Tx().routing.routingType))
     {
         return EntityLoadBalanceSalt(routeKey);
     }

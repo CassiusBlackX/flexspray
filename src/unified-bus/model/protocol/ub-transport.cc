@@ -281,16 +281,18 @@ TypeId UbTransportChannel::GetTypeId(void)
                       MakeBooleanAccessor(&UbTransportChannel::SetSelectiveMarkPsnEnable,
                                           &UbTransportChannel::GetSelectiveMarkPsnEnable),
                       MakeBooleanChecker())
-        .AddAttribute("UsePacketSpray",
-                      "Enable per-packet ECMP/packet spray across multiple paths.",
-                      BooleanValue(false),
-                      MakeBooleanAccessor(&UbTransportChannel::m_usePacketSpray),
-                      MakeBooleanChecker())
-        .AddAttribute("UseShortestPaths",
-                      "Sets a packet header flag that instructs switches to restrict forwarding to shortest paths (true) or allow non-shortest paths (false).",
-                      BooleanValue(true),
-                      MakeBooleanAccessor(&UbTransportChannel::m_useShortestPaths),
-                      MakeBooleanChecker())
+        .AddAttribute("RoutingType",
+                      "UB routing type encoded in the data-link packet header.",
+                      EnumValue(RoutingType::PER_FLOW_SHORTEST_PATHS),
+                      MakeEnumAccessor<RoutingType>(&UbTransportChannel::m_routingType),
+                      MakeEnumChecker(RoutingType::PER_FLOW_ALL_PATHS,
+                                      "PER_FLOW_ALL_PATHS",
+                                      RoutingType::PER_PACKET_ALL_PATHS,
+                                      "PER_PACKET_ALL_PATHS",
+                                      RoutingType::PER_FLOW_SHORTEST_PATHS,
+                                      "PER_FLOW_SHORTEST_PATHS",
+                                      RoutingType::PER_PACKET_SHORTEST_PATHS,
+                                      "PER_PACKET_SHORTEST_PATHS"))
         .AddTraceSource("FirstPacketSendsNotify",
                         "Fires when the first packet of a WQE segment is sent.",
                         MakeTraceSourceAccessor(&UbTransportChannel::m_traceFirstPacketSendsNotify),
@@ -814,8 +816,7 @@ UbTransportChannel::EnqueueDcqcnCnp(uint8_t ecn, bool location)
                                 false,
                                 packetVl,
                                 packetVl,
-                                m_usePacketSpray,
-                                m_useShortestPaths,
+                                m_routingType,
                                 UbDatalinkHeaderConfig::PACKET_IPV4);
 
     if (m_cnpQ.empty() && m_ackQ.empty() && m_wqeSegmentVector.empty()) {
@@ -941,7 +942,9 @@ Ptr<Packet> UbTransportChannel::GenDataPacket(Ptr<UbWqeSegment> wqeSegment,
     p->AddHeader(TpHeader);
     // Packet-spray hashing must be derived from packet identity, not from the order in which
     // worker threads happen to call this function.
-    m_lbHashSalt = m_usePacketSpray ? UbTpPsnSequence::ToWire(m_psnSndNxt) : 0;
+    m_lbHashSalt = RoutingTypeIsPerPacket(m_routingType)
+                       ? UbTpPsnSequence::ToWire(m_psnSndNxt)
+                       : 0;
     UbPort::AddUdpHeader(p, this);
     // add ipv4 header
     UbPort::AddIpv4Header(p, this);
@@ -950,8 +953,13 @@ Ptr<Packet> UbTransportChannel::GenDataPacket(Ptr<UbWqeSegment> wqeSegment,
     m_congestionCtrl->OnSenderPrepareIpBasedNetworkHeader(networkHeader);
     p->AddHeader(networkHeader);
     // add dl header
-    UbDataLink::GenPacketHeader(p, false, false, m_priority, m_priority, m_usePacketSpray,
-                                m_useShortestPaths, UbDatalinkHeaderConfig::PACKET_IPV4);
+    UbDataLink::GenPacketHeader(p,
+                                false,
+                                false,
+                                m_priority,
+                                m_priority,
+                                m_routingType,
+                                UbDatalinkHeaderConfig::PACKET_IPV4);
     return p;
 }
 
@@ -1518,6 +1526,12 @@ void UbTransportChannel::SetUbTransport(uint32_t nodeId,
                                         Ipv4Address dip,         // Dest IP address
                                         Ptr<UbCongestionControl> congestionCtrl)
 {
+    Ptr<Node> node = NodeList::GetNode(nodeId);
+    Ptr<UbSwitch> sw = node->GetObject<UbSwitch>();
+    NS_ABORT_MSG_IF(sw == nullptr || sw->GetRoutingProcess() == nullptr,
+                    "RTP transport configuration requires an initialized UB routing process");
+    sw->GetRoutingProcess()->ValidateRoutingType(m_routingType, "RTP transport channel");
+
     m_nodeId = nodeId;
     m_src = src;
     m_dest = dest;
@@ -1621,8 +1635,7 @@ UbTransportChannel::BuildTransportResponsePacket(const ReceivedDataPacketContext
                                 true,
                                 ctx.dataLinkHeader.GetCreditTargetVL(),
                                 ctx.dataLinkHeader.GetPacketVL(),
-                                0,
-                                1,
+                                ctx.dataLinkHeader.GetRoutingType(),
                                 UbDatalinkHeaderConfig::PACKET_IPV4);
     return responsePacket;
 }
