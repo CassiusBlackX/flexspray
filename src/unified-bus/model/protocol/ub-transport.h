@@ -318,6 +318,7 @@ public:
 
     bool TryAdmitWqeSegment(Ptr<UbWqeSegment> segment);
     bool CanAdmitWqeSegment(Ptr<const UbWqeSegment> segment) const;
+    bool IsAcceptingNewWorkForTest() const { return m_isActive; }
     UbWqeSegmentTerminalDisposition TryCancelUnsentWqeSegment(
         Ptr<UbWqeSegment> segment,
         const UbTransactionCorrelationIdentity& expectedCorrelation,

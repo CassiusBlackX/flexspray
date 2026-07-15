@@ -7,6 +7,7 @@
 #include <set>
 #include <map>
 #include "ub-network-address.h"
+#include "ub-lifecycle.h"
 #include "ns3/log.h"
 #include "ns3/random-variable-stream.h"
 #include <mutex>
@@ -22,6 +23,7 @@ namespace utils {
  * @brief tp-config.csv 中定义的数据结构
  */
 struct Connection {
+    uint32_t ownerNodeId{UINT32_MAX};
     uint32_t node1;
     uint32_t port1;
     uint32_t tpn1;
@@ -30,6 +32,28 @@ struct Connection {
     uint32_t tpn2;
     uint32_t priority;
     uint32_t metrics;
+};
+
+enum class EndpointSlotState : uint8_t
+{
+    UNMATERIALIZED,
+    ACTIVE,
+    DRAINING,
+    RETIRED
+};
+
+struct ConnectionLifecycleSnapshot
+{
+    uint32_t ownerNodeId{UINT32_MAX};
+    uint64_t generation{0};
+    uint32_t node1{0};
+    uint32_t tpn1{0};
+    uint32_t node2{0};
+    uint32_t tpn2{0};
+    EndpointSlotState slot1{EndpointSlotState::UNMATERIALIZED};
+    EndpointSlotState slot2{EndpointSlotState::UNMATERIALIZED};
+    bool destroyRequested{false};
+    UbDestroyReason reason{UbDestroyReason::EXPLICIT};
 };
 
 /**
@@ -148,6 +172,22 @@ public:
                                uint32_t localTpn,
                                Connection& connection) const;
 
+    /** Notify the canonical owner that one reserved endpoint has materialized. */
+    void NotifyEndpointMaterialized(uint32_t localNodeId,
+                                    uint32_t localTpn,
+                                    bool draining = false);
+    bool IsConnectionDestroyRequested(uint32_t localNodeId, uint32_t localTpn) const;
+    void DestroyDrainOnlyEndpoint(uint32_t localNodeId, uint32_t localTpn);
+
+    UbDestroyStatus DestroyConnection(uint32_t localNodeId,
+                                      uint32_t localTpn,
+                                      UbDestroyReason reason = UbDestroyReason::EXPLICIT,
+                                      UbDestroyCallback callback = {});
+
+    bool GetConnectionLifecycleSnapshot(uint32_t localTpn,
+                                        ConnectionLifecycleSnapshot& snapshot) const;
+    size_t GetCanonicalConnectionCountForTest() const;
+
     // 清空指定节点的连接
     void ClearNodeConnections(uint32_t nodeId);
 
@@ -165,11 +205,40 @@ public:
     }
 private:
   friend class ns3::UbController;
-  friend class ns3::UbTransportChannelManager;
+    friend class ns3::UbTransportChannelManager;
 
   static std::mutex g_tpConnectionControlLock;
 
-  uint32_t ReserveNextTpnLocked();
+    uint32_t ReserveNextTpnLocked();
+
+    struct ConnectionLifecycleRecord
+    {
+        Connection connection;
+        uint64_t generation{0};
+        EndpointSlotState slot1{EndpointSlotState::UNMATERIALIZED};
+        EndpointSlotState slot2{EndpointSlotState::UNMATERIALIZED};
+        bool destroyRequested{false};
+        bool slot1Materialized{false};
+        bool slot2Materialized{false};
+        bool finalizing{false};
+        UbDestroyReason reason{UbDestroyReason::EXPLICIT};
+        UbLifecycleResourceIdentity identity;
+        std::vector<UbDestroyCallback> callbacks;
+    };
+
+    void RegisterCanonicalConnectionLocked(const Connection& conn);
+    bool NotifyEndpointMaterializedLocked(uint32_t localNodeId,
+                                          uint32_t localTpn,
+                                          EndpointSlotState state);
+    UbDestroyStatus DestroyConnectionOwned(uint32_t ownerTpn,
+                                           UbDestroyReason reason,
+                                           UbDestroyCallback callback);
+    void OnEndpointDestroyed(uint32_t ownerTpn,
+                             uint8_t slot,
+                             UbLifecycleResourceIdentity identity,
+                             UbDestroyStatus status);
+    void TryFinalizeConnection(uint32_t ownerTpn);
+    void EraseConnectionView(uint32_t localNodeId, uint32_t localTpn);
 
   // 为指定节点建立各种索引
   void BuildIndexesForNode(uint32_t localNodeId, Connection conn);
@@ -225,6 +294,13 @@ private:
     bool m_removeUselessTp = false;
 
     mutable std::mutex m_stateLock;
+    uint32_t m_ownerNodeId{UINT32_MAX};
+    uint64_t m_nextConnectionGeneration{0};
+    std::map<std::pair<uint32_t, uint32_t>, ConnectionLifecycleRecord>
+        m_canonicalConnections;
+
+  public:
+    void SetOwnerNodeId(uint32_t nodeId) { m_ownerNodeId = nodeId; }
 };
 
 } // namespace utils

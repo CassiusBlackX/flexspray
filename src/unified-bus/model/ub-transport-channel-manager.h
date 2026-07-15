@@ -31,7 +31,8 @@ class UbTransportChannelManager : public Object
                   UbPriority priority,
                   uint32_t srcTpn,
                   uint32_t dstTpn,
-                  Ptr<UbCongestionControl> congestionCtrl);
+                  Ptr<UbCongestionControl> congestionCtrl,
+                  bool drainOnly = false);
     Ptr<UbTransportChannel> GetTp(uint32_t tpn) const;
     Ptr<UbTransportChannel> CreateReservedTpEndpoint(uint32_t tpn);
     Ptr<UbTransportChannel> ResolveInboundTp(uint32_t srcTpn,
@@ -64,7 +65,8 @@ class UbTransportChannelManager : public Object
         std::vector<UbDestroyCallback> callbacks;
     };
 
-    Ptr<UbTransportChannel> CreateReservedTpEndpointLocked(uint32_t tpn);
+    Ptr<UbTransportChannel> CreateReservedTpEndpointLocked(uint32_t tpn, bool drainOnly = false);
+    void BeginDrainOnlyDestroy(uint32_t tpn);
     bool CanFinalize(const EndpointRecord& record) const;
     void FinalizeDestroy(uint32_t tpn, bool force);
     void NotifyLifecycleStateChanged(UbLifecycleResourceIdentity identity);

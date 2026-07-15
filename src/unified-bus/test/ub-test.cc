@@ -19582,8 +19582,38 @@ class UbExplicitTpDestroyDrainsAndRematerializesTest : public TestCase
             kUrmaWriteRegressionPriority);
         NS_TEST_ASSERT_MSG_EQ(receiverTpns.size(), 1u, "Expected one receiver reservation");
         const uint32_t tpn = receiverTpns[0].first;
+        const auto senderTpns = sender->GetTpConnManager()->GetTpnsByPeerNodePriority(
+            topo.sender->GetId(), topo.receiver->GetId(), kUrmaWriteRegressionPriority);
+        NS_TEST_ASSERT_MSG_EQ(senderTpns.size(), 1u, "Expected one sender reservation");
+        ConnectionLifecycleSnapshot connectionSnapshot;
+        NS_TEST_ASSERT_MSG_EQ(sender->GetTpConnManager()->GetCanonicalConnectionCountForTest(),
+                              1u,
+                              "Reservation should create one canonical owner record");
+        NS_TEST_ASSERT_MSG_EQ(sender->GetTpConnManager()->GetConnectionLifecycleSnapshot(
+                                  senderTpns[0].first, connectionSnapshot),
+                              true,
+                              "Owner should expose the reserved connection generation");
+        NS_TEST_ASSERT_MSG_EQ(connectionSnapshot.ownerNodeId,
+                              topo.sender->GetId(),
+                              "Connection owner should be the canonical source node");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(connectionSnapshot.slot1),
+                              static_cast<uint32_t>(EndpointSlotState::UNMATERIALIZED),
+                              "Source slot should begin unmaterialized");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(connectionSnapshot.slot2),
+                              static_cast<uint32_t>(EndpointSlotState::UNMATERIALIZED),
+                              "Receiver slot should begin unmaterialized");
         Ptr<UbTransportChannel> first = m_controller->CreateReservedTpEndpoint(tpn);
         NS_TEST_ASSERT_MSG_NE(first, nullptr, "Reserved endpoint should materialize");
+        NS_TEST_ASSERT_MSG_EQ(sender->GetTpConnManager()->GetConnectionLifecycleSnapshot(
+                                  senderTpns[0].first, connectionSnapshot),
+                              true,
+                              "Owner snapshot should remain available after one endpoint materializes");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(connectionSnapshot.slot1),
+                              static_cast<uint32_t>(EndpointSlotState::UNMATERIALIZED),
+                              "Source slot should remain unmaterialized");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(connectionSnapshot.slot2),
+                              static_cast<uint32_t>(EndpointSlotState::ACTIVE),
+                              "Receiver slot should become active when materialized");
         const UbLifecycleResourceIdentity firstIdentity = first->GetLifecycleOwner();
 
         Ptr<UbLifecycleCoordinator> coordinator =
@@ -19650,6 +19680,222 @@ class UbExplicitTpDestroyDrainsAndRematerializesTest : public TestCase
     Ptr<UbController> m_controller;
     Connection m_connection;
     UbLifecycleResourceIdentity m_callbackIdentity;
+    uint32_t m_callbackCount{0};
+};
+
+class UbExplicitConnectionDestroyAggregatesBothEndpointsTest : public TestCase
+{
+  public:
+    UbExplicitConnectionDestroyAggregatesBothEndpointsTest()
+        : TestCase("UnifiedBus - explicit connection destroy aggregates both endpoints")
+    {
+    }
+
+  private:
+    void OnDestroyed(UbLifecycleResourceIdentity identity, UbDestroyStatus status)
+    {
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(status),
+                              static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
+                              "Connection callback should report completion");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(identity.kind),
+                              static_cast<uint32_t>(UbLifecycleResourceKind::RTP_CONNECTION),
+                              "Callback should identify the connection generation");
+        Connection ignored;
+        NS_TEST_ASSERT_MSG_EQ(m_senderManager->TryGetLocalConnection(
+                                  m_connection.node1, m_connection.tpn1, ignored),
+                              false,
+                              "Connection callback should run after source reservation erase");
+        NS_TEST_ASSERT_MSG_EQ(m_receiverManager->TryGetLocalConnection(
+                                  m_connection.node2, m_connection.tpn2, ignored),
+                              false,
+                              "Connection callback should run after receiver reservation erase");
+        NS_TEST_ASSERT_MSG_EQ(m_senderController->GetTpByTpn(m_connection.tpn1),
+                              nullptr,
+                              "Connection callback should observe source endpoint erase");
+        NS_TEST_ASSERT_MSG_EQ(m_receiverController->GetTpByTpn(m_connection.tpn2),
+                              nullptr,
+                              "Connection callback should observe receiver endpoint erase");
+        m_destroyedIdentity = identity;
+        ++m_callbackCount;
+    }
+
+    void DoRun() override
+    {
+        LocalTpTopology topo = BuildLocalTpTopology();
+        m_senderController = topo.sender->GetObject<UbController>();
+        m_receiverController = topo.receiver->GetObject<UbController>();
+        m_senderManager = m_senderController->GetTpConnManager();
+        m_receiverManager = m_receiverController->GetTpConnManager();
+
+        const std::vector<uint32_t> senderTpns = m_senderManager->GetTpns(
+            utils::GetTpnRuleT::BY_PEERNODE_PRIORITY,
+            true,
+            false,
+            topo.sender->GetId(),
+            topo.receiver->GetId(),
+            UINT32_MAX,
+            UINT32_MAX,
+            kUrmaWriteRegressionPriority);
+        NS_TEST_ASSERT_MSG_EQ(senderTpns.size(), 1u, "Expected one materialized source endpoint");
+        NS_TEST_ASSERT_MSG_EQ(m_senderManager->TryGetLocalConnection(
+                                  topo.sender->GetId(), senderTpns[0], m_connection),
+                              true,
+                              "Expected the source reservation");
+        Ptr<UbTransportChannel> receiverTp =
+            m_receiverController->CreateReservedTpEndpoint(m_connection.tpn2);
+        NS_TEST_ASSERT_MSG_NE(receiverTp, nullptr, "Expected one materialized receiver endpoint");
+        Ptr<UbTransportChannel> senderTp = m_senderController->GetTpByTpn(m_connection.tpn1);
+        NS_TEST_ASSERT_MSG_NE(senderTp, nullptr, "Expected one materialized sender endpoint");
+
+        ConnectionLifecycleSnapshot before;
+        NS_TEST_ASSERT_MSG_EQ(m_senderManager->GetConnectionLifecycleSnapshot(
+                                  m_connection.tpn1, before),
+                              true,
+                              "Expected canonical connection lifecycle state");
+        const UbLifecycleLeaseIdentity gate =
+            UbLifecycleCoordinator::GetOrCreate(topo.sender)
+                ->AcquireLease(senderTp->GetLifecycleOwner(),
+                               UbLifecycleLeaseKind::TRANSPORT_WORK,
+                               senderTp->GetLifecycleOwner());
+
+        const UbDestroyStatus first = m_receiverManager->DestroyConnection(
+            topo.receiver->GetId(),
+            m_connection.tpn2,
+            UbDestroyReason::EXPLICIT,
+            MakeCallback(&UbExplicitConnectionDestroyAggregatesBothEndpointsTest::OnDestroyed,
+                         this));
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(first),
+                              static_cast<uint32_t>(UbDestroyStatus::PENDING),
+                              "One busy endpoint should keep paired destroy pending");
+        const UbDestroyStatus repeated = m_senderManager->DestroyConnection(
+            topo.sender->GetId(),
+            m_connection.tpn1,
+            UbDestroyReason::ERROR,
+            MakeCallback(&UbExplicitConnectionDestroyAggregatesBothEndpointsTest::OnDestroyed,
+                         this));
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(repeated),
+                              static_cast<uint32_t>(UbDestroyStatus::PENDING),
+                              "Repeated either-side request should join the pending flow");
+        ConnectionLifecycleSnapshot upgraded;
+        NS_TEST_ASSERT_MSG_EQ(m_senderManager->GetConnectionLifecycleSnapshot(
+                                  m_connection.tpn1, upgraded),
+                              true,
+                              "Repeated destroy should retain the canonical connection flow");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(upgraded.reason),
+                              static_cast<uint32_t>(UbDestroyReason::ERROR),
+                              "A stronger repeated request should upgrade the destroy reason");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_receiverManager->DestroyConnection(
+                                  topo.receiver->GetId(),
+                                  m_connection.tpn2,
+                                  UbDestroyReason::EXPLICIT)),
+                              static_cast<uint32_t>(UbDestroyStatus::PENDING),
+                              "A weaker repeated request should stay on the same pending flow");
+        NS_TEST_ASSERT_MSG_EQ(m_senderManager->GetConnectionLifecycleSnapshot(
+                                  m_connection.tpn1, upgraded),
+                              true,
+                              "Weaker repeat should retain the canonical connection flow");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(upgraded.reason),
+                              static_cast<uint32_t>(UbDestroyReason::ERROR),
+                              "A weaker repeated request must not downgrade the destroy reason");
+        NS_TEST_ASSERT_MSG_EQ(m_callbackCount,
+                              0u,
+                              "Connection callback must wait for both endpoint slots");
+
+        UbLifecycleCoordinator::GetOrCreate(topo.sender)->ReleaseLease(gate);
+        NS_TEST_ASSERT_MSG_EQ(m_callbackCount,
+                              2u,
+                              "Both pending callers should complete exactly once");
+        NS_TEST_ASSERT_MSG_EQ(m_senderManager->GetCanonicalConnectionCountForTest(),
+                              0u,
+                              "Owner record should erase after both slots retire");
+
+        const std::vector<uint32_t> reusedTpns = m_senderManager->GetTpns(
+            utils::GetTpnRuleT::BY_PEERNODE_PRIORITY,
+            true,
+            false,
+            topo.sender->GetId(),
+            topo.receiver->GetId(),
+            UINT32_MAX,
+            UINT32_MAX,
+            kUrmaWriteRegressionPriority);
+        NS_TEST_ASSERT_MSG_EQ(reusedTpns.size(), 1u, "Expected one replacement reservation");
+        NS_TEST_ASSERT_MSG_EQ(reusedTpns[0],
+                              m_connection.tpn1,
+                              "Released source TPN should be reusable");
+        ConnectionLifecycleSnapshot after;
+        NS_TEST_ASSERT_MSG_EQ(m_senderManager->GetConnectionLifecycleSnapshot(reusedTpns[0], after),
+                              true,
+                              "Replacement reservation should create a canonical record");
+        NS_TEST_ASSERT_MSG_GT(after.generation,
+                              before.generation,
+                              "Replacement reservation should have a new connection generation");
+
+        Connection replacement;
+        NS_TEST_ASSERT_MSG_EQ(m_senderManager->TryGetLocalConnection(
+                                  topo.sender->GetId(), reusedTpns[0], replacement),
+                              true,
+                              "Expected replacement source reservation");
+        m_connection = replacement;
+        Ptr<UbTransportChannel> replacementSender =
+            m_senderController->GetTpByTpn(replacement.tpn1);
+        const UbLifecycleLeaseIdentity lateGate =
+            UbLifecycleCoordinator::GetOrCreate(topo.sender)
+                ->AcquireLease(replacementSender->GetLifecycleOwner(),
+                               UbLifecycleLeaseKind::TRANSPORT_WORK,
+                               replacementSender->GetLifecycleOwner());
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(m_senderManager->DestroyConnection(
+                topo.sender->GetId(),
+                replacement.tpn1,
+                UbDestroyReason::EXPLICIT,
+                MakeCallback(&UbExplicitConnectionDestroyAggregatesBothEndpointsTest::OnDestroyed,
+                             this))),
+            static_cast<uint32_t>(UbDestroyStatus::PENDING),
+            "Source endpoint gate should keep replacement destroy pending");
+        NS_TEST_ASSERT_MSG_EQ(m_receiverController->CreateReservedTpEndpoint(replacement.tpn2),
+                              nullptr,
+                              "Closing connection should reject new application materialization");
+
+        Ptr<UbTransportChannel> drainOnly = m_receiverController->ResolveInboundTp(
+            replacement.tpn1,
+            replacement.tpn2,
+            NodeIdToIp(topo.sender->GetId(), topo.senderPort->GetIfIndex()),
+            NodeIdToIp(topo.receiver->GetId(), topo.receiverPort->GetIfIndex()),
+            kUrmaWriteRegressionPriority);
+        NS_TEST_ASSERT_MSG_NE(drainOnly,
+                              nullptr,
+                              "Validated old inbound work should materialize a drain-only endpoint");
+        NS_TEST_ASSERT_MSG_EQ(drainOnly->IsAcceptingNewWorkForTest(),
+                              false,
+                              "Drain-only endpoint should never accept new application work");
+        ConnectionLifecycleSnapshot closing;
+        NS_TEST_ASSERT_MSG_EQ(m_senderManager->GetConnectionLifecycleSnapshot(
+                                  replacement.tpn1, closing),
+                              true,
+                              "Closing connection should retain its canonical record");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(closing.slot2),
+                              static_cast<uint32_t>(EndpointSlotState::DRAINING),
+                              "Late endpoint should bind directly to the draining slot");
+        Simulator::Stop(NanoSeconds(1));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(m_receiverController->GetTpByTpn(replacement.tpn2),
+                              nullptr,
+                              "Idle drain-only endpoint should retire after the current handler");
+        UbLifecycleCoordinator::GetOrCreate(topo.sender)->ReleaseLease(lateGate);
+        NS_TEST_ASSERT_MSG_EQ(m_callbackCount,
+                              3u,
+                              "Late-packet flow should complete after both slots retire");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+    Ptr<UbController> m_senderController;
+    Ptr<UbController> m_receiverController;
+    Ptr<TpConnectionManager> m_senderManager;
+    Ptr<TpConnectionManager> m_receiverManager;
+    Connection m_connection;
+    UbLifecycleResourceIdentity m_destroyedIdentity;
     uint32_t m_callbackCount{0};
 };
 
@@ -22875,6 +23121,8 @@ UbTpReservationTestSuite::UbTpReservationTestSuite()
     AddTestCase(new UbRepeatedTpResolutionReusesReservationTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbUnreservedReceiverTpnDoesNotMaterializeTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbExplicitTpDestroyDrainsAndRematerializesTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbExplicitConnectionDestroyAggregatesBothEndpointsTest(),
                 TestCase::Duration::QUICK);
 }
 

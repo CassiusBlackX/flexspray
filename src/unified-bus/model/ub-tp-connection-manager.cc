@@ -4,6 +4,8 @@
 #include "ns3/node-list.h"
 #include "ns3/ub-utils.h"
 
+#include <limits>
+
 using namespace ns3;
 namespace utils {
 
@@ -42,26 +44,62 @@ TpConnectionManager::~TpConnectionManager()
 void TpConnectionManager::AddConnection(const Connection& conn)
 {
     std::lock_guard<std::mutex> lock(m_stateLock);
+    Connection canonical = conn;
+    if (canonical.ownerNodeId == UINT32_MAX)
+    {
+        canonical.ownerNodeId = canonical.node1;
+    }
     // 存储连接
-    m_allConnections.push_back(conn);
+    m_allConnections.push_back(canonical);
 
     // 为两个节点都建立索引
-    BuildIndexesForNode(conn.node1, conn);
-    BuildIndexesForNode(conn.node2, conn);
+    BuildIndexesForNode(canonical.node1, canonical);
+    BuildIndexesForNode(canonical.node2, canonical);
+    if (m_ownerNodeId == canonical.ownerNodeId)
+    {
+        RegisterCanonicalConnectionLocked(canonical);
+    }
 }
 
 // 添加单边连接
 void TpConnectionManager::AddUnilateralConnection(const Connection& conn, const uint32_t src)
 {
     std::lock_guard<std::mutex> lock(m_stateLock);
+    Connection canonical = conn;
+    if (canonical.ownerNodeId == UINT32_MAX)
+    {
+        canonical.ownerNodeId = canonical.node1;
+    }
     // 存储连接
-    m_allConnections.push_back(conn);
+    m_allConnections.push_back(canonical);
     // 如果源节点既不是conn的node1也不是node2，则判错
-    if (src != conn.node1 && src != conn.node2) {
+    if (src != canonical.node1 && src != canonical.node2) {
         NS_ASSERT_MSG(0, "conn.src != src");
     }
     // 仅为源节点建立索引
-    BuildIndexesForNode(src, conn);
+    BuildIndexesForNode(src, canonical);
+    if (m_ownerNodeId == canonical.ownerNodeId && src == canonical.ownerNodeId)
+    {
+        RegisterCanonicalConnectionLocked(canonical);
+    }
+}
+
+void
+TpConnectionManager::RegisterCanonicalConnectionLocked(const Connection& conn)
+{
+    const auto key = std::make_pair(conn.node1, conn.tpn1);
+    if (m_canonicalConnections.find(key) != m_canonicalConnections.end())
+    {
+        return;
+    }
+    NS_ABORT_MSG_IF(m_nextConnectionGeneration == std::numeric_limits<uint64_t>::max(),
+                    "Connection lifecycle generation exhausted");
+    ConnectionLifecycleRecord record;
+    record.connection = conn;
+    record.generation = ++m_nextConnectionGeneration;
+    record.identity = UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(conn.ownerNodeId))
+                          ->OpenResource(UbLifecycleResourceKind::RTP_CONNECTION, conn.tpn1);
+    m_canonicalConnections.emplace(key, record);
 }
 
 // 获取指定节点的连接管理器视图
@@ -370,6 +408,375 @@ TpConnectionManager::TryGetLocalConnection(uint32_t localNodeId,
     }
     connection = it->second;
     return true;
+}
+
+void
+TpConnectionManager::NotifyEndpointMaterialized(uint32_t localNodeId,
+                                                uint32_t localTpn,
+                                                bool draining)
+{
+    const EndpointSlotState state =
+        draining ? EndpointSlotState::DRAINING : EndpointSlotState::ACTIVE;
+    {
+        std::lock_guard<std::mutex> lock(m_stateLock);
+        if (NotifyEndpointMaterializedLocked(localNodeId, localTpn, state))
+        {
+            return;
+        }
+    }
+
+    Connection connection;
+    if (!TryGetLocalConnection(localNodeId, localTpn, connection))
+    {
+        return;
+    }
+    NS_ABORT_MSG_IF(connection.ownerNodeId == UINT32_MAX,
+                    "Connection reservation lacks a canonical owner");
+    Ptr<Node> ownerNode = NodeList::GetNode(connection.ownerNodeId);
+    Ptr<ns3::UbController> ownerController = ownerNode->GetObject<ns3::UbController>();
+    NS_ABORT_MSG_IF(ownerController == nullptr, "Connection owner lacks UbController");
+    Ptr<TpConnectionManager> ownerManager = ownerController->GetTpConnManager();
+    std::lock_guard<std::mutex> ownerLock(ownerManager->m_stateLock);
+    NS_ABORT_MSG_IF(!ownerManager->NotifyEndpointMaterializedLocked(localNodeId, localTpn, state),
+                    "Connection owner lacks the canonical endpoint slot");
+}
+
+bool
+TpConnectionManager::NotifyEndpointMaterializedLocked(uint32_t localNodeId,
+                                                      uint32_t localTpn,
+                                                      EndpointSlotState state)
+{
+    const auto it = m_canonicalConnections.find({localNodeId, localTpn});
+    if (it != m_canonicalConnections.end())
+    {
+        it->second.slot1 = state;
+        it->second.slot1Materialized = true;
+        return true;
+    }
+    for (auto& [key, record] : m_canonicalConnections)
+    {
+        (void)key;
+        if (record.connection.node2 == localNodeId && record.connection.tpn2 == localTpn)
+        {
+            record.slot2 = state;
+            record.slot2Materialized = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool
+TpConnectionManager::IsConnectionDestroyRequested(uint32_t localNodeId, uint32_t localTpn) const
+{
+    Connection connection;
+    if (!TryGetLocalConnection(localNodeId, localTpn, connection))
+    {
+        return false;
+    }
+    const uint32_t ownerTpn = connection.ownerNodeId == connection.node1
+                                  ? connection.tpn1
+                                  : connection.tpn2;
+    Ptr<TpConnectionManager> ownerManager =
+        NodeList::GetNode(connection.ownerNodeId)
+            ->GetObject<ns3::UbController>()
+            ->GetTpConnManager();
+    std::lock_guard<std::mutex> lock(ownerManager->m_stateLock);
+    const auto it = ownerManager->m_canonicalConnections.find(
+        {connection.ownerNodeId, ownerTpn});
+    return it != ownerManager->m_canonicalConnections.end() && it->second.destroyRequested;
+}
+
+void
+TpConnectionManager::DestroyDrainOnlyEndpoint(uint32_t localNodeId, uint32_t localTpn)
+{
+    Connection connection;
+    if (!TryGetLocalConnection(localNodeId, localTpn, connection))
+    {
+        return;
+    }
+    const uint32_t ownerTpn = connection.ownerNodeId == connection.node1
+                                  ? connection.tpn1
+                                  : connection.tpn2;
+    Ptr<TpConnectionManager> ownerManager =
+        NodeList::GetNode(connection.ownerNodeId)
+            ->GetObject<ns3::UbController>()
+            ->GetTpConnManager();
+    const uint8_t slot = localNodeId == connection.ownerNodeId ? 1 : 2;
+    Ptr<ns3::UbController> localController =
+        NodeList::GetNode(localNodeId)->GetObject<ns3::UbController>();
+    localController->DestroyTp(
+        localTpn,
+        UbDestroyReason::EXPLICIT,
+        MakeCallback(&TpConnectionManager::OnEndpointDestroyed, PeekPointer(ownerManager))
+            .Bind(ownerTpn, slot));
+}
+
+UbDestroyStatus
+TpConnectionManager::DestroyConnection(uint32_t localNodeId,
+                                       uint32_t localTpn,
+                                       UbDestroyReason reason,
+                                       UbDestroyCallback callback)
+{
+    std::lock_guard<std::mutex> controlLock(g_tpConnectionControlLock);
+    Connection connection;
+    if (!TryGetLocalConnection(localNodeId, localTpn, connection))
+    {
+        return UbDestroyStatus::NOT_FOUND;
+    }
+    const uint32_t ownerTpn = connection.ownerNodeId == connection.node1
+                                  ? connection.tpn1
+                                  : connection.tpn2;
+    Ptr<ns3::UbController> ownerController =
+        NodeList::GetNode(connection.ownerNodeId)->GetObject<ns3::UbController>();
+    NS_ABORT_MSG_IF(ownerController == nullptr, "Connection owner lacks UbController");
+    return ownerController->GetTpConnManager()->DestroyConnectionOwned(ownerTpn,
+                                                                       reason,
+                                                                       callback);
+}
+
+UbDestroyStatus
+TpConnectionManager::DestroyConnectionOwned(uint32_t ownerTpn,
+                                            UbDestroyReason reason,
+                                            UbDestroyCallback callback)
+{
+    Connection connection;
+    {
+        std::lock_guard<std::mutex> lock(m_stateLock);
+        auto it = m_canonicalConnections.find({m_ownerNodeId, ownerTpn});
+        if (it == m_canonicalConnections.end())
+        {
+            return UbDestroyStatus::NOT_FOUND;
+        }
+        ConnectionLifecycleRecord& record = it->second;
+        if (!callback.IsNull())
+        {
+            record.callbacks.push_back(callback);
+        }
+        if (record.destroyRequested)
+        {
+            if (static_cast<uint8_t>(reason) > static_cast<uint8_t>(record.reason))
+            {
+                record.reason = reason;
+            }
+            return UbDestroyStatus::PENDING;
+        }
+        record.destroyRequested = true;
+        record.reason = reason;
+        connection = record.connection;
+    }
+
+    Ptr<ns3::UbController> controller1 =
+        NodeList::GetNode(connection.node1)->GetObject<ns3::UbController>();
+    Ptr<ns3::UbController> controller2 =
+        NodeList::GetNode(connection.node2)->GetObject<ns3::UbController>();
+    NS_ABORT_MSG_IF(controller1 == nullptr || controller2 == nullptr,
+                    "Connection endpoint lacks UbController");
+    const bool active1 = controller1->GetTpByTpn(connection.tpn1) != nullptr;
+    const bool active2 = controller2->GetTpByTpn(connection.tpn2) != nullptr;
+
+    {
+        std::lock_guard<std::mutex> lock(m_stateLock);
+        ConnectionLifecycleRecord& record =
+            m_canonicalConnections.at({m_ownerNodeId, ownerTpn});
+        record.slot1 = active1 ? EndpointSlotState::DRAINING
+                               : (active2 ? EndpointSlotState::DRAINING
+                                          : EndpointSlotState::RETIRED);
+        record.slot2 = active2 ? EndpointSlotState::DRAINING
+                               : (active1 ? EndpointSlotState::DRAINING
+                                          : EndpointSlotState::RETIRED);
+    }
+
+    if (active1)
+    {
+        controller1->DestroyTp(
+            connection.tpn1,
+            reason,
+            MakeCallback(&TpConnectionManager::OnEndpointDestroyed, this).Bind(ownerTpn, 1));
+    }
+    if (active2)
+    {
+        controller2->DestroyTp(
+            connection.tpn2,
+            reason,
+            MakeCallback(&TpConnectionManager::OnEndpointDestroyed, this).Bind(ownerTpn, 2));
+    }
+    TryFinalizeConnection(ownerTpn);
+
+    std::lock_guard<std::mutex> lock(m_stateLock);
+    return m_canonicalConnections.find({m_ownerNodeId, ownerTpn}) ==
+                   m_canonicalConnections.end()
+               ? UbDestroyStatus::COMPLETED
+               : UbDestroyStatus::PENDING;
+}
+
+void
+TpConnectionManager::OnEndpointDestroyed(uint32_t ownerTpn,
+                                         uint8_t slot,
+                                         UbLifecycleResourceIdentity,
+                                         UbDestroyStatus status)
+{
+    NS_ABORT_MSG_IF(status != UbDestroyStatus::COMPLETED,
+                    "Endpoint destroy callback must report completion");
+    {
+        std::lock_guard<std::mutex> lock(m_stateLock);
+        auto it = m_canonicalConnections.find({m_ownerNodeId, ownerTpn});
+        if (it == m_canonicalConnections.end())
+        {
+            return;
+        }
+        ConnectionLifecycleRecord& record = it->second;
+        if (slot == 1)
+        {
+            record.slot1 = EndpointSlotState::RETIRED;
+            record.slot1Materialized = false;
+            if (record.slot2 == EndpointSlotState::DRAINING && !record.slot2Materialized)
+            {
+                record.slot2 = EndpointSlotState::RETIRED;
+            }
+        }
+        else
+        {
+            record.slot2 = EndpointSlotState::RETIRED;
+            record.slot2Materialized = false;
+            if (record.slot1 == EndpointSlotState::DRAINING && !record.slot1Materialized)
+            {
+                record.slot1 = EndpointSlotState::RETIRED;
+            }
+        }
+    }
+    TryFinalizeConnection(ownerTpn);
+}
+
+void
+TpConnectionManager::TryFinalizeConnection(uint32_t ownerTpn)
+{
+    Connection connection;
+    UbLifecycleResourceIdentity identity;
+    std::vector<UbDestroyCallback> callbacks;
+    {
+        std::lock_guard<std::mutex> lock(m_stateLock);
+        auto it = m_canonicalConnections.find({m_ownerNodeId, ownerTpn});
+        if (it == m_canonicalConnections.end() || it->second.finalizing ||
+            it->second.slot1 != EndpointSlotState::RETIRED ||
+            it->second.slot2 != EndpointSlotState::RETIRED)
+        {
+            return;
+        }
+        it->second.finalizing = true;
+        connection = it->second.connection;
+        identity = it->second.identity;
+        callbacks = it->second.callbacks;
+    }
+
+    Ptr<TpConnectionManager> manager1 =
+        NodeList::GetNode(connection.node1)
+            ->GetObject<ns3::UbController>()
+            ->GetTpConnManager();
+    Ptr<TpConnectionManager> manager2 =
+        NodeList::GetNode(connection.node2)
+            ->GetObject<ns3::UbController>()
+            ->GetTpConnManager();
+    manager1->EraseConnectionView(connection.node1, connection.tpn1);
+    manager2->EraseConnectionView(connection.node2, connection.tpn2);
+    UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(connection.ownerNodeId))
+        ->RetireResource(identity);
+
+    {
+        std::lock_guard<std::mutex> lock(m_stateLock);
+        m_canonicalConnections.erase({m_ownerNodeId, ownerTpn});
+    }
+    for (const UbDestroyCallback& callback : callbacks)
+    {
+        callback(identity, UbDestroyStatus::COMPLETED);
+    }
+}
+
+void
+TpConnectionManager::EraseConnectionView(uint32_t localNodeId, uint32_t localTpn)
+{
+    std::lock_guard<std::mutex> lock(m_stateLock);
+    auto local = m_localTpnIndex.find({localNodeId, localTpn});
+    if (local == m_localTpnIndex.end())
+    {
+        return;
+    }
+    const Connection oriented = local->second;
+    const auto removeView = [&](auto& index, const auto& key) {
+        auto entry = index.find(key);
+        if (entry == index.end())
+        {
+            return;
+        }
+        auto& container = entry->second;
+        container.erase(std::remove_if(container.begin(),
+                                       container.end(),
+                                       [&](const Connection& item) {
+                                           return item.ownerNodeId == oriented.ownerNodeId &&
+                                                  item.node1 == oriented.node1 &&
+                                                  item.tpn1 == oriented.tpn1;
+                                       }),
+                        container.end());
+        if (container.empty())
+        {
+            index.erase(entry);
+        }
+    };
+    removeView(m_nodeConnections, localNodeId);
+    removeView(m_peerNodeIndex, std::make_pair(localNodeId, oriented.node2));
+    removeView(m_peerNodePriorityIndex,
+               std::make_tuple(localNodeId,
+                               oriented.node2,
+                               static_cast<uint32_t>(oriented.priority)));
+    removeView(m_peerNodeLocalPortIndex,
+               std::make_tuple(localNodeId, oriented.node2, oriented.port1));
+    removeView(m_bothPortsIndex,
+               std::make_tuple(localNodeId, oriented.node2, oriented.port1, oriented.port2));
+    m_localTpnIndex.erase(local);
+    m_allConnections.erase(std::remove_if(m_allConnections.begin(),
+                                          m_allConnections.end(),
+                                          [&](const Connection& item) {
+                                              return item.ownerNodeId == oriented.ownerNodeId &&
+                                                     ((item.node1 == localNodeId &&
+                                                       item.tpn1 == localTpn) ||
+                                                      (item.node2 == localNodeId &&
+                                                       item.tpn2 == localTpn));
+                                          }),
+                           m_allConnections.end());
+    m_tpnList.erase(localTpn);
+    m_reservedTpnList.erase(localTpn);
+    m_nextTpn = std::min(m_nextTpn, localTpn);
+}
+
+bool
+TpConnectionManager::GetConnectionLifecycleSnapshot(uint32_t localTpn,
+                                                     ConnectionLifecycleSnapshot& snapshot) const
+{
+    std::lock_guard<std::mutex> lock(m_stateLock);
+    const auto it = m_canonicalConnections.find({m_ownerNodeId, localTpn});
+    if (it == m_canonicalConnections.end())
+    {
+        return false;
+    }
+    const ConnectionLifecycleRecord& record = it->second;
+    snapshot.ownerNodeId = m_ownerNodeId;
+    snapshot.generation = record.generation;
+    snapshot.node1 = record.connection.node1;
+    snapshot.tpn1 = record.connection.tpn1;
+    snapshot.node2 = record.connection.node2;
+    snapshot.tpn2 = record.connection.tpn2;
+    snapshot.slot1 = record.slot1;
+    snapshot.slot2 = record.slot2;
+    snapshot.destroyRequested = record.destroyRequested;
+    snapshot.reason = record.reason;
+    return true;
+}
+
+size_t
+TpConnectionManager::GetCanonicalConnectionCountForTest() const
+{
+    std::lock_guard<std::mutex> lock(m_stateLock);
+    return m_canonicalConnections.size();
 }
 
 // 清空指定节点的连接

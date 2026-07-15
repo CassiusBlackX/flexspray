@@ -53,7 +53,8 @@ UbTransportChannelManager::CreateTp(uint32_t src,
                                     UbPriority priority,
                                     uint32_t srcTpn,
                                     uint32_t dstTpn,
-                                    Ptr<UbCongestionControl> congestionCtrl)
+                                    Ptr<UbCongestionControl> congestionCtrl,
+                                    bool drainOnly)
 {
     NS_LOG_FUNCTION(this << src << dest << sport << dport << priority << srcTpn);
     if (m_endpoints.find(srcTpn) != m_endpoints.end())
@@ -84,6 +85,10 @@ UbTransportChannelManager::CreateTp(uint32_t src,
                        sip,
                        dip,
                        congestionCtrl);
+    if (drainOnly)
+    {
+        tp->FreezeNewWork();
+    }
     tp->SetLifecycleStateChangedCallback(
         MakeCallback(&UbTransportChannelManager::NotifyStateChanged, this));
     UbLifecycleCoordinator::GetOrCreate(currentNode)->SetResourceStateChangedCallback(
@@ -93,6 +98,9 @@ UbTransportChannelManager::CreateTp(uint32_t src,
     m_endpoints.emplace(srcTpn, EndpointRecord{tp});
     ++m_transportsCount;
     currentNode->GetObject<UbSwitch>()->RegisterTpWithAllocator(tp, sport, priority);
+    m_controller->GetTpConnManager()->NotifyEndpointMaterialized(currentNode->GetId(),
+                                                                  srcTpn,
+                                                                  drainOnly);
     utils::UbUtils::Get()->SingleTpTraceConnect(src, srcTpn);
     NS_LOG_DEBUG("Created transport channel success");
     return true;
@@ -102,11 +110,17 @@ Ptr<UbTransportChannel>
 UbTransportChannelManager::CreateReservedTpEndpoint(uint32_t tpn)
 {
     std::lock_guard<std::mutex> lock(TpConnectionManager::g_tpConnectionControlLock);
+    Ptr<Node> currentNode = m_controller->GetObject<Node>();
+    if (currentNode != nullptr &&
+        m_controller->GetTpConnManager()->IsConnectionDestroyRequested(currentNode->GetId(), tpn))
+    {
+        return nullptr;
+    }
     return CreateReservedTpEndpointLocked(tpn);
 }
 
 Ptr<UbTransportChannel>
-UbTransportChannelManager::CreateReservedTpEndpointLocked(uint32_t tpn)
+UbTransportChannelManager::CreateReservedTpEndpointLocked(uint32_t tpn, bool drainOnly)
 {
     Ptr<UbTransportChannel> existingTp = GetTp(tpn);
     if (existingTp != nullptr)
@@ -136,8 +150,23 @@ UbTransportChannelManager::CreateReservedTpEndpointLocked(uint32_t tpn)
              static_cast<UbPriority>(conn.priority),
              conn.tpn1,
              conn.tpn2,
-             congestionCtrl);
+             congestionCtrl,
+             drainOnly);
+    if (drainOnly)
+    {
+        Simulator::ScheduleNow(&UbTransportChannelManager::BeginDrainOnlyDestroy, this, tpn);
+    }
     return GetTp(tpn);
+}
+
+void
+UbTransportChannelManager::BeginDrainOnlyDestroy(uint32_t tpn)
+{
+    Ptr<Node> node = m_controller->GetObject<Node>();
+    if (node != nullptr)
+    {
+        m_controller->GetTpConnManager()->DestroyDrainOnlyEndpoint(node->GetId(), tpn);
+    }
 }
 
 Ptr<UbTransportChannel>
@@ -183,7 +212,10 @@ UbTransportChannelManager::ResolveInboundTp(uint32_t srcTpn,
     {
         return nullptr;
     }
-    return targetTp != nullptr ? targetTp : CreateReservedTpEndpointLocked(dstTpn);
+    const bool drainOnly = targetTp == nullptr &&
+                           m_controller->GetTpConnManager()->IsConnectionDestroyRequested(
+                               m_controller->GetObject<Node>()->GetId(), dstTpn);
+    return targetTp != nullptr ? targetTp : CreateReservedTpEndpointLocked(dstTpn, drainOnly);
 }
 
 UbDestroyStatus
