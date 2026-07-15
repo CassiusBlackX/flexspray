@@ -57,6 +57,7 @@ build_lib(
 	model/protocol/ub-flow-control.cc
 	model/protocol/ub-cbfc.cc
 	model/protocol/ub-pfc.cc
+	model/ub-ingress-queue.cc
 	model/ub-queue-manager.cc
 	model/ub-fault.cc
 	model/ub-tp-connection-manager.cc
@@ -98,6 +99,7 @@ build_lib(
 	model/protocol/ub-flow-control.h
 	model/protocol/ub-cbfc.h
 	model/protocol/ub-pfc.h
+	model/ub-ingress-queue.h
 	model/ub-queue-manager.h
 	model/ub-tag.h
 	model/ub-fault.h

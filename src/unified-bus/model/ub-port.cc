@@ -449,7 +449,7 @@ void UbPort::DequeuePacket(void)
     if (m_ubEQ->IsEmpty()) {
         // Switch allocation when port sendding packet.
         if (ubSwitch != nullptr && ubSwitch->GetAllocator() != nullptr) {
-            Simulator::ScheduleNow(&UbSwitchAllocator::TriggerAllocator, ubSwitch->GetAllocator(), this);
+            ubSwitch->GetAllocator()->ScheduleTriggerAllocator(this);
         }
     }
 
@@ -648,7 +648,7 @@ void UbPort::TriggerTransmit()
                 // Keep allocator prefetch alive while the current packet is still sending.
                 // This lets a late-arriving next packet hide AllocationTime behind the
                 // current serialization delay instead of always bubbling after tx-complete.
-                Simulator::ScheduleNow(&UbSwitchAllocator::TriggerAllocator, ubSwitch->GetAllocator(), this);
+                ubSwitch->GetAllocator()->ScheduleTriggerAllocator(this);
             }
         }
         NS_LOG_DEBUG("[UbPort TriggerTransmit] SendState::BUSY");
@@ -658,7 +658,7 @@ void UbPort::TriggerTransmit()
         NS_LOG_DEBUG("[UbPort TriggerTransmit] trigger Allocator");
         Ptr<UbSwitch> ubSwitch = GetNode()->GetObject<UbSwitch>();
         if (ubSwitch != nullptr && ubSwitch->GetAllocator() != nullptr) {
-            Simulator::ScheduleNow(&UbSwitchAllocator::TriggerAllocator, ubSwitch->GetAllocator(), this);
+            ubSwitch->GetAllocator()->ScheduleTriggerAllocator(this);
         }
         return;
     }

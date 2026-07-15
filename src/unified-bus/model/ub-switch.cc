@@ -256,17 +256,37 @@ void UbSwitch::Init()
 
 void UbSwitch::DoDispose()
 {
-    for (auto& event : m_inPortProcessingEvents) {
-        if (event.IsPending()) {
-            event.Cancel();
+    PruneResolvedInPortEvents();
+    m_forcedInPortEventResidue = 0;
+    m_forcedInPortByteResidue = 0;
+    for (auto& pending : m_inPortProcessingEvents) {
+        if (pending.event.IsPending()) {
+            ++m_forcedInPortEventResidue;
+            m_forcedInPortByteResidue += pending.packetBytes;
+            pending.event.Cancel();
         }
     }
     m_inPortProcessingEvents.clear();
+    m_forcedVoqPacketResidue = 0;
+    for (const auto& group : m_voq.groups) {
+        for (const auto& entry : group) {
+            if (entry.queue != nullptr) {
+                m_forcedVoqPacketResidue += entry.queue->GetPacketCount();
+            }
+        }
+    }
+    m_forcedBufferedByteResidue = m_queueManager == nullptr
+                                      ? 0
+                                      : m_queueManager->GetSwitchBufferOccupancy().total_buffered_bytes;
+    if (m_allocator != nullptr) {
+        m_allocator->Dispose();
+    }
     m_queueManager = nullptr;
     m_congestionCtrl = nullptr;
     m_allocator = nullptr;
     m_voq.groups.clear();
     m_routingProcess = nullptr;
+    Object::DoDispose();
 }
 
 /**
@@ -419,13 +439,18 @@ UbSwitch::ForwardDataPacketAfterAdmission(Ptr<Packet> packet,
         return;
     }
 
-    m_inPortProcessingEvents.push_back(Simulator::Schedule(m_inPortProcessingDelay,
-                                                           &UbSwitch::CompleteInPortProcessing,
-                                                           this,
-                                                           packet,
-                                                           inPort,
-                                                           outPort,
-                                                           priority));
+    m_inPortProcessingEvents.push_back(
+        {Simulator::Schedule(m_inPortProcessingDelay,
+                             &UbSwitch::CompleteInPortProcessing,
+                             this,
+                             packet,
+                             inPort,
+                             outPort,
+                             priority),
+         inPort,
+         outPort,
+         priority,
+         packet->GetSize()});
 }
 
 void
@@ -484,14 +509,82 @@ UbSwitch::CompleteInPortProcessing(Ptr<Packet> packet,
                                    uint32_t outPort,
                                    uint32_t priority)
 {
-    m_inPortProcessingEvents.erase(
-        std::remove_if(m_inPortProcessingEvents.begin(),
-                       m_inPortProcessingEvents.end(),
-                       [](const EventId& event) { return !event.IsPending(); }),
-        m_inPortProcessingEvents.end());
+    PruneResolvedInPortEvents();
 
     MoveInPortProcessingToVoq(packet, inPort, outPort, priority);
     FinalizeForwardedPacketEnqueue(packet, inPort, outPort, priority);
+}
+
+void
+UbSwitch::PruneResolvedInPortEvents()
+{
+    m_inPortProcessingEvents.erase(
+        std::remove_if(m_inPortProcessingEvents.begin(),
+                       m_inPortProcessingEvents.end(),
+                       [](const InPortProcessingEvent& pending) {
+                           return !pending.event.IsPending();
+                       }),
+        m_inPortProcessingEvents.end());
+}
+
+bool
+UbSwitch::HasPendingInPortWork(uint32_t outPort, uint32_t priority, uint32_t inPort) const
+{
+    return std::any_of(m_inPortProcessingEvents.begin(),
+                       m_inPortProcessingEvents.end(),
+                       [outPort, priority, inPort](const InPortProcessingEvent& pending) {
+                           return pending.event.IsPending() && pending.outPort == outPort &&
+                                  pending.priority == priority && pending.inPort == inPort;
+                       });
+}
+
+bool
+UbSwitch::TryDestroyEmptyVoq(uint32_t outPort, uint32_t priority, uint32_t inPort)
+{
+    if (!IsValidVoqIndices(outPort, priority, inPort, m_portsNum, m_vlNum) ||
+        m_allocator == nullptr || m_queueManager == nullptr) {
+        return false;
+    }
+
+    const auto groupKey = BuildVoqGroupKey(outPort, priority);
+    const Ptr<UbPacketQueue>* slot = FindVoqSlot(groupKey, inPort);
+    if (slot == nullptr || *slot == nullptr) {
+        return false;
+    }
+    Ptr<UbPacketQueue> queue = *slot;
+    if (queue->GetPacketCount() != 0 || HasPendingInPortWork(outPort, priority, inPort) ||
+        m_allocator->HasPendingOrActiveWork(queue)) {
+        return false;
+    }
+
+    const bool hasAccounting =
+        m_queueManager->GetQueueIngressTotalBytes(inPort, priority) != 0 ||
+        m_queueManager->GetOutPortBufferUsed(outPort, priority) != 0 ||
+        m_queueManager->GetIngressControlBytes(inPort, priority) != 0 ||
+        m_queueManager->GetOutPortControlBytes(outPort, priority) != 0;
+    if (hasAccounting) {
+        return false;
+    }
+
+    m_allocator->UnregisterUbIngressQueue(queue, outPort, priority);
+    if (queue->GetPacketCount() != 0 || HasPendingInPortWork(outPort, priority, inPort) ||
+        m_allocator->HasPendingOrActiveWork(queue) ||
+        m_queueManager->GetQueueIngressTotalBytes(inPort, priority) != 0 ||
+        m_queueManager->GetOutPortBufferUsed(outPort, priority) != 0 ||
+        m_queueManager->GetIngressControlBytes(inPort, priority) != 0 ||
+        m_queueManager->GetOutPortControlBytes(outPort, priority) != 0) {
+        m_allocator->RegisterUbIngressQueue(queue, outPort, priority);
+        return false;
+    }
+    auto& group = m_voq.groups[static_cast<size_t>(groupKey)];
+    const auto oldSize = group.size();
+    group.erase(std::remove_if(group.begin(),
+                               group.end(),
+                               [inPort, queue](const VirtualOutputQueueEntry& entry) {
+                                   return entry.inPort == inPort && entry.queue == queue;
+                               }),
+                group.end());
+    return group.size() + 1 == oldSize;
 }
 
 bool UbSwitch::IsValidVoqIndices(uint32_t outPort, uint32_t priority, uint32_t inPort, uint32_t portsNum, uint32_t vlNum)
@@ -519,6 +612,24 @@ bool UbSwitch::HasVoqForTest(uint32_t outPort, uint32_t priority, uint32_t inPor
     }
     const Ptr<UbPacketQueue>* slot = FindVoqSlot(BuildVoqGroupKey(outPort, priority), inPort);
     return slot != nullptr && *slot != nullptr;
+}
+
+bool
+UbSwitch::TryDestroyVoqForTest(uint32_t outPort, uint32_t priority, uint32_t inPort)
+{
+    PruneResolvedInPortEvents();
+    return TryDestroyEmptyVoq(outPort, priority, inPort);
+}
+
+uint32_t
+UbSwitch::GetPendingInPortProcessingEventCountForTest() const
+{
+    return static_cast<uint32_t>(
+        std::count_if(m_inPortProcessingEvents.begin(),
+                      m_inPortProcessingEvents.end(),
+                      [](const InPortProcessingEvent& pending) {
+                          return pending.event.IsPending();
+                      }));
 }
 
 UbPacketType_t UbSwitch::GetPacketType(Ptr<Packet> packet)
@@ -1152,7 +1263,7 @@ UbSwitch::GetVoqPacketCountForTest(uint32_t outPort, uint32_t priority, uint32_t
     if (queue == nullptr || *queue == nullptr) {
         return 0;
     }
-    return (*queue)->IsEmpty() ? 0u : 1u;
+    return static_cast<uint32_t>((*queue)->GetPacketCount());
 }
 
 }  // namespace ns3
