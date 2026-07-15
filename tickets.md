@@ -373,11 +373,28 @@ Closeout:
 
 **Blocked by:** T01 Establish a single-TP packet lifecycle tracer bullet.
 
-- [ ] Base flow-control, CBFC, shared-credit behavior, PFC, and decision hooks retain their existing public configuration and trace behavior.
-- [ ] Credit, pause, resume, piggyback, and fallback control-frame behavior matches current tests.
-- [ ] Every Datalink control packet has one persistent port/VL accounting owner and one terminal outcome.
-- [ ] Switch allocator order and queue ownership do not move into the flow-control modules.
-- [ ] Focused NONE/CBFC/PFC threshold and control-frame tests plus a targeted queue-pressure scenario preserve arbitration, credit, pause/resume, and trace behavior.
+- [x] Base flow-control, CBFC, shared-credit behavior, PFC, and decision hooks retain their existing public configuration and trace behavior.
+- [x] Credit, pause, resume, piggyback, and fallback control-frame behavior matches current tests.
+- [x] Every Datalink control packet has one persistent port/VL accounting owner and one terminal outcome.
+- [x] Switch allocator order and queue ownership do not move into the flow-control modules.
+- [x] Focused NONE/CBFC/PFC threshold and control-frame tests plus a targeted queue-pressure scenario preserve arbitration, credit, pause/resume, and trace behavior.
+
+Closeout:
+
+- `UbFlowControl` retains the compatibility event/base surface. The complete inherited CBFC and
+  shared-credit blocks now live in `UbCbfc` owners, while PFC decision hooks and the inherited PFC
+  block live in `UbPfc` owners; existing TypeIds, configuration, traces and factory behavior remain.
+- The moved CBFC/PFC implementation bodies were compared against `main@ccf41b58`. Credit math,
+  threshold/status order, pause/resume, piggyback, fallback control-frame builders and callbacks are
+  unchanged; no parallel parser, builder, state machine, queue or allocator was added.
+- Each valid control frame registers once under a lazy persistent Datalink port/VL owner after type
+  validation and before VOQ retention. The peer terminal occurs after the inherited flow-control
+  receive callback. Queue/backpressure/channel outcomes retain their existing typed seams.
+- Target build and the 35-case flow-control, lifecycle and switch-VOQ suites passed. The linked-port
+  characterization proves the packet remains live during the receive callback and balances after it.
+- `scratch/2nodes_single-tp_cbfc-credit-large` completed 1/1 task in about 56 ms run time and 158 ms
+  total wall time. The 128-cell `credit-small` negative case was stopped at 0/1 task after sustained
+  starvation and is explicitly not reported PASS. T15 is not a frozen-byte milestone.
 
 ## Task 16: Balance VOQ ownership, allocator events, and queue disposal
 
