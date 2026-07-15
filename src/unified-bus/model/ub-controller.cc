@@ -35,6 +35,7 @@ UbController::UbController()
 
 void UbController::CreateUbFunction()
 {
+    m_tpnConn->SetOwnerNodeId(GetObject<Node>()->GetId());
     m_function = CreateObject<UbFunction>();
     m_function->Init(GetObject<Node>()->GetId());
 }
