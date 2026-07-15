@@ -139,11 +139,11 @@ private:
  * 报文头格式：total 32 bits
  *              [Credit:1][ACK:1][Credit Target VL:4][Reverse:1]
  *              [VL of this packet:4][Reverse:1][Config(fixed 0011):4]
- *              [Load Balance Mode(0:per flow/1:per packet):1][Routing Policy(0: all paths/1: shortest paths):1]
+ *              [RT[1](0:all paths/1:shortest paths):1][RT[0](0:per flow/1:per packet):1]
  *              [Packet Length in block:4][Last Block Length in flit:5]
  *              [Tail Payload Length in bytes:5]
  *
- *              [Load Balance Mode][Routing Policy]合称RT字段
+ *              RT is encoded according to the UB specification.
  */
 class UbDatalinkPacketHeader : public Header {
 public:
@@ -156,16 +156,14 @@ public:
     void SetCreditTargetVL(uint8_t vlIndex);  // 4 bits: 指定接收credit的VL
     void SetPacketVL(uint8_t vl);             // 4 bits: 数据包的VL
     void SetConfig(uint8_t config);
-    void SetLoadBalanceMode(bool mode);  // 1 bit: 0=per flow, 1=per packet
-    void SetRoutingPolicy(bool policy);  // 1 bit: 0=all paths, 1=shortest paths
+    void SetRoutingType(RoutingType routingType);
 
     // Getters
     bool GetCredit() const;
     bool GetACK() const;
     uint8_t GetCreditTargetVL() const;  // 4 bits: 返回接收credit的VL索引
     uint8_t GetPacketVL() const;        // 4 bits: 返回数据包的VL
-    bool GetLoadBalanceMode() const;    // 1 bit: 返回负载均衡模式
-    bool GetRoutingPolicy() const;      // 1 bit: 返回路由策略
+    RoutingType GetRoutingType() const;
     uint8_t GetConfig() const;          // 返回固定值 0x03 (0011)
     bool IsUbDatalinkControlCreditHeader();
 
@@ -190,9 +188,8 @@ private:
     uint8_t reservE2Value = 0;                       // 1 bit: Reserved
     uint8_t m_config = 0b0011;                       // 4 bits: Config (fixed 0011)
     
-    // 字节2: [Load Balance Mode:1][Routing Policy:1][Packet Length in block (ignored):4][Last Block Length高2位:2]
-    bool m_loadBalanceMode = LB_MODE_PER_FLOW;       // 1 bit: 0=per flow, 1=per packet
-    bool m_routingPolicy = ROUTING_SHORTEST;         // 1 bit: 0=all paths, 1=shortest paths
+    // 字节2: [RT:2][Packet Length in block (ignored):4][Last Block Length高2位:2]
+    RoutingType m_routingType = RoutingType::PER_FLOW_SHORTEST_PATHS;
     // 未完成字段：Packet Length in block (4 bits) - 序列化时填充0
     // 未完成字段：Last Block Length高2位 (2 bits) - 序列化时填充0
     

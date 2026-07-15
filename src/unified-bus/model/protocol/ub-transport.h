@@ -537,8 +537,7 @@ private:
     bool m_sendWindowLimited = false; // 记录发送窗口是否满
     uint64_t m_defaultMaxWqeSegNum;
     uint64_t m_defaultMaxInflightPacketSize;
-    bool m_usePacketSpray;
-    bool m_useShortestPaths;
+    RoutingType m_routingType{RoutingType::PER_FLOW_SHORTEST_PATHS};
     uint16_t m_lbHashSalt = 0; // load balance salt for ECMP/packet-spray hashing, increases per packet
 
     std::unique_ptr<UbRetransController> m_retrans;

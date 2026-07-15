@@ -61,13 +61,9 @@ public:
         return m_transportMode;
     }
 
-    /**
-     * @brief Get whether shortest paths are required.
-     * @return True when the application is configured to use shortest paths.
-     */
-    bool GetUseShortestPaths() const
+    RoutingType GetRoutingType() const
     {
-        return m_useShortestPaths;
+        return m_routingType;
     }
 
     void SetGetTpnRule(GetTpnRuleT type)
@@ -75,14 +71,9 @@ public:
         m_getTpnRule = type;
     }
 
-    void SetUseShortestPaths(bool useShortestPaths)
+    void SetRoutingType(RoutingType routingType)
     {
-        m_useShortestPaths = useShortestPaths;
-    }
-
-    void SetUsePacketSpray(bool usePacketSpray)
-    {
-        m_usePacketSpray = usePacketSpray;
+        m_routingType = routingType;
     }
 
     /**
@@ -116,8 +107,7 @@ private:
     bool m_multiPathEnable = false;
 
     GetTpnRuleT m_getTpnRule = GetTpnRuleT::BY_PEERNODE_PRIORITY;
-    bool m_useShortestPaths = true;
-    bool m_usePacketSpray = false;
+    RoutingType m_routingType{RoutingType::PER_FLOW_SHORTEST_PATHS};
     bool m_ctpUseUnboundSourceJetty = false;
     std::map<std::tuple<uint32_t, uint32_t, uint32_t, uint32_t, uint8_t>, uint32_t>
         m_ctpBoundJettyByFullKey;

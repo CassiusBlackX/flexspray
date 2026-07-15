@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include <algorithm>
+#include <array>
 #include <limits>
 #include "ns3/ub-controller.h"
 #include "ns3/ub-header.h"
@@ -27,18 +28,41 @@ TypeId UbRoutingProcess::GetTypeId(void)
         .SetParent<Object>()
         .SetGroupName("UnifiedBus")
         .AddConstructor<UbRoutingProcess>()
-        .AddAttribute("RoutingAlgorithm",
-                    "Routing algorithm applied by UbRoutingProcess.",
-                    EnumValue(UbRoutingAlgorithm::HASH),
-                    MakeEnumAccessor<UbRoutingProcess::UbRoutingAlgorithm>(
-                                    &UbRoutingProcess::m_routingAlgorithm),
-                    MakeEnumChecker(UbRoutingAlgorithm::HASH, "HASH",
-                                    UbRoutingAlgorithm::ADAPTIVE, "ADAPTIVE"));
+        .AddAttribute("MultipathSelector",
+                    "Selector used to choose one path from the routing candidate set.",
+                    EnumValue(MultipathSelector::HASH64),
+                    MakeEnumAccessor<MultipathSelector>(&UbRoutingProcess::m_multipathSelector),
+                    MakeEnumChecker(MultipathSelector::HASH64, "HASH64",
+                                    MultipathSelector::CRC32, "CRC32",
+                                    MultipathSelector::TOEPLITZ, "TOEPLITZ",
+                                    MultipathSelector::ROUND_ROBIN, "ROUND_ROBIN",
+                                    MultipathSelector::ADAPTIVE, "ADAPTIVE",
+                                    MultipathSelector::INGRESS_PORT_STRIPE,
+                                    "INGRESS_PORT_STRIPE"));
     return tid;
 }
 
 UbRoutingProcess::UbRoutingProcess()
 {
+}
+
+void
+UbRoutingProcess::ValidateRoutingType(RoutingType routingType, const std::string& owner) const
+{
+    if (MultipathSelectorIsValidForRoutingType(m_multipathSelector, routingType))
+    {
+        return;
+    }
+
+    const RoutingType compatibleRoutingType =
+        MakeRoutingType(m_multipathSelector != MultipathSelector::INGRESS_PORT_STRIPE,
+                        RoutingTypeUsesShortestPaths(routingType));
+    NS_ABORT_MSG("Invalid routing configuration for "
+                 << owner << ": RoutingType \"" << RoutingTypeToString(routingType)
+                 << "\" cannot be combined with MultipathSelector \""
+                 << MultipathSelectorToString(m_multipathSelector)
+                 << "\". Use RoutingType \"" << RoutingTypeToString(compatibleRoutingType)
+                 << "\" or MultipathSelector \"HASH64\".");
 }
 
 std::shared_ptr<std::vector<uint16_t> >
@@ -379,64 +403,157 @@ int UbRoutingProcess::SelectAdaptiveOutPort(RoutingKey &rtKey, const std::vector
     return selectedPort;
 }
 
-uint64_t UbRoutingProcess::CalcHash(uint32_t sip, uint32_t dip, uint16_t sport, uint16_t dport, uint8_t priority, uint32_t salt)
+std::array<uint8_t, 17>
+UbRoutingProcess::BuildHashBytes(const RoutingKey& rtKey) const
 {
-    uint8_t buf[17];
-    buf[0] = (sip >> 24) & 0xff;
-    buf[1] = (sip >> 16) & 0xff;
-    buf[2] = (sip >> 8) & 0xff;
-    buf[3] = sip & 0xff;
-    buf[4] = (dip >> 24) & 0xff;
-    buf[5] = (dip >> 16) & 0xff;
-    buf[6] = (dip >> 8) & 0xff;
-    buf[7] = dip & 0xff;
-    buf[8] = (sport >> 8) & 0xff;
-    buf[9] = sport & 0xff;
-    buf[10] = (dport >> 8) & 0xff;
-    buf[11] = dport & 0xff;
-    buf[12] = priority;
-    buf[13] = (salt >> 24) & 0xff;
-    buf[14] = (salt >> 16) & 0xff;
-    buf[15] = (salt >> 8) & 0xff;
-    buf[16] = salt & 0xff;
-    std::string str(reinterpret_cast<const char*>(buf), sizeof(buf));
-    uint64_t hash = Hash64(str);
+    const uint32_t salt = utils::NodeIdToIp(m_nodeId).Get();
+    return {
+        static_cast<uint8_t>((rtKey.sip >> 24) & 0xff),
+        static_cast<uint8_t>((rtKey.sip >> 16) & 0xff),
+        static_cast<uint8_t>((rtKey.sip >> 8) & 0xff),
+        static_cast<uint8_t>(rtKey.sip & 0xff),
+        static_cast<uint8_t>((rtKey.dip >> 24) & 0xff),
+        static_cast<uint8_t>((rtKey.dip >> 16) & 0xff),
+        static_cast<uint8_t>((rtKey.dip >> 8) & 0xff),
+        static_cast<uint8_t>(rtKey.dip & 0xff),
+        static_cast<uint8_t>((rtKey.sport >> 8) & 0xff),
+        static_cast<uint8_t>(rtKey.sport & 0xff),
+        static_cast<uint8_t>((rtKey.dport >> 8) & 0xff),
+        static_cast<uint8_t>(rtKey.dport & 0xff),
+        rtKey.priority,
+        static_cast<uint8_t>((salt >> 24) & 0xff),
+        static_cast<uint8_t>((salt >> 16) & 0xff),
+        static_cast<uint8_t>((salt >> 8) & 0xff),
+        static_cast<uint8_t>(salt & 0xff),
+    };
+}
+
+uint32_t
+UbRoutingProcess::CalcCrc32(const std::array<uint8_t, 17>& bytes) const
+{
+    uint32_t crc = 0xffffffffU;
+    for (uint8_t byte : bytes)
+    {
+        crc ^= byte;
+        for (uint8_t bit = 0; bit < 8; ++bit)
+        {
+            crc = (crc >> 1) ^ ((crc & 1U) ? 0xedb88320U : 0U);
+        }
+    }
+    return ~crc;
+}
+
+uint32_t
+UbRoutingProcess::CalcToeplitzHash(const std::array<uint8_t, 17>& bytes) const
+{
+    static constexpr std::array<uint8_t, 40> key = {
+        0x6d, 0x5a, 0x56, 0xda, 0x25, 0x5b, 0x0e, 0xc2,
+        0x41, 0x67, 0x25, 0x3d, 0x43, 0xa3, 0x8f, 0xb0,
+        0xd0, 0xca, 0x2b, 0xcb, 0xae, 0x7b, 0x30, 0xb4,
+        0x77, 0xcb, 0x2d, 0xa3, 0x80, 0x30, 0xf2, 0x0c,
+        0x6a, 0x42, 0xb7, 0x3b, 0xbe, 0xac, 0x01, 0xfa,
+    };
+
+    auto keyWindow = [](uint32_t bitOffset) {
+        uint32_t value = 0;
+        for (uint32_t bit = 0; bit < 32; ++bit)
+        {
+            const uint32_t position = bitOffset + bit;
+            value = (value << 1) |
+                    ((key[position / 8] >> (7 - (position % 8))) & 1U);
+        }
+        return value;
+    };
+
+    uint32_t hash = 0;
+    uint32_t bitOffset = 0;
+    for (uint8_t byte : bytes)
+    {
+        for (uint8_t bit = 0; bit < 8; ++bit, ++bitOffset)
+        {
+            if (((byte >> (7 - bit)) & 1U) != 0)
+            {
+                hash ^= keyWindow(bitOffset);
+            }
+        }
+    }
     return hash;
 }
 
 int UbRoutingProcess::SelectOutPort(RoutingKey &rtKey, const std::vector<uint16_t>& shortestPorts, 
-                                     const std::vector<uint16_t>& nonShortestPorts, bool &selectedShortestPath)
+                                     const std::vector<uint16_t>& nonShortestPorts,
+                                     bool &selectedShortestPath, uint16_t inPort)
 {
-    uint32_t sip = rtKey.sip;
-    uint32_t dip = rtKey.dip;
-    uint16_t sport = rtKey.sport;
-    uint16_t dport = rtKey.dport;
-    uint8_t priority = rtKey.priority;
-    bool usePacketSpray = rtKey.usePacketSpray;
-    bool hashIncludesTransportPorts = rtKey.hashIncludesTransportPorts;
-    // hash key用本地ip做盐值，使同一条流/包在不同交换机上会有不同的hash
-    uint32_t salt = utils::NodeIdToIp(m_nodeId).Get();
-
+    ValidateRoutingType(rtKey.routingType, "packet forwarding");
     size_t totalSize = shortestPorts.size() + nonShortestPorts.size();
 
     if (totalSize == 0) {
         return -1;
     }
 
-    uint64_t hash64 = 0;
-    if (usePacketSpray) {
-        // Packet spray should stay exactly even over time for each flow while still
-        // randomizing the starting port across different flows.
-        const uint64_t flowBase = CalcHash(sip, dip, 0, dport, priority, salt);
-        const uint64_t packetSalt = CalcHash(0, 0, sport, 0, 0, salt);
-        hash64 = flowBase + packetSalt;
-    } else {
-        // usePacketSpray == LB_MODE_PER_FLOW
-        hash64 = hashIncludesTransportPorts ? CalcHash(sip, dip, sport, dport, priority, salt)
-                                             : CalcHash(sip, dip, 0, 0, priority, salt);
+    uint64_t hash = 0;
+    size_t idx = 0;
+    switch (m_multipathSelector)
+    {
+    case MultipathSelector::HASH64:
+    {
+        const auto bytes = BuildHashBytes(rtKey);
+        hash = Hash64(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+        break;
+    }
+    case MultipathSelector::CRC32:
+    {
+        const auto bytes = BuildHashBytes(rtKey);
+        hash = CalcCrc32(bytes);
+        break;
+    }
+    case MultipathSelector::TOEPLITZ:
+    {
+        const auto bytes = BuildHashBytes(rtKey);
+        hash = CalcToeplitzHash(bytes);
+        break;
+    }
+    case MultipathSelector::ROUND_ROBIN:
+    {
+        std::vector<uint16_t> candidatePorts;
+        candidatePorts.insert(candidatePorts.end(), shortestPorts.begin(), shortestPorts.end());
+        candidatePorts.insert(candidatePorts.end(), nonShortestPorts.begin(), nonShortestPorts.end());
+        uint64_t& nextIndex = m_rrNextIndexByCandidates[candidatePorts];
+        idx = nextIndex % totalSize;
+        ++nextIndex;
+        if (idx < shortestPorts.size())
+        {
+            selectedShortestPath = true;
+            return shortestPorts[idx];
+        }
+        selectedShortestPath = false;
+        return nonShortestPorts[idx - shortestPorts.size()];
+    }
+    case MultipathSelector::INGRESS_PORT_STRIPE:
+        if (inPort == UINT16_MAX)
+        {
+            const auto bytes = BuildHashBytes(rtKey);
+            hash = Hash64(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+            break;
+        }
+        idx = inPort % totalSize;
+        if (idx < shortestPorts.size())
+        {
+            selectedShortestPath = true;
+            return shortestPorts[idx];
+        }
+        selectedShortestPath = false;
+        return nonShortestPorts[idx - shortestPorts.size()];
+    case MultipathSelector::ADAPTIVE:
+        return SelectAdaptiveOutPort(rtKey,
+                                     shortestPorts,
+                                     nonShortestPorts,
+                                     selectedShortestPath);
+    default:
+        return -1;
     }
     
-    size_t idx = hash64 % totalSize;
+    idx = hash % totalSize;
     
     // 通过索引判断是否选中最短路径，并直接返回对应集合中的端口
     if (idx < shortestPorts.size()) {
@@ -448,11 +565,6 @@ int UbRoutingProcess::SelectOutPort(RoutingKey &rtKey, const std::vector<uint16_
     }
 }
 
-// 1. GetCandidatePorts基于useShortestPath选择可用的出端口集合
-// 2. 基于用户设定的UbRoutingAlgorithm在candidatePorts中选择最终的出端口
-// 2.1 如果是 HASH 算法，基于五元组哈希选择出端口(如果是usePacketSpray则使用完整五元组，否则掩盖sport和dport为0)
-// 2.2 如果是 ADAPTIVE 算法，基于QueueManager信息选择负载最小的出端口
-// 3. 如果找不到出端口，报错
 int UbRoutingProcess::GetOutPort(RoutingKey &rtKey, bool &selectedShortestPath, uint16_t inPort)
 {
     uint32_t sip = rtKey.sip;
@@ -460,15 +572,13 @@ int UbRoutingProcess::GetOutPort(RoutingKey &rtKey, bool &selectedShortestPath, 
     uint16_t sport = rtKey.sport;
     uint16_t dport = rtKey.dport;
     uint8_t priority = rtKey.priority;
-    bool useShortestPath = rtKey.useShortestPath;
-    bool usePacketSpray = rtKey.usePacketSpray;
+    const RoutingType routingType = rtKey.routingType;
     NS_LOG_DEBUG("[UbRoutingProcess GetOutPort]: sip: " << Ipv4Address(sip)
                 << " dip: " << Ipv4Address(dip)
                 << " sport: " << sport
                 << " dport: " << dport
                 << " priority: " << (uint16_t)priority
-                << " useShortestPath: " << useShortestPath
-                << " usePacketSpray: " << usePacketSpray);
+                << " routingType: " << static_cast<uint32_t>(routingType));
     
     uint32_t tempDip = dip;
     
@@ -476,7 +586,7 @@ int UbRoutingProcess::GetOutPort(RoutingKey &rtKey, bool &selectedShortestPath, 
     std::vector<uint16_t> shortestPorts;
     std::vector<uint16_t> nonShortestPorts;
     GetShortestCandidates(tempDip, inPort, shortestPorts);
-    if (!useShortestPath) {
+    if (!RoutingTypeUsesShortestPaths(routingType)) {
         // 只有在不限制最短路径时，才获取非最短路径候选端口
         GetNonShortestCandidates(tempDip, inPort, nonShortestPorts);
     }
@@ -489,11 +599,11 @@ int UbRoutingProcess::GetOutPort(RoutingKey &rtKey, bool &selectedShortestPath, 
 
     // 基于路由算法选择出端口，同时获得 selectedShortestPath 标记
     int outPortId = -1;
-    if(m_routingAlgorithm == UbRoutingProcess::UbRoutingAlgorithm::HASH){
-        outPortId = SelectOutPort(rtKey, shortestPorts, nonShortestPorts, selectedShortestPath);
-    } else if(m_routingAlgorithm == UbRoutingProcess::UbRoutingAlgorithm::ADAPTIVE){
-        outPortId = SelectAdaptiveOutPort(rtKey, shortestPorts, nonShortestPorts, selectedShortestPath);
-    }
+    outPortId = SelectOutPort(rtKey,
+                              shortestPorts,
+                              nonShortestPorts,
+                              selectedShortestPath,
+                              inPort);
 
     // 若找不到出端口，报ASSERT
     NS_ASSERT_MSG(outPortId != -1, "No available output port found");

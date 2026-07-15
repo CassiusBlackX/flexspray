@@ -10,6 +10,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <string_view>
 #include <unordered_map>
@@ -62,6 +63,124 @@ constexpr std::array<NetworkAttributeAlias, 2> kNetworkAttributeAliases = {{
     {"ns3::UbTransportChannel::EnableFastSelectiveRetrans",
      "ns3::UbTransportChannel::EnableFastRetrans"},
 }};
+
+struct LegacyRoutingAttributes
+{
+    const char* typeName;
+    const char* packetSpray;
+    const char* shortestPaths;
+};
+
+constexpr std::array<LegacyRoutingAttributes, 3> kLegacyRoutingAttributes = {{
+    {"ns3::UbApp", "ns3::UbApp::UsePacketSpray", "ns3::UbApp::UseShortestPaths"},
+    {"ns3::UbTransportChannel",
+     "ns3::UbTransportChannel::UsePacketSpray",
+     "ns3::UbTransportChannel::UseShortestPaths"},
+    {"ns3::UbLdstApi",
+     "ns3::UbLdstApi::UsePacketSpray",
+     "ns3::UbLdstApi::UseShortestPaths"},
+}};
+
+struct ParsedDefaultAttribute
+{
+    std::string name;
+    std::string value;
+};
+
+std::optional<ParsedDefaultAttribute>
+ParseDefaultAttribute(const std::string& line)
+{
+    const auto firstNonSpace = line.find_first_not_of(" \t");
+    if (firstNonSpace == std::string::npos || line[firstNonSpace] == '#')
+    {
+        return std::nullopt;
+    }
+
+    std::istringstream tokens(line.substr(firstNonSpace));
+    std::string directive;
+    ParsedDefaultAttribute attribute;
+    tokens >> directive >> attribute.name >> attribute.value;
+    if (directive != "default" || attribute.name.empty() || attribute.value.empty())
+    {
+        return std::nullopt;
+    }
+    if (attribute.value.size() >= 2 && attribute.value.front() == '"' &&
+        attribute.value.back() == '"')
+    {
+        attribute.value = attribute.value.substr(1, attribute.value.size() - 2);
+    }
+    return attribute;
+}
+
+bool
+ParseLegacyRoutingBool(const std::string& value,
+                       const std::string& filename,
+                       uint32_t lineNumber)
+{
+    if (value == "true" || value == "1")
+    {
+        return true;
+    }
+    if (value == "false" || value == "0")
+    {
+        return false;
+    }
+    NS_FATAL_ERROR("Invalid legacy routing boolean at "
+                   << filename << ":" << lineNumber << ": " << value
+                   << ". Use true or false.");
+    return false;
+}
+
+template <typename T>
+T
+GetConfiguredDefaultEnum(TypeId typeId, const char* attributeName)
+{
+    TypeId::AttributeInformation info;
+    NS_ABORT_MSG_IF(!typeId.LookupAttributeByName(attributeName, &info),
+                    "Missing routing attribute " << typeId.GetName() << "::" << attributeName);
+    const auto* value = dynamic_cast<const EnumValue<T>*>(PeekPointer(info.initialValue));
+    NS_ABORT_MSG_IF(value == nullptr,
+                    "Routing attribute " << typeId.GetName() << "::" << attributeName
+                                         << " is not an enum");
+    return value->Get();
+}
+
+void
+ValidateConfiguredRoutingDefaults(const std::string& filename)
+{
+    const MultipathSelector selector = GetConfiguredDefaultEnum<MultipathSelector>(
+        UbRoutingProcess::GetTypeId(),
+        "MultipathSelector");
+    const std::array<std::pair<TypeId, const char*>, 3> routingOwners = {{
+        {UbApp::GetTypeId(), "ns3::UbApp"},
+        {UbTransportChannel::GetTypeId(), "ns3::UbTransportChannel"},
+        {UbLdstApi::GetTypeId(), "ns3::UbLdstApi"},
+    }};
+
+    for (const auto& [typeId, typeName] : routingOwners)
+    {
+        const RoutingType routingType =
+            GetConfiguredDefaultEnum<RoutingType>(typeId, "RoutingType");
+        if (MultipathSelectorIsValidForRoutingType(selector, routingType))
+        {
+            continue;
+        }
+
+        const RoutingType compatibleRoutingType =
+            MakeRoutingType(selector != MultipathSelector::INGRESS_PORT_STRIPE,
+                            RoutingTypeUsesShortestPaths(routingType));
+        NS_ABORT_MSG("Invalid routing configuration in "
+                     << filename << ": default " << typeName << "::RoutingType \""
+                     << RoutingTypeToString(routingType)
+                     << "\" cannot be combined with default "
+                        "ns3::UbRoutingProcess::MultipathSelector \""
+                     << MultipathSelectorToString(selector)
+                     << "\". Replace one line with either:\n"
+                     << "  default " << typeName << "::RoutingType \""
+                     << RoutingTypeToString(compatibleRoutingType) << "\"\n"
+                     << "  default ns3::UbRoutingProcess::MultipathSelector \"HASH64\"");
+    }
+}
 
 std::string
 DisplayFilename(const std::string& filename)
@@ -444,28 +563,237 @@ RewriteDefaultAttributeLine(std::string& line, const NetworkAttributeAlias& alia
 }
 
 std::string
-CreateConfigStoreInput(const std::string& filename, uint32_t& rewrittenAliasLines)
+CreateConfigStoreInput(const std::string& filename, uint32_t& rewrittenLines)
 {
     std::ifstream input(filename.c_str());
     NS_ASSERT_MSG(input.good(), "Can not open File: " << filename);
 
-    rewrittenAliasLines = 0;
-    std::ostringstream rewritten;
+    rewrittenLines = 0;
+    std::vector<std::string> lines;
     std::string line;
     while (std::getline(input, line))
     {
+        lines.push_back(line);
+    }
+
+    struct LegacyValue
+    {
+        std::string value;
+        uint32_t lineNumber;
+        std::vector<uint32_t> sourceLines;
+    };
+    struct RoutingState
+    {
+        std::optional<LegacyValue> packetSpray;
+        std::optional<LegacyValue> shortestPaths;
+        std::optional<uint32_t> canonicalLine;
+    };
+
+    std::array<RoutingState, kLegacyRoutingAttributes.size()> routingStates;
+    std::optional<LegacyValue> legacySelector;
+    std::optional<uint32_t> canonicalSelectorLine;
+    auto recordLegacyValue = [](std::optional<LegacyValue>& target,
+                                const std::string& value,
+                                uint32_t lineNumber) {
+        if (!target.has_value())
+        {
+            target = LegacyValue{value, lineNumber, {lineNumber}};
+            return;
+        }
+        target->value = value;
+        target->lineNumber = lineNumber;
+        target->sourceLines.push_back(lineNumber);
+    };
+
+    for (std::size_t index = 0; index < lines.size(); ++index)
+    {
+        const auto attribute = ParseDefaultAttribute(lines[index]);
+        if (!attribute.has_value())
+        {
+            continue;
+        }
+        const uint32_t lineNumber = static_cast<uint32_t>(index + 1);
+        for (std::size_t owner = 0; owner < kLegacyRoutingAttributes.size(); ++owner)
+        {
+            const auto& legacy = kLegacyRoutingAttributes[owner];
+            if (attribute->name == legacy.packetSpray)
+            {
+                recordLegacyValue(routingStates[owner].packetSpray,
+                                  attribute->value,
+                                  lineNumber);
+            }
+            else if (attribute->name == legacy.shortestPaths)
+            {
+                recordLegacyValue(routingStates[owner].shortestPaths,
+                                  attribute->value,
+                                  lineNumber);
+            }
+            else if (attribute->name == std::string(legacy.typeName) + "::RoutingType")
+            {
+                routingStates[owner].canonicalLine = lineNumber;
+            }
+        }
+        if (attribute->name == "ns3::UbRoutingProcess::RoutingAlgorithm")
+        {
+            recordLegacyValue(legacySelector, attribute->value, lineNumber);
+        }
+        else if (attribute->name == "ns3::UbRoutingProcess::MultipathSelector")
+        {
+            canonicalSelectorLine = lineNumber;
+        }
+    }
+
+    std::map<uint32_t, std::string> replacements;
+    std::set<uint32_t> removedLines;
+    std::vector<std::string> warningEntries;
+    for (std::size_t owner = 0; owner < kLegacyRoutingAttributes.size(); ++owner)
+    {
+        const auto& legacy = kLegacyRoutingAttributes[owner];
+        const auto& state = routingStates[owner];
+        if (!state.packetSpray.has_value() && !state.shortestPaths.has_value())
+        {
+            continue;
+        }
+        NS_ABORT_MSG_IF(state.canonicalLine.has_value(),
+                        "Conflicting routing configuration in "
+                            << filename << ": legacy " << legacy.packetSpray << "/"
+                            << legacy.shortestPaths << " cannot be combined with "
+                            << legacy.typeName << "::RoutingType at line "
+                            << *state.canonicalLine << ". Remove the legacy lines.");
+
+        const bool packetSpray =
+            state.packetSpray.has_value()
+                ? ParseLegacyRoutingBool(state.packetSpray->value,
+                                         filename,
+                                         state.packetSpray->lineNumber)
+                : false;
+        const bool shortestPaths =
+            state.shortestPaths.has_value()
+                ? ParseLegacyRoutingBool(state.shortestPaths->value,
+                                         filename,
+                                         state.shortestPaths->lineNumber)
+                : true;
+        const RoutingType routingType = MakeRoutingType(packetSpray, shortestPaths);
+        const std::string replacement = std::string("default ") + legacy.typeName +
+                                        "::RoutingType \"" + RoutingTypeToString(routingType) + "\"";
+
+        std::vector<uint32_t> sourceLines;
+        if (state.packetSpray.has_value())
+        {
+            sourceLines.insert(sourceLines.end(),
+                               state.packetSpray->sourceLines.begin(),
+                               state.packetSpray->sourceLines.end());
+            removedLines.insert(state.packetSpray->sourceLines.begin(),
+                                state.packetSpray->sourceLines.end());
+        }
+        if (state.shortestPaths.has_value())
+        {
+            sourceLines.insert(sourceLines.end(),
+                               state.shortestPaths->sourceLines.begin(),
+                               state.shortestPaths->sourceLines.end());
+            removedLines.insert(state.shortestPaths->sourceLines.begin(),
+                                state.shortestPaths->sourceLines.end());
+        }
+        std::sort(sourceLines.begin(), sourceLines.end());
+        replacements[sourceLines.front()] = replacement;
+
+        std::ostringstream entry;
+        entry << filename << ":";
+        for (std::size_t index = 0; index < sourceLines.size(); ++index)
+        {
+            if (index > 0)
+            {
+                entry << ",";
+            }
+            entry << sourceLines[index];
+        }
+        entry << " -> " << replacement;
+        warningEntries.push_back(entry.str());
+    }
+
+    if (legacySelector.has_value())
+    {
+        NS_ABORT_MSG_IF(canonicalSelectorLine.has_value(),
+                        "Conflicting routing configuration in "
+                            << filename
+                            << ": legacy ns3::UbRoutingProcess::RoutingAlgorithm at line "
+                            << legacySelector->lineNumber
+                            << " cannot be combined with "
+                               "ns3::UbRoutingProcess::MultipathSelector at line "
+                            << *canonicalSelectorLine << ". Remove the legacy line.");
+        std::string selector;
+        if (legacySelector->value == "HASH")
+        {
+            selector = "HASH64";
+        }
+        else if (legacySelector->value == "ADAPTIVE")
+        {
+            selector = "ADAPTIVE";
+        }
+        else
+        {
+            NS_FATAL_ERROR("Unsupported legacy routing algorithm at "
+                           << filename << ":" << legacySelector->lineNumber << ": "
+                           << legacySelector->value << ". Use MultipathSelector instead.");
+        }
+        const std::string replacement =
+            "default ns3::UbRoutingProcess::MultipathSelector \"" + selector + "\"";
+        replacements[legacySelector->sourceLines.front()] = replacement;
+        removedLines.insert(legacySelector->sourceLines.begin(),
+                            legacySelector->sourceLines.end());
+        std::ostringstream entry;
+        entry << filename << ":";
+        for (std::size_t index = 0; index < legacySelector->sourceLines.size(); ++index)
+        {
+            if (index > 0)
+            {
+                entry << ",";
+            }
+            entry << legacySelector->sourceLines[index];
+        }
+        entry << " -> " << replacement;
+        warningEntries.push_back(entry.str());
+    }
+
+    std::ostringstream rewritten;
+    for (std::size_t index = 0; index < lines.size(); ++index)
+    {
+        const uint32_t lineNumber = static_cast<uint32_t>(index + 1);
+        auto replacement = replacements.find(lineNumber);
+        if (replacement != replacements.end())
+        {
+            rewritten << replacement->second << '\n';
+            ++rewrittenLines;
+            continue;
+        }
+        if (removedLines.find(lineNumber) != removedLines.end())
+        {
+            ++rewrittenLines;
+            continue;
+        }
+        line = lines[index];
         for (const auto& alias : kNetworkAttributeAliases)
         {
             if (RewriteDefaultAttributeLine(line, alias))
             {
-                ++rewrittenAliasLines;
+                ++rewrittenLines;
                 break;
             }
         }
         rewritten << line << '\n';
     }
 
-    if (rewrittenAliasLines == 0)
+    if (!warningEntries.empty())
+    {
+        std::cerr << "WARNING: Legacy routing attributes are deprecated and may stop working in a "
+                     "future release. Replace them with:\n";
+        for (const auto& entry : warningEntries)
+        {
+            std::cerr << "  " << entry << '\n';
+        }
+    }
+
+    if (rewrittenLines == 0)
     {
         return filename;
     }
@@ -2538,18 +2866,19 @@ void UbUtils::SetComponentsAttribute(const string &filename)
         NS_ASSERT_MSG(0, "Can not open File: " << filename);
     }
     ValidateLegacyNetworkAttributeKeys(filename);
-    uint32_t rewrittenAliasLines = 0;
-    const std::string configStoreFilename = CreateConfigStoreInput(filename, rewrittenAliasLines);
-    if (rewrittenAliasLines > 0)
+    uint32_t rewrittenLines = 0;
+    const std::string configStoreFilename = CreateConfigStoreInput(filename, rewrittenLines);
+    if (rewrittenLines > 0)
     {
-        PrintTimestamp("[setup] Rewrite legacy network attribute aliases: " +
-                       std::to_string(rewrittenAliasLines));
+        PrintTimestamp("[setup] Adapt legacy network attributes: " +
+                       std::to_string(rewrittenLines) + " line(s)");
     }
     Config::SetDefault("ns3::ConfigStore::Filename", StringValue(configStoreFilename));
     Config::SetDefault("ns3::ConfigStore::FileFormat", StringValue("RawText"));
     Config::SetDefault("ns3::ConfigStore::Mode", StringValue("Load"));
     ConfigStore config;
     config.ConfigureDefaults();
+    ValidateConfiguredRoutingDefaults(filename);
     if (configStoreFilename != filename)
     {
         Config::SetDefault("ns3::ConfigStore::Filename", StringValue(filename));
