@@ -31,6 +31,7 @@ enum class UbLifecycleResourceKind : uint8_t
     CTP_SERVICE = 8,
     LDST_INSTANCE = 9,
     LDST_SEGMENT = 10,
+    DATALINK_PORT_VL = 11,
 };
 
 enum class UbLifecycleLeaseKind : uint8_t
