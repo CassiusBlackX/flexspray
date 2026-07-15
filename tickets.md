@@ -342,11 +342,30 @@ Closeout:
 
 **Blocked by:** T01 Establish a single-TP packet lifecycle tracer bullet.
 
-- [ ] Route lookup performs no policy selection and returns a bounded read-only candidate view.
-- [ ] Hash, spray, shortest/non-shortest, adaptive selection, ingress filtering, and tie-break results match current behavior.
-- [ ] The forwarding hot path does not allocate temporary route or best-port containers per packet.
-- [ ] Route failure still produces exactly one packet terminal outcome.
-- [ ] Focused routing characterization tests and targeted route-failure/medium-topology scenarios preserve selection and trace behavior; allocation count and forwarding time are reported.
+- [x] Route lookup performs no policy selection and returns a bounded read-only candidate view.
+- [x] Hash, shortest/non-shortest, adaptive selection, ingress filtering, and tie-break results match
+  current behavior; packet spray uses the user-approved strict RR correction.
+- [x] The forwarding hot path does not allocate temporary route or best-port containers per packet.
+- [x] Route failure still produces exactly one packet terminal outcome.
+- [x] Focused routing characterization tests and targeted route-failure/medium-topology scenarios preserve selection and trace behavior; allocation count and forwarding time are reported.
+
+Closeout:
+
+- `UbRoutingTable` owns the copied exact/range maps, port-set interning, overlap boundaries, and
+  copy-out APIs. Hot lookup returns bounded read-only spans and performs no policy selection.
+- `UbRoutingPolicy` owns the copied per-flow HASH and ADAPTIVE implementations. Candidate traversal
+  preserves shortest-before-non-shortest order, ingress filtering, VOQ+egress load score, and the
+  first-minimum tie-break without temporary candidate or best-port vectors.
+- Packet spray intentionally uses strict RR as approved during T14: one flow-base hash selects the
+  starting offset and the monotonically increasing `sport` salt advances the RR step. The former
+  second per-packet Hash64 call was removed; other routing semantics are unchanged.
+- `UbRoutingProcess` remains the TypeId/configuration/caller facade. Existing switch, packet builder,
+  route loader, and TP connection callers retain their API and route-failure terminal seams.
+- Target build and the five-case routing, lifecycle, and switch-VOQ suites passed. The measured
+  100,000 hot lookups took about 1 ms of suite time with zero route-selection container allocations.
+- The two-task multipath scenario completed 2/2 tasks in 1.315601 s of simulation run time and
+  1.786822 s case-reported total time. T14 is not a frozen-byte milestone; the strict-RR output
+  change is explicit and user-approved.
 
 ## Task 15: Split Datalink flow control without changing control frames
 
