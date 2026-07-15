@@ -469,12 +469,26 @@ Closeout:
 
 **Blocked by:** T17 Route lifecycle accounting through MTP, MPI, and hybrid owners.
 
-- [ ] Correctness ledger, trace sources, and deep verification remain independent execution planes.
-- [ ] Summary reads existing counters without creating duplicate event accounting.
-- [ ] Event/detail records use fixed fields, generation-aware identities, owner sequence, stable numeric enums, and one schema metadata source.
-- [ ] Detail filtering retains complete selected resource generations or packet identities and never randomly drops events from a retained chain.
-- [ ] Missing metadata, unknown version/enum, and inconsistent MPI-rank mappings are explicit parser errors.
-- [ ] Focused OFF/SUMMARY/EVENT/DETAIL runs preserve task completion, throughput, and deterministic protocol outcomes while validating emitted schemas.
+- [x] Correctness ledger, trace sources, and deep verification remain independent execution planes.
+- [x] Summary reads existing counters without creating duplicate event accounting.
+- [x] Event/detail records use fixed fields, generation-aware identities, owner sequence, stable numeric enums, and one schema metadata source.
+- [x] Detail filtering retains complete selected resource generations or packet identities and never randomly drops events from a retained chain.
+- [x] Missing metadata, unknown version/enum, and inconsistent MPI-rank mappings are explicit parser errors.
+- [x] Focused OFF/SUMMARY/EVENT/DETAIL runs preserve task completion, throughput, and deterministic protocol outcomes while validating emitted schemas.
+
+- `UbLifecycleCoordinator` now publishes post-mutation typed lifecycle records through one ns-3
+  trace source. SUMMARY reads existing snapshots at teardown; EVENT records resource/work changes;
+  DETAIL adds complete deterministic resource-generation, lease and packet-attempt chains.
+- `LifecycleTraceSchema.json` and rank-scoped variants serialize the C++ numeric registries used by
+  fixed-column records. The production lifecycle parser has no duplicate enum table and rejects
+  missing metadata, unsupported schemas/enums, non-monotonic owner sequence and rank-registry drift.
+- The trace sink directly reuses the pre-refactor `UbUtils` path, file registry, 16 KiB pending
+  buffer and teardown flush/close path. Existing trace formats, protocol builders/parsers, state
+  machines, ACK/RTO, queue/scheduler, congestion and cleanup algorithms are unchanged.
+- Targeted build, lifecycle trace tests, the existing lifecycle suite, parser tests and OpenUSim
+  helper/reference tests passed. Serial OFF/SUMMARY/EVENT/DETAIL simple-case runs all completed; task
+  statistics and throughput artifacts were byte-identical across levels. T18 is not a frozen-byte
+  milestone, so no frozen baseline comparison was run.
 
 ## Task 19: Bound trace writer memory, file descriptors, and write overhead
 
