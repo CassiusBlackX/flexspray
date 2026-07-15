@@ -236,7 +236,7 @@ UbCtpTransactionContext::CanAdmit(uint32_t sequence) const
     {
         return false;
     }
-    return true;
+    return m_sendNext - m_completeUna < m_ackWindow.GetWindowSize();
 }
 
 bool
@@ -767,12 +767,22 @@ UbCtpTransportService::GetOrCreateEntityState(const UbCtpEntityKey& key)
     {
         it->second.Tx().routing = m_defaultRoutingPolicy;
     }
-    if (it->second.Tx().context == nullptr)
-    {
-        it->second.Tx().context =
-            Create<UbCtpTransactionContext>(key, UB_JETTY_TASSN_OOO_THRESHOLD);
-    }
     return it->second;
+}
+
+Ptr<UbTransaction>
+UbCtpTransportService::GetTransactionOwner() const
+{
+    Ptr<UbController> controller = m_node == nullptr ? nullptr : m_node->GetObject<UbController>();
+    Ptr<UbTransaction> transaction = controller == nullptr ? nullptr : controller->GetUbTransaction();
+    NS_ABORT_MSG_IF(transaction == nullptr, "CTP transaction state requires the Transaction owner");
+    return transaction;
+}
+
+UbCtpTransactionState&
+UbCtpTransportService::GetTransactionState(const UbCtpEntityKey& key) const
+{
+    return GetTransactionOwner()->GetOrCreateCtpTransactionState(key);
 }
 
 void
@@ -794,14 +804,20 @@ UbCtpTransportService::GetEntityStateCount() const
 Ptr<UbCtpTransactionContext>
 UbCtpTransportService::GetOrCreateTransactionContext(const UbCtpEntityKey& key)
 {
-    return GetOrCreateEntityState(key).Tx().context;
+    GetOrCreateEntityState(key);
+    return GetTransactionState(key).context;
 }
 
 bool
 UbCtpTransportService::HasTransactionContextForTesting(const UbCtpEntityKey& key) const
 {
-    auto it = m_entityStates.find(key);
-    return it != m_entityStates.end() && it->second.Tx().context != nullptr;
+    if (m_node == nullptr)
+    {
+        return false;
+    }
+    Ptr<UbController> controller = m_node->GetObject<UbController>();
+    Ptr<UbTransaction> transaction = controller == nullptr ? nullptr : controller->GetUbTransaction();
+    return transaction != nullptr && transaction->FindCtpTransactionState(key) != nullptr;
 }
 
 Ptr<UbCompactTransportChannel>
@@ -921,10 +937,15 @@ bool
 UbCtpTransportService::SendSegment(Ptr<UbWqeSegment> segment, const UbCtpEntityKey& key)
 {
     NS_ABORT_MSG_IF(segment == nullptr, "CTP send requires WQE segment");
+    const UbCtpTransportConstraints constraints = GetTransactionConstraints();
+    if (segment->GetBytesLeft() > constraints.maxSegmentBytes)
+    {
+        return false;
+    }
 
     UbCtpEntityState& state = GetOrCreateEntityState(key);
-    Ptr<UbCtpTransactionContext> context = state.Tx().context;
-    while (!segment->IsSentCompleted())
+    Ptr<UbCtpTransactionContext> context = GetTransactionState(key).context;
+    if (!segment->IsSentCompleted())
     {
         const uint32_t progressBytes = static_cast<uint32_t>(segment->GetBytesLeft());
         if (progressBytes == 0)
@@ -944,14 +965,19 @@ UbCtpTransportService::SendSegment(Ptr<UbWqeSegment> segment, const UbCtpEntityK
             return false;
         }
     }
-    return true;
+    return segment->IsSentCompleted();
 }
 
 void
 UbCtpTransportService::PrepareJetty(Ptr<UbJetty> jetty)
 {
     NS_ABORT_MSG_IF(jetty == nullptr, "CTP send requires jetty");
-    jetty->SetTaSegmentBytes(UB_MTU_BYTE);
+}
+
+UbCtpTransportConstraints
+UbCtpTransportService::GetTransactionConstraints() const
+{
+    return {};
 }
 
 void
@@ -1051,10 +1077,12 @@ UbCtpTransportService::SendAdmittedFragment(Ptr<UbWqeSegment> segment,
                                             uint32_t taSsn,
                                             uint32_t progressBytes)
 {
-    if (state.Tx().outstandingSegments.find(taSsn) == state.Tx().outstandingSegments.end())
+    UbCtpTransactionState& transactionState = GetTransactionState(state.GetKey());
+    if (transactionState.outstandingSegments.find(taSsn) ==
+        transactionState.outstandingSegments.end())
     {
-        state.Tx().outstandingSegments[taSsn] = segment;
-        ++state.Tx().segmentOutstandingPackets[segment];
+        transactionState.outstandingSegments[taSsn] = segment;
+        ++transactionState.segmentOutstandingPackets[segment];
     }
 
     const uint16_t lbSalt = NextLoadBalanceSalt(state, packetKey);
@@ -1069,7 +1097,7 @@ UbCtpTransportService::SendAdmittedFragment(Ptr<UbWqeSegment> segment,
                            progressBytes,
                            segment->GetType());
     segment->UpdateSentBytes(progressBytes);
-    TraceWindowEvent(packetKey, "data-enqueued", taSsn, *state.Tx().context, outPort);
+    TraceWindowEvent(packetKey, "data-enqueued", taSsn, *transactionState.context, outPort);
 
     Ptr<UbPort> port = DynamicCast<UbPort>(m_node->GetDevice(outPort));
     NS_ABORT_MSG_IF(port == nullptr, "CTP send selected a non-UB source port");
@@ -1082,14 +1110,15 @@ UbCtpTransportService::AdmitSegmentForTest(Ptr<UbWqeSegment> segment,
                                            const UbCtpEntityKey& key,
                                            uint32_t taSsn)
 {
-    UbCtpEntityState& state = GetOrCreateEntityState(key);
-    Ptr<UbCtpTransactionContext> context = state.Tx().context;
+    GetOrCreateEntityState(key);
+    UbCtpTransactionState& transactionState = GetTransactionState(key);
+    Ptr<UbCtpTransactionContext> context = transactionState.context;
     if (!context->TryAdmit(taSsn))
     {
         return false;
     }
-    state.Tx().outstandingSegments[taSsn] = segment;
-    ++state.Tx().segmentOutstandingPackets[segment];
+    transactionState.outstandingSegments[taSsn] = segment;
+    ++transactionState.segmentOutstandingPackets[segment];
     return true;
 }
 
@@ -1112,7 +1141,8 @@ UbCtpTransportService::DrainJettys(UbCtpEntityState& state)
     }
 
     auto& jettys = jettysIt->second;
-    auto& pendingSegments = state.Tx().pendingSegments;
+    UbCtpTransactionState& transactionState = GetTransactionState(key);
+    auto& pendingSegments = transactionState.pendingSegments;
     uint32_t& rrIndex = m_keyJettyRrIndex[key];
     while (!jettys.empty())
     {
@@ -1127,7 +1157,12 @@ UbCtpTransportService::DrainJettys(UbCtpEntityState& state)
                 {
                     continue;
                 }
-                segment = jettys[idx]->GetNextWqeSegment();
+                Ptr<UbController> controller = m_node->GetObject<UbController>();
+                NS_ABORT_MSG_IF(controller == nullptr || controller->GetUbTransaction() == nullptr,
+                                "CTP segmentation requires the Transaction owner");
+                segment = controller->GetUbTransaction()->PrepareNextCtpWqeSegment(
+                    jettys[idx],
+                    GetTransactionConstraints().maxSegmentBytes);
                 if (segment != nullptr)
                 {
                     rrIndex = (idx + 1) % count;
@@ -1150,7 +1185,7 @@ UbCtpTransportService::DrainJettys(UbCtpEntityState& state)
         }
 
         const UbCtpEntityKey packetKey = MakeTxKeyForSegment(key, segment);
-        Ptr<UbCtpTransactionContext> context = state.Tx().context;
+        Ptr<UbCtpTransactionContext> context = transactionState.context;
         const uint32_t taSsn = segment->GetTaSsn();
         if (!context->TryAdmit(taSsn))
         {
@@ -1158,6 +1193,7 @@ UbCtpTransportService::DrainJettys(UbCtpEntityState& state)
             return;
         }
         TraceWindowEvent(packetKey, "admit", taSsn, *context);
+        m_node->GetObject<UbController>()->GetUbTransaction()->CommitCtpWqeSegment(segment);
         const uint32_t progressBytes = static_cast<uint32_t>(segment->GetBytesLeft());
         SendAdmittedFragment(segment, state, packetKey, taSsn, progressBytes);
         if (segment->IsSentCompleted())
@@ -1402,7 +1438,8 @@ UbCtpTransportService::TrackInboundTaPacket(UbCtpEntityState& state,
                                             uint32_t flowId,
                                             uint32_t flowSize)
 {
-    auto& unit = state.Rx().inboundTaUnits[taHeader.GetIniTaSsn()];
+    UbCtpTransactionState& transactionState = GetTransactionState(state.GetKey());
+    auto& unit = transactionState.inboundTaUnits[taHeader.GetIniTaSsn()];
     const bool isReadRequest = taOpcode == TaOpcode::TA_OPCODE_READ;
     const uint32_t logicalBytes =
         static_cast<uint32_t>(64u << static_cast<uint32_t>(maHeader.GetLength()));
@@ -1442,7 +1479,7 @@ UbCtpTransportService::TrackInboundTaPacket(UbCtpEntityState& state,
     }
 
     Ptr<UbWqeSegment> completed = unit.segment;
-    state.Rx().inboundTaUnits.erase(taHeader.GetIniTaSsn());
+    transactionState.inboundTaUnits.erase(taHeader.GetIniTaSsn());
     return completed;
 }
 
@@ -1457,10 +1494,16 @@ UbCtpTransportService::RegisterQueueForTest(Ptr<UbCompactTransportChannel> queue
 void
 UbCtpTransportService::CompleteFromTaAckForTest(const UbCtpEntityKey& key, uint32_t taSsn)
 {
+    UbCtpTransactionState& state = GetTransactionState(key);
+    const auto outstanding = state.outstandingSegments.find(taSsn);
+    const bool read = outstanding != state.outstandingSegments.end() &&
+                      outstanding->second != nullptr &&
+                      outstanding->second->GetType() == TaOpcode::TA_OPCODE_READ;
     Ptr<UbWqeSegment> response = CreateObject<UbWqeSegment>();
     response->SetSegmentKind(UbTransactionSegmentKind::RESPONSE);
-    response->SetType(TaOpcode::TA_OPCODE_TRANSACTION_ACK);
-    response->SetRequestOpcode(TaOpcode::TA_OPCODE_WRITE);
+    response->SetType(read ? TaOpcode::TA_OPCODE_READ_RESPONSE
+                           : TaOpcode::TA_OPCODE_TRANSACTION_ACK);
+    response->SetRequestOpcode(read ? TaOpcode::TA_OPCODE_READ : TaOpcode::TA_OPCODE_WRITE);
     response->SetRequestTassn(taSsn);
     response->SetTaSsn(static_cast<uint16_t>(taSsn));
     CompleteFromTaAck(key, taSsn, response);
@@ -1589,6 +1632,11 @@ bool
 UbCtpTransportService::SendResponseSegment(Ptr<UbWqeSegment> response, UbCtpEntityState& state)
 {
     NS_ABORT_MSG_IF(response == nullptr, "CTP response send requires WQE segment");
+    if (response->GetType() != TaOpcode::TA_OPCODE_TRANSACTION_ACK &&
+        response->GetBytesLeft() > GetTransactionConstraints().maxSegmentBytes)
+    {
+        return false;
+    }
 
     const UbCtpEntityKey& key = state.GetKey();
     uint32_t taSsn = response->GetRequestTassn();
@@ -1606,7 +1654,7 @@ UbCtpTransportService::SendResponseSegment(Ptr<UbWqeSegment> response, UbCtpEnti
         return true;
     }
 
-    while (!response->IsSentCompleted())
+    if (!response->IsSentCompleted())
     {
         const uint32_t progressBytes = static_cast<uint32_t>(response->GetBytesLeft());
         const uint16_t lbSalt = NextLoadBalanceSalt(state, key);
@@ -1634,8 +1682,8 @@ UbCtpTransportService::CompleteFromTaAck(const UbCtpEntityKey& key,
 {
     if (ShouldDelayTaAck(key, taSsn))
     {
-        UbCtpEntityState& state = GetOrCreateEntityState(key);
-        TraceWindowEvent(key, "taack-delay", taSsn, *state.Tx().context);
+        GetOrCreateEntityState(key);
+        TraceWindowEvent(key, "taack-delay", taSsn, *GetTransactionState(key).context);
         Simulator::Schedule(m_delayTaAckTime,
                             &UbCtpTransportService::CompleteFromTaAckNow,
                             this,
@@ -1653,31 +1701,35 @@ UbCtpTransportService::CompleteFromTaAckNow(const UbCtpEntityKey& key,
                                             Ptr<UbWqeSegment> response)
 {
     UbCtpEntityState* state = &GetOrCreateEntityState(key);
-    taSsn = ResolveWireTaSsn(*state, static_cast<uint16_t>(taSsn));
-    auto outstandingIt = FindOutstandingSegment(*state, taSsn);
+    UbCtpTransactionState* transactionState = &GetTransactionState(key);
+    taSsn = ResolveWireTaSsn(*transactionState, static_cast<uint16_t>(taSsn));
+    auto outstandingIt = FindOutstandingSegment(*transactionState, taSsn);
     const UbCtpEntityKey sourceGroupKey = MakeSourceGroupKeyForRequest(key);
     const bool keyIsSourceGroup = sourceGroupKey == key;
-    if (outstandingIt == state->Tx().outstandingSegments.end() && !keyIsSourceGroup)
+    if (outstandingIt == transactionState->outstandingSegments.end() && !keyIsSourceGroup)
     {
         auto sourceGroupIt = m_entityStates.find(sourceGroupKey);
-        if (sourceGroupIt != m_entityStates.end())
+        UbCtpTransactionState* sourceGroupState =
+            GetTransactionOwner()->FindCtpTransactionState(sourceGroupKey);
+        if (sourceGroupIt != m_entityStates.end() && sourceGroupState != nullptr)
         {
             const uint32_t sourceGroupTaSsn =
-                ResolveWireTaSsn(sourceGroupIt->second, static_cast<uint16_t>(taSsn));
+                ResolveWireTaSsn(*sourceGroupState, static_cast<uint16_t>(taSsn));
             auto sourceGroupOutstandingIt =
-                FindOutstandingSegment(sourceGroupIt->second, sourceGroupTaSsn);
-            if (sourceGroupOutstandingIt != sourceGroupIt->second.Tx().outstandingSegments.end())
+                FindOutstandingSegment(*sourceGroupState, sourceGroupTaSsn);
+            if (sourceGroupOutstandingIt != sourceGroupState->outstandingSegments.end())
             {
                 state = &sourceGroupIt->second;
+                transactionState = sourceGroupState;
                 taSsn = sourceGroupTaSsn;
                 outstandingIt = sourceGroupOutstandingIt;
             }
         }
     }
 
-    Ptr<UbCtpTransactionContext> context = state->Tx().context;
+    Ptr<UbCtpTransactionContext> context = transactionState->context;
     const uint32_t oldCompleteUna = context->GetCompleteUna();
-    if (outstandingIt == state->Tx().outstandingSegments.end())
+    if (outstandingIt == transactionState->outstandingSegments.end())
     {
         context->MarkTaAck(taSsn);
         return;
@@ -1690,9 +1742,9 @@ UbCtpTransportService::CompleteFromTaAckNow(const UbCtpEntityKey& key,
                          taSsn,
                          completedSegment->GetSize(),
                          completedSegment->GetType());
-    state->Tx().outstandingSegments.erase(outstandingIt);
-    auto segmentCountIt = state->Tx().segmentOutstandingPackets.find(completedSegment);
-    if (segmentCountIt != state->Tx().segmentOutstandingPackets.end())
+    transactionState->outstandingSegments.erase(outstandingIt);
+    auto segmentCountIt = transactionState->segmentOutstandingPackets.find(completedSegment);
+    if (segmentCountIt != transactionState->segmentOutstandingPackets.end())
     {
         if (segmentCountIt->second > 1)
         {
@@ -1700,21 +1752,29 @@ UbCtpTransportService::CompleteFromTaAckNow(const UbCtpEntityKey& key,
         }
         else
         {
-            state->Tx().segmentOutstandingPackets.erase(segmentCountIt);
+            transactionState->segmentOutstandingPackets.erase(segmentCountIt);
         }
     }
     Ptr<UbController> controller = m_node == nullptr ? nullptr : m_node->GetObject<UbController>();
     Ptr<UbTransaction> transaction = controller == nullptr ? nullptr : controller->GetUbTransaction();
     const bool segmentComplete = completedSegment->IsSentCompleted() &&
-                                 state->Tx().segmentOutstandingPackets.find(completedSegment) ==
-                                     state->Tx().segmentOutstandingPackets.end();
+                                 transactionState->segmentOutstandingPackets.find(
+                                     completedSegment) ==
+                                     transactionState->segmentOutstandingPackets.end();
     if (transaction != nullptr && segmentComplete)
     {
         Ptr<UbWqeSegment> completion = response == nullptr ? completedSegment : response;
+        completion->SetTaskId(completedSegment->GetTaskId());
+        completion->SetWqeSize(completedSegment->GetWqeSize());
+        completion->SetJettyNum(completedSegment->GetJettyNum());
         completion->SetOriginJettyNum(completedSegment->GetOriginJettyNum());
         completion->SetTaSsn(completedSegment->GetTaSsn());
         completion->SetRequestTassn(completedSegment->GetTaSsn());
         completion->SetRequestOpcode(completedSegment->GetType());
+        if (completedSegment->HasTransactionCorrelation())
+        {
+            completion->SetTransactionCorrelation(completedSegment->GetTransactionCorrelation());
+        }
         transaction->ProcessInboundTaResponse(completion);
     }
     if (context->GetCompleteUna() != oldCompleteUna)
@@ -1724,17 +1784,17 @@ UbCtpTransportService::CompleteFromTaAckNow(const UbCtpEntityKey& key,
 }
 
 std::map<uint32_t, Ptr<UbWqeSegment>>::iterator
-UbCtpTransportService::FindOutstandingSegment(UbCtpEntityState& state, uint32_t taSsn)
+UbCtpTransportService::FindOutstandingSegment(UbCtpTransactionState& state, uint32_t taSsn)
 {
-    return state.Tx().outstandingSegments.find(taSsn);
+    return state.outstandingSegments.find(taSsn);
 }
 
 uint32_t
-UbCtpTransportService::ResolveWireTaSsn(UbCtpEntityState& state, uint16_t wireTaSsn) const
+UbCtpTransportService::ResolveWireTaSsn(UbCtpTransactionState& state, uint16_t wireTaSsn) const
 {
-    const auto& outstandingSegments = state.Tx().outstandingSegments;
-    const uint32_t completeUna = state.Tx().context->GetCompleteUna();
-    const uint32_t sendNext = state.Tx().context->GetSendNext();
+    const auto& outstandingSegments = state.outstandingSegments;
+    const uint32_t completeUna = state.context->GetCompleteUna();
+    const uint32_t sendNext = state.context->GetSendNext();
     const uint32_t base = completeUna & ~0xffffu;
     std::vector<uint32_t> candidates;
     candidates.push_back(base | wireTaSsn);

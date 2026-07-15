@@ -9,6 +9,7 @@
 #include <vector>
 #include <unordered_map>
 #include "ns3/ub-datatype.h"
+#include "ns3/ub-ctp.h"
 #include "ns3/ub-network-address.h"
 #include "ns3/random-variable-stream.h"
 #include "ns3/callback.h"
@@ -120,6 +121,12 @@ namespace ns3 {
 
         // tp调用
         void ApplyScheduleWqeSegment(Ptr<UbTransportChannel> tp);
+        Ptr<UbWqeSegment> PrepareNextCtpWqeSegment(Ptr<UbJetty> jetty,
+                                                   uint32_t maxSegmentBytes);
+        void CommitCtpWqeSegment(Ptr<UbWqeSegment> segment);
+        UbCtpTransactionState& GetOrCreateCtpTransactionState(const UbCtpEntityKey& key);
+        UbCtpTransactionState* FindCtpTransactionState(const UbCtpEntityKey& key);
+        const UbCtpTransactionState* FindCtpTransactionState(const UbCtpEntityKey& key) const;
 
         bool ProcessWqeSegmentComplete(Ptr<UbWqeSegment> wqeSegment);
         void HandleInboundTaUnit(uint32_t localTpn, Ptr<UbWqeSegment> segment);
@@ -158,6 +165,10 @@ namespace ns3 {
         bool TryAdmitRtpWqe(uint32_t jettyNum,
                             Ptr<UbWqe> wqe,
                             const UbLifecycleResourceIdentity& wqeIdentity);
+        bool TryAdmitCtpWqe(uint32_t jettyNum,
+                            Ptr<UbWqe> wqe,
+                            const UbLifecycleResourceIdentity& wqeIdentity,
+                            const UbCtpEntityKey& key);
         bool HasWqeOperation(uint32_t jettyNum, uint32_t wqeId) const;
         bool HasLifecycleOperationForJetty(uint32_t jettyNum) const;
         uint32_t GetActiveOperationCount() const;
@@ -378,6 +389,8 @@ namespace ns3 {
             bool rtpScheduleChainActive{false};
             bool readyQueued{false};
             bool terminalPending{false};
+            bool ctp{false};
+            UbCtpEntityKey ctpKey;
             struct SegmentRecord
             {
                 Ptr<UbWqeSegment> segment;
@@ -390,6 +403,7 @@ namespace ns3 {
         };
 
         std::map<std::pair<uint32_t, uint32_t>, OperationRecord> m_operations;
+        std::map<UbCtpEntityKey, UbCtpTransactionState> m_ctpTransactionStates;
         std::map<AdmissionDomainKey, AdmissionDomainState> m_admissionDomains;
         std::vector<UbLifecycleResourceIdentity> m_suppressedTpgOwnerProgress;
     };

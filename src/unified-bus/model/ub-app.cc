@@ -241,8 +241,6 @@ UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
     wqe->SetPriority(task.priority);
     controller->GetUbTransaction()->SetTransactionServiceMode(jettyNum, TransactionServiceMode::ROI);
     jetty->SetNodeId(GetNode()->GetId());
-    controller->GetUbTransaction()->AddWqe(jettyNum, wqe);
-    jetty->PushWqe(wqe);
 
     UbCtpEntityKey key{.srcNodeId = task.sourceNode,
                        .srcEntityId = srcEntityId,
@@ -251,6 +249,9 @@ UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
                        .vl = vl};
     const UbCtpEntityKey jettyKey =
         m_ctpUseUnboundSourceJetty ? service->MakeSourceGroupKeyForRequest(key) : key;
+    const UbWqeSubmissionResult submission = ubFunc->SubmitCtpWqe(wqe, jettyNum, jettyKey);
+    NS_ABORT_MSG_IF(submission.status != UbWqeSubmissionStatus::ACCEPTED,
+                    "Validated CTP WQE submission failed before transport start");
     service->StartJetty(jetty, jettyKey);
 }
 

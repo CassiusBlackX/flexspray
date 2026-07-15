@@ -103,6 +103,9 @@ namespace ns3 {
          */
         void PushWqeToJetty(Ptr<UbWqe> wqe, uint32_t jettyNum);
         UbWqeSubmissionResult SubmitWqe(Ptr<UbWqe> wqe, uint32_t jettyNum);
+        UbWqeSubmissionResult SubmitCtpWqe(Ptr<UbWqe> wqe,
+                                           uint32_t jettyNum,
+                                           const UbCtpEntityKey& key);
         void ApplyWqeOutcomeFromTransaction(uint32_t jettyNum,
                                             uint32_t wqeId,
                                             const UbLifecycleResourceIdentity& wqeIdentity,
@@ -234,7 +237,10 @@ namespace ns3 {
         static TypeId GetTypeId(void);
         UbJetty();
         Ptr<UbWqeSegment> GetNextWqeSegment();
+        Ptr<UbWqeSegment> GetNextWqeSegment(uint32_t maxSegmentBytes);
         Ptr<UbWqeSegment> PrepareNextWqeSegment(Ptr<UbWqe> expectedWqe = nullptr);
+        Ptr<UbWqeSegment> PrepareNextWqeSegment(Ptr<UbWqe> expectedWqe,
+                                                uint32_t maxSegmentBytes);
         bool CanCommitWqeSegmentAdmission(Ptr<UbWqeSegment> segment,
                                           Ptr<UbWqe> expectedWqe) const;
         void CommitWqeSegmentAdmission(Ptr<UbWqeSegment> segment);
@@ -254,6 +260,7 @@ namespace ns3 {
         }
 
         void PushWqe(Ptr<UbWqe> ubQqe);
+        void PushWqe(Ptr<UbWqe> ubQqe, uint32_t maxSegmentBytes);
 
         uint32_t GetJettyNum()
         {

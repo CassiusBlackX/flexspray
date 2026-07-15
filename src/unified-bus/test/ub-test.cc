@@ -112,41 +112,6 @@ CreateCtpTaAckResponseSegment(uint32_t requestTaSsn)
     return segment;
 }
 
-struct DecodedCtpCompactDataPacket
-{
-    uint16_t taSsn{0};
-    uint32_t payloadBytes{0};
-    uint32_t logicalBytes{0};
-};
-
-DecodedCtpCompactDataPacket
-DecodeCtpCompactDataPacket(Ptr<Packet> packet)
-{
-    Ptr<Packet> copy = packet->Copy();
-    UbDatalinkPacketHeader datalinkHeader;
-    UbCna16NetworkHeader cnaHeader;
-    UbCtpHeader ctpHeader;
-    UbCompactTransactionHeader compactTah;
-
-    copy->RemoveHeader(datalinkHeader);
-    copy->RemoveHeader(cnaHeader);
-    copy->RemoveHeader(ctpHeader);
-    if (ctpHeader.GetNlp() == UB_CTPH_NLP_UPI16_EID40_TAH)
-    {
-        UbCompactUpiHeader upiHeader;
-        UbCompactEidHeader eidHeader;
-        copy->RemoveHeader(upiHeader);
-        copy->RemoveHeader(eidHeader);
-    }
-    copy->RemoveHeader(compactTah);
-    UbCompactMAExtTah maHeader;
-    copy->RemoveHeader(maHeader);
-
-    return {.taSsn = compactTah.GetIniTaSsn(),
-            .payloadBytes = copy->GetSize(),
-            .logicalBytes = static_cast<uint32_t>(64u << maHeader.GetLength())};
-}
-
 Ptr<Packet>
 BuildCtpCnpPacket(const UbCtpEntityKey& key)
 {
@@ -21215,6 +21180,39 @@ class UbCtpTransactionContextHolTest : public TestCase
     }
 };
 
+class UbCtpReportsConstraintsWithoutMutatingJettyTest : public TestCase
+{
+  public:
+    UbCtpReportsConstraintsWithoutMutatingJettyTest()
+        : TestCase("UnifiedBus - CTP reports transaction constraints without mutating Jetty")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<UbCtpTransportService> service =
+            node->GetObject<UbController>()->GetCtpTransportService();
+        Ptr<UbJetty> jetty = CreateObject<UbJetty>();
+        const uint32_t before = jetty->GetTaSegmentBytes();
+
+        service->PrepareJetty(jetty);
+        const UbCtpTransportConstraints constraints = service->GetTransactionConstraints();
+
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSegmentBytes(),
+                              before,
+                              "CTP preparation must not rewrite Function/Jetty segmentation state");
+        NS_TEST_ASSERT_MSG_EQ(constraints.maxSegmentBytes,
+                              UB_MTU_BYTE,
+                              "CTP should report one MTU as its transaction segment limit");
+        NS_TEST_ASSERT_MSG_EQ(constraints.onePacketPerSegment,
+                              true,
+                              "CTP should require one packet per Transaction segment");
+        Simulator::Destroy();
+    }
+};
+
 class UbCtpTransactionContextAckWindowAdmissionTest : public TestCase
 {
   public:
@@ -21301,7 +21299,9 @@ class UbCtpPortHintsDoNotCreateEntityStateTest : public TestCase
   private:
     void DoRun() override
     {
-        Ptr<UbCtpTransportService> service = CreateObject<UbCtpTransportService>();
+        Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<UbCtpTransportService> service =
+            node->GetObject<UbController>()->GetCtpTransportService();
         UbCtpEntityKey key{.srcNodeId = 0,
                            .srcEntityId = 10,
                            .dstNodeId = 1,
@@ -21909,7 +21909,9 @@ class UbCtpCnpDoesNotAckTransactionTest : public TestCase
   private:
     void DoRun() override
     {
-        Ptr<UbCtpTransportService> service = CreateObject<UbCtpTransportService>();
+        Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<UbCtpTransportService> service =
+            node->GetObject<UbController>()->GetCtpTransportService();
         UbCtpEntityKey key{.srcNodeId = 0,
                            .srcEntityId = 10,
                            .dstNodeId = 1,
@@ -21943,7 +21945,9 @@ class UbCtpTaAckCompletionHelperTest : public TestCase
   private:
     void DoRun() override
     {
-        Ptr<UbCtpTransportService> service = CreateObject<UbCtpTransportService>();
+        Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<UbCtpTransportService> service =
+            node->GetObject<UbController>()->GetCtpTransportService();
         UbCtpEntityKey key{.srcNodeId = 0,
                            .srcEntityId = 10,
                            .dstNodeId = 1,
@@ -21984,7 +21988,9 @@ class UbCtpWireAckRequiresExactEntityContextTest : public TestCase
   private:
     void DoRun() override
     {
-        Ptr<UbCtpTransportService> service = CreateObject<UbCtpTransportService>();
+        Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<UbCtpTransportService> service =
+            node->GetObject<UbController>()->GetCtpTransportService();
         UbCtpEntityKey entity5{.srcNodeId = 0,
                                .srcEntityId = 5,
                                .dstNodeId = 1,
@@ -22011,8 +22017,8 @@ class UbCtpWireAckRequiresExactEntityContextTest : public TestCase
             service->BuildResponsePacketForTest(CreateCtpTaAckResponseSegment(0), ackWireKey);
 
         NS_TEST_ASSERT_MSG_EQ(service->HandleReceivedPacket(ackPacket),
-                              false,
-                              "wire TAACK without entity ids must not use node/VL fallback");
+                              true,
+                              "wire TAACK should be recognized even without a matching context");
         NS_TEST_ASSERT_MSG_EQ(entity5Context->GetCompleteUna(),
                               0u,
                               "wire TAACK without entity ids must not complete entity 5");
@@ -22032,7 +22038,9 @@ class UbCtpWireTaAckCompletesReverseEntityZeroContextTest : public TestCase
   private:
     void DoRun() override
     {
-        Ptr<UbCtpTransportService> service = CreateObject<UbCtpTransportService>();
+        Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<UbCtpTransportService> service =
+            node->GetObject<UbController>()->GetCtpTransportService();
         UbCtpEntityKey requestKey{.srcNodeId = 0,
                                   .srcEntityId = 0,
                                   .dstNodeId = 1,
@@ -22073,7 +22081,9 @@ class UbCtpWireTaAckDoesNotCompleteNonzeroEntityWithoutWireEntityTest : public T
   private:
     void DoRun() override
     {
-        Ptr<UbCtpTransportService> service = CreateObject<UbCtpTransportService>();
+        Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<UbCtpTransportService> service =
+            node->GetObject<UbController>()->GetCtpTransportService();
         UbCtpEntityKey entity5{.srcNodeId = 0,
                                .srcEntityId = 5,
                                .dstNodeId = 1,
@@ -22093,8 +22103,8 @@ class UbCtpWireTaAckDoesNotCompleteNonzeroEntityWithoutWireEntityTest : public T
             service->BuildResponsePacketForTest(CreateCtpTaAckResponseSegment(0), responseWireKey);
 
         NS_TEST_ASSERT_MSG_EQ(service->HandleReceivedPacket(ackPacket),
-                              false,
-                              "wire TAACK without entity ids must not complete nonzero entity");
+                              true,
+                              "wire TAACK should be recognized even without a matching context");
         NS_TEST_ASSERT_MSG_EQ(context->GetCompleteUna(),
                               0u,
                               "nonzero entity context should remain incomplete");
@@ -22114,7 +22124,9 @@ class UbCtpWireTaAckUnwrapsLogicalTassnTest : public TestCase
   private:
     void DoRun() override
     {
-        Ptr<UbCtpTransportService> service = CreateObject<UbCtpTransportService>();
+        Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<UbCtpTransportService> service =
+            node->GetObject<UbController>()->GetCtpTransportService();
         UbCtpEntityKey requestKey{.srcNodeId = 0,
                                   .srcEntityId = 0,
                                   .dstNodeId = 1,
@@ -22147,7 +22159,7 @@ class UbCtpSendSegmentFragmentsPayloadTest : public TestCase
 {
   public:
     UbCtpSendSegmentFragmentsPayloadTest()
-        : TestCase("UnifiedBus - CTP SendSegment fragments payload into MTU-sized packets")
+        : TestCase("UnifiedBus - CTP SendSegment rejects an oversized Transaction segment")
     {
     }
 
@@ -22164,7 +22176,6 @@ class UbCtpSendSegmentFragmentsPayloadTest : public TestCase
         service->SetSourcePortHint(key, 0);
 
         constexpr uint32_t payloadBytes = 4u * 1024u * 1024u;
-        constexpr uint32_t expectedPackets = payloadBytes / UB_MTU_BYTE;
         Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(0);
         segment->SetSize(payloadBytes);
         segment->SetPayloadBytes(payloadBytes);
@@ -22172,19 +22183,19 @@ class UbCtpSendSegmentFragmentsPayloadTest : public TestCase
         segment->SetCarrierBytes(payloadBytes);
 
         NS_TEST_ASSERT_MSG_EQ(service->SendSegment(segment, key),
-                              true,
-                              "4MiB CTP segment should be accepted for fragmentation");
+                              false,
+                              "CTP must reject segmentation work that belongs to Transaction");
         NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(key),
-                              expectedPackets,
-                              "CTP should queue one packet per MTU-sized fragment");
+                              0u,
+                              "Rejected oversized segment must not queue a packet");
 
         Ptr<UbCtpTransactionContext> context = service->GetOrCreateTransactionContext(key);
         NS_TEST_ASSERT_MSG_EQ(context->GetSendNext(),
-                              1u,
-                              "fragmented WQE segment should consume one compact TA sequence");
+                              0u,
+                              "Rejected oversized segment must not consume a TASSN");
         NS_TEST_ASSERT_MSG_EQ(context->GetOutstandingCount(),
-                              1u,
-                              "fragmented WQE segment should occupy one outstanding transaction slot");
+                              0u,
+                              "Rejected oversized segment must not occupy a transaction slot");
 
         Simulator::Destroy();
     }
@@ -22194,7 +22205,7 @@ class UbCtpSendSegmentRemainderPayloadTest : public TestCase
 {
   public:
     UbCtpSendSegmentRemainderPayloadTest()
-        : TestCase("UnifiedBus - CTP SendSegment keeps a short remainder fragment payload")
+        : TestCase("UnifiedBus - CTP rejects a segment with an MTU remainder")
     {
     }
 
@@ -22218,31 +22229,14 @@ class UbCtpSendSegmentRemainderPayloadTest : public TestCase
         segment->SetCarrierBytes(payloadBytes);
 
         NS_TEST_ASSERT_MSG_EQ(service->SendSegment(segment, key),
-                              true,
-                              "CTP segment with a remainder should be accepted");
+                              false,
+                              "Transaction must split a segment before CTP admission");
 
         Ptr<UbCompactTransportChannel> queue =
             service->GetOrCreateQueue(key, 0, key.vl);
         NS_TEST_ASSERT_MSG_EQ(queue->GetQueuedPacketCountForTest(),
-                              2u,
-                              "payload slightly over MTU should produce two packets");
-
-        Ptr<Packet> firstPacket = queue->GetNextPacket();
-        Ptr<Packet> secondPacket = queue->GetNextPacket();
-        NS_TEST_ASSERT_MSG_NE(firstPacket, nullptr, "first fragment packet should be present");
-        NS_TEST_ASSERT_MSG_NE(secondPacket, nullptr, "second fragment packet should be present");
-
-        const DecodedCtpCompactDataPacket first = DecodeCtpCompactDataPacket(firstPacket);
-        const DecodedCtpCompactDataPacket second = DecodeCtpCompactDataPacket(secondPacket);
-        NS_TEST_ASSERT_MSG_EQ(first.payloadBytes,
-                              UB_MTU_BYTE,
-                              "first fragment should carry one full MTU");
-        NS_TEST_ASSERT_MSG_EQ(second.payloadBytes,
-                              123u,
-                              "second fragment should carry only the payload remainder");
-        NS_TEST_ASSERT_MSG_EQ(first.taSsn,
-                              second.taSsn,
-                              "all fragments for one WQE segment should carry the same TA SSN");
+                              0u,
+                              "Rejected remainder segment must not queue partial packets");
 
         Simulator::Destroy();
     }
@@ -22252,7 +22246,7 @@ class UbCtpFragmentedSegmentDoesNotBlockNextTaSsnTest : public TestCase
 {
   public:
     UbCtpFragmentedSegmentDoesNotBlockNextTaSsnTest()
-        : TestCase("UnifiedBus - CTP fragmented segment leaves next logical TASSN admissible")
+        : TestCase("UnifiedBus - rejected oversized CTP segment preserves the next TASSN")
     {
     }
 
@@ -22275,22 +22269,22 @@ class UbCtpFragmentedSegmentDoesNotBlockNextTaSsnTest : public TestCase
         first->SetCarrierBytes(16u * UB_MTU_BYTE);
 
         NS_TEST_ASSERT_MSG_EQ(service->SendSegment(first, key),
+                              false,
+                              "Oversized segment should be rejected at the CTP seam");
+        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(CreateCtpWriteSegment(0), key),
                               true,
-                              "first 64KiB WQE segment should be accepted");
-        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(CreateCtpWriteSegment(1), key),
-                              true,
-                              "next WQE segment should use TASSN 1 after fragmented TASSN 0");
+                              "Next valid segment should retain TASSN 0 after rejection");
         NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(key),
-                              17u,
-                              "64KiB segment plus the next segment should queue 17 packets");
+                              1u,
+                              "Only the valid one-packet segment should be queued");
 
         Ptr<UbCtpTransactionContext> context = service->GetOrCreateTransactionContext(key);
         NS_TEST_ASSERT_MSG_EQ(context->GetSendNext(),
-                              2u,
-                              "two WQE segments should occupy two logical transaction sequences");
+                              1u,
+                              "Only the valid segment should consume one transaction sequence");
         NS_TEST_ASSERT_MSG_EQ(context->GetOutstandingCount(),
-                              2u,
-                              "two WQE segments should occupy two outstanding slots");
+                              1u,
+                              "Rejected oversized work must not consume a transaction slot");
 
         Simulator::Destroy();
     }
@@ -22347,7 +22341,9 @@ class UbCtpRejectedSegmentDoesNotCreateQueueOrRequireRouteTest : public TestCase
     void DoRun() override
     {
         int status = RunInChildProcess([]() {
-            Ptr<UbCtpTransportService> service = CreateObject<UbCtpTransportService>();
+            Ptr<Node> node = BuildSinglePortCtpNode();
+            Ptr<UbCtpTransportService> service =
+                node->GetObject<UbController>()->GetCtpTransportService();
             UbCtpEntityKey key{.srcNodeId = 0,
                                .srcEntityId = 10,
                                .dstNodeId = 1,
@@ -22755,6 +22751,166 @@ class UbCompactTransportChannelRejectsNullPacketTest : public TestCase
 };
 #endif
 
+class UbCtpReadWriteUsesTransactionLifecycleTest : public TestCase
+{
+  public:
+    UbCtpReadWriteUsesTransactionLifecycleTest()
+        : TestCase("UnifiedBus - CTP READ and WRITE use Transaction-owned lifecycle")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<UbController> controller = node->GetObject<UbController>();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
+        const uint32_t initialRtpCount = controller->GetTransportCountForTest();
+
+        Ptr<UbApp> app = CreateObject<UbApp>();
+        node->AddApplication(app);
+        app->SetTransportMode(TransportMode::CTP);
+        app->SetLocalEntityId(10);
+        app->SetPeerEntityId(11);
+
+        UbCtpEntityKey key{.srcNodeId = node->GetId(),
+                           .srcEntityId = 10,
+                           .dstNodeId = 1,
+                           .dstEntityId = 11,
+                           .vl = 7};
+        service->SetSourcePortHint(key, 0);
+
+        UbTrafficGen::RuntimeTask task;
+        task.taskId = 100;
+        task.sourceNode = node->GetId();
+        task.destNode = 1;
+        task.dataSize = 2 * UB_MTU_BYTE;
+        task.phaseId = 1;
+        task.priority = key.vl;
+        task.op = UbTrafficGen::RuntimeTaskOp::URMA_WRITE;
+        app->SendCtpUrmaTraffic(task);
+
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
+                              1u,
+                              "CTP WRITE should create one common Transaction operation");
+        const UbCtpTransactionState* writeState = transaction->FindCtpTransactionState(key);
+        NS_TEST_ASSERT_MSG_NE(writeState,
+                              nullptr,
+                              "CTP WRITE state should live in the Transaction owner");
+        NS_TEST_ASSERT_MSG_EQ(writeState->context->GetSendNext(),
+                              2u,
+                              "Two-MTU WRITE should allocate two Transaction-owned TASSNs");
+        NS_TEST_ASSERT_MSG_EQ(writeState->outstandingSegments.size(),
+                              2u,
+                              "WRITE should retain two one-packet Transaction segments");
+        service->CompleteFromTaAckForTest(key, 0);
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
+                              1u,
+                              "First WRITE TAACK should not finish the two-segment operation");
+        service->CompleteFromTaAckForTest(key, 1);
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
+                              0u,
+                              "Final WRITE TAACK should retire the common Transaction operation");
+
+        task.taskId = 101;
+        task.op = UbTrafficGen::RuntimeTaskOp::URMA_READ;
+        app->SendCtpUrmaTraffic(task);
+        const UbCtpTransactionState* readState = transaction->FindCtpTransactionState(key);
+        NS_TEST_ASSERT_MSG_NE(readState,
+                              nullptr,
+                              "CTP READ should reuse Transaction-owned key state");
+        NS_TEST_ASSERT_MSG_EQ(readState->context->GetSendNext(),
+                              4u,
+                              "Two-MTU READ should allocate two more request TASSNs");
+        NS_TEST_ASSERT_MSG_EQ(readState->outstandingSegments.size(),
+                              2u,
+                              "READ should retain two one-packet request/response units");
+        service->CompleteFromTaAckForTest(key, 2);
+        service->CompleteFromTaAckForTest(key, 3);
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
+                              0u,
+                              "Final READ response should retire the common Transaction operation");
+        NS_TEST_ASSERT_MSG_EQ(controller->GetTransportCountForTest(),
+                              initialRtpCount,
+                              "CTP READ/WRITE lifecycle must not create RTP TP state");
+
+        Simulator::Destroy();
+    }
+};
+
+class UbCtpForcedTerminalCleansTransactionStateTest : public TestCase
+{
+  public:
+    UbCtpForcedTerminalCleansTransactionStateTest()
+        : TestCase("UnifiedBus - CTP forced terminal cleans Transaction-owned state")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<UbController> controller = node->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+
+        Ptr<UbApp> app = CreateObject<UbApp>();
+        node->AddApplication(app);
+        app->SetTransportMode(TransportMode::CTP);
+        app->SetLocalEntityId(10);
+        app->SetPeerEntityId(11);
+
+        UbCtpEntityKey key{.srcNodeId = node->GetId(),
+                           .srcEntityId = 10,
+                           .dstNodeId = 1,
+                           .dstEntityId = 11,
+                           .vl = 7};
+        controller->GetCtpTransportService()->SetSourcePortHint(key, 0);
+
+        UbTrafficGen::RuntimeTask task;
+        task.taskId = 102;
+        task.sourceNode = node->GetId();
+        task.destNode = 1;
+        task.dataSize = 2 * UB_MTU_BYTE;
+        task.phaseId = 1;
+        task.priority = key.vl;
+        task.op = UbTrafficGen::RuntimeTaskOp::URMA_WRITE;
+        app->SendCtpUrmaTraffic(task);
+
+        const UbCtpTransactionState* before = transaction->FindCtpTransactionState(key);
+        NS_TEST_ASSERT_MSG_NE(before, nullptr, "CTP state should exist before forced terminal");
+        NS_TEST_ASSERT_MSG_EQ(before->outstandingSegments.size(),
+                              2u,
+                              "Two-MTU WRITE should retain two segments before terminal");
+
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(
+                                  function->DestroyJetty(0, UbDestroyReason::ERROR)),
+                              static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
+                              "ERROR destroy should synchronously terminalize CTP work");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
+                              0u,
+                              "Forced CTP terminal should erase the common operation");
+
+        const UbCtpTransactionState* after = transaction->FindCtpTransactionState(key);
+        NS_TEST_ASSERT_MSG_NE(after, nullptr, "CTP key state remains reusable until T12 cleanup");
+        NS_TEST_ASSERT_MSG_EQ(after->pendingSegments.empty(),
+                              true,
+                              "Forced terminal must not retain pending CTP segments");
+        NS_TEST_ASSERT_MSG_EQ(after->outstandingSegments.empty(),
+                              true,
+                              "Forced terminal must not retain outstanding CTP segments");
+        NS_TEST_ASSERT_MSG_EQ(after->segmentOutstandingPackets.empty(),
+                              true,
+                              "Forced terminal must clear per-segment packet retention");
+        NS_TEST_ASSERT_MSG_EQ(after->context->GetOutstandingCount(),
+                              0u,
+                              "Forced terminal must release CTP window capacity");
+
+        Simulator::Destroy();
+    }
+};
+
 /**
  * @brief Unified-bus test suite
  */
@@ -22762,6 +22918,12 @@ class UbTestSuite : public TestSuite
 {
 public:
     UbTestSuite();
+};
+
+class UbCtpTransactionTestSuite : public TestSuite
+{
+  public:
+    UbCtpTransactionTestSuite();
 };
 
 class UbDcqcnMarkingTestSuite : public TestSuite
@@ -22874,6 +23036,8 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbTrafficGenIntegerDelayParserTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpHeaderEncodeDecodeTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpTransactionContextHolTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpReportsConstraintsWithoutMutatingJettyTest(),
+                TestCase::Duration::QUICK);
     AddTestCase(new UbCtpTransactionContextAckWindowAdmissionTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpServiceDoesNotCreateRtpTpTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpPortHintsDoNotCreateEntityStateTest(), TestCase::Duration::QUICK);
@@ -23102,6 +23266,35 @@ UbTestSuite::UbTestSuite()
 
 // Register the test suite
 static UbTestSuite g_ubTestSuite;
+
+UbCtpTransactionTestSuite::UbCtpTransactionTestSuite()
+    : TestSuite("unified-bus-ctp-transaction", Type::UNIT)
+{
+    AddTestCase(new UbCtpTransactionContextHolTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpReportsConstraintsWithoutMutatingJettyTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpTransactionContextAckWindowAdmissionTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpServiceDoesNotCreateRtpTpTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpPortHintsDoNotCreateEntityStateTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpCnpDoesNotAckTransactionTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpTaAckCompletionHelperTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpWireAckRequiresExactEntityContextTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpWireTaAckCompletesReverseEntityZeroContextTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpWireTaAckDoesNotCompleteNonzeroEntityWithoutWireEntityTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpWireTaAckUnwrapsLogicalTassnTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpSendSegmentFragmentsPayloadTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpSendSegmentRemainderPayloadTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpFragmentedSegmentDoesNotBlockNextTaSsnTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpReadWriteUsesTransactionLifecycleTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpForcedTerminalCleansTransactionStateTest(),
+                TestCase::Duration::QUICK);
+}
+
+static UbCtpTransactionTestSuite g_ubCtpTransactionTestSuite;
 
 UbTpReservationTestSuite::UbTpReservationTestSuite()
     : TestSuite("unified-bus-tp-reservation", Type::UNIT)
