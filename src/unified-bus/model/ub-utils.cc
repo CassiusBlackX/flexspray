@@ -827,6 +827,18 @@ void UbUtils::Destroy()
     queue_sampler_events.clear();
     queue_sampler_started = false;
 
+    if (UbLifecycleTrace::GetLevel() != UbLifecycleTraceLevel::OFF)
+    {
+        for (auto node = NodeList::Begin(); node != NodeList::End(); ++node)
+        {
+            Ptr<UbLifecycleCoordinator> coordinator = (*node)->GetObject<UbLifecycleCoordinator>();
+            if (coordinator != nullptr)
+            {
+                coordinator->EmitLifecycleSummary();
+            }
+        }
+    }
+
     std::lock_guard<std::mutex> filesGuard(files_mutex);
     for (auto& pair : files) {
         std::lock_guard<std::mutex> fileGuard(pair.second.mutex);
@@ -841,6 +853,7 @@ void UbUtils::Destroy()
         }
     }
     files.clear();
+    UbLifecycleTrace::Reset();
 }
 
 std::string UbUtils::PrepareTraceDir(const std::string &configPath)
@@ -893,6 +906,44 @@ void UbUtils::CreateTraceDir()
     trace_path = PrepareTraceDir(g_config_path);
     queue_sampler_started = false;
     queue_sampler_events.clear();
+
+    BooleanValue traceEnabled;
+    StringValue preset;
+    StringValue lifecycleLevel;
+    UintegerValue detailStride;
+    UintegerValue detailOffset;
+    g_trace_enable.GetValue(traceEnabled);
+    g_trace_preset.GetValue(preset);
+    g_lifecycle_trace_level.GetValue(lifecycleLevel);
+    g_lifecycle_detail_sample_stride.GetValue(detailStride);
+    g_lifecycle_detail_sample_offset.GetValue(detailOffset);
+
+    UbLifecycleTraceLevel resolvedLevel = UbLifecycleTraceLevel::OFF;
+    if (traceEnabled.Get())
+    {
+        resolvedLevel = UbLifecycleTrace::ResolveLevel(preset.Get(), lifecycleLevel.Get());
+    }
+
+    uint32_t rank = 0;
+    bool rankScoped = false;
+#ifdef NS3_MPI
+    rankScoped = MpiInterface::IsEnabled();
+    if (rankScoped)
+    {
+        rank = MpiInterface::GetSystemId();
+    }
+#endif
+    UbLifecycleTrace::Configure(
+        trace_path,
+        resolvedLevel,
+        detailStride.Get(),
+        detailOffset.Get(),
+        rank,
+        rankScoped,
+        [](const std::string& filename, const std::string& line) {
+            UbUtils::PrintTraceInfoNoTs(filename, line);
+        });
+    UbLifecycleTrace::EmitMetadata();
     PrintTimestamp("[setup] Prepare runlog directory: " + trace_path + "runlog");
 }
 

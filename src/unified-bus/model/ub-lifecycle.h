@@ -8,6 +8,7 @@
 #include "ns3/packet.h"
 #include "ns3/simulator.h"
 #include "ns3/tag.h"
+#include "ns3/traced-callback.h"
 
 #include <cstdint>
 #include <map>
@@ -19,6 +20,7 @@ namespace ns3
 {
 
 class Node;
+struct UbLifecycleTraceRecord;
 
 enum class UbLifecycleResourceKind : uint8_t
 {
@@ -260,6 +262,7 @@ class UbLifecycleCoordinator : public Object
     UbPacketAttemptIdentity RegisterPacketAttempt(const UbLifecycleResourceIdentity& owner,
                                                   Ptr<Packet> packet);
     UbLifecycleResourceSnapshot GetSnapshot(const UbLifecycleResourceIdentity& owner) const;
+    void EmitLifecycleSummary();
 
     static void ObservePacketTransfer(Ptr<Packet> packet,
                                       UbPacketTransfer transfer,
@@ -299,6 +302,8 @@ class UbLifecycleCoordinator : public Object
     void TerminatePacket(const UbPacketAttemptIdentity& identity, UbPacketTerminal terminal);
 
     uint32_t m_ownerNodeId{0};
+    uint64_t m_traceSequence{0};
+    TracedCallback<const UbLifecycleTraceRecord&> m_lifecycleTrace;
     std::map<ResourceKey, ResourceState> m_resources;
 };
 

@@ -10,10 +10,10 @@
 
 | Tier | Intent | Post-processing output |
 |------|--------|----------------------|
-| minimal | 只要任务级统计，最快跑完 | `task_statistics.csv`（仅任务起止，无首包/末ACK） |
-| balanced | 任务 + 包 + 端口，够用的排查能力 | `task_statistics.csv`（含首包/末ACK）+ `throughput.csv` |
-| detailed | 全开，含逐包逐跳路径证据 | 同 balanced + `AllPacketTrace_*.tr` |
-| custom | 用户自选开关组合 | 取决于所选开关 |
+| minimal | 只要任务级统计，最快跑完 | `task_statistics.csv`（仅任务起止，无首包/末ACK）+ lifecycle `SUMMARY` |
+| balanced | 任务 + 包 + 端口，够用的排查能力 | `task_statistics.csv`（含首包/末ACK）+ `throughput.csv` + lifecycle `SUMMARY` |
+| detailed | 全开，含逐包逐跳路径证据 | 同 balanced + `AllPacketTrace_*.tr` + lifecycle `EVENT` |
+| custom | 用户自选开关组合 | 可显式选择 lifecycle `DETAIL`，其余取决于所选开关 |
 
 Use `observability_preset(tier)` from `network_attribute_writer` to get the concrete overrides dict.
 Do not hardcode switch names in experiment specs or agent logic.
@@ -30,6 +30,11 @@ Do not hardcode switch names in experiment specs or agent logic.
 - `QueueTrace_*` can include ingress queue occupancy rows with the `ingress` marker when `UB_QUEUE_TRACE_ENABLE` is enabled.
 - `UB_FLOW_CONTROL_TRACE_ENABLE` gates algorithm-emitted flow-control trace files such as `PfcTrace_*`, `PfcDynamicTrace_*`, and `CbfcTrace_*`.
 - `UB_CONGESTION_CONTROL_TRACE_ENABLE` gates algorithm-emitted congestion-control trace files such as `DcqcnMarkTrace_*`, `DcqcnCnpTrace_*`, `DcqcnSenderTrace_*`, `CaqmAckTrace_*`, and `CaqmSenderTrace_*`.
+- `UB_LIFECYCLE_TRACE_LEVEL` selects `OFF`, `SUMMARY`, `EVENT`, or `DETAIL`. `SUMMARY` reads the
+  always-on lifecycle ledger at teardown and does not maintain a second event-accounting plane.
+- Lifecycle `EVENT` and `DETAIL` write fixed numeric records plus `LifecycleTraceSchema.json`.
+  `DETAIL` sampling uses a deterministic identity stride/offset and retains complete selected
+  resource generations or packet attempts; it never randomly drops individual events.
 - These category gates default to `false`, so experiments must opt in explicitly when these files are needed.
 
 ## Non-Implications
