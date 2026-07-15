@@ -20652,6 +20652,7 @@ class UbPacketSprayUsesEvenRoundRobinAcrossEqualPortsTest : public TestCase
     void DoRun() override
     {
         Ptr<UbRoutingProcess> routing = CreateObject<UbRoutingProcess>();
+        routing->SetNodeId(0);
         const std::vector<uint16_t> equalPorts = {10, 11, 12};
         routing->AddShortestRoute(NodeIdToIp(42).Get(), equalPorts);
 
@@ -20695,6 +20696,150 @@ class UbPacketSprayUsesEvenRoundRobinAcrossEqualPortsTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(((maxCount - minCount) <= 1),
                               true,
                               "Packet spray should differ by at most one packet across equal-cost ports");
+    }
+};
+
+class UbRoutingPolicyPreservesCandidateSemanticsTest : public TestCase
+{
+  public:
+    UbRoutingPolicyPreservesCandidateSemanticsTest()
+        : TestCase("UnifiedBus - routing policy preserves candidate order and ingress filtering")
+    {
+    }
+
+    void DoRun() override
+    {
+        Ptr<UbRoutingProcess> routing = CreateObject<UbRoutingProcess>();
+        routing->SetNodeId(0);
+        routing->AddShortestRoute(NodeIdToIp(42).Get(), {2, 3});
+        routing->AddOtherRoute(NodeIdToIp(42).Get(), {4, 5});
+
+        RoutingKey key{};
+        key.sip = NodeIdToIp(1).Get();
+        key.dip = NodeIdToIp(42).Get();
+        key.sport = 9;
+        key.dport = 7;
+        key.priority = 2;
+        key.useShortestPath = false;
+        key.usePacketSpray = false;
+
+        bool firstIsShortest = false;
+        const int first = routing->GetOutPort(key, firstIsShortest);
+        bool repeatedIsShortest = false;
+        const int repeated = routing->GetOutPort(key, repeatedIsShortest);
+        NS_TEST_ASSERT_MSG_EQ(repeated, first, "Per-flow hash selection must be deterministic");
+        NS_TEST_ASSERT_MSG_EQ(repeatedIsShortest,
+                              firstIsShortest,
+                              "Per-flow hash path classification must be deterministic");
+
+        key.useShortestPath = true;
+        bool shortestOnly = false;
+        const int shortestPort = routing->GetOutPort(key, shortestOnly);
+        NS_TEST_ASSERT_MSG_EQ(shortestOnly, true, "Shortest-only lookup must classify its result");
+        NS_TEST_ASSERT_MSG_EQ((shortestPort == 2 || shortestPort == 3),
+                              true,
+                              "Shortest-only lookup must exclude non-shortest ports");
+
+        routing->AddShortestRoute(NodeIdToIp(43).Get(), {7, 8});
+        key.dip = NodeIdToIp(43).Get();
+        bool filteredIsShortest = false;
+        const int filteredPort = routing->GetOutPort(key, filteredIsShortest, 7);
+        NS_TEST_ASSERT_MSG_EQ(filteredPort, 8, "Ingress filtering must retain the other route");
+        NS_TEST_ASSERT_MSG_EQ(filteredIsShortest,
+                              true,
+                              "Ingress filtering must preserve route classification");
+
+        key.dip = NodeIdToIp(99).Get();
+        bool missingIsShortest = false;
+        NS_TEST_ASSERT_MSG_EQ(routing->GetOutPort(key, missingIsShortest),
+                              -1,
+                              "Missing route must return the inherited failure result");
+        NS_TEST_ASSERT_MSG_EQ(routing->GetHotPathLookupCountForTest(),
+                              5u,
+                              "Every facade lookup should be counted");
+        NS_TEST_ASSERT_MSG_EQ(routing->GetHotPathTemporaryContainerAllocationCountForTest(),
+                              0u,
+                              "Facade lookup must not allocate candidate or best-port containers");
+    }
+};
+
+class UbRoutingAdaptiveFirstMinimumTest : public TestCase
+{
+  public:
+    UbRoutingAdaptiveFirstMinimumTest()
+        : TestCase("UnifiedBus - adaptive routing keeps first-minimum tie break")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        Ptr<Node> node = CreateObject<Node>(0);
+        InitNode(node, UB_SWITCH, 3);
+        Ptr<UbRoutingProcess> routing = node->GetObject<UbSwitch>()->GetRoutingProcess();
+        routing->SetAttribute("RoutingAlgorithm", StringValue("ADAPTIVE"));
+        routing->AddShortestRoute(NodeIdToIp(42).Get(), {0, 1});
+
+        RoutingKey key{};
+        key.sip = NodeIdToIp(1).Get();
+        key.dip = NodeIdToIp(42).Get();
+        key.priority = 2;
+        key.useShortestPath = true;
+
+        bool selectedShortest = false;
+        NS_TEST_ASSERT_MSG_EQ(routing->GetOutPort(key, selectedShortest),
+                              0,
+                              "Equal-load adaptive routing should keep the first candidate");
+        NS_TEST_ASSERT_MSG_EQ(selectedShortest,
+                              true,
+                              "Adaptive shortest candidate must retain classification");
+        NS_TEST_ASSERT_MSG_EQ(routing->GetOutPort(key, selectedShortest, 0),
+                              1,
+                              "Adaptive routing must filter the ingress before tie-breaking");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbRoutingHotPathContainerBalanceTest : public TestCase
+{
+  public:
+    UbRoutingHotPathContainerBalanceTest()
+        : TestCase("UnifiedBus - routing hot path avoids temporary candidate containers")
+    {
+    }
+
+    void DoRun() override
+    {
+        Ptr<UbRoutingProcess> routing = CreateObject<UbRoutingProcess>();
+        routing->SetNodeId(0);
+        routing->AddShortestRoute(NodeIdToIp(42).Get(), {2, 3, 4, 5});
+
+        RoutingKey key{};
+        key.sip = NodeIdToIp(1).Get();
+        key.dip = NodeIdToIp(42).Get();
+        key.dport = 7;
+        key.priority = 2;
+        key.useShortestPath = true;
+        key.usePacketSpray = true;
+
+        constexpr uint32_t lookups = 100000;
+        for (uint32_t i = 0; i < lookups; ++i)
+        {
+            key.sport = static_cast<uint16_t>(i);
+            bool selectedShortest = false;
+            NS_TEST_ASSERT_MSG_NE(routing->GetOutPort(key, selectedShortest),
+                                  -1,
+                                  "Hot-path characterization requires a route");
+        }
+
+        NS_TEST_ASSERT_MSG_EQ(routing->GetHotPathLookupCountForTest(),
+                              lookups,
+                              "Hot-path counter must cover every measured lookup");
+        NS_TEST_ASSERT_MSG_EQ(routing->GetHotPathTemporaryContainerAllocationCountForTest(),
+                              0u,
+                              "Measured lookups must not allocate route-selection containers");
     }
 };
 
@@ -23494,6 +23639,12 @@ class UbLdstLifecycleTestSuite : public TestSuite
     UbLdstLifecycleTestSuite();
 };
 
+class UbRoutingTestSuite : public TestSuite
+{
+  public:
+    UbRoutingTestSuite();
+};
+
 class UbDcqcnMarkingTestSuite : public TestSuite
 {
   public:
@@ -23905,6 +24056,20 @@ UbLdstLifecycleTestSuite::UbLdstLifecycleTestSuite()
 }
 
 static UbLdstLifecycleTestSuite g_ubLdstLifecycleTestSuite;
+
+UbRoutingTestSuite::UbRoutingTestSuite()
+    : TestSuite("unified-bus-routing", Type::UNIT)
+{
+    AddTestCase(new UbRoutingProcessRangeRouteTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbPacketSprayUsesEvenRoundRobinAcrossEqualPortsTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbRoutingPolicyPreservesCandidateSemanticsTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbRoutingAdaptiveFirstMinimumTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbRoutingHotPathContainerBalanceTest(), TestCase::Duration::QUICK);
+}
+
+static UbRoutingTestSuite g_ubRoutingTestSuite;
 
 UbTpReservationTestSuite::UbTpReservationTestSuite()
     : TestSuite("unified-bus-tp-reservation", Type::UNIT)
