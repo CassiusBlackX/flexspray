@@ -58,6 +58,8 @@ void UbLdstApi::LdstProcess(Ptr<UbLdstTaskSegment> taskSegment)
 {
     // genpacket
     auto packet = GenDataPacket(taskSegment);
+    auto ldstInstance = NodeList::GetNode(m_nodeId)->GetObject<UbLdstInstance>();
+    ldstInstance->RegisterPacketBirth(packet);
     // sendpacket
     SendPacket(taskSegment, packet);
 }
@@ -79,12 +81,15 @@ void UbLdstApi::SendPacket(Ptr<UbLdstTaskSegment> taskSegment, Ptr<Packet> packe
     int outPort = sw->GetRoutingProcess()->GetOutPort(rtKey, selectedShortestPath);
     if (outPort < 0) {
         // Route failed
+        UbLifecycleCoordinator::TerminatePacket(packet, UbPacketTerminal::ROUTE_NOT_FOUND);
         NS_ASSERT_MSG(0, "The route cannot be found");
+        return;
     }
     uint16_t destPort = outPort;
     sw->PushPacketToVoq(packet, destPort, taskSegment->GetPriority(), destPort);
     Ptr<UbPort> port = DynamicCast<UbPort>(node->GetDevice(destPort));
-    Simulator::ScheduleNow(&UbPort::TriggerTransmit, port);
+    auto ldstInstance = node->GetObject<UbLdstInstance>();
+    ldstInstance->ScheduleNow(MakeCallback(&UbPort::TriggerTransmit, port));
 }
 
 Ptr<Packet> UbLdstApi::GenDataPacket(Ptr<UbLdstTaskSegment> taskSegment)
@@ -184,6 +189,8 @@ void UbLdstApi::RecvDataPacket(Ptr<Packet> packet)
     UbDataLink::GenPacketHeader(ackp, false, true, linkPacketHeader.GetCreditTargetVL(), linkPacketHeader.GetPacketVL(),
                                 linkPacketHeader.GetLoadBalanceMode(), linkPacketHeader.GetRoutingPolicy(),
                                 UbDatalinkHeaderConfig::PACKET_UB_MEM);
+    auto ldstInstance = NodeList::GetNode(m_nodeId)->GetObject<UbLdstInstance>();
+    ldstInstance->RegisterPacketBirth(ackp);
 
     RoutingKey rtKey;
     rtKey.sip = utils::Cna16ToIp(cna16NetworkHeader.GetScna()).Get();
@@ -201,7 +208,9 @@ void UbLdstApi::RecvDataPacket(Ptr<Packet> packet)
     int destPort = sw->GetRoutingProcess()->GetOutPort(rtKey, selectedShortestPath);
     if (destPort < 0) {
         // Route failed
+        UbLifecycleCoordinator::TerminatePacket(ackp, UbPacketTerminal::ROUTE_NOT_FOUND);
         NS_ASSERT_MSG(0, "The route cannot be found");
+        return;
     }
 
     sw->PushPacketToVoq(ackp, destPort, linkPacketHeader.GetPacketVL(), destPort);
@@ -247,7 +256,7 @@ void UbLdstApi::RecvResponse(Ptr<Packet> packet)
     }
     uint32_t taskSegmentId = caTaHeader.GetIniTaSsn();
     auto ldstInst = NodeList::GetNode(m_nodeId)->GetObject<UbLdstInstance>();
-    Simulator::ScheduleNow(&UbLdstInstance::OnRecvAck, ldstInst, taskSegmentId);
+    ldstInst->ScheduleNow(MakeCallback(&UbLdstInstance::OnRecvAck, ldstInst).Bind(taskSegmentId));
 }
 
 void UbLdstApi::SetUsePacketSpray(bool usePacketSpray)

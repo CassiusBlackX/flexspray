@@ -3,12 +3,26 @@
 #define UB_LDST_INSTANCE_H
 
 #include "ns3/ub-datatype.h"
+#include "ns3/ub-lifecycle.h"
 #include "ns3/ub-network-address.h"
 #include "ns3/node-list.h"
 #include "ns3/node.h"
 
+#include <unordered_set>
+
 namespace ns3 {
 class UbLdstThread;
+
+struct UbLdstForcedStopResidue
+{
+    uint64_t activeTasks{0};
+    uint64_t activeSegments{0};
+    uint64_t waitingAcks{0};
+    uint64_t queuedSegments{0};
+    uint64_t trackedActions{0};
+    uint64_t inFlightPackets{0};
+};
+
 class UbLdstInstance : public Object {
 public:
     static TypeId GetTypeId(void);
@@ -24,21 +38,41 @@ public:
     Ptr<UbLdstThread> GetLdstThread(uint32_t threadId);
     Callback<void, uint32_t> FinishCallback;
     void OnRecvAck(uint32_t taskSegmentId);
-    void OnTaskSegmentCompleted(uint32_t taskId);
+    bool OnRecvAckForTest(uint32_t taskSegmentId);
+    void OnTaskSegmentCompleted(Ptr<UbLdstTaskSegment> taskSegment);
+    void ScheduleNow(Callback<void> action);
+    void RegisterPacketBirth(Ptr<Packet> packet);
+
+    size_t GetActiveTaskCountForTest() const;
+    size_t GetActiveSegmentCountForTest() const;
+    Ptr<UbLdstTaskSegment> GetTaskSegmentForTest(uint32_t taskSegmentId) const;
+    UbLifecycleResourceSnapshot GetLifecycleSnapshotForTest() const;
+    const UbLdstForcedStopResidue& GetLastForcedStopResidueForTest() const;
 
 private:
+    struct SegmentRecord
+    {
+        Ptr<UbLdstTaskSegment> segment;
+        UbLifecycleResourceIdentity lifecycle;
+    };
+
+    void RunTrackedAction(uint64_t token, Callback<void> action);
+    bool ResolveAck(uint32_t taskSegmentId);
     void MemTaskStartsNotify(uint32_t nodeId, uint32_t memTaskId);
     void LastPacketACKsNotify(uint32_t nodeId, uint32_t taskId);
     void MemTaskCompletesNotify(uint32_t nodeId, uint32_t taskId);
     void FirstPacketSendsNotify(uint32_t nodeId, uint32_t memTaskId);
     void LastPacketSendsNotify(uint32_t nodeId, uint32_t memTaskId);
-    std::unordered_map<uint32_t, std::vector<Ptr<UbLdstTaskSegment>>> m_taskToSegmentMap;  // taskid -> taskSegments
+    std::unordered_map<uint32_t, std::unordered_set<uint32_t>> m_taskToSegmentMap;
     std::vector<Ptr<UbLdstThread>> m_threads;
-    std::unordered_map<uint32_t, uint32_t> m_taskSegmentCompletedNum;
-    std::unordered_map<uint32_t, Ptr<UbLdstTaskSegment>> m_taskSegmentsMap;
+    std::unordered_map<uint32_t, SegmentRecord> m_taskSegmentsMap;
     uint32_t m_currentTaskId = 0;
     uint32_t m_threadNum = 0;
     uint32_t m_queuePriority = 0;
+    UbLifecycleResourceIdentity m_lifecycleOwner;
+    UbTrackedEventSet m_trackedActions;
+    UbLdstForcedStopResidue m_lastForcedStopResidue;
+    bool m_disposed{false};
     
     
     TracedCallback<uint32_t, uint32_t> m_traceLastPacketACKsNotify;

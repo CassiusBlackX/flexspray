@@ -751,6 +751,7 @@ bool UbSwitch::SinkLdstDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Pa
     } else {
         NS_ASSERT_MSG(0, "packet Ta Op code is wrong!");
     }
+    UbLifecycleCoordinator::TerminatePacket(packet, UbPacketTerminal::ENDPOINT_CONSUMED);
     return true;
 }
 
@@ -850,6 +851,8 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
     int outPort = m_routingProcess->GetOutPort(rtKey, selectedShortestPath, port->GetIfIndex());
     if (outPort < 0) {
         utils::UbUtils::RecordRuntimePacketDrop("route cannot be found");
+        UbLifecycleCoordinator::TerminatePacket(packet,
+                                                UbPacketTerminal::ROUTE_NOT_FOUND);
         NS_LOG_WARN("The route cannot be found. Packet Dropped!");
         return;
     }
