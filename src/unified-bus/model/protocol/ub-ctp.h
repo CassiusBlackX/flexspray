@@ -32,6 +32,7 @@ class UbCompactMAExtTah;
 class UbCompactTransactionHeader;
 class UbJetty;
 class UbRoutingProcess;
+class UbTransaction;
 class UbWqeSegment;
 struct RoutingKey;
 
@@ -65,6 +66,12 @@ struct UbCtpRoutingPolicy
     uint32_t nextSprayIndex{0};
 };
 
+struct UbCtpTransportConstraints
+{
+    uint32_t maxSegmentBytes{UB_MTU_BYTE};
+    bool onePacketPerSegment{true};
+};
+
 class UbCtpTransactionContext : public SimpleRefCount<UbCtpTransactionContext>
 {
   public:
@@ -88,10 +95,6 @@ class UbCtpTransactionContext : public SimpleRefCount<UbCtpTransactionContext>
 
 struct UbCtpTxState
 {
-    Ptr<UbCtpTransactionContext> context;
-    std::deque<Ptr<UbWqeSegment>> pendingSegments;
-    std::map<uint32_t, Ptr<UbWqeSegment>> outstandingSegments;
-    std::map<Ptr<UbWqeSegment>, uint32_t> segmentOutstandingPackets;
     std::vector<uint32_t> outPorts;
     UbCtpRoutingPolicy routing;
 };
@@ -107,6 +110,14 @@ struct UbCtpRxState
 {
     uint32_t receivedPackets{0};
     uint32_t generatedResponses{0};
+};
+
+struct UbCtpTransactionState
+{
+    Ptr<UbCtpTransactionContext> context;
+    std::deque<Ptr<UbWqeSegment>> pendingSegments;
+    std::map<uint32_t, Ptr<UbWqeSegment>> outstandingSegments;
+    std::map<Ptr<UbWqeSegment>, uint32_t> segmentOutstandingPackets;
     std::map<uint32_t, UbCtpInboundTaUnit> inboundTaUnits;
 };
 
@@ -210,6 +221,7 @@ class UbCtpTransportService : public Object
     void ClearSourcePortHint(const UbCtpEntityKey& key);
     void SetDestinationPortHint(const UbCtpEntityKey& key, uint32_t port);
     void ClearDestinationPortHint(const UbCtpEntityKey& key);
+    UbCtpTransportConstraints GetTransactionConstraints() const;
 
     UbCtpEntityState& GetOrCreateEntityState(const UbCtpEntityKey& key);
     void ConfigureRoutingPolicy(const UbCtpEntityKey& key,
@@ -255,6 +267,9 @@ class UbCtpTransportService : public Object
   private:
     using QueueKey = std::tuple<UbCtpEntityKey, uint32_t, uint32_t>;
 
+    Ptr<UbTransaction> GetTransactionOwner() const;
+    UbCtpTransactionState& GetTransactionState(const UbCtpEntityKey& key) const;
+
     Ptr<Packet> BuildDataPacketWithTaSsn(Ptr<UbWqeSegment> segment,
                                          UbCtpEntityState& state,
                                          const UbCtpEntityKey& packetKey,
@@ -293,9 +308,10 @@ class UbCtpTransportService : public Object
     void CompleteFromTaAckNow(const UbCtpEntityKey& key,
                               uint32_t taSsn,
                               Ptr<UbWqeSegment> response);
-    std::map<uint32_t, Ptr<UbWqeSegment>>::iterator FindOutstandingSegment(UbCtpEntityState& state,
-                                                                           uint32_t taSsn);
-    uint32_t ResolveWireTaSsn(UbCtpEntityState& state, uint16_t wireTaSsn) const;
+    std::map<uint32_t, Ptr<UbWqeSegment>>::iterator FindOutstandingSegment(
+        UbCtpTransactionState& state,
+        uint32_t taSsn);
+    uint32_t ResolveWireTaSsn(UbCtpTransactionState& state, uint16_t wireTaSsn) const;
     bool ShouldTraceWindow(const UbCtpEntityKey& key) const;
     bool ShouldDelayTaAck(const UbCtpEntityKey& key, uint32_t taSsn) const;
     void AddCtpNetworkHeaders(Ptr<Packet> packet,

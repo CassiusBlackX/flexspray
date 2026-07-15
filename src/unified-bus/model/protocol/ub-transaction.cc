@@ -430,6 +430,69 @@ void UbTransaction::ApplyScheduleWqeSegment(Ptr<UbTransportChannel> tp)
     WakeDeferredRtpSources(tp);
 }
 
+Ptr<UbWqeSegment>
+UbTransaction::PrepareNextCtpWqeSegment(Ptr<UbJetty> jetty, uint32_t maxSegmentBytes)
+{
+    NS_ABORT_MSG_IF(jetty == nullptr, "CTP segmentation requires a Jetty");
+    return jetty->PrepareNextWqeSegment(nullptr, maxSegmentBytes);
+}
+
+void
+UbTransaction::CommitCtpWqeSegment(Ptr<UbWqeSegment> segment)
+{
+    NS_ABORT_MSG_IF(segment == nullptr, "Cannot commit a null CTP Transaction segment");
+    Ptr<UbJetty> jetty = GetJetty(segment->GetJettyNum());
+    NS_ABORT_MSG_IF(jetty == nullptr, "CTP Transaction segment lost its Jetty binding");
+    auto operation = m_operations.find({segment->GetJettyNum(), segment->GetTaskId()});
+    if (operation != m_operations.end())
+    {
+        NS_ABORT_MSG_IF(!operation->second.ctp,
+                        "CTP segment references an RTP Transaction operation");
+        NS_ABORT_MSG_IF(operation->second.segments.find(segment->GetTaSsn()) !=
+                            operation->second.segments.end(),
+                        "Duplicate CTP Transaction segment admission");
+        const uint64_t localId = (static_cast<uint64_t>(segment->GetJettyNum()) << 32) |
+                                 segment->GetTaSsn();
+        OperationRecord::SegmentRecord record;
+        record.segment = segment;
+        record.identity = m_coordinator->OpenResource(
+            UbLifecycleResourceKind::TRANSACTION_SEGMENT,
+            localId);
+        record.childLease = m_coordinator->AcquireLease(operation->second.wqeIdentity,
+                                                        UbLifecycleLeaseKind::CHILD,
+                                                        record.identity);
+        segment->SetTransactionCorrelation(operation->second.operationIdentity, record.identity);
+        operation->second.segments.emplace(segment->GetTaSsn(), record);
+    }
+    jetty->CommitWqeSegmentAdmission(segment);
+}
+
+UbCtpTransactionState&
+UbTransaction::GetOrCreateCtpTransactionState(const UbCtpEntityKey& key)
+{
+    auto [it, inserted] = m_ctpTransactionStates.try_emplace(key);
+    if (inserted)
+    {
+        it->second.context =
+            Create<UbCtpTransactionContext>(key, UB_JETTY_TASSN_OOO_THRESHOLD);
+    }
+    return it->second;
+}
+
+const UbCtpTransactionState*
+UbTransaction::FindCtpTransactionState(const UbCtpEntityKey& key) const
+{
+    const auto it = m_ctpTransactionStates.find(key);
+    return it == m_ctpTransactionStates.end() ? nullptr : &it->second;
+}
+
+UbCtpTransactionState*
+UbTransaction::FindCtpTransactionState(const UbCtpEntityKey& key)
+{
+    const auto it = m_ctpTransactionStates.find(key);
+    return it == m_ctpTransactionStates.end() ? nullptr : &it->second;
+}
+
 bool UbTransaction::IsUrmaReadWriteRequest(const Ptr<UbWqeSegment>& segment)
 {
     if (segment == nullptr) {
@@ -1123,6 +1186,20 @@ UbTransaction::RecordSegmentSuccess(uint32_t jettyNum,
     {
         return false;
     }
+    if (operation->second.ctp)
+    {
+        if (completion == nullptr || !completion->HasTransactionCorrelation() ||
+            completion->GetTransactionOperationIdentity() != operation->second.operationIdentity ||
+            completion->GetTransactionSegmentIdentity() != segment->second.identity)
+        {
+            return false;
+        }
+        m_coordinator->ReleaseLease(segment->second.childLease);
+        m_coordinator->RecordWorkTerminal(segment->second.identity, UbWorkOutcome::COMPLETED);
+        m_coordinator->RetireResource(segment->second.identity);
+        operation->second.segments.erase(segment);
+        return true;
+    }
     if (completion == nullptr || !completion->HasTransactionCorrelation() ||
         completion->GetTransactionOperationIdentity() != operation->second.operationIdentity ||
         completion->GetTransactionSegmentIdentity() != segment->second.identity ||
@@ -1564,6 +1641,35 @@ UbTransaction::TryAdmitRtpWqe(uint32_t jettyNum,
     return true;
 }
 
+bool
+UbTransaction::TryAdmitCtpWqe(uint32_t jettyNum,
+                              Ptr<UbWqe> wqe,
+                              const UbLifecycleResourceIdentity& wqeIdentity,
+                              const UbCtpEntityKey& key)
+{
+    if (wqe == nullptr || m_operations.find({jettyNum, wqe->GetWqeId()}) != m_operations.end())
+    {
+        return false;
+    }
+
+    Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
+    OperationRecord operation;
+    operation.wqe = wqe;
+    operation.wqeIdentity = wqeIdentity;
+    operation.operationIdentity = coordinator->OpenResource(
+        UbLifecycleResourceKind::TRANSACTION_OPERATION,
+        wqe->GetWqeId());
+    operation.workLease = coordinator->AcquireLease(wqeIdentity,
+                                                    UbLifecycleLeaseKind::WORK,
+                                                    operation.operationIdentity);
+    operation.ctp = true;
+    operation.ctpKey = key;
+    m_operations.emplace(std::make_pair(jettyNum, wqe->GetWqeId()), operation);
+    GetOrCreateCtpTransactionState(key);
+    wqe->MarkLifecycleManaged();
+    return true;
+}
+
 void
 UbTransaction::ReleaseTransportUseLease(OperationRecord& operation)
 {
@@ -1694,6 +1800,64 @@ void UbTransaction::WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe, UbWorkOutcome o
                     "WqeFinish references a stale WQE instance");
     NS_ABORT_MSG_IF(operation == m_operations.end() && wqe->IsLifecycleManaged(),
                     "WqeFinish references an unknown, duplicate, or stale direct WQE");
+    if (operation != m_operations.end() && operation->second.ctp)
+    {
+        const UbLifecycleResourceIdentity wqeIdentity = operation->second.wqeIdentity;
+        auto transactionState = m_ctpTransactionStates.find(operation->second.ctpKey);
+        if (transactionState != m_ctpTransactionStates.end())
+        {
+            auto& pendingSegments = transactionState->second.pendingSegments;
+            std::erase_if(pendingSegments,
+                          [jettyNum, wqe](const Ptr<UbWqeSegment>& segment) {
+                              return segment != nullptr && segment->GetJettyNum() == jettyNum &&
+                                     segment->GetTaskId() == wqe->GetWqeId();
+                          });
+        }
+        std::vector<uint32_t> terminalTaSsns;
+        terminalTaSsns.reserve(operation->second.segments.size());
+        for (const auto& [taSsn, record] : operation->second.segments)
+        {
+            terminalTaSsns.push_back(taSsn);
+            if (transactionState != m_ctpTransactionStates.end())
+            {
+                transactionState->second.outstandingSegments.erase(taSsn);
+                transactionState->second.segmentOutstandingPackets.erase(record.segment);
+                transactionState->second.context->MarkTaAck(taSsn);
+            }
+            m_coordinator->ReleaseLease(record.childLease);
+            m_coordinator->RecordWorkTerminal(record.identity, outcome);
+            m_coordinator->RetireResource(record.identity);
+        }
+        if (!terminalTaSsns.empty())
+        {
+            Ptr<UbJetty> jetty = GetJetty(jettyNum);
+            NS_ABORT_MSG_IF(jetty == nullptr, "CTP Transaction terminal lost its Jetty owner");
+            jetty->ApplyWqeSegmentTerminalProgress(terminalTaSsns);
+        }
+        m_coordinator->ReleaseLease(operation->second.workLease);
+        m_coordinator->RecordWorkTerminal(operation->second.operationIdentity, outcome);
+        m_coordinator->RetireResource(operation->second.operationIdentity);
+        m_coordinator->RecordWorkTerminal(operation->second.wqeIdentity, outcome);
+        m_coordinator->RetireResource(operation->second.wqeIdentity);
+        m_operations.erase(operation);
+
+        auto ordered = m_jettyOrderedWqe.find(jettyNum);
+        if (ordered != m_jettyOrderedWqe.end())
+        {
+            auto wqeId = std::find(ordered->second.begin(),
+                                   ordered->second.end(),
+                                   wqe->GetWqeId());
+            if (wqeId != ordered->second.end())
+            {
+                ordered->second.erase(wqeId);
+            }
+        }
+        GetFunction()->ApplyWqeOutcomeFromTransaction(jettyNum,
+                                                      wqe->GetWqeId(),
+                                                      wqeIdentity,
+                                                      outcome);
+        return;
+    }
     bool hadLifecycleOperation = false;
     UbLifecycleResourceIdentity wqeIdentity;
     if (operation != m_operations.end())
@@ -1938,6 +2102,7 @@ void UbTransaction::DoDispose()
         }
     }
     m_tpRelatedRemoteRequests.clear();
+    m_ctpTransactionStates.clear();
     m_tpRRIndex.clear();
     m_random = nullptr;
     m_serviceMode.clear();

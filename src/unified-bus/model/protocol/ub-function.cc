@@ -199,6 +199,46 @@ UbWqeSubmissionResult UbFunction::SubmitWqe(Ptr<UbWqe> wqe, uint32_t jettyNum)
     return {UbWqeSubmissionStatus::ACCEPTED, wqeIdentity};
 }
 
+UbWqeSubmissionResult
+UbFunction::SubmitCtpWqe(Ptr<UbWqe> wqe,
+                         uint32_t jettyNum,
+                         const UbCtpEntityKey& key)
+{
+    Ptr<UbJetty> jetty = GetJetty(jettyNum);
+    if (jetty == nullptr)
+    {
+        return {UbWqeSubmissionStatus::JETTY_NOT_FOUND, {}};
+    }
+    if (!m_jettyManager->IsAcceptingWqes(jettyNum))
+    {
+        return {UbWqeSubmissionStatus::JETTY_DESTROYING, {}};
+    }
+    if (!jetty->CanAcceptWqe(wqe))
+    {
+        return {UbWqeSubmissionStatus::JETTY_BINDING_MISMATCH, {}};
+    }
+    if (GetTransaction()->HasWqeOperation(jettyNum, wqe->GetWqeId()))
+    {
+        return {UbWqeSubmissionStatus::DUPLICATE_OPERATION, {}};
+    }
+
+    Ptr<UbLifecycleCoordinator> coordinator =
+        UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId));
+    const UbLifecycleResourceIdentity wqeIdentity =
+        coordinator->OpenResource(UbLifecycleResourceKind::WQE, wqe->GetWqeId());
+    NS_ABORT_MSG_IF(!GetTransaction()->TryAdmitCtpWqe(jettyNum,
+                                                      wqe,
+                                                      wqeIdentity,
+                                                      key),
+                    "Validated CTP WQE admission changed before commit");
+
+    jetty->SetNodeId(m_nodeId);
+    jetty->PushWqe(wqe, UbCtpTransportConstraints{}.maxSegmentBytes);
+    m_jettyManager->RegisterWqe(jettyNum, wqe->GetWqeId(), wqeIdentity);
+    GetTransaction()->AddWqe(jettyNum, wqe);
+    return {UbWqeSubmissionStatus::ACCEPTED, wqeIdentity};
+}
+
 void
 UbFunction::ApplyWqeOutcomeFromTransaction(
     uint32_t jettyNum,
@@ -857,7 +897,12 @@ UbTransaction* UbJetty::GetTransaction()
 
 Ptr<UbWqeSegment> UbJetty::GetNextWqeSegment()
 {
-    Ptr<UbWqeSegment> segment = PrepareNextWqeSegment();
+    return GetNextWqeSegment(m_taSegmentBytes);
+}
+
+Ptr<UbWqeSegment> UbJetty::GetNextWqeSegment(uint32_t maxSegmentBytes)
+{
+    Ptr<UbWqeSegment> segment = PrepareNextWqeSegment(nullptr, maxSegmentBytes);
     if (segment != nullptr)
     {
         CommitWqeSegmentAdmission(segment);
@@ -867,7 +912,15 @@ Ptr<UbWqeSegment> UbJetty::GetNextWqeSegment()
 
 Ptr<UbWqeSegment> UbJetty::PrepareNextWqeSegment(Ptr<UbWqe> expectedWqe)
 {
+    return PrepareNextWqeSegment(expectedWqe, m_taSegmentBytes);
+}
+
+Ptr<UbWqeSegment> UbJetty::PrepareNextWqeSegment(Ptr<UbWqe> expectedWqe,
+                                                 uint32_t maxSegmentBytes)
+{
     NS_LOG_FUNCTION(this);
+    NS_ABORT_MSG_IF(maxSegmentBytes == 0 || maxSegmentBytes > UB_WQE_TA_SEGMENT_BYTE,
+                    "Transaction segment limit must be in [1, UB_WQE_TA_SEGMENT_BYTE]");
 
     if (IsLimited()) {
         NS_LOG_WARN("Inflight reach limit");
@@ -920,8 +973,9 @@ Ptr<UbWqeSegment> UbJetty::PrepareNextWqeSegment(Ptr<UbWqe> expectedWqe)
     }
 
     uint64_t segmentSize = currentWqe->GetBytesLeft();
-    if (segmentSize > m_taSegmentBytes) {
-        segmentSize = m_taSegmentBytes;
+    const uint32_t segmentLimit = std::min(m_taSegmentBytes, maxSegmentBytes);
+    if (segmentSize > segmentLimit) {
+        segmentSize = segmentLimit;
     }
 
     Ptr<UbWqeSegment> segment = GenWqeSegment(currentWqe, segmentSize);
@@ -1078,12 +1132,20 @@ Ptr<UbWqeSegment> UbJetty::GenWqeSegment(Ptr<UbWqe> wqe, uint32_t segmentSize)
 
 void UbJetty::PushWqe(Ptr<UbWqe> ubWqe)
 {
+    PushWqe(ubWqe, m_taSegmentBytes);
+}
+
+void UbJetty::PushWqe(Ptr<UbWqe> ubWqe, uint32_t maxSegmentBytes)
+{
     NS_ABORT_MSG_IF(!CanAcceptWqe(ubWqe),
                     "WQE is not compatible with Jetty source/destination binding");
+    NS_ABORT_MSG_IF(maxSegmentBytes == 0 || maxSegmentBytes > UB_WQE_TA_SEGMENT_BYTE,
+                    "WQE segment limit must be in [1, UB_WQE_TA_SEGMENT_BYTE]");
     ubWqe->SetJettyNum(m_jettyNum);
     ubWqe->SetTaMsn(m_taMsnCnt);
     ubWqe->SetTaSsnStart(m_taSsnCnt);
-    uint64_t ssnSize = (ubWqe->GetSize() + m_taSegmentBytes - 1) / m_taSegmentBytes;
+    const uint32_t segmentLimit = std::min(m_taSegmentBytes, maxSegmentBytes);
+    uint64_t ssnSize = (ubWqe->GetSize() + segmentLimit - 1) / segmentLimit;
     ubWqe->SetTaSsnSize(ssnSize);
     // Assign request identity only after Jetty binding is known.
     ubWqe->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
