@@ -155,6 +155,23 @@ class MpiInterface
         ParallelCommunicationInterface::TaskCompletionHandler handler);
 
     /**
+     * @brief Send a fixed-size causal control record to its target node owner.
+     */
+    static void SendCausalControl(
+        const ParallelCommunicationInterface::CausalControlRecord& record);
+
+    /**
+     * @brief Register the process-local causal control dispatcher.
+     */
+    static void SetCausalControlHandler(
+        ParallelCommunicationInterface::CausalControlHandler handler);
+
+    /**
+     * @brief Return whether the selected MPI transport supports causal control records.
+     */
+    static bool SupportsCausalControl();
+
+    /**
      * @brief Add an upper bound to the effective MPI lookahead.
      *
      * This is used when a non-packet control-plane event has its own visibility delay
@@ -163,6 +180,11 @@ class MpiInterface
      * @param lookAhead maximum lookahead; must be positive.
      */
     static void BoundLookAhead(Time lookAhead);
+
+    /**
+     * @brief Return the positive lookahead already established by the active MPI simulator.
+     */
+    static Time GetCausalControlLookAhead();
 
     /**
      * @brief Return the communicator used to run ns-3.

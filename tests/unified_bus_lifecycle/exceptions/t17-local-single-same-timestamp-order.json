@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "ticket": "T17",
+  "case": "medium-cross-owner-runtime-local",
+  "runtime": "local-single",
+  "approval": {
+    "status": "approved",
+    "source": "known acceptable difference policy",
+    "date": "2026-07-15",
+    "policy_statement": "A byte difference may pass only when root review confirms an exact, evidenced, acceptable cause and every other managed artifact remains accounted for.",
+    "approved_by": "root-review",
+    "approved_cause_ids": [
+      "t05-remote-response-same-timestamp-order"
+    ]
+  },
+  "evidence": {
+    "specification": "tickets.md Task 17 requires runtime-matching frozen acceptance while allowing a known, evidenced, acceptable narrow difference.",
+    "reference_root": ".openusim/unified-bus-lifecycle/reference/runs/local-single/medium-cross-owner-runtime/run-1/case",
+    "candidate_root": ".openusim/unified-bus-lifecycle/candidate/t17-local-single/case",
+    "diagnostics_root": ".openusim/unified-bus-lifecycle/diagnostics/t17-local-single-approved",
+    "comparison_result": "expected-differences-only",
+    "managed_artifact_count": 18,
+    "affected_artifact_count": 1,
+    "unaffected_artifact_count": 17,
+    "records": [
+      {
+        "id": "t17-local-single-same-timestamp-control",
+        "kind": "milestone-acceptance",
+        "summary": "The complete managed-tree comparison isolates the known same-timestamp Sends/Completes ordering change to one TaskTrace artifact.",
+        "ticket": "T17",
+        "runtime": "local-single",
+        "reference_root": ".openusim/unified-bus-lifecycle/reference/runs/local-single/medium-cross-owner-runtime/run-1/case",
+        "candidate_root": ".openusim/unified-bus-lifecycle/candidate/t17-local-single/case",
+        "affected_artifacts": [
+          "runlog/TaskTrace_node_1.tr"
+        ],
+        "claims": {
+          "prior_reviewed_exception": "tests/unified_bus_lifecycle/exceptions/t08-inherited-descriptor-gbn.json",
+          "event_timestamp_ns": 114.48,
+          "event_membership_preserved": true,
+          "protocol_and_packet_artifacts_identical": true,
+          "focused_test_ids": [
+            "mpi-causal-control-ordering",
+            "mpi-hybrid-causal-control-ordering",
+            "unified-bus-mpi-dependency-visibility",
+            "mpi-ub-lifecycle-parallel-control",
+            "mpi-hybrid-ub-lifecycle-parallel-control"
+          ]
+        }
+      }
+    ]
+  },
+  "causes": [
+    {
+      "id": "t05-remote-response-same-timestamp-order",
+      "introduced_by": "T05",
+      "cause": "Remote response admission wakes synchronously inside the existing ready-source domain, so the same-timestamp Sends record now precedes the inbound Completes record.",
+      "impact": "Both events remain at 114.480 ns with unchanged membership; task statistics, throughput, canonical events, packet traces, port traces, inputs, and every other managed artifact remain byte-identical.",
+      "evidence": {
+        "ids": [
+          "t17-local-single-same-timestamp-control"
+        ]
+      },
+      "artifacts": [
+        "runlog/TaskTrace_node_1.tr"
+      ]
+    }
+  ],
+  "affected_artifacts": [
+    {
+      "path": "runlog/TaskTrace_node_1.tr",
+      "cause_ids": [
+        "t05-remote-response-same-timestamp-order"
+      ],
+      "first_byte_offset": 25,
+      "reference_byte_hex": "43",
+      "candidate_byte_hex": "53",
+      "reference_sha256": "fb6d7333dd337bc0ae65e64d8628390ee59431803ba7d3477cafd60d2a57494b",
+      "candidate_sha256": "c68777bf376e6fba0e7bb3a45473166dd44397b8e4a1fe1da6fd024c7eba2823"
+    }
+  ],
+  "unaffected_artifacts": [
+    {
+      "path": "canonical-events.rank0.txt",
+      "sha256": "10f54f22c7b3f8e935b08c87eb9ed1e8d8e6384fc8ece55c8b77b5a6e0b9dd64"
+    },
+    {
+      "path": "network_attribute.txt",
+      "sha256": "bab3bd6b97cd4a29fee5d8aaa9260cd0b303831bf2cfee012ca657f17bde4b84"
+    },
+    {
+      "path": "node.csv",
+      "sha256": "0d36cec15ef6189fadb7b643eaa4ebab0e034e76012944736ebef9e10009e4ca"
+    },
+    {
+      "path": "output/task_statistics.csv",
+      "sha256": "f9e82bd87f3ae3054d2659299f2733feab2454ea936e77f509cff1a3185f5d62"
+    },
+    {
+      "path": "output/throughput.csv",
+      "sha256": "6d880c37e2c171cb8af007f5c65e5d2af0a3521585100e4038a67694d0304c51"
+    },
+    {
+      "path": "routing_table.csv",
+      "sha256": "ebac54c6bb8b6b08534c66c370ae23d57b18303a55d6686b81c7060dcc6802a6"
+    },
+    {
+      "path": "runlog/AllPacketTrace_ACK_node_0.tr",
+      "sha256": "5286295cc22d7e06e0dedb53a480fa657cd3f5acb448d43f0f4d1a6a5dde55a3"
+    },
+    {
+      "path": "runlog/AllPacketTrace_ACK_node_1.tr",
+      "sha256": "99b6d8a6afbf55b5f4e51b21a8d1bce9440ad2c49bf6fdd95912c20a44a4c42c"
+    },
+    {
+      "path": "runlog/AllPacketTrace_PKT_node_0.tr",
+      "sha256": "d980d620618137a2044e730f25ec17da93843fbd96f9a23a9e3402739e1e274f"
+    },
+    {
+      "path": "runlog/AllPacketTrace_PKT_node_1.tr",
+      "sha256": "c5a330d92373c13eab771d3245739375eecf52be1df2e625ce62468df3258893"
+    },
+    {
+      "path": "runlog/PacketTrace_node_0.tr",
+      "sha256": "3a190e5cb697931909f9d4b5c40fd44dfdfd7a36640e527c7373b5d07a699267"
+    },
+    {
+      "path": "runlog/PacketTrace_node_1.tr",
+      "sha256": "159619521a5195f213e938a492cbb5d9beefa32adc350890bb811dd260ed84c8"
+    },
+    {
+      "path": "runlog/PortTrace_node_0_port_0.tr",
+      "sha256": "f1a35a1d7d9aa7ec0288f83a9b0706889e3f6b94381f6dc51f8350be802c3941"
+    },
+    {
+      "path": "runlog/PortTrace_node_1_port_0.tr",
+      "sha256": "048ef75c8abd92ec2409395eaf7b85601ae48bbd3ebb58d9c9862a8e45728ed0"
+    },
+    {
+      "path": "runlog/TaskTrace_node_0.tr",
+      "sha256": "e940530fe9a527526a3c19bd0c899b0b001563f9feeb051ac580624729a55f01"
+    },
+    {
+      "path": "topology.csv",
+      "sha256": "de1a5b97b8df05ab3f5ca18a15d048b48c33ecbab7e934440bd4b58529c56b43"
+    },
+    {
+      "path": "traffic.csv",
+      "sha256": "8ef81e14026f1bedb6b4a944edd1bd0b632d2276ec27382b7765c262fc5b628f"
+    }
+  ]
+}

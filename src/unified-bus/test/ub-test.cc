@@ -367,14 +367,16 @@ InstallStaticTpPair(const LocalTpTopology& topo)
 {
     Ptr<UbController> senderCtrl = topo.sender->GetObject<UbController>();
     Ptr<UbController> receiverCtrl = topo.receiver->GetObject<UbController>();
-    Connection connection{topo.sender->GetId(),
-                          topo.senderPort->GetIfIndex(),
-                          kUrmaWriteRegressionSenderTpn,
-                          topo.receiver->GetId(),
-                          topo.receiverPort->GetIfIndex(),
-                          kUrmaWriteRegressionReceiverTpn,
-                          kUrmaWriteRegressionPriority,
-                          0};
+    Connection connection;
+    connection.ownerNodeId = topo.sender->GetId();
+    connection.node1 = topo.sender->GetId();
+    connection.port1 = topo.senderPort->GetIfIndex();
+    connection.tpn1 = kUrmaWriteRegressionSenderTpn;
+    connection.node2 = topo.receiver->GetId();
+    connection.port2 = topo.receiverPort->GetIfIndex();
+    connection.tpn2 = kUrmaWriteRegressionReceiverTpn;
+    connection.priority = kUrmaWriteRegressionPriority;
+    connection.metrics = 0;
 
     Connection existingConnection;
     if (!senderCtrl->GetTpConnManager()->TryGetLocalConnection(topo.sender->GetId(),
@@ -7436,6 +7438,166 @@ class UbLifecycleEgressQueueFullDropTest : public TestCase
                               "Egress rejection terminal should follow packet birth");
 
         coordinator->RetirePacketOwner(owner);
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbParallelLifecyclePacketOrderingTest : public TestCase
+{
+  public:
+    UbParallelLifecyclePacketOrderingTest()
+        : TestCase("UnifiedBus - parallel packet controls apply once in source order")
+    {
+    }
+
+    void DoRun() override
+    {
+        Ptr<Node> ownerNode = CreateObject<Node>();
+        Ptr<Node> sourceNode = CreateObject<Node>();
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(ownerNode);
+        Ptr<UbParallelLifecycleAdapter> adapter =
+            UbParallelLifecycleAdapter::GetOrCreate(ownerNode);
+        const UbLifecycleResourceIdentity owner =
+            coordinator->OpenPacketOwner(UbLifecycleResourceKind::RTP_ENDPOINT, 202);
+        Ptr<Packet> transferPacket = Create<Packet>(64);
+        Ptr<Packet> terminalPacket = Create<Packet>(64);
+        const UbPacketAttemptIdentity transferAttempt =
+            coordinator->RegisterPacketAttempt(owner, transferPacket);
+        const UbPacketAttemptIdentity terminalAttempt =
+            coordinator->RegisterPacketAttempt(owner, terminalPacket);
+
+        UbLifecycleControlRecord second;
+        second.sourceNodeId = sourceNode->GetId();
+        second.targetNodeId = ownerNode->GetId();
+        second.sequence = 2;
+        second.operation = UbLifecycleControlOperation::PACKET_TERMINAL;
+        second.packet = terminalAttempt;
+        second.value = static_cast<uint64_t>(UbPacketTerminal::ENDPOINT_CONSUMED);
+        adapter->InjectControlForTest(second);
+        adapter->InjectControlForTest(second);
+
+        UbLifecycleControlRecord first;
+        first.sourceNodeId = sourceNode->GetId();
+        first.targetNodeId = ownerNode->GetId();
+        first.sequence = 1;
+        first.operation = UbLifecycleControlOperation::PACKET_TRANSFER;
+        first.packet = transferAttempt;
+        first.value = static_cast<uint64_t>(UbPacketTransfer::LOCAL_LINK);
+        adapter->InjectControlForTest(first);
+        adapter->InjectControlForTest(first);
+
+        UbParallelLifecycleSnapshot control = adapter->GetSnapshot();
+        NS_TEST_ASSERT_MSG_EQ(control.received, 4u, "All injected records should be observed");
+        NS_TEST_ASSERT_MSG_EQ(control.applied, 2u, "Each ordered record should apply once");
+        NS_TEST_ASSERT_MSG_EQ(control.duplicate, 1u, "Buffered duplicate should be rejected");
+        NS_TEST_ASSERT_MSG_EQ(control.stale, 1u, "Already-applied sequence should be stale");
+        NS_TEST_ASSERT_MSG_EQ(control.pending, 0u, "Sequence gap should drain after seq1 arrives");
+        NS_TEST_ASSERT_MSG_EQ(control.ownerSequence,
+                              2u,
+                              "Owner sequence should advance only for applied mutations");
+
+        UbLifecycleResourceSnapshot resource = coordinator->GetSnapshot(owner);
+        NS_TEST_ASSERT_MSG_EQ(resource.transferObservations,
+                              1u,
+                              "Original transfer mutation should run exactly once");
+        NS_TEST_ASSERT_MSG_EQ(resource.endpointConsumed,
+                              1u,
+                              "Original terminal mutation should run exactly once");
+        NS_TEST_ASSERT_MSG_EQ(resource.inFlightPackets,
+                              1u,
+                              "Only the non-terminal transfer attempt should remain active");
+
+        UbLifecycleCoordinator::TerminatePacket(transferPacket,
+                                                UbPacketTerminal::ENDPOINT_CONSUMED);
+        coordinator->RetirePacketOwner(owner);
+        const UbLifecycleResourceIdentity replacement =
+            coordinator->OpenPacketOwner(UbLifecycleResourceKind::RTP_ENDPOINT, 202);
+        second.sequence = 3;
+        adapter->InjectControlForTest(second);
+        control = adapter->GetSnapshot();
+        NS_TEST_ASSERT_MSG_EQ(control.applied,
+                              2u,
+                              "Stale-generation record must not reach the old mutation block");
+        NS_TEST_ASSERT_MSG_EQ(control.stale,
+                              2u,
+                              "Stale generation should be rejected and counted");
+        coordinator->RetirePacketOwner(replacement);
+        Simulator::Destroy();
+    }
+};
+
+class UbParallelConnectionLifecycleControlTest : public TestCase
+{
+  public:
+    UbParallelConnectionLifecycleControlTest()
+        : TestCase("UnifiedBus - typed connection control reuses paired destroy cleanup")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbController> sender = topo.sender->GetObject<UbController>();
+        Ptr<UbController> receiver = topo.receiver->GetObject<UbController>();
+        Ptr<TpConnectionManager> senderManager = sender->GetTpConnManager();
+        Ptr<TpConnectionManager> receiverManager = receiver->GetTpConnManager();
+        Connection connection;
+        NS_TEST_ASSERT_MSG_EQ(senderManager->TryGetLocalConnection(
+                                  topo.sender->GetId(),
+                                  kUrmaWriteRegressionSenderTpn,
+                                  connection),
+                              true,
+                              "Expected the installed source reservation");
+        const UbLifecycleResourceIdentity identity{
+            connection.ownerNodeId,
+            UbLifecycleResourceKind::RTP_CONNECTION,
+            connection.tpn1,
+            connection.reservationGeneration,
+        };
+
+        UbLifecycleControlRecord request;
+        request.sourceNodeId = topo.receiver->GetId();
+        request.targetNodeId = topo.sender->GetId();
+        request.sequence = 1;
+        request.operation = UbLifecycleControlOperation::CONNECTION_DESTROY_REQUEST;
+        request.resource = identity;
+        request.tpn = connection.tpn1;
+        request.value = static_cast<uint64_t>(UbDestroyReason::EXPLICIT);
+        Ptr<UbParallelLifecycleAdapter> adapter =
+            UbParallelLifecycleAdapter::GetOrCreate(topo.sender);
+        adapter->InjectControlForTest(request);
+
+        Connection ignored;
+        NS_TEST_ASSERT_MSG_EQ(senderManager->TryGetLocalConnection(
+                                  topo.sender->GetId(), connection.tpn1, ignored),
+                              false,
+                              "Typed cleanup should erase the source reservation view");
+        NS_TEST_ASSERT_MSG_EQ(receiverManager->TryGetLocalConnection(
+                                  topo.receiver->GetId(), connection.tpn2, ignored),
+                              false,
+                              "Typed cleanup should erase the receiver reservation view");
+        NS_TEST_ASSERT_MSG_EQ(sender->GetTpByTpn(connection.tpn1),
+                              nullptr,
+                              "Typed endpoint request should destroy the source endpoint");
+        NS_TEST_ASSERT_MSG_EQ(receiver->GetTpByTpn(connection.tpn2),
+                              nullptr,
+                              "Typed endpoint request should destroy the receiver endpoint");
+        NS_TEST_ASSERT_MSG_EQ(senderManager->GetCanonicalConnectionCountForTest(),
+                              0u,
+                              "Owner should erase the canonical record after both view acks");
+        NS_TEST_ASSERT_MSG_EQ(
+            UbLifecycleCoordinator::GetOrCreate(topo.sender)->GetSnapshot(identity).retired,
+            true,
+            "Connection lifecycle resource should retire after reservation cleanup");
+        const UbParallelLifecycleSnapshot control = adapter->GetSnapshot();
+        NS_TEST_ASSERT_MSG_EQ(control.applied,
+                              1u,
+                              "The typed owner request should apply exactly once");
+        NS_TEST_ASSERT_MSG_EQ(control.pending, 0u, "Typed cleanup should leave no buffered record");
         Simulator::Destroy();
         Config::Reset();
     }
@@ -24414,6 +24576,7 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
     : TestSuite("unified-bus-lifecycle", Type::UNIT)
 {
     AddTestCase(new UbLifecyclePacketAccountingTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbParallelLifecyclePacketOrderingTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleEgressQueueFullDropTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleAtomicWqeSubmissionTest(), TestCase::Duration::QUICK);
 #ifndef _WIN32
@@ -24650,6 +24813,19 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
 }
 
 static UbLifecycleTestSuite g_ubLifecycleTestSuite;
+
+class UbParallelLifecycleFocusedTestSuite : public TestSuite
+{
+  public:
+    UbParallelLifecycleFocusedTestSuite()
+        : TestSuite("unified-bus-parallel-lifecycle", Type::UNIT)
+    {
+        AddTestCase(new UbParallelLifecyclePacketOrderingTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbParallelConnectionLifecycleControlTest(), TestCase::Duration::QUICK);
+    }
+};
+
+static UbParallelLifecycleFocusedTestSuite g_ubParallelLifecycleFocusedTestSuite;
 
 UbWireFormatTestSuite::UbWireFormatTestSuite()
     : TestSuite("unified-bus-wire-format", Type::UNIT)
@@ -27072,6 +27248,22 @@ class UbQuickExampleSystemTestSuite : public TestSuite
 };
 
 static UbQuickExampleSystemTestSuite g_ubQuickExampleSystemTestSuite;
+
+#ifdef NS3_MPI
+class UbQuickExampleMpiDependencyVisibilityFocusedTestSuite : public TestSuite
+{
+  public:
+    UbQuickExampleMpiDependencyVisibilityFocusedTestSuite()
+        : TestSuite("unified-bus-mpi-dependency-visibility", Type::SYSTEM)
+    {
+        AddTestCase(new UbQuickExampleMpiDependencyVisibilityDelaySystemTest(),
+                    TestCase::Duration::QUICK);
+    }
+};
+
+static UbQuickExampleMpiDependencyVisibilityFocusedTestSuite
+    g_ubQuickExampleMpiDependencyVisibilityFocusedTestSuite;
+#endif
 
 class UbQuickExampleSmokeTestSuite : public TestSuite
 {
