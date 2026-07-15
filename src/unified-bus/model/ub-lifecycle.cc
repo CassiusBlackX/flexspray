@@ -5,6 +5,7 @@
 #include "ns3/node.h"
 #include "ns3/node-list.h"
 #include "ns3/simulator.h"
+#include "ns3/ub-lifecycle-trace.h"
 #include "ns3/ub-tp-connection-manager.h"
 
 #ifdef NS3_MPI
@@ -28,6 +29,121 @@ NS_OBJECT_ENSURE_REGISTERED(UbParallelLifecycleAdapter);
 
 namespace
 {
+
+UbLifecycleTraceRecord
+MakeTraceRecord(const UbLifecycleResourceIdentity& identity,
+                uint64_t ownerSequence,
+                UbLifecycleTraceRecordType recordType,
+                UbLifecycleTraceSubjectKind subjectKind,
+                uint64_t subjectId,
+                UbLifecycleTraceEvent event,
+                int64_t before,
+                int64_t delta,
+                int64_t after,
+                UbLifecycleTraceOutcome outcome,
+                UbLifecycleTraceReason reason,
+                UbLifecycleTraceSite site)
+{
+    return {Simulator::Now().GetNanoSeconds(),
+            identity.ownerNodeId,
+            ownerSequence,
+            recordType,
+            identity.kind,
+            identity.localId,
+            identity.generation,
+            subjectKind,
+            subjectId,
+            event,
+            before,
+            delta,
+            after,
+            outcome,
+            reason,
+            site};
+}
+
+UbLifecycleTraceReason
+ToTraceReason(UbLifecycleLeaseKind kind)
+{
+    switch (kind)
+    {
+    case UbLifecycleLeaseKind::WORK:
+        return UbLifecycleTraceReason::WORK_LEASE;
+    case UbLifecycleLeaseKind::CHILD:
+        return UbLifecycleTraceReason::CHILD_LEASE;
+    case UbLifecycleLeaseKind::TRANSPORT_USE:
+        return UbLifecycleTraceReason::TRANSPORT_USE_LEASE;
+    case UbLifecycleLeaseKind::BINDING:
+        return UbLifecycleTraceReason::BINDING_LEASE;
+    case UbLifecycleLeaseKind::TRACKED_EVENT:
+        return UbLifecycleTraceReason::TRACKED_EVENT_LEASE;
+    case UbLifecycleLeaseKind::TRANSPORT_WORK:
+        return UbLifecycleTraceReason::TRANSPORT_WORK_LEASE;
+    }
+    NS_ABORT_MSG("Unknown lifecycle lease trace reason");
+}
+
+UbLifecycleTraceReason
+ToTraceReason(UbPacketTransfer transfer)
+{
+    switch (transfer)
+    {
+    case UbPacketTransfer::EGRESS_QUEUE_ENQUEUE:
+        return UbLifecycleTraceReason::EGRESS_QUEUE_ENQUEUE;
+    case UbPacketTransfer::EGRESS_QUEUE_DEQUEUE:
+        return UbLifecycleTraceReason::EGRESS_QUEUE_DEQUEUE;
+    case UbPacketTransfer::LOCAL_LINK:
+        return UbLifecycleTraceReason::LOCAL_LINK;
+    }
+    NS_ABORT_MSG("Unknown packet transfer trace reason");
+}
+
+UbLifecycleTraceOutcome
+ToTraceOutcome(UbWorkOutcome outcome)
+{
+    switch (outcome)
+    {
+    case UbWorkOutcome::COMPLETED:
+        return UbLifecycleTraceOutcome::COMPLETED;
+    case UbWorkOutcome::FAILED:
+        return UbLifecycleTraceOutcome::FAILED;
+    case UbWorkOutcome::CANCELED:
+        return UbLifecycleTraceOutcome::CANCELED;
+    case UbWorkOutcome::FLUSHED:
+        return UbLifecycleTraceOutcome::FLUSHED;
+    }
+    NS_ABORT_MSG("Unknown work trace outcome");
+}
+
+UbLifecycleTraceOutcome
+ToTraceOutcome(UbPacketTerminal terminal)
+{
+    switch (terminal)
+    {
+    case UbPacketTerminal::ENDPOINT_CONSUMED:
+        return UbLifecycleTraceOutcome::ENDPOINT_CONSUMED;
+    case UbPacketTerminal::ROUTE_NOT_FOUND:
+        return UbLifecycleTraceOutcome::ROUTE_NOT_FOUND;
+    case UbPacketTerminal::EGRESS_QUEUE_FULL:
+        return UbLifecycleTraceOutcome::EGRESS_QUEUE_FULL;
+    case UbPacketTerminal::INGRESS_QUEUE_FULL:
+        return UbLifecycleTraceOutcome::INGRESS_QUEUE_FULL;
+    case UbPacketTerminal::FAULT_DROP:
+        return UbLifecycleTraceOutcome::FAULT_DROP;
+    case UbPacketTerminal::CHANNEL_FAILURE:
+        return UbLifecycleTraceOutcome::CHANNEL_FAILURE;
+    case UbPacketTerminal::MALFORMED_PACKET:
+        return UbLifecycleTraceOutcome::MALFORMED_PACKET;
+    }
+    NS_ABORT_MSG("Unknown packet terminal trace outcome");
+}
+
+bool
+ShouldTraceResource(const UbLifecycleResourceIdentity& identity)
+{
+    return UbLifecycleTrace::IsEventEnabled() &&
+           (!UbLifecycleTrace::IsDetailEnabled() || UbLifecycleTrace::SelectResource(identity));
+}
 
 #ifdef NS3_MPI
 constexpr uint32_t UB_LIFECYCLE_CAUSAL_PROTOCOL = 0x55424c31;
@@ -256,7 +372,12 @@ UbLifecycleCoordinator::GetTypeId()
     static TypeId tid = TypeId("ns3::UbLifecycleCoordinator")
                             .SetParent<Object>()
                             .SetGroupName("UnifiedBus")
-                            .AddConstructor<UbLifecycleCoordinator>();
+                            .AddConstructor<UbLifecycleCoordinator>()
+                            .AddTraceSource("LifecycleEvent",
+                                            "Typed lifecycle state and identity event.",
+                                            MakeTraceSourceAccessor(
+                                                &UbLifecycleCoordinator::m_lifecycleTrace),
+                                            "ns3::TracedCallback::UbLifecycleTraceRecord");
     return tid;
 }
 
@@ -269,6 +390,11 @@ UbLifecycleCoordinator::GetOrCreate(Ptr<Node> node)
     {
         coordinator = CreateObject<UbLifecycleCoordinator>();
         coordinator->m_ownerNodeId = node->GetId();
+        if (UbLifecycleTrace::IsEventEnabled())
+        {
+            coordinator->m_lifecycleTrace.ConnectWithoutContext(
+                MakeCallback(&UbLifecycleTrace::Emit));
+        }
         node->AggregateObject(coordinator);
     }
     NS_ABORT_MSG_IF(coordinator->m_ownerNodeId != node->GetId(),
@@ -303,7 +429,23 @@ UbLifecycleCoordinator::OpenResource(UbLifecycleResourceKind kind, uint64_t loca
     state.activeAttempts.clear();
     state.activeLeases.clear();
     state.stateChangedCallback = {};
-    return {m_ownerNodeId, kind, localId, state.generation};
+    const UbLifecycleResourceIdentity identity{m_ownerNodeId, kind, localId, state.generation};
+    if (ShouldTraceResource(identity))
+    {
+        m_lifecycleTrace(MakeTraceRecord(identity,
+                                         ++m_traceSequence,
+                                         UbLifecycleTraceRecordType::RESOURCE_STATE,
+                                         UbLifecycleTraceSubjectKind::RESOURCE,
+                                         localId,
+                                         UbLifecycleTraceEvent::RESOURCE_OPEN,
+                                         0,
+                                         1,
+                                         1,
+                                         UbLifecycleTraceOutcome::NONE,
+                                         UbLifecycleTraceReason::NONE,
+                                         UbLifecycleTraceSite::COORDINATOR_OPEN));
+    }
+    return identity;
 }
 
 void
@@ -315,6 +457,21 @@ UbLifecycleCoordinator::RetireResource(const UbLifecycleResourceIdentity& identi
     NS_ABORT_MSG_IF(!state.activeLeases.empty(),
                     "Cannot retire lifecycle generation with active leases");
     state.snapshot.retired = true;
+    if (ShouldTraceResource(identity))
+    {
+        m_lifecycleTrace(MakeTraceRecord(identity,
+                                                ++m_traceSequence,
+                                                UbLifecycleTraceRecordType::RESOURCE_STATE,
+                                                UbLifecycleTraceSubjectKind::RESOURCE,
+                                                identity.localId,
+                                                UbLifecycleTraceEvent::RESOURCE_RETIRE,
+                                                0,
+                                                1,
+                                                1,
+                                                UbLifecycleTraceOutcome::NONE,
+                                                UbLifecycleTraceReason::NONE,
+                                                UbLifecycleTraceSite::COORDINATOR_RETIRE));
+    }
 }
 
 bool
@@ -375,6 +532,21 @@ UbLifecycleCoordinator::AcquireLease(const UbLifecycleResourceIdentity& owner,
     default:
         NS_ABORT_MSG("Unknown lifecycle lease kind");
     }
+    if (UbLifecycleTrace::IsDetailEnabled() && UbLifecycleTrace::SelectResource(owner))
+    {
+        m_lifecycleTrace(MakeTraceRecord(owner,
+                                                ++m_traceSequence,
+                                                UbLifecycleTraceRecordType::LEDGER_DELTA,
+                                                UbLifecycleTraceSubjectKind::LEASE,
+                                                lease.lease,
+                                                UbLifecycleTraceEvent::LEASE_ACQUIRE,
+                                                0,
+                                                1,
+                                                1,
+                                                UbLifecycleTraceOutcome::NONE,
+                                                ToTraceReason(kind),
+                                                UbLifecycleTraceSite::COORDINATOR_ACQUIRE_LEASE));
+    }
     return lease;
 }
 
@@ -427,6 +599,21 @@ UbLifecycleCoordinator::ReleaseLease(const UbLifecycleLeaseIdentity& lease)
     {
         callback(lease.owner);
     }
+    if (UbLifecycleTrace::IsDetailEnabled() && UbLifecycleTrace::SelectResource(lease.owner))
+    {
+        m_lifecycleTrace(MakeTraceRecord(lease.owner,
+                                                ++m_traceSequence,
+                                                UbLifecycleTraceRecordType::LEDGER_DELTA,
+                                                UbLifecycleTraceSubjectKind::LEASE,
+                                                lease.lease,
+                                                UbLifecycleTraceEvent::LEASE_RELEASE,
+                                                1,
+                                                -1,
+                                                0,
+                                                UbLifecycleTraceOutcome::NONE,
+                                                ToTraceReason(lease.kind),
+                                                UbLifecycleTraceSite::COORDINATOR_RELEASE_LEASE));
+    }
 }
 
 void
@@ -463,6 +650,21 @@ UbLifecycleCoordinator::RecordWorkTerminal(const UbLifecycleResourceIdentity& id
         break;
     default:
         NS_ABORT_MSG("Unknown work terminal outcome");
+    }
+    if (ShouldTraceResource(identity))
+    {
+        m_lifecycleTrace(MakeTraceRecord(identity,
+                                                ++m_traceSequence,
+                                                UbLifecycleTraceRecordType::TERMINAL_OUTCOME,
+                                                UbLifecycleTraceSubjectKind::WORK,
+                                                identity.localId,
+                                                UbLifecycleTraceEvent::WORK_TERMINAL,
+                                                0,
+                                                1,
+                                                1,
+                                                ToTraceOutcome(outcome),
+                                                UbLifecycleTraceReason::NONE,
+                                                UbLifecycleTraceSite::COORDINATOR_WORK_TERMINAL));
     }
 }
 
@@ -502,7 +704,89 @@ UbLifecycleCoordinator::RegisterPacketAttempt(const UbLifecycleResourceIdentity&
     UbPacketLifecycleTag tag;
     tag.SetIdentity(identity);
     packet->AddPacketTag(tag);
+    if (UbLifecycleTrace::IsDetailEnabled() && UbLifecycleTrace::SelectPacket(identity))
+    {
+        m_lifecycleTrace(MakeTraceRecord(owner,
+                                                ++m_traceSequence,
+                                                UbLifecycleTraceRecordType::IDENTITY_LIFETIME,
+                                                UbLifecycleTraceSubjectKind::PACKET,
+                                                attempt,
+                                                UbLifecycleTraceEvent::PACKET_BIRTH,
+                                                static_cast<int64_t>(state.snapshot.inFlightPackets - 1),
+                                                1,
+                                                static_cast<int64_t>(state.snapshot.inFlightPackets),
+                                                UbLifecycleTraceOutcome::NONE,
+                                                UbLifecycleTraceReason::NONE,
+                                                UbLifecycleTraceSite::COORDINATOR_PACKET_BIRTH));
+    }
     return identity;
+}
+
+void
+UbLifecycleCoordinator::EmitLifecycleSummary()
+{
+    if (UbLifecycleTrace::GetLevel() == UbLifecycleTraceLevel::OFF)
+    {
+        return;
+    }
+
+    for (const auto& [key, state] : m_resources)
+    {
+        const UbLifecycleResourceIdentity identity{m_ownerNodeId,
+                                                   key.kind,
+                                                   key.localId,
+                                                   state.generation};
+        const auto emit = [&](UbLifecycleTraceEvent event, uint64_t value) {
+            UbLifecycleTrace::Emit(MakeTraceRecord(identity,
+                                                    ++m_traceSequence,
+                                                    UbLifecycleTraceRecordType::SUMMARY,
+                                                    UbLifecycleTraceSubjectKind::RESOURCE,
+                                                    key.localId,
+                                                    event,
+                                                    UbLifecycleTrace::NOT_APPLICABLE,
+                                                    UbLifecycleTrace::NOT_APPLICABLE,
+                                                    static_cast<int64_t>(value),
+                                                    UbLifecycleTraceOutcome::NONE,
+                                                    UbLifecycleTraceReason::NONE,
+                                                    UbLifecycleTraceSite::COORDINATOR_SUMMARY));
+        };
+        emit(UbLifecycleTraceEvent::SUMMARY_IN_FLIGHT_PACKETS, state.snapshot.inFlightPackets);
+        emit(UbLifecycleTraceEvent::SUMMARY_REGISTERED_PACKETS, state.snapshot.registeredPackets);
+        emit(UbLifecycleTraceEvent::SUMMARY_TRANSFER_OBSERVATIONS,
+             state.snapshot.transferObservations);
+        emit(UbLifecycleTraceEvent::SUMMARY_ENDPOINT_CONSUMED, state.snapshot.endpointConsumed);
+        emit(UbLifecycleTraceEvent::SUMMARY_ROUTE_NOT_FOUND_DROPS,
+             state.snapshot.routeNotFoundDrops);
+        emit(UbLifecycleTraceEvent::SUMMARY_EGRESS_QUEUE_FULL_DROPS,
+             state.snapshot.egressQueueFullDrops);
+        emit(UbLifecycleTraceEvent::SUMMARY_INGRESS_QUEUE_FULL_DROPS,
+             state.snapshot.ingressQueueFullDrops);
+        emit(UbLifecycleTraceEvent::SUMMARY_FAULT_DROPS, state.snapshot.faultDrops);
+        emit(UbLifecycleTraceEvent::SUMMARY_CHANNEL_FAILURE_DROPS,
+             state.snapshot.channelFailureDrops);
+        emit(UbLifecycleTraceEvent::SUMMARY_MALFORMED_PACKET_DROPS,
+             state.snapshot.malformedPacketDrops);
+        emit(UbLifecycleTraceEvent::SUMMARY_ACTIVE_WORK_LEASES,
+             state.snapshot.activeWorkLeases);
+        emit(UbLifecycleTraceEvent::SUMMARY_ACTIVE_CHILD_LEASES,
+             state.snapshot.activeChildLeases);
+        emit(UbLifecycleTraceEvent::SUMMARY_ACTIVE_TRANSPORT_USE_LEASES,
+             state.snapshot.activeTransportUseLeases);
+        emit(UbLifecycleTraceEvent::SUMMARY_ACTIVE_BINDING_LEASES,
+             state.snapshot.activeBindingLeases);
+        emit(UbLifecycleTraceEvent::SUMMARY_ACTIVE_TRACKED_EVENT_LEASES,
+             state.snapshot.activeTrackedEventLeases);
+        emit(UbLifecycleTraceEvent::SUMMARY_ACTIVE_TRANSPORT_WORK_LEASES,
+             state.snapshot.activeTransportWorkLeases);
+        emit(UbLifecycleTraceEvent::SUMMARY_SUCCESSFUL_TERMINALS,
+             state.snapshot.successfulTerminals);
+        emit(UbLifecycleTraceEvent::SUMMARY_COMPLETED_TERMINALS,
+             state.snapshot.completedTerminals);
+        emit(UbLifecycleTraceEvent::SUMMARY_FAILED_TERMINALS, state.snapshot.failedTerminals);
+        emit(UbLifecycleTraceEvent::SUMMARY_CANCELED_TERMINALS, state.snapshot.canceledTerminals);
+        emit(UbLifecycleTraceEvent::SUMMARY_FLUSHED_TERMINALS, state.snapshot.flushedTerminals);
+        emit(UbLifecycleTraceEvent::SUMMARY_RETIRED, state.snapshot.retired ? 1 : 0);
+    }
 }
 
 UbLifecycleResourceSnapshot
@@ -859,13 +1143,29 @@ UbLifecycleCoordinator::Validate(const UbLifecycleResourceIdentity& identity) co
 
 void
 UbLifecycleCoordinator::ObservePacketTransfer(const UbPacketAttemptIdentity& identity,
-                                              UbPacketTransfer)
+                                              UbPacketTransfer transfer)
 {
     ResourceState& state = ValidateMutable(identity.owner);
     NS_ABORT_MSG_IF(state.activeAttempts.find(identity.attempt) == state.activeAttempts.end(),
                     "Packet transfer references an inactive attempt");
     ++state.snapshot.transferObservations;
     state.snapshot.lastTransferSequence = ++state.sequence;
+    if (UbLifecycleTrace::IsDetailEnabled() && UbLifecycleTrace::SelectPacket(identity))
+    {
+        m_lifecycleTrace(MakeTraceRecord(
+            identity.owner,
+            ++m_traceSequence,
+            UbLifecycleTraceRecordType::IDENTITY_LIFETIME,
+            UbLifecycleTraceSubjectKind::PACKET,
+            identity.attempt,
+            UbLifecycleTraceEvent::PACKET_TRANSFER,
+            static_cast<int64_t>(state.snapshot.transferObservations - 1),
+            1,
+            static_cast<int64_t>(state.snapshot.transferObservations),
+            UbLifecycleTraceOutcome::NONE,
+            ToTraceReason(transfer),
+            UbLifecycleTraceSite::COORDINATOR_PACKET_TRANSFER));
+    }
 }
 
 void
@@ -912,6 +1212,22 @@ UbLifecycleCoordinator::TerminatePacket(const UbPacketAttemptIdentity& identity,
     if (!callback.IsNull())
     {
         callback(identity.owner);
+    }
+    if (UbLifecycleTrace::IsDetailEnabled() && UbLifecycleTrace::SelectPacket(identity))
+    {
+        m_lifecycleTrace(MakeTraceRecord(
+            identity.owner,
+            ++m_traceSequence,
+            UbLifecycleTraceRecordType::TERMINAL_OUTCOME,
+            UbLifecycleTraceSubjectKind::PACKET,
+            identity.attempt,
+            UbLifecycleTraceEvent::PACKET_TERMINAL,
+            static_cast<int64_t>(state.snapshot.inFlightPackets + 1),
+            -1,
+            static_cast<int64_t>(state.snapshot.inFlightPackets),
+            ToTraceOutcome(terminal),
+            UbLifecycleTraceReason::NONE,
+            UbLifecycleTraceSite::COORDINATOR_PACKET_TERMINAL));
     }
 }
 

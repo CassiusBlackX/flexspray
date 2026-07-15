@@ -10,7 +10,10 @@ if str(HELPER_ROOT) not in sys.path:
     sys.path.insert(0, str(HELPER_ROOT))
 
 from openusim_run_experiment.case_checker import check_case_files
-from openusim_run_experiment.network_attribute_writer import validate_overrides_against_catalog
+from openusim_run_experiment.network_attribute_writer import (
+    observability_preset,
+    validate_overrides_against_catalog,
+)
 
 
 class OpenUSimRunExperimentHelpersTest(unittest.TestCase):
@@ -57,6 +60,20 @@ class OpenUSimRunExperimentHelpersTest(unittest.TestCase):
 
         self.assertEqual(result["unknown_keys"], [])
         self.assertIn("UB_TRACE_ENABLE", result["accepted_keys"])
+
+    def test_observability_presets_publish_lifecycle_levels(self):
+        self.assertEqual(observability_preset("minimal")["UB_LIFECYCLE_TRACE_LEVEL"], "SUMMARY")
+        self.assertEqual(observability_preset("balanced")["UB_LIFECYCLE_TRACE_LEVEL"], "SUMMARY")
+        self.assertEqual(observability_preset("detailed")["UB_LIFECYCLE_TRACE_LEVEL"], "EVENT")
+
+        catalog = self.make_catalog(
+            {"parameter_key": "ns3::UbPort::UbDataRate", "kind": "AddAttribute"},
+        )
+        result = validate_overrides_against_catalog(
+            catalog,
+            explicit_overrides={"UB_LIFECYCLE_DETAIL_SAMPLE_STRIDE": "4"},
+        )
+        self.assertIn("UB_LIFECYCLE_DETAIL_SAMPLE_STRIDE", result["accepted_keys"])
 
     def test_check_case_files_allows_missing_transport_channel_for_on_demand_mode(self):
         with tempfile.TemporaryDirectory() as tmpdir:

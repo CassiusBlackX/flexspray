@@ -36,6 +36,7 @@ build_lib(
 	model/protocol/ub-ctp.cc
 	model/ub-link.cc
 	model/ub-lifecycle.cc
+	model/ub-lifecycle-trace.cc
 	model/ub-port.cc
 	model/ub-tag.cc
 	model/ub-switch.cc
@@ -74,6 +75,7 @@ build_lib(
 	model/protocol/ub-ctp.h
 	model/ub-link.h
 	model/ub-lifecycle.h
+	model/ub-lifecycle-trace.h
 	model/ub-modulo-sequence.h
 	model/ub-port.h
 	model/ub-small-fifo-queue.h

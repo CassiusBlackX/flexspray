@@ -34,6 +34,7 @@
 #include "ns3/random-variable-stream.h"
 #include "ns3/enum.h"
 #include "ns3/ub-fault.h"
+#include "ns3/ub-lifecycle-trace.h"
 
 class UbLinkDelayOffsetTest;
 
@@ -361,6 +362,30 @@ private:
                      "Enable queue trace files such as QueueTrace_* from event-driven updates and sampling.",
                      ns3::BooleanValue(false),
                      ns3::MakeBooleanChecker());
+
+    ns3::GlobalValue g_trace_preset =
+    ns3::GlobalValue("UB_TRACE_PRESET",
+                     "Trace category preset: minimal, balanced, detailed, or custom.",
+                     ns3::StringValue("minimal"),
+                     ns3::MakeStringChecker());
+
+    ns3::GlobalValue g_lifecycle_trace_level =
+    ns3::GlobalValue("UB_LIFECYCLE_TRACE_LEVEL",
+                     "Lifecycle trace level override: OFF, SUMMARY, EVENT, or DETAIL.",
+                     ns3::StringValue(""),
+                     ns3::MakeStringChecker());
+
+    ns3::GlobalValue g_lifecycle_detail_sample_stride =
+    ns3::GlobalValue("UB_LIFECYCLE_DETAIL_SAMPLE_STRIDE",
+                     "Retain one complete lifecycle identity chain per deterministic stride.",
+                     ns3::UintegerValue(1),
+                     ns3::MakeUintegerChecker<uint64_t>(1));
+
+    ns3::GlobalValue g_lifecycle_detail_sample_offset =
+    ns3::GlobalValue("UB_LIFECYCLE_DETAIL_SAMPLE_OFFSET",
+                     "Selected identity remainder within the lifecycle detail sample stride.",
+                     ns3::UintegerValue(0),
+                     ns3::MakeUintegerChecker<uint64_t>());
 
     ns3::GlobalValue g_python_script_path =
     ns3::GlobalValue("UB_PYTHON_SCRIPT_PATH",

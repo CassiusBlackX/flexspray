@@ -27,6 +27,7 @@
 #include "ns3/ub-ldst-instance.h"
 #include "ns3/ub-ldst-thread.h"
 #include "ns3/ub-lifecycle.h"
+#include "ns3/ub-lifecycle-trace.h"
 #include "ns3/ub-modulo-sequence.h"
 #include "ns3/ub-port.h"
 #include "ns3/ub-queue-manager.h"
@@ -7387,6 +7388,196 @@ class UbLifecyclePacketAccountingTest : public TestCase
                               "Reopening an owner-local resource should allocate a new generation");
 
         Simulator::Destroy();
+    }
+};
+
+class UbLifecycleTraceLevelAndSummaryTest : public TestCase
+{
+  public:
+    UbLifecycleTraceLevelAndSummaryTest()
+        : TestCase("UnifiedBus - lifecycle trace levels preserve the correctness ledger")
+    {
+    }
+
+    void DoRun() override
+    {
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(
+                                  UbLifecycleTrace::ResolveLevel("minimal", "")),
+                              static_cast<uint32_t>(UbLifecycleTraceLevel::SUMMARY),
+                              "Minimal preset should read the existing summary ledger");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(
+                                  UbLifecycleTrace::ResolveLevel("balanced", "")),
+                              static_cast<uint32_t>(UbLifecycleTraceLevel::SUMMARY),
+                              "Balanced preset should not add lifecycle event I/O");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(
+                                  UbLifecycleTrace::ResolveLevel("detailed", "")),
+                              static_cast<uint32_t>(UbLifecycleTraceLevel::EVENT),
+                              "Detailed preset should stop short of lifecycle detail");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(
+                                  UbLifecycleTrace::ResolveLevel("custom", "DETAIL")),
+                              static_cast<uint32_t>(UbLifecycleTraceLevel::DETAIL),
+                              "Custom preset should allow explicit lifecycle detail");
+
+        std::vector<std::string> output;
+        auto append = [&output](const std::string&, const std::string& line) {
+            output.push_back(line);
+        };
+
+        UbLifecycleTrace::Configure("/tmp",
+                                    UbLifecycleTraceLevel::OFF,
+                                    1,
+                                    0,
+                                    0,
+                                    false,
+                                    append);
+        Ptr<Node> offNode = CreateObject<Node>();
+        Ptr<UbLifecycleCoordinator> offCoordinator =
+            UbLifecycleCoordinator::GetOrCreate(offNode);
+        const auto offOwner =
+            offCoordinator->OpenPacketOwner(UbLifecycleResourceKind::RTP_ENDPOINT, 11);
+        Ptr<Packet> offPacket = Create<Packet>(64);
+        offCoordinator->RegisterPacketAttempt(offOwner, offPacket);
+        UbLifecycleCoordinator::TerminatePacket(offPacket, UbPacketTerminal::ENDPOINT_CONSUMED);
+        offCoordinator->RetirePacketOwner(offOwner);
+        offCoordinator->EmitLifecycleSummary();
+        NS_TEST_ASSERT_MSG_EQ(output.empty(), true, "OFF must not emit lifecycle evidence");
+        NS_TEST_ASSERT_MSG_EQ(offCoordinator->GetSnapshot(offOwner).endpointConsumed,
+                              1u,
+                              "OFF must not disable lifecycle accounting");
+        Simulator::Destroy();
+
+        output.clear();
+        UbLifecycleTrace::Configure("/tmp",
+                                    UbLifecycleTraceLevel::SUMMARY,
+                                    1,
+                                    0,
+                                    0,
+                                    false,
+                                    append);
+        UbLifecycleTrace::EmitMetadata();
+        Ptr<Node> summaryNode = CreateObject<Node>();
+        Ptr<UbLifecycleCoordinator> summaryCoordinator =
+            UbLifecycleCoordinator::GetOrCreate(summaryNode);
+        const auto summaryOwner =
+            summaryCoordinator->OpenPacketOwner(UbLifecycleResourceKind::RTP_ENDPOINT, 12);
+        Ptr<Packet> summaryPacket = Create<Packet>(64);
+        summaryCoordinator->RegisterPacketAttempt(summaryOwner, summaryPacket);
+        UbLifecycleCoordinator::TerminatePacket(summaryPacket,
+                                                UbPacketTerminal::ENDPOINT_CONSUMED);
+        summaryCoordinator->RetirePacketOwner(summaryOwner);
+        const UbLifecycleResourceSnapshot before = summaryCoordinator->GetSnapshot(summaryOwner);
+        summaryCoordinator->EmitLifecycleSummary();
+        const UbLifecycleResourceSnapshot after = summaryCoordinator->GetSnapshot(summaryOwner);
+        NS_TEST_ASSERT_MSG_EQ(after.endpointConsumed,
+                              before.endpointConsumed,
+                              "SUMMARY must read rather than duplicate terminal accounting");
+        NS_TEST_ASSERT_MSG_EQ(after.registeredPackets,
+                              before.registeredPackets,
+                              "SUMMARY must read rather than duplicate packet accounting");
+        NS_TEST_ASSERT_MSG_GT(output.size(),
+                              3u,
+                              "SUMMARY should emit metadata, headers and existing counters");
+        NS_TEST_ASSERT_MSG_NE(output.front().find("\"schema\":\"ub.lifecycle.v1\""),
+                              std::string::npos,
+                              "Metadata should declare the supported lifecycle schema");
+        NS_TEST_ASSERT_MSG_NE(output.front().find("\"resourceKinds\""),
+                              std::string::npos,
+                              "Metadata should contain the C++ resource enum registry");
+        Simulator::Destroy();
+        UbLifecycleTrace::Reset();
+    }
+};
+
+class UbLifecycleTraceIdentityChainTest : public TestCase
+{
+  public:
+    UbLifecycleTraceIdentityChainTest()
+        : TestCase("UnifiedBus - lifecycle detail retains complete selected packet identities")
+    {
+    }
+
+    void DoRun() override
+    {
+        std::vector<std::string> output;
+        UbLifecycleTrace::Configure(
+            "/tmp",
+            UbLifecycleTraceLevel::DETAIL,
+            2,
+            0,
+            0,
+            false,
+            [&output](const std::string&, const std::string& line) { output.push_back(line); });
+        UbLifecycleTrace::EmitMetadata();
+
+        Ptr<Node> node = CreateObject<Node>();
+        Ptr<UbLifecycleCoordinator> coordinator = UbLifecycleCoordinator::GetOrCreate(node);
+        const auto owner =
+            coordinator->OpenPacketOwner(UbLifecycleResourceKind::RTP_ENDPOINT, 20);
+        Ptr<Packet> unselected = Create<Packet>(64);
+        Ptr<Packet> selected = Create<Packet>(64);
+        const auto first = coordinator->RegisterPacketAttempt(owner, unselected);
+        const auto second = coordinator->RegisterPacketAttempt(owner, selected);
+        NS_TEST_ASSERT_MSG_EQ(first.attempt, 1u, "First packet should be outside offset zero");
+        NS_TEST_ASSERT_MSG_EQ(second.attempt, 2u, "Second packet should be selected by stride two");
+
+        UbLifecycleCoordinator::ObservePacketTransfer(unselected, UbPacketTransfer::LOCAL_LINK);
+        UbLifecycleCoordinator::ObservePacketTransfer(selected, UbPacketTransfer::LOCAL_LINK);
+        UbLifecycleCoordinator::TerminatePacket(unselected, UbPacketTerminal::ENDPOINT_CONSUMED);
+        UbLifecycleCoordinator::TerminatePacket(selected, UbPacketTerminal::ENDPOINT_CONSUMED);
+        coordinator->RetirePacketOwner(owner);
+
+        uint32_t selectedBirth = 0;
+        uint32_t selectedTransfer = 0;
+        uint32_t selectedTerminal = 0;
+        uint32_t unselectedRecords = 0;
+        uint64_t previousSequence = 0;
+        for (const std::string& line : output)
+        {
+            if (line.empty() || line.front() == '#' || line.front() < '0' || line.front() > '9')
+            {
+                continue;
+            }
+            std::vector<std::string> fields;
+            std::stringstream row(line);
+            std::string field;
+            while (std::getline(row, field, ','))
+            {
+                fields.push_back(field);
+            }
+            NS_TEST_ASSERT_MSG_EQ(fields.size(), 16u, "Lifecycle record must use fixed columns");
+            const uint64_t sequence = std::stoull(fields[2]);
+            NS_TEST_ASSERT_MSG_GT(sequence,
+                                  previousSequence,
+                                  "Owner sequence must be strictly monotonic");
+            previousSequence = sequence;
+            if (fields[7] != std::to_string(
+                                  static_cast<uint64_t>(UbLifecycleTraceSubjectKind::PACKET)))
+            {
+                continue;
+            }
+            if (fields[8] == "1")
+            {
+                ++unselectedRecords;
+            }
+            if (fields[8] != "2")
+            {
+                continue;
+            }
+            const auto event = static_cast<UbLifecycleTraceEvent>(std::stoul(fields[9]));
+            selectedBirth += event == UbLifecycleTraceEvent::PACKET_BIRTH;
+            selectedTransfer += event == UbLifecycleTraceEvent::PACKET_TRANSFER;
+            selectedTerminal += event == UbLifecycleTraceEvent::PACKET_TERMINAL;
+        }
+
+        NS_TEST_ASSERT_MSG_EQ(unselectedRecords,
+                              0u,
+                              "Unselected packet identity must be omitted as a complete chain");
+        NS_TEST_ASSERT_MSG_EQ(selectedBirth, 1u, "Selected identity must retain its birth");
+        NS_TEST_ASSERT_MSG_EQ(selectedTransfer, 1u, "Selected identity must retain its transfer");
+        NS_TEST_ASSERT_MSG_EQ(selectedTerminal, 1u, "Selected identity must retain its terminal");
+
+        Simulator::Destroy();
+        UbLifecycleTrace::Reset();
     }
 };
 
@@ -24813,6 +25004,19 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
 }
 
 static UbLifecycleTestSuite g_ubLifecycleTestSuite;
+
+class UbLifecycleTraceFocusedTestSuite : public TestSuite
+{
+  public:
+    UbLifecycleTraceFocusedTestSuite()
+        : TestSuite("unified-bus-lifecycle-trace", Type::UNIT)
+    {
+        AddTestCase(new UbLifecycleTraceLevelAndSummaryTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbLifecycleTraceIdentityChainTest(), TestCase::Duration::QUICK);
+    }
+};
+
+static UbLifecycleTraceFocusedTestSuite g_ubLifecycleTraceFocusedTestSuite;
 
 class UbParallelLifecycleFocusedTestSuite : public TestSuite
 {

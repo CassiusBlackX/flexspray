@@ -307,6 +307,12 @@ overrides = observability_preset("balanced")
 overrides = observability_preset("minimal")
 overrides["UB_PORT_TRACE_ENABLE"] = "true"  # add port trace to minimal
 
+# Lifecycle DETAIL is custom-only. Sampling is deterministic by complete identity chain.
+overrides["UB_TRACE_PRESET"] = "custom"
+overrides["UB_LIFECYCLE_TRACE_LEVEL"] = "DETAIL"
+overrides["UB_LIFECYCLE_DETAIL_SAMPLE_STRIDE"] = "4"
+overrides["UB_LIFECYCLE_DETAIL_SAMPLE_OFFSET"] = "0"
+
 # Pass to write_network_attributes
 write_network_attributes(
     case_dir=Path("<case_dir>"),
@@ -316,6 +322,16 @@ write_network_attributes(
 ```
 
 Refer to `trace-observability.md` for tier semantics and safe wording constraints.
+
+Validate lifecycle artifacts independently after a run:
+
+```bash
+python3 scratch/ns-3-ub-tools/trace_analysis/lifecycle_trace.py {case_dir}
+```
+
+The lifecycle parser requires the C++-emitted schema metadata and rejects missing metadata,
+unsupported versions or enum values, and inconsistent MPI-rank registries. It does not replace the
+existing task or throughput parsers.
 
 ## Execution
 
