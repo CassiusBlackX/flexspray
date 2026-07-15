@@ -309,11 +309,32 @@ Closeout:
 
 **Blocked by:** T01 Establish a single-TP packet lifecycle tracer bullet.
 
-- [ ] Task segment, request/response packet, ACK record, and scheduled action each have one owner and terminal path.
-- [ ] Successful completion removes the segment from every active LDST map and updates compact statistics only where required.
-- [ ] Unknown, duplicate, and stale ACKs cannot insert records or underflow counters.
-- [ ] Forced stop reports active LDST residue explicitly and releases scheduled work before disposal.
-- [ ] Thread selection, address behavior, packet sizes, completion timing, and stable outputs match the frozen baseline.
+- [x] Task segment, request/response packet, ACK record, and scheduled action each have one owner and terminal path.
+- [x] Successful completion removes the segment from every active LDST map and updates compact statistics only where required.
+- [x] Unknown, duplicate, and stale ACKs cannot insert records or underflow counters.
+- [x] Forced stop reports active LDST residue explicitly and releases scheduled work before disposal.
+- [x] Thread selection, address behavior, packet sizes, completion timing, and stable outputs match the frozen baseline.
+
+Closeout:
+
+- The `main@ccf41b58` admission, worker, request/response builder, routing, VOQ, ACK, and completion
+  blocks remain the active implementation. Lifecycle changes are limited to canonical records,
+  non-inserting ACK lookup, exact retirement, typed packet terminals, tracked actions, and forced-stop
+  residue; no packet builder, parser, routing, queue, scheduler, ACK/RTO, or flow-control algorithm
+  was rewritten.
+- Completion erases ACK, segment, and task records exactly once. Unknown, duplicate, and stale ACKs
+  do not mutate state or restore an outstanding slot, and reentrant disposal cannot schedule new LDST
+  work after pending actions have been canceled.
+- Focused validation passed: targeted build, the two-case LDST lifecycle suite, lifecycle suite, and
+  switch-VOQ suite. The two-task multipath MEM_STORE scenario and a separate two-task 4 KiB MEM_LOAD
+  scenario completed successfully.
+- The frozen root verified 369 files. Two frozen `local-single` reference runs matched each other,
+  and the current candidate matched all 31 bounded LDST multipath artifacts byte-for-byte; no
+  exception was required.
+- An extra repository-wide `--test-name=unified-bus` run remains unaccepted: its pre-existing
+  direct-app invalid-priority child intentionally aborts and the parent exits 139. This path is
+  outside T13 and its ticket-defined acceptance suite, so the unrelated child-process harness was
+  not changed.
 
 ## Task 14: Separate route storage from routing policy on the live packet path
 
