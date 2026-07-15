@@ -235,12 +235,36 @@ Closeout:
 
 **Blocked by:** T03 Complete WQE outcomes and explicit Jetty drain.
 
-- [ ] Transaction owns TASSN, windows, pending/outstanding segments, inbound units, response matching, and operation completion.
-- [ ] CTP reports MTU and one-packet constraints without modifying Function or Jetty segmentation state.
-- [ ] WRITE can use multiple one-packet segments; READ responses and single-packet operations obey their operation-specific limits.
-- [ ] Segment and WQE outcomes are emitted once and completed Transaction records are removed.
-- [ ] No CTP path creates an RTP TP reservation, TPN, PSN, transport ACK, retransmission context, or CTP root generation.
-- [ ] Focused CTP transaction tests and a targeted READ/WRITE scenario cover segmentation constraints, task/packet outcomes, completion, and Transaction cleanup.
+- [x] Transaction owns TASSN, windows, pending/outstanding segments, inbound units, response matching, and operation completion.
+- [x] CTP reports MTU and one-packet constraints without modifying Function or Jetty segmentation state.
+- [x] WRITE can use multiple one-packet segments; READ responses and single-packet operations obey their operation-specific limits.
+- [x] Segment and WQE outcomes are emitted once and completed Transaction records are removed.
+- [x] No CTP path creates an RTP TP reservation, TPN, PSN, transport ACK, retransmission context, or CTP root generation.
+- [x] Focused CTP transaction tests and a targeted READ/WRITE scenario cover segmentation constraints, task/packet outcomes, completion, and Transaction cleanup.
+
+Closeout:
+
+- `UbFunction::SubmitCtpWqe` reuses the common WQE and Transaction-operation lifecycle while the
+  node-scoped CTP service continues to own packetization, routing, queues, traces, and transport
+  policy. CTP admission creates no RTP transport reference, TPN, PSN, ACK/RTO, or retransmission
+  state.
+- The pre-refactor Jetty segmentation path is parameterized with an MTU ceiling. CTP no longer
+  rewrites persistent Jetty configuration, and the old prepare -> window admission -> commit order
+  ensures backpressure cannot advance TASSN state.
+- Transaction now owns CTP contexts, pending/outstanding segments, inbound units, response matching,
+  and lifecycle correlation. Multi-MTU READ and WRITE become multiple one-packet Transaction
+  segments; the CTP send seam rejects unsplit oversized segments without consuming window space.
+- Normal TAACK/response completion and forced Jetty terminal retire segment, operation, and WQE
+  resources once. Forced terminal also removes exact pending/outstanding retention and releases CTP
+  window capacity; cacheable key retirement remains T12.
+- Review against `main@ccf41b58` found no rewritten packet builder/parser, header/tag order,
+  routing, queue, allocator, ACK/RTO, scheduler, or congestion-control algorithm. Two invalid
+  standalone-service tests were moved to the production node-owned service and now distinguish
+  packet recognition from exact Entity-context completion.
+- Focused validation passed: targeted build, 16-case `unified-bus-ctp-transaction`,
+  `unified-bus-lifecycle`, diff check, and the 16-task
+  `clos_32hosts-4leafs-8spines_ctp-entities` scenario with eight WRITE and eight READ completions.
+  T11 has no frozen byte comparison; the CTP byte milestone remains T12.
 
 ## Task 12: Make CTP keys, queues, events, and finite children retire independently
 
