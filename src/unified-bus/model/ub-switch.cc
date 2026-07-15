@@ -565,6 +565,8 @@ void UbSwitch::SwitchHandlePacket(Ptr<UbPort> port, Ptr<Packet> packet)
     switch (packetType) {
         case UB_CONTROL_FRAME:
             port->GetFlowControl()->OnControlFrameReceived(packet);
+            UbLifecycleCoordinator::TerminatePacket(packet,
+                                                    UbPacketTerminal::ENDPOINT_CONSUMED);
             break;
         case UB_URMA_DATA_PACKET:
             if (IsCBFCEnable() || IsCBFCSharedEnable()) {
@@ -1059,11 +1061,12 @@ void UbSwitch::SendControlFrame(Ptr<Packet> packet, uint32_t portId)
     NS_ABORT_MSG_IF(GetPacketType(packet) != UB_CONTROL_FRAME,
                     "SendControlFrame expects a real UB control-credit packet");
     uint32_t priority = 0;
+    Ptr<Node> node = GetObject<Node>();
+    Ptr<UbPort> port = DynamicCast<ns3::UbPort>(node->GetDevice(portId));
+    port->RegisterDatalinkControlPacket(packet, priority);
     GetOrCreateVoq(portId, priority, portId)->Push(packet);
     m_queueManager->PushToVoq(portId, portId, priority, packet->GetSize());
 
-    Ptr<Node> node = GetObject<Node>();
-    Ptr<UbPort> port = DynamicCast<ns3::UbPort>(node->GetDevice(portId));
     port->TriggerTransmit();
 }
 

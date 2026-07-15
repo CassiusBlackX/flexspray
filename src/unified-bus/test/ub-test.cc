@@ -7085,6 +7085,38 @@ class UbRecordingFlowControl : public UbFlowControl
     std::vector<std::string>* m_eventLog {nullptr};
 };
 
+class UbControlFrameLifecycleObserver : public UbFlowControl
+{
+  public:
+    static TypeId GetTypeId(void)
+    {
+        static TypeId tid = TypeId("ns3::UbControlFrameLifecycleObserver")
+                                .SetParent<UbFlowControl>()
+                                .AddConstructor<UbControlFrameLifecycleObserver>();
+        return tid;
+    }
+
+    void Configure(Ptr<UbLifecycleCoordinator> coordinator,
+                   const UbLifecycleResourceIdentity& owner)
+    {
+        m_coordinator = coordinator;
+        m_owner = owner;
+    }
+
+    void OnControlFrameReceived(Ptr<Packet>) override
+    {
+        m_called = true;
+        m_inFlightDuringCallback = m_coordinator->GetSnapshot(m_owner).inFlightPackets;
+    }
+
+    bool m_called {false};
+    uint64_t m_inFlightDuringCallback {0};
+
+  private:
+    Ptr<UbLifecycleCoordinator> m_coordinator;
+    UbLifecycleResourceIdentity m_owner;
+};
+
 class UbRecordingCongestionControl : public UbCongestionControl
 {
   public:
@@ -17270,6 +17302,74 @@ class UbControlFrameUsesDedicatedAccountingTest : public TestCase
     }
 };
 
+class UbDatalinkControlPacketLifecycleTest : public TestCase
+{
+  public:
+    UbDatalinkControlPacketLifecycleTest()
+        : TestCase("UnifiedBus - Datalink control packet has one port VL owner and terminal")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        Ptr<Node> sender = CreateObject<Node>();
+        Ptr<Node> receiver = CreateObject<Node>();
+        InitNode(sender, UB_DEVICE, 1);
+        InitNode(receiver, UB_DEVICE, 1);
+
+        Ptr<UbPort> senderPort = DynamicCast<UbPort>(sender->GetDevice(0));
+        Ptr<UbPort> receiverPort = DynamicCast<UbPort>(receiver->GetDevice(0));
+        Ptr<UbLink> link = CreateObject<UbLink>();
+        senderPort->Attach(link);
+        receiverPort->Attach(link);
+
+        uint8_t credits[16] = {};
+        credits[0] = 1;
+        Ptr<Packet> controlPacket = UbDataLink::GenControlCreditPacket(credits);
+        sender->GetObject<UbSwitch>()->SendControlFrame(controlPacket, 0);
+
+        const UbLifecycleResourceIdentity owner =
+            senderPort->GetDatalinkPacketOwnerForTest(0);
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(sender);
+        Ptr<UbControlFrameLifecycleObserver> observer =
+            CreateObject<UbControlFrameLifecycleObserver>();
+        observer->Configure(coordinator, owner);
+        receiverPort->m_flowControl = observer;
+        const UbLifecycleResourceSnapshot queued = coordinator->GetSnapshot(owner);
+        NS_TEST_ASSERT_MSG_EQ(queued.registeredPackets,
+                              1u,
+                              "Control-frame birth should register exactly once before VOQ retention");
+        NS_TEST_ASSERT_MSG_EQ(queued.inFlightPackets,
+                              1u,
+                              "Queued control frame should remain live until peer consumption");
+
+        Simulator::Stop(MicroSeconds(10));
+        Simulator::Run();
+
+        const UbLifecycleResourceSnapshot consumed = coordinator->GetSnapshot(owner);
+        NS_TEST_ASSERT_MSG_EQ(observer->m_called,
+                              true,
+                              "Peer flow-control callback should observe the real control frame");
+        NS_TEST_ASSERT_MSG_EQ(observer->m_inFlightDuringCallback,
+                              1u,
+                              "Control frame must remain live until its receive callback returns");
+        NS_TEST_ASSERT_MSG_EQ(consumed.registeredPackets,
+                              1u,
+                              "Queue and link transfers must not recount the control frame");
+        NS_TEST_ASSERT_MSG_EQ(consumed.inFlightPackets,
+                              0u,
+                              "Peer flow-control consumption should balance the physical attempt");
+        NS_TEST_ASSERT_MSG_EQ(consumed.endpointConsumed,
+                              1u,
+                              "Control frame should terminalize after the receive callback");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
 #ifndef _WIN32
 class UbDataPacketHeaderRejectsPriorityZeroTest : public TestCase
 {
@@ -24462,6 +24562,7 @@ UbFlowControlTestSuite::UbFlowControlTestSuite()
 {
     AddTestCase(new UbSwitchFlowControlModeAttributeTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbControlFrameUsesDedicatedAccountingTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbDatalinkControlPacketLifecycleTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbPfcFixedModeCountsHeadroomTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbPfcDynamicModePauseResumeTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbQueueManagerDynamicPfcDecisionApiTest(), TestCase::Duration::QUICK);

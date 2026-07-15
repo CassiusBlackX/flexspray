@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "ns3/ub-port.h"
+#include "ns3/ub-cbfc.h"
 #include "ns3/ub-link.h"
 #include "ns3/ub-lifecycle.h"
+#include "ns3/ub-pfc.h"
 #include "ns3/log.h"
 #include "ns3/ub-network-address.h"
 #include "ns3/ub-caqm.h"
@@ -378,6 +380,36 @@ void UbPort::CreateAndInitFc(FcType type)
         default:
             NS_FATAL_ERROR("Unknown flow control type for port " << m_portId);
     }
+}
+
+void
+UbPort::RegisterDatalinkControlPacket(Ptr<Packet> packet, uint32_t vlId)
+{
+    NS_ABORT_MSG_IF(packet == nullptr, "Cannot register a null Datalink control packet");
+    NS_ABORT_MSG_IF(vlId >= qCnt, "Datalink control packet VL is out of range");
+    Ptr<UbLifecycleCoordinator> coordinator =
+        UbLifecycleCoordinator::GetOrCreate(GetNode());
+    auto owner = m_datalinkPacketOwners.find(vlId);
+    if (owner == m_datalinkPacketOwners.end())
+    {
+        const uint64_t localId = (static_cast<uint64_t>(m_portId) << 32) | vlId;
+        owner = m_datalinkPacketOwners
+                    .emplace(vlId,
+                             coordinator->OpenPacketOwner(
+                                 UbLifecycleResourceKind::DATALINK_PORT_VL,
+                                 localId))
+                    .first;
+    }
+    coordinator->RegisterPacketAttempt(owner->second, packet);
+}
+
+const UbLifecycleResourceIdentity&
+UbPort::GetDatalinkPacketOwnerForTest(uint32_t vlId) const
+{
+    const auto owner = m_datalinkPacketOwners.find(vlId);
+    NS_ABORT_MSG_IF(owner == m_datalinkPacketOwners.end(),
+                    "Datalink packet owner has not been opened for this VL");
+    return owner->second;
 }
 
 void UbPort::TransmitComplete()
@@ -770,6 +802,7 @@ void UbPort::DoDispose()
     m_currentPkt = nullptr;
     m_datalink = nullptr;
     m_flowControl = nullptr;
+    m_datalinkPacketOwners.clear();
     m_mpiReceiveEnabled = false;
     m_revQueueSize.clear();
     NetDevice::DoDispose();
