@@ -356,9 +356,9 @@ Closeout:
 - `UbRoutingPolicy` owns the copied per-flow HASH and ADAPTIVE implementations. Candidate traversal
   preserves shortest-before-non-shortest order, ingress filtering, VOQ+egress load score, and the
   first-minimum tie-break without temporary candidate or best-port vectors.
-- Packet spray intentionally uses strict RR as approved during T14: one flow-base hash selects the
-  starting offset and the monotonically increasing `sport` salt advances the RR step. The former
-  second per-packet Hash64 call was removed; other routing semantics are unchanged.
+- Packet spray intentionally uses strict RR as approved during T14: the monotonically increasing
+  `sport` salt directly selects the RR step, with no hashed starting offset. Packet-spray Hash64
+  calls were removed; other routing semantics are unchanged.
 - `UbRoutingProcess` remains the TypeId/configuration/caller facade. Existing switch, packet builder,
   route loader, and TP connection callers retain their API and route-failure terminal seams.
 - Target build and the five-case routing, lifecycle, and switch-VOQ suites passed. The measured
@@ -366,6 +366,9 @@ Closeout:
 - The two-task multipath scenario completed 2/2 tasks in 1.315601 s of simulation run time and
   1.786822 s case-reported total time. T14 is not a frozen-byte milestone; the strict-RR output
   change is explicit and user-approved.
+- A follow-up clarification removed the remaining flow-hash starting offset. Packet spray now uses
+  the encoded per-packet RR step directly; exact-order characterization and the five-case routing
+  suite pass, while non-spray HASH behavior remains unchanged.
 
 ## Task 15: Split Datalink flow control without changing control frames
 
