@@ -24,6 +24,8 @@
 #include "ns3/ub-flow-control.h"
 #include "ns3/ub-function.h"
 #include "ns3/ub-link.h"
+#include "ns3/ub-ldst-instance.h"
+#include "ns3/ub-ldst-thread.h"
 #include "ns3/ub-lifecycle.h"
 #include "ns3/ub-modulo-sequence.h"
 #include "ns3/ub-port.h"
@@ -23293,6 +23295,181 @@ class UbCtpForcedTerminalCleansTransactionStateTest : public TestCase
 /**
  * @brief Unified-bus test suite
  */
+class UbLdstCompletionRetiresActiveRecordsTest : public TestCase
+{
+  public:
+    UbLdstCompletionRetiresActiveRecordsTest()
+        : TestCase("UnifiedBus - LDST completion retires active records and rejects stale ACKs")
+    {
+    }
+
+  private:
+    void OnCompleted(uint32_t taskId)
+    {
+        ++m_completionCount;
+        m_completedTaskId = taskId;
+    }
+
+    void DoRun() override
+    {
+        Ptr<Node> node = CreateObject<Node>();
+        Ptr<UbLdstInstance> instance = CreateObject<UbLdstInstance>();
+        node->AggregateObject(instance);
+        instance->SetAttribute("ThreadNum", UintegerValue(2));
+        instance->Init(node->GetId());
+        instance->SetClientCallback(
+            MakeCallback(&UbLdstCompletionRetiresActiveRecordsTest::OnCompleted, this));
+
+        constexpr uint32_t taskId = 41;
+        instance->HandleLdstTask(node->GetId(),
+                                 node->GetId() + 1,
+                                 1024,
+                                 taskId,
+                                 7,
+                                 UbMemOperationType::STORE,
+                                 {0, 1},
+                                 0);
+        NS_TEST_ASSERT_MSG_EQ(instance->GetActiveTaskCountForTest(), 1u, "Expected one task");
+        NS_TEST_ASSERT_MSG_EQ(instance->GetActiveSegmentCountForTest(), 2u, "Expected two segments");
+
+        for (uint32_t segmentId = 0; segmentId < 2; ++segmentId) {
+            Ptr<UbLdstTaskSegment> segment = instance->GetTaskSegmentForTest(segmentId);
+            NS_TEST_ASSERT_MSG_NE(segment, nullptr, "Admitted segment should be resolvable");
+            Ptr<UbLdstThread> thread = instance->GetLdstThread(segment->GetThreadId());
+            thread->PushTaskSegment(segment);
+            NS_TEST_ASSERT_MSG_EQ(segment->GetPsnSize(), 1u, "Preserve STORE packet sizing");
+            NS_TEST_ASSERT_MSG_EQ(thread->GetWaitingAckCountForTest(), 1u, "Expected one ACK record");
+            segment->UpdateSentBytes(segment->GetSize());
+            thread->HandleStoreTask();
+            NS_TEST_ASSERT_MSG_EQ(thread->UpdateTaskForTest(segment), true, "ACK should complete");
+            NS_TEST_ASSERT_MSG_EQ(thread->GetWaitingAckCountForTest(), 0u, "ACK record should retire");
+            NS_TEST_ASSERT_MSG_EQ(thread->UpdateTaskForTest(segment),
+                                  false,
+                                  "Duplicate ACK must not recreate a retired record");
+        }
+
+        NS_TEST_ASSERT_MSG_EQ(m_completionCount, 1u, "Completion callback should run once");
+        NS_TEST_ASSERT_MSG_EQ(m_completedTaskId, taskId, "Completion should retain task ID");
+        NS_TEST_ASSERT_MSG_EQ(instance->GetActiveTaskCountForTest(), 0u, "Task should retire");
+        NS_TEST_ASSERT_MSG_EQ(instance->GetActiveSegmentCountForTest(), 0u, "Segments should retire");
+        NS_TEST_ASSERT_MSG_EQ(instance->OnRecvAckForTest(0), false, "Stale ACK must not insert");
+        NS_TEST_ASSERT_MSG_EQ(instance->OnRecvAckForTest(999), false, "Unknown ACK must not insert");
+        NS_TEST_ASSERT_MSG_EQ(instance->GetActiveSegmentCountForTest(), 0u, "ACK map stays empty");
+
+        instance->DoDispose();
+        Simulator::Destroy();
+    }
+
+    uint32_t m_completionCount{0};
+    uint32_t m_completedTaskId{0};
+};
+
+class UbLdstPacketEventAndForcedStopTest : public TestCase
+{
+  public:
+    UbLdstPacketEventAndForcedStopTest()
+        : TestCase("UnifiedBus - LDST packet event balance and forced-stop residue")
+    {
+    }
+
+  private:
+    void RunAction()
+    {
+        ++m_actionCount;
+    }
+
+    void DisposeAndTryReschedule(Ptr<UbLdstInstance> instance)
+    {
+        ++m_actionCount;
+        instance->DoDispose();
+        instance->ScheduleNow(
+            MakeCallback(&UbLdstPacketEventAndForcedStopTest::RunAction, this));
+    }
+
+    void DoRun() override
+    {
+        Ptr<Node> node = CreateObject<Node>();
+        Ptr<UbLdstInstance> instance = CreateObject<UbLdstInstance>();
+        node->AggregateObject(instance);
+        instance->SetAttribute("ThreadNum", UintegerValue(0));
+        instance->Init(node->GetId());
+
+        Ptr<Packet> request = Create<Packet>(64);
+        Ptr<Packet> response = Create<Packet>();
+        instance->RegisterPacketBirth(request);
+        instance->RegisterPacketBirth(response);
+        UbLifecycleResourceSnapshot snapshot = instance->GetLifecycleSnapshotForTest();
+        NS_TEST_ASSERT_MSG_EQ(snapshot.registeredPackets, 2u, "Expected two packet births");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.inFlightPackets, 2u, "Packets should be active");
+        UbLifecycleCoordinator::TerminatePacket(request, UbPacketTerminal::ENDPOINT_CONSUMED);
+        UbLifecycleCoordinator::TerminatePacket(response, UbPacketTerminal::ROUTE_NOT_FOUND);
+        snapshot = instance->GetLifecycleSnapshotForTest();
+        NS_TEST_ASSERT_MSG_EQ(snapshot.inFlightPackets, 0u, "Packet attempts should balance");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.endpointConsumed, 1u, "Endpoint terminal should be typed");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.routeNotFoundDrops, 1u, "Route terminal should be typed");
+
+        instance->ScheduleNow(MakeCallback(&UbLdstPacketEventAndForcedStopTest::RunAction, this));
+        NS_TEST_ASSERT_MSG_EQ(instance->GetLifecycleSnapshotForTest().activeTrackedEventLeases,
+                              1u,
+                              "Pending action should hold a lease");
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(m_actionCount, 1u, "ScheduleNow action should fire once");
+        NS_TEST_ASSERT_MSG_EQ(instance->GetLifecycleSnapshotForTest().activeTrackedEventLeases,
+                              0u,
+                              "Fired action should resolve");
+        instance->DoDispose();
+        Simulator::Destroy();
+
+        node = CreateObject<Node>();
+        instance = CreateObject<UbLdstInstance>();
+        node->AggregateObject(instance);
+        instance->SetAttribute("ThreadNum", UintegerValue(2));
+        instance->Init(node->GetId());
+        instance->HandleLdstTask(node->GetId(),
+                                 node->GetId() + 1,
+                                 1024,
+                                 73,
+                                 7,
+                                 UbMemOperationType::LOAD,
+                                 {0, 1},
+                                 0);
+        NS_TEST_ASSERT_MSG_EQ(instance->GetLifecycleSnapshotForTest().activeTrackedEventLeases,
+                              2u,
+                              "Worker admissions should be tracked");
+        instance->DoDispose();
+        const UbLdstForcedStopResidue& residue = instance->GetLastForcedStopResidueForTest();
+        NS_TEST_ASSERT_MSG_EQ(residue.activeTasks, 1u, "Forced stop should report task residue");
+        NS_TEST_ASSERT_MSG_EQ(residue.activeSegments, 2u, "Forced stop should report segments");
+        NS_TEST_ASSERT_MSG_EQ(residue.trackedActions, 2u, "Forced stop should report actions");
+        NS_TEST_ASSERT_MSG_EQ(instance->GetActiveTaskCountForTest(), 0u, "Task storage should clear");
+        NS_TEST_ASSERT_MSG_EQ(instance->GetActiveSegmentCountForTest(), 0u, "Segments should clear");
+        NS_TEST_ASSERT_MSG_EQ(instance->GetLifecycleSnapshotForTest().activeTrackedEventLeases,
+                              0u,
+                              "Forced stop should cancel actions");
+        Simulator::Destroy();
+
+        node = CreateObject<Node>();
+        instance = CreateObject<UbLdstInstance>();
+        node->AggregateObject(instance);
+        instance->SetAttribute("ThreadNum", UintegerValue(0));
+        instance->Init(node->GetId());
+        const uint32_t actionsBeforeDispose = m_actionCount;
+        instance->ScheduleNow(
+            MakeCallback(&UbLdstPacketEventAndForcedStopTest::DisposeAndTryReschedule, this)
+                .Bind(instance));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(m_actionCount,
+                              actionsBeforeDispose + 1,
+                              "Reentrant disposal must reject newly scheduled LDST work");
+        NS_TEST_ASSERT_MSG_EQ(instance->GetLifecycleSnapshotForTest().activeTrackedEventLeases,
+                              0u,
+                              "Running action should release its lease after reentrant disposal");
+        Simulator::Destroy();
+    }
+
+    uint32_t m_actionCount{0};
+};
+
 class UbTestSuite : public TestSuite
 {
 public:
@@ -23309,6 +23486,12 @@ class UbCtpLifecycleTestSuite : public TestSuite
 {
   public:
     UbCtpLifecycleTestSuite();
+};
+
+class UbLdstLifecycleTestSuite : public TestSuite
+{
+  public:
+    UbLdstLifecycleTestSuite();
 };
 
 class UbDcqcnMarkingTestSuite : public TestSuite
@@ -23713,6 +23896,15 @@ UbCtpLifecycleTestSuite::UbCtpLifecycleTestSuite()
 }
 
 static UbCtpLifecycleTestSuite g_ubCtpLifecycleTestSuite;
+
+UbLdstLifecycleTestSuite::UbLdstLifecycleTestSuite()
+    : TestSuite("unified-bus-ldst-lifecycle", Type::UNIT)
+{
+    AddTestCase(new UbLdstCompletionRetiresActiveRecordsTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbLdstPacketEventAndForcedStopTest(), TestCase::Duration::QUICK);
+}
+
+static UbLdstLifecycleTestSuite g_ubLdstLifecycleTestSuite;
 
 UbTpReservationTestSuite::UbTpReservationTestSuite()
     : TestSuite("unified-bus-tp-reservation", Type::UNIT)

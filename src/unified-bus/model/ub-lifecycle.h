@@ -29,6 +29,8 @@ enum class UbLifecycleResourceKind : uint8_t
     RTP_TPG = 6,
     RTP_CONNECTION = 7,
     CTP_SERVICE = 8,
+    LDST_INSTANCE = 9,
+    LDST_SEGMENT = 10,
 };
 
 enum class UbLifecycleLeaseKind : uint8_t
