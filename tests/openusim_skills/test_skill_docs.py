@@ -247,6 +247,31 @@ class OpenUSimStageSkillDocsTest(unittest.TestCase):
         self.assertIn("Run must not invent cases", method_text)
         self.assertIn("Plan owns the matrix", run_text)
 
+    def test_routing_strategy_selection_is_integrated(self):
+        card_text = self.read_text(
+            ".codex/skills/openusim-references/routing-strategy-selection.md"
+        )
+        plan_text = self.read_text(".codex/skills/openusim-plan-experiment/SKILL.md")
+        spec_rules_text = self.read_text(
+            ".codex/skills/openusim-references/spec-rules.md"
+        )
+        toolchain_text = self.read_text(
+            ".codex/skills/openusim-references/spec-to-toolchain.md"
+        )
+        skills_readme_text = self.read_text(".codex/skills/README.md")
+
+        for marker in (
+            "<reference-hint>",
+            "## Core Judgment",
+            "## Profile Selection",
+            "## Selector Guidance",
+            "## Candidate Scope",
+            "## Evidence Contract",
+        ):
+            self.assertIn(marker, card_text)
+        for text in (plan_text, spec_rules_text, toolchain_text, skills_readme_text):
+            self.assertIn("routing-strategy-selection.md", text)
+
     def test_reference_cards_expose_reference_hint_block(self):
         for path in self.reference_files():
             text = path.read_text(encoding="utf-8")
