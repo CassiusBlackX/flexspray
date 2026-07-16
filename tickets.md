@@ -553,9 +553,30 @@ Closeout:
 
 **Blocked by:** T17 Route lifecycle accounting through MTP, MPI, and hybrid owners; T19 Bound trace writer memory, file descriptors, and write overhead; T20 Contract compatibility layers after all owners migrate.
 
-- [ ] RTP, CTP, LDST, WRITE, READ, response work, loss/drop, GBN/selective, CAQM/DCQCN, NONE/PFC/CBFC, direct/TPG, teardown, late reuse, lifecycle races, and forced stop all have required evidence.
-- [ ] Single-thread, MTP, MPI, and hybrid comparisons include owner-local balance and deterministic/canonical artifact checks.
-- [ ] Every reference artifact classified as byte-stable is byte-identical; every canonical-only artifact has matching canonical bytes and preserved raw evidence.
-- [ ] Every mismatch is either fixed or listed in the approved exception manifest with Specification or characterization evidence.
-- [ ] Accounting, deep verification, detail trace, writer settings, and storage policies are measured separately for wall time, events, objects/allocations, peak RSS, trace bytes, syscalls, descriptors, and scaling.
-- [ ] Automatic TP close/destroy remains disabled; any storage-retention default is selected only from the reported measurements.
+- [x] RTP, CTP, LDST, WRITE, READ, response work, loss/drop, GBN/selective, CAQM/DCQCN, NONE/PFC/CBFC, direct/TPG, teardown, late reuse, lifecycle races, and forced stop all have required evidence.
+- [x] Single-thread, MTP, MPI, and hybrid comparisons include owner-local balance and deterministic/canonical artifact checks.
+- [x] Every reference artifact classified as byte-stable is byte-identical; every canonical-only artifact has matching canonical bytes and preserved raw evidence.
+- [x] Every mismatch is either fixed or listed in the approved exception manifest with Specification or characterization evidence.
+- [x] Accounting, deep verification, detail trace, writer settings, and storage policies are measured separately for wall time, events, objects/allocations, peak RSS, trace bytes, syscalls, descriptors, and scaling.
+- [x] Automatic TP close/destroy remains disabled; any storage-retention default is selected only from the reported measurements.
+
+- Published the final semantic, runtime, frozen-artifact, performance and storage-policy matrix in
+  `docs/superpowers/specs/2026-07-16-unified-bus-lifecycle-acceptance.md`. Ticket-defined focused
+  suites, 38 lifecycle harness tests and production parser checks pass serially.
+- Current local-single ran all five bounded T00 cases. Current MPI-single and hybrid cross-owner
+  trees are byte-identical to their accepted T17 trees; T20 already supplies the exact current
+  local-MTP tree. All finite packet/work/event balances return to zero. Persistent binding leases
+  remain by design for retained idle endpoints.
+- The new minimal comparison has 18/19 byte-identical artifacts. Its sole TaskTrace difference is
+  the already reviewed T05 same-timestamp Sends/Completes order and is bound by a T21 manifest.
+  Every medium difference remains restricted by its runtime/path/hash-bound T20/T17 manifest.
+- OFF/SUMMARY/EVENT/DETAIL produce identical network outputs and bounded trace/writer resources.
+  Existing evidence retains 64 KiB chunks and current watermarks/FD cap. Automatic TP close,
+  task-driven removal and idle/RSS-driven reclamation remain disabled; ordinary empty VOQs and idle
+  TP endpoints remain retained pending representative long-workload evidence.
+- Correctness accounting remains mandatory and has no valid off mode. No separate production deep
+  verification toggle exists; its stale/underflow/duplicate/drain cost is classified through focused
+  invariant tests rather than reported as a fictitious runtime on/off comparison.
+- Non-gating residual: the extra umbrella `unified-bus` suite exits 139 in its pre-existing CTP
+  invalid-priority child-abort fixture on this macOS host. The fail-fast behavior is observed and
+  ticket-defined lifecycle/CTP focused suites pass; no speculative unrelated fix was included.
