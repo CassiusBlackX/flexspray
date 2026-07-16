@@ -331,10 +331,10 @@ Closeout:
 - The frozen root verified 369 files. Two frozen `local-single` reference runs matched each other,
   and the current candidate matched all 31 bounded LDST multipath artifacts byte-for-byte; no
   exception was required.
-- An extra repository-wide `--test-name=unified-bus` run remains unaccepted: its pre-existing
-  direct-app invalid-priority child intentionally aborts and the parent exits 139. This path is
-  outside T13 and its ticket-defined acceptance suite, so the unrelated child-process harness was
-  not changed.
+- An extra repository-wide `--test-name=unified-bus` run remains unaccepted on this macOS host.
+  T13 initially attributed its exit 139 to the direct-app invalid-priority child-abort fixture, but
+  later removal of that fixture did not remove the crash. The actual umbrella crash point remains
+  unlocalized; ticket-defined focused suites are the accepted macOS validation path.
 
 ## Task 14: Separate route storage from routing policy on the live packet path
 

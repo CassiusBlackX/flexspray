@@ -38,11 +38,12 @@ The focused suites were built and run serially. Expected `NS_FATAL` output came 
 negative fixtures. The lifecycle baseline harness passed 38 tests, including rejection of stale,
 forged, incomplete, broad, and unclassified exception evidence.
 
-An additional non-ticket umbrella run, `--test-name=unified-bus`, is not classified PASS: the
-pre-existing `UbAppCtpTrafficRecordRejectsInvalidPriorityTest` child-abort fixture exits the runner
-with status 139 on this macOS host. The production invalid-priority fail-fast is observed, and all
-T21 lifecycle/CTP behavior is covered by passing focused suites, but the umbrella harness issue
-remains a separate test-infrastructure residual.
+An additional non-ticket umbrella run, `--test-name=unified-bus`, is not classified PASS because the
+runner exits with status 139 on this macOS host. Removing the
+`UbAppCtpTrafficRecordRejectsInvalidPriorityTest` child-abort fixture did not remove the crash, so
+that fixture is not the root cause and the actual crash point remains unlocalized. Production
+invalid-priority validation is unchanged, and the passing ticket-defined lifecycle/CTP focused
+suites remain the accepted macOS validation path.
 
 ## Runtime Matrix
 
