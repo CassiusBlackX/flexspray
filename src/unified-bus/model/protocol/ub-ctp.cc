@@ -1845,6 +1845,24 @@ UbCtpTransportService::DoDispose()
     {
         m_delayedTaAckEvents.Clear();
     }
+
+    Ptr<UbSwitch> sw = m_node == nullptr ? nullptr : m_node->GetObject<UbSwitch>();
+    for (const auto& [key, queue] : m_queues)
+    {
+        (void)key;
+        if (queue == nullptr)
+        {
+            continue;
+        }
+        queue->SetEmptyCallback({});
+        if (m_registeredQueues.find(queue) != m_registeredQueues.end() && sw != nullptr &&
+            sw->GetAllocator() != nullptr)
+        {
+            sw->RemoveTpFromAllocator(queue);
+        }
+    }
+    m_registeredQueues.clear();
+    m_queues.clear();
     m_node = nullptr;
     Object::DoDispose();
 }
