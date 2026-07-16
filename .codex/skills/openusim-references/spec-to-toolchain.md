@@ -313,6 +313,12 @@ overrides["UB_LIFECYCLE_TRACE_LEVEL"] = "DETAIL"
 overrides["UB_LIFECYCLE_DETAIL_SAMPLE_STRIDE"] = "4"
 overrides["UB_LIFECYCLE_DETAIL_SAMPLE_OFFSET"] = "0"
 
+# Optional host-I/O tuning. These values do not alter simulated network semantics.
+overrides["UB_TRACE_CHUNK_BYTES"] = str(64 * 1024)
+overrides["UB_TRACE_OWNER_HIGH_WATER_BYTES"] = str(1024 * 1024)
+overrides["UB_TRACE_OWNER_LOW_WATER_BYTES"] = str(512 * 1024)
+overrides["UB_TRACE_MAX_OPEN_FILES"] = "1024"
+
 # Pass to write_network_attributes
 write_network_attributes(
     case_dir=Path("<case_dir>"),

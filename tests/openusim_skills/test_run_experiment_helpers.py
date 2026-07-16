@@ -11,6 +11,7 @@ if str(HELPER_ROOT) not in sys.path:
 
 from openusim_run_experiment.case_checker import check_case_files
 from openusim_run_experiment.network_attribute_writer import (
+    _FALLBACK_UB_GLOBAL_KEYS,
     observability_preset,
     validate_overrides_against_catalog,
 )
@@ -19,6 +20,16 @@ from openusim_run_experiment.network_attribute_writer import (
 class OpenUSimRunExperimentHelpersTest(unittest.TestCase):
     def make_catalog(self, *entries):
         return {"entries": list(entries)}
+
+    def test_trace_writer_globals_are_available_in_fallback_catalog(self):
+        self.assertTrue(
+            {
+                "UB_TRACE_CHUNK_BYTES",
+                "UB_TRACE_OWNER_HIGH_WATER_BYTES",
+                "UB_TRACE_OWNER_LOW_WATER_BYTES",
+                "UB_TRACE_MAX_OPEN_FILES",
+            }.issubset(_FALLBACK_UB_GLOBAL_KEYS)
+        )
 
     def test_validate_overrides_rejects_unknown_default_keys(self):
         catalog = self.make_catalog(

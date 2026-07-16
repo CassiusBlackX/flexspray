@@ -390,6 +390,7 @@ UbLifecycleCoordinator::GetOrCreate(Ptr<Node> node)
     {
         coordinator = CreateObject<UbLifecycleCoordinator>();
         coordinator->m_ownerNodeId = node->GetId();
+        UbLifecycleTrace::PrepareOwner(coordinator->m_ownerNodeId);
         if (UbLifecycleTrace::IsEventEnabled())
         {
             coordinator->m_lifecycleTrace.ConnectWithoutContext(

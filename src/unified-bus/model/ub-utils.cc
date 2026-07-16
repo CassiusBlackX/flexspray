@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -13,6 +14,9 @@
 #include <sstream>
 #include <string_view>
 #include <unordered_map>
+#ifndef _WIN32
+#include <sys/resource.h>
+#endif
 #ifdef NS3_MPI
 #include "ub-remote-link.h"
 #include "ns3/mpi-interface.h"
@@ -628,37 +632,351 @@ namespace utils {
 UbUtils::TraceFileState&
 UbUtils::GetTraceFile(const std::string& fileName)
 {
-    namespace fs = std::filesystem;
-
+    ConfigureTraceWriter();
     std::lock_guard<std::mutex> filesGuard(files_mutex);
     auto [it, inserted] = files.try_emplace(fileName);
     if (inserted)
     {
-        std::error_code ec;
-        const fs::path parent = fs::path(fileName).parent_path();
-        if (!parent.empty())
+        it->second.fileName = fileName;
+    }
+    return it->second;
+}
+
+UbUtils::TraceSinkHandle
+UbUtils::ResolveTraceSink(const std::string& fileName)
+{
+    while (true)
+    {
+        const uint64_t epoch = trace_writer_epoch.load(std::memory_order_acquire);
+        TraceFileState* state = &GetTraceFile(fileName);
+        if (epoch == trace_writer_epoch.load(std::memory_order_acquire))
         {
-            fs::create_directories(parent, ec);
-            NS_ASSERT_MSG(!ec, "Failed to create trace parent dir: " << parent << " err=" << ec.message());
+            TraceSinkHandle handle;
+            handle.state = state;
+            handle.epoch = epoch;
+            return handle;
         }
-        it->second.stream.open(fileName.c_str(), std::ios::out | std::ios::app);
-        NS_ASSERT_MSG(it->second.stream.is_open(), "Can not open File: " << fileName);
-        it->second.pending.reserve(TRACE_FLUSH_THRESHOLD_BYTES);
+    }
+}
+
+UbUtils::TraceSinkHandle
+UbUtils::GetCachedTraceSink(const std::string& fileName)
+{
+    struct SinkCache
+    {
+        uint64_t epoch{0};
+        std::unordered_map<std::string, TraceSinkHandle> sinks;
+    };
+
+    thread_local SinkCache cache;
+
+    const uint64_t epoch = trace_writer_epoch.load(std::memory_order_acquire);
+    if (cache.epoch != epoch)
+    {
+        cache.epoch = epoch;
+        cache.sinks.clear();
+    }
+    auto it = cache.sinks.find(fileName);
+    if (it == cache.sinks.end())
+    {
+        it = cache.sinks.emplace(fileName, ResolveTraceSink(fileName)).first;
     }
     return it->second;
 }
 
 void
-UbUtils::FlushTraceFile(TraceFileState& fileState)
+UbUtils::ConfigureTraceWriter()
 {
-    std::lock_guard<std::mutex> fileGuard(fileState.mutex);
-    if (fileState.pending.empty())
+    std::lock_guard<std::mutex> guard(files_mutex);
+    if (trace_writer_configured)
     {
         return;
     }
-    fileState.stream.write(fileState.pending.data(),
-                           static_cast<std::streamsize>(fileState.pending.size()));
-    fileState.pending.clear();
+
+    UintegerValue chunkBytes;
+    UintegerValue highWaterBytes;
+    UintegerValue lowWaterBytes;
+    UintegerValue maxOpenFiles;
+    NS_ABORT_MSG_IF(!GlobalValue::GetValueByNameFailSafe("UB_TRACE_CHUNK_BYTES", chunkBytes),
+                    "Missing UB_TRACE_CHUNK_BYTES");
+    NS_ABORT_MSG_IF(
+        !GlobalValue::GetValueByNameFailSafe("UB_TRACE_OWNER_HIGH_WATER_BYTES", highWaterBytes),
+        "Missing UB_TRACE_OWNER_HIGH_WATER_BYTES");
+    NS_ABORT_MSG_IF(
+        !GlobalValue::GetValueByNameFailSafe("UB_TRACE_OWNER_LOW_WATER_BYTES", lowWaterBytes),
+        "Missing UB_TRACE_OWNER_LOW_WATER_BYTES");
+    NS_ABORT_MSG_IF(!GlobalValue::GetValueByNameFailSafe("UB_TRACE_MAX_OPEN_FILES", maxOpenFiles),
+                    "Missing UB_TRACE_MAX_OPEN_FILES");
+
+    trace_writer_config.chunkBytes = static_cast<std::size_t>(chunkBytes.Get());
+    trace_writer_config.highWaterBytes = static_cast<std::size_t>(highWaterBytes.Get());
+    trace_writer_config.lowWaterBytes = static_cast<std::size_t>(lowWaterBytes.Get());
+    trace_writer_config.maxOpenFiles = static_cast<std::size_t>(maxOpenFiles.Get());
+    NS_ABORT_MSG_IF(trace_writer_config.lowWaterBytes > trace_writer_config.highWaterBytes,
+                    "Trace owner low-water mark exceeds high-water mark");
+    NS_ABORT_MSG_IF(trace_writer_config.chunkBytes > trace_writer_config.highWaterBytes,
+                    "Trace chunk size exceeds owner high-water mark");
+
+    std::size_t platformLimit = 256;
+#ifndef _WIN32
+    constexpr std::size_t kReservedDescriptors = 128;
+    struct rlimit limit;
+    if (getrlimit(RLIMIT_NOFILE, &limit) == 0)
+    {
+        if (limit.rlim_cur == RLIM_INFINITY)
+        {
+            platformLimit = trace_writer_config.maxOpenFiles;
+        }
+        else if (limit.rlim_cur > kReservedDescriptors)
+        {
+            platformLimit = static_cast<std::size_t>(limit.rlim_cur) - kReservedDescriptors;
+        }
+        else
+        {
+            platformLimit = 1;
+        }
+    }
+#endif
+    trace_writer_config.effectiveMaxOpenFiles =
+        std::max<std::size_t>(1, std::min(trace_writer_config.maxOpenFiles, platformLimit));
+    trace_writer_configured = true;
+}
+
+UbUtils::TraceOwnerState&
+UbUtils::GetTraceOwner(uint32_t ownerId)
+{
+    struct OwnerCache
+    {
+        uint64_t epoch{0};
+        uint32_t ownerId{0};
+        TraceOwnerState* owner{nullptr};
+    };
+
+    thread_local OwnerCache cache;
+
+    const uint64_t epoch = trace_writer_epoch.load(std::memory_order_acquire);
+    if (cache.epoch == epoch && cache.owner != nullptr && cache.ownerId == ownerId)
+    {
+        return *cache.owner;
+    }
+    std::lock_guard<std::mutex> guard(files_mutex);
+    auto [it, inserted] = trace_owners.try_emplace(ownerId);
+    (void)inserted;
+    cache = {epoch, ownerId, &it->second};
+    return *cache.owner;
+}
+
+void
+UbUtils::CloseTraceFile(TraceFileState& fileState, bool lruClose)
+{
+    if (!fileState.open)
+    {
+        return;
+    }
+    NS_ABORT_MSG_IF(fileState.activeWrites != 0,
+                    "Cannot close active trace file: " << fileState.fileName);
+    fileState.stream.close();
+    NS_ABORT_MSG_IF(fileState.stream.fail(), "Failed to close trace file: " << fileState.fileName);
+    fileState.open = false;
+    --trace_open_files;
+    ++trace_writer_stats.closeCount;
+    if (lruClose)
+    {
+        ++trace_writer_stats.lruCloseCount;
+    }
+}
+
+void
+UbUtils::CommitTraceChunk(TraceFileState& fileState, std::string& chunk)
+{
+    if (chunk.empty())
+    {
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> filesGuard(files_mutex);
+        if (!fileState.open)
+        {
+            while (trace_open_files >= trace_writer_config.effectiveMaxOpenFiles)
+            {
+                TraceFileState* candidate = nullptr;
+                for (auto& [name, state] : files)
+                {
+                    (void)name;
+                    if (state.open && state.activeWrites == 0 && &state != &fileState &&
+                        (candidate == nullptr || state.lastUse < candidate->lastUse))
+                    {
+                        candidate = &state;
+                    }
+                }
+                NS_ABORT_MSG_IF(candidate == nullptr,
+                                "Trace file descriptor limit reached with no closable sink");
+                CloseTraceFile(*candidate, true);
+            }
+
+            namespace fs = std::filesystem;
+            std::error_code ec;
+            const fs::path parent = fs::path(fileState.fileName).parent_path();
+            if (!parent.empty())
+            {
+                fs::create_directories(parent, ec);
+                NS_ABORT_MSG_IF(ec,
+                                "Failed to create trace parent dir: " << parent
+                                                                      << " err=" << ec.message());
+            }
+            fileState.stream.clear();
+            fileState.stream.open(fileState.fileName.c_str(), std::ios::out | std::ios::app);
+            NS_ABORT_MSG_IF(!fileState.stream.is_open(),
+                            "Cannot open trace file: " << fileState.fileName);
+            fileState.open = true;
+            ++trace_open_files;
+            ++trace_writer_stats.openCount;
+            trace_writer_stats.peakOpenFiles =
+                std::max(trace_writer_stats.peakOpenFiles, trace_open_files);
+        }
+        ++fileState.activeWrites;
+        fileState.lastUse = ++trace_lru_clock;
+    }
+
+    {
+        std::lock_guard<std::mutex> fileGuard(fileState.mutex);
+        fileState.stream.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+        NS_ABORT_MSG_IF(fileState.stream.fail(),
+                        "Failed to write trace file: " << fileState.fileName);
+        fileState.stream.flush();
+        NS_ABORT_MSG_IF(fileState.stream.fail(),
+                        "Failed to flush trace file: " << fileState.fileName);
+    }
+
+    {
+        std::lock_guard<std::mutex> filesGuard(files_mutex);
+        --fileState.activeWrites;
+        fileState.lastUse = ++trace_lru_clock;
+        ++trace_writer_stats.writeCount;
+        ++trace_writer_stats.flushCount;
+    }
+    std::string empty;
+    chunk.swap(empty);
+}
+
+void
+UbUtils::AppendTraceLine(const TraceSinkHandle& sink, std::string line)
+{
+    const uint64_t epoch = trace_writer_epoch.load(std::memory_order_acquire);
+    NS_ABORT_MSG_IF(!sink.IsValid() || sink.epoch != epoch, "Stale or invalid trace sink handle");
+    auto& fileState = *static_cast<TraceFileState*>(sink.state);
+    TraceOwnerState& owner = GetTraceOwner(Simulator::GetSystemId());
+    std::lock_guard<std::mutex> ownerGuard(owner.mutex);
+
+    line.push_back('\n');
+    const auto pressureFlush = [&](std::size_t incomingBytes) {
+        std::vector<std::pair<TraceFileState*, std::string*>> pending;
+        pending.reserve(owner.chunks.size());
+        for (auto& [state, buffered] : owner.chunks)
+        {
+            if (!buffered.empty())
+            {
+                pending.emplace_back(state, &buffered);
+            }
+        }
+        std::sort(pending.begin(), pending.end(), [](const auto& lhs, const auto& rhs) {
+            return lhs.second->size() > rhs.second->size();
+        });
+        const std::size_t target = trace_writer_config.lowWaterBytes > incomingBytes
+                                       ? trace_writer_config.lowWaterBytes - incomingBytes
+                                       : 0;
+        for (auto& [state, buffered] : pending)
+        {
+            if (owner.bufferedBytes <= target)
+            {
+                break;
+            }
+            const std::size_t bytes = buffered->size();
+            CommitTraceChunk(*state, *buffered);
+            owner.bufferedBytes -= bytes;
+        }
+        std::lock_guard<std::mutex> filesGuard(files_mutex);
+        ++trace_writer_stats.pressureFlushCount;
+    };
+
+    if (owner.bufferedBytes + line.size() >= trace_writer_config.highWaterBytes)
+    {
+        pressureFlush(line.size());
+    }
+
+    std::string& chunk = owner.chunks[&fileState];
+    if (!chunk.empty() && chunk.size() + line.size() > trace_writer_config.chunkBytes)
+    {
+        const std::size_t bytes = chunk.size();
+        CommitTraceChunk(fileState, chunk);
+        owner.bufferedBytes -= bytes;
+    }
+    if (line.size() >= trace_writer_config.chunkBytes)
+    {
+        CommitTraceChunk(fileState, line);
+        return;
+    }
+
+    chunk += line;
+    owner.bufferedBytes += line.size();
+    {
+        std::lock_guard<std::mutex> filesGuard(files_mutex);
+        trace_writer_stats.peakBufferedBytes =
+            std::max(trace_writer_stats.peakBufferedBytes, owner.bufferedBytes);
+    }
+    if (chunk.size() >= trace_writer_config.chunkBytes)
+    {
+        const std::size_t bytes = chunk.size();
+        CommitTraceChunk(fileState, chunk);
+        owner.bufferedBytes -= bytes;
+    }
+}
+
+void
+UbUtils::AppendTraceInfoNoTs(const TraceSinkHandle& sink, const std::string& info)
+{
+    AppendTraceLine(sink, info);
+}
+
+void
+UbUtils::FlushTraceFile(TraceFileState& fileState)
+{
+    std::vector<TraceOwnerState*> owners;
+    {
+        std::lock_guard<std::mutex> filesGuard(files_mutex);
+        owners.reserve(trace_owners.size());
+        for (auto& [ownerId, owner] : trace_owners)
+        {
+            (void)ownerId;
+            owners.push_back(&owner);
+        }
+    }
+    for (TraceOwnerState* owner : owners)
+    {
+        std::lock_guard<std::mutex> ownerGuard(owner->mutex);
+        auto it = owner->chunks.find(&fileState);
+        if (it != owner->chunks.end() && !it->second.empty())
+        {
+            const std::size_t bytes = it->second.size();
+            CommitTraceChunk(fileState, it->second);
+            owner->bufferedBytes -= bytes;
+        }
+    }
+}
+
+void
+UbUtils::FlushTraceOwner(TraceOwnerState& owner)
+{
+    std::lock_guard<std::mutex> ownerGuard(owner.mutex);
+    for (auto& [fileState, chunk] : owner.chunks)
+    {
+        if (!chunk.empty())
+        {
+            CommitTraceChunk(*fileState, chunk);
+        }
+    }
+    owner.bufferedBytes = 0;
 }
 
 bool
@@ -839,20 +1157,45 @@ void UbUtils::Destroy()
         }
     }
 
-    std::lock_guard<std::mutex> filesGuard(files_mutex);
-    for (auto& pair : files) {
-        std::lock_guard<std::mutex> fileGuard(pair.second.mutex);
-        if (!pair.second.pending.empty())
-        {
-            pair.second.stream.write(pair.second.pending.data(),
-                                     static_cast<std::streamsize>(pair.second.pending.size()));
-            pair.second.pending.clear();
-        }
-        if (pair.second.stream.is_open()) {
-            pair.second.stream.close();
-        }
+    for (auto& [ownerId, owner] : trace_owners)
+    {
+        (void)ownerId;
+        FlushTraceOwner(owner);
     }
-    files.clear();
+
+    {
+        std::lock_guard<std::mutex> filesGuard(files_mutex);
+        for (auto& [fileName, fileState] : files)
+        {
+            (void)fileName;
+            CloseTraceFile(fileState, false);
+        }
+        const char* report = std::getenv("UB_TRACE_WRITER_REPORT");
+        if (report != nullptr && std::string_view(report) == "1")
+        {
+            std::cerr << "TRACE_WRITER_METRICS"
+                      << " chunkBytes=" << trace_writer_config.chunkBytes
+                      << " highWaterBytes=" << trace_writer_config.highWaterBytes
+                      << " lowWaterBytes=" << trace_writer_config.lowWaterBytes
+                      << " effectiveMaxOpenFiles=" << trace_writer_config.effectiveMaxOpenFiles
+                      << " opens=" << trace_writer_stats.openCount
+                      << " writes=" << trace_writer_stats.writeCount
+                      << " flushes=" << trace_writer_stats.flushCount
+                      << " closes=" << trace_writer_stats.closeCount
+                      << " lruCloses=" << trace_writer_stats.lruCloseCount
+                      << " pressureFlushes=" << trace_writer_stats.pressureFlushCount
+                      << " peakOpenFiles=" << trace_writer_stats.peakOpenFiles
+                      << " peakBufferedBytes=" << trace_writer_stats.peakBufferedBytes << '\n';
+        }
+        files.clear();
+        trace_owners.clear();
+        trace_writer_config = {};
+        trace_writer_stats = {};
+        trace_writer_configured = false;
+        trace_open_files = 0;
+        trace_lru_clock = 0;
+        trace_writer_epoch.fetch_add(1, std::memory_order_release);
+    }
     UbLifecycleTrace::Reset();
 }
 
@@ -933,16 +1276,18 @@ void UbUtils::CreateTraceDir()
         rank = MpiInterface::GetSystemId();
     }
 #endif
-    UbLifecycleTrace::Configure(
-        trace_path,
-        resolvedLevel,
-        detailStride.Get(),
-        detailOffset.Get(),
-        rank,
-        rankScoped,
-        [](const std::string& filename, const std::string& line) {
-            UbUtils::PrintTraceInfoNoTs(filename, line);
-        });
+    UbLifecycleTrace::Configure(trace_path,
+                                resolvedLevel,
+                                detailStride.Get(),
+                                detailOffset.Get(),
+                                rank,
+                                rankScoped,
+                                [](const std::string& filename) {
+                                    const auto sink = UbUtils::ResolveTraceSink(filename);
+                                    return [sink](const std::string& line) {
+                                        UbUtils::AppendTraceInfoNoTs(sink, line);
+                                    };
+                                });
     UbLifecycleTrace::EmitMetadata();
     PrintTimestamp("[setup] Prepare runlog directory: " + trace_path + "runlog");
 }
@@ -1050,31 +1395,16 @@ UbUtils::StartQueueSampler()
 
 void UbUtils::PrintTraceInfo(const string& fileName, const string& info)
 {
-    auto& fileState = GetTraceFile(fileName);
-    std::lock_guard<std::mutex> fileGuard(fileState.mutex);
-    fileState.pending += "[";
-    fileState.pending += std::to_string(Simulator::Now().GetSeconds() * 1e6);
-    fileState.pending += "us] ";
-    fileState.pending += info;
-    fileState.pending.push_back('\n');
-    if (fileState.pending.size() >= TRACE_FLUSH_THRESHOLD_BYTES) {
-        fileState.stream.write(fileState.pending.data(),
-                               static_cast<std::streamsize>(fileState.pending.size()));
-        fileState.pending.clear();
-    }
+    std::string line = "[";
+    line += std::to_string(Simulator::Now().GetSeconds() * 1e6);
+    line += "us] ";
+    line += info;
+    AppendTraceLine(GetCachedTraceSink(fileName), std::move(line));
 }
 
 void UbUtils::PrintTraceInfoNoTs(const string& fileName, const string& info)
 {
-    auto& fileState = GetTraceFile(fileName);
-    std::lock_guard<std::mutex> fileGuard(fileState.mutex);
-    fileState.pending += info;
-    fileState.pending.push_back('\n');
-    if (fileState.pending.size() >= TRACE_FLUSH_THRESHOLD_BYTES) {
-        fileState.stream.write(fileState.pending.data(),
-                               static_cast<std::streamsize>(fileState.pending.size()));
-        fileState.pending.clear();
-    }
+    AppendTraceInfoNoTs(GetCachedTraceSink(fileName), info);
 }
 
 inline void UbUtils::TpFirstPacketSendsNotify(

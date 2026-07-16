@@ -7419,8 +7419,10 @@ class UbLifecycleTraceLevelAndSummaryTest : public TestCase
                               "Custom preset should allow explicit lifecycle detail");
 
         std::vector<std::string> output;
-        auto append = [&output](const std::string&, const std::string& line) {
-            output.push_back(line);
+        std::map<std::string, uint32_t> resolutions;
+        auto resolveSink = [&output, &resolutions](const std::string& filename) {
+            ++resolutions[filename];
+            return [&output](const std::string& line) { output.push_back(line); };
         };
 
         UbLifecycleTrace::Configure("/tmp",
@@ -7429,7 +7431,7 @@ class UbLifecycleTraceLevelAndSummaryTest : public TestCase
                                     0,
                                     0,
                                     false,
-                                    append);
+                                    resolveSink);
         Ptr<Node> offNode = CreateObject<Node>();
         Ptr<UbLifecycleCoordinator> offCoordinator =
             UbLifecycleCoordinator::GetOrCreate(offNode);
@@ -7441,6 +7443,7 @@ class UbLifecycleTraceLevelAndSummaryTest : public TestCase
         offCoordinator->RetirePacketOwner(offOwner);
         offCoordinator->EmitLifecycleSummary();
         NS_TEST_ASSERT_MSG_EQ(output.empty(), true, "OFF must not emit lifecycle evidence");
+        NS_TEST_ASSERT_MSG_EQ(resolutions.empty(), true, "OFF must not resolve lifecycle sinks");
         NS_TEST_ASSERT_MSG_EQ(offCoordinator->GetSnapshot(offOwner).endpointConsumed,
                               1u,
                               "OFF must not disable lifecycle accounting");
@@ -7453,7 +7456,7 @@ class UbLifecycleTraceLevelAndSummaryTest : public TestCase
                                     0,
                                     0,
                                     false,
-                                    append);
+                                    resolveSink);
         UbLifecycleTrace::EmitMetadata();
         Ptr<Node> summaryNode = CreateObject<Node>();
         Ptr<UbLifecycleCoordinator> summaryCoordinator =
@@ -7483,6 +7486,14 @@ class UbLifecycleTraceLevelAndSummaryTest : public TestCase
         NS_TEST_ASSERT_MSG_NE(output.front().find("\"resourceKinds\""),
                               std::string::npos,
                               "Metadata should contain the C++ resource enum registry");
+        NS_TEST_ASSERT_MSG_EQ(resolutions.size(),
+                              2u,
+                              "SUMMARY should resolve one metadata and one owner sink");
+        for (const auto& [filename, count] : resolutions)
+        {
+            (void)filename;
+            NS_TEST_ASSERT_MSG_EQ(count, 1u, "Each lifecycle filename should resolve exactly once");
+        }
         Simulator::Destroy();
         UbLifecycleTrace::Reset();
     }
@@ -7499,14 +7510,17 @@ class UbLifecycleTraceIdentityChainTest : public TestCase
     void DoRun() override
     {
         std::vector<std::string> output;
-        UbLifecycleTrace::Configure(
-            "/tmp",
-            UbLifecycleTraceLevel::DETAIL,
-            2,
-            0,
-            0,
-            false,
-            [&output](const std::string&, const std::string& line) { output.push_back(line); });
+        UbLifecycleTrace::Configure("/tmp",
+                                    UbLifecycleTraceLevel::DETAIL,
+                                    2,
+                                    0,
+                                    0,
+                                    false,
+                                    [&output](const std::string&) {
+                                        return [&output](const std::string& line) {
+                                            output.push_back(line);
+                                        };
+                                    });
         UbLifecycleTrace::EmitMetadata();
 
         Ptr<Node> node = CreateObject<Node>();
@@ -20825,6 +20839,233 @@ class UbTraceFileConcurrencyTest : public TestCase
     }
 };
 
+class UbTraceWriterBoundedTest : public TestCase
+{
+  public:
+    UbTraceWriterBoundedTest()
+        : TestCase("UnifiedBus - trace chunks are lazy and owner pressure is bounded")
+    {
+    }
+
+    void DoRun() override
+    {
+        namespace fs = std::filesystem;
+
+        const auto uniqueSuffix =
+            std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+        const fs::path caseDir =
+            fs::temp_directory_path() / ("ub-trace-bounded-test-" + uniqueSuffix);
+        const fs::path firstFile = caseDir / "runlog" / "first.tr";
+        const fs::path secondFile = caseDir / "runlog" / "second.tr";
+        const fs::path tailFile = caseDir / "runlog" / "tail.tr";
+        std::error_code ec;
+        fs::remove_all(caseDir, ec);
+
+        UbUtils::Get()->Destroy();
+        GlobalValue::Bind("UB_TRACE_CHUNK_BYTES", UintegerValue(1024));
+        GlobalValue::Bind("UB_TRACE_OWNER_HIGH_WATER_BYTES", UintegerValue(2048));
+        GlobalValue::Bind("UB_TRACE_OWNER_LOW_WATER_BYTES", UintegerValue(1024));
+        GlobalValue::Bind("UB_TRACE_MAX_OPEN_FILES", UintegerValue(8));
+
+        const auto first = UbUtils::ResolveTraceSink(firstFile.string());
+        NS_TEST_ASSERT_MSG_EQ(first.IsValid(), true, "Resolved trace sink should be reusable");
+        NS_TEST_ASSERT_MSG_EQ(fs::exists(firstFile),
+                              false,
+                              "Resolving a sink must not allocate a chunk or open a file");
+        NS_TEST_ASSERT_MSG_EQ(UbUtils::trace_owners.empty(),
+                              true,
+                              "Owner state should be lazy until the first record");
+
+        const std::string largeA(900, 'A');
+        const std::string largeB(900, 'B');
+        const std::string tail(300, 'C');
+        UbUtils::AppendTraceInfoNoTs(first, largeA);
+        UbUtils::AppendTraceInfoNoTs(UbUtils::ResolveTraceSink(secondFile.string()), largeB);
+        UbUtils::AppendTraceInfoNoTs(UbUtils::ResolveTraceSink(tailFile.string()), tail);
+
+        auto& owner = UbUtils::trace_owners.at(Simulator::GetSystemId());
+        NS_TEST_ASSERT_MSG_EQ(owner.chunks.size(),
+                              3u,
+                              "Each owner/sink pair should retain one unfinished chunk slot");
+        const bool withinLowWater = owner.bufferedBytes <= 1024u;
+        NS_TEST_ASSERT_MSG_EQ(withinLowWater,
+                              true,
+                              "Pressure flush should return the owner to its low-water mark");
+        NS_TEST_ASSERT_MSG_EQ(UbUtils::trace_writer_stats.pressureFlushCount,
+                              1u,
+                              "Cross-sink owner pressure should trigger one batched flush");
+        const bool peakWithinHighWater = UbUtils::trace_writer_stats.peakBufferedBytes <= 2048u;
+        NS_TEST_ASSERT_MSG_EQ(peakWithinHighWater,
+                              true,
+                              "Owner buffering must never cross the configured hard limit");
+        std::size_t retainedCapacity = 0;
+        for (const auto& [fileState, chunk] : owner.chunks)
+        {
+            (void)fileState;
+            retainedCapacity += chunk.capacity();
+        }
+        const bool retainedCapacityWithinHighWater = retainedCapacity <= 2048u;
+        NS_TEST_ASSERT_MSG_EQ(retainedCapacityWithinHighWater,
+                              true,
+                              "Flushed sparse sinks must not retain payload capacity above budget");
+        NS_TEST_ASSERT_MSG_EQ(fs::exists(firstFile),
+                              true,
+                              "Largest buffered sink should become visible under pressure");
+        NS_TEST_ASSERT_MSG_EQ(fs::exists(secondFile),
+                              true,
+                              "Pressure flush should continue until low water");
+        NS_TEST_ASSERT_MSG_EQ(fs::exists(tailFile),
+                              false,
+                              "Low-volume tail should remain lazy until teardown");
+
+        UbUtils::Get()->Destroy();
+
+        std::ifstream tailInput(tailFile);
+        std::string tailLine;
+        std::getline(tailInput, tailLine);
+        NS_TEST_ASSERT_MSG_EQ(tailLine,
+                              tail,
+                              "Teardown must preserve the unfinished tail bytes exactly");
+
+        GlobalValue::Bind("UB_TRACE_CHUNK_BYTES", UintegerValue(64 * 1024));
+        GlobalValue::Bind("UB_TRACE_OWNER_HIGH_WATER_BYTES", UintegerValue(1024 * 1024));
+        GlobalValue::Bind("UB_TRACE_OWNER_LOW_WATER_BYTES", UintegerValue(512 * 1024));
+        GlobalValue::Bind("UB_TRACE_MAX_OPEN_FILES", UintegerValue(1024));
+        fs::remove_all(caseDir, ec);
+    }
+};
+
+class UbTraceWriterDescriptorLruTest : public TestCase
+{
+  public:
+    UbTraceWriterDescriptorLruTest()
+        : TestCase("UnifiedBus - trace descriptor LRU reopens files in append mode")
+    {
+    }
+
+    void DoRun() override
+    {
+        namespace fs = std::filesystem;
+
+        const auto uniqueSuffix =
+            std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+        const fs::path caseDir = fs::temp_directory_path() / ("ub-trace-lru-test-" + uniqueSuffix);
+        const fs::path firstFile = caseDir / "runlog" / "first.tr";
+        const fs::path secondFile = caseDir / "runlog" / "second.tr";
+        const fs::path thirdFile = caseDir / "runlog" / "third.tr";
+        std::error_code ec;
+        fs::remove_all(caseDir, ec);
+
+        UbUtils::Get()->Destroy();
+        GlobalValue::Bind("UB_TRACE_CHUNK_BYTES", UintegerValue(1024));
+        GlobalValue::Bind("UB_TRACE_OWNER_HIGH_WATER_BYTES", UintegerValue(16 * 1024));
+        GlobalValue::Bind("UB_TRACE_OWNER_LOW_WATER_BYTES", UintegerValue(8 * 1024));
+        GlobalValue::Bind("UB_TRACE_MAX_OPEN_FILES", UintegerValue(2));
+
+        const std::string firstRecord(1100, 'A');
+        const std::string secondRecord(1100, 'B');
+        const std::string thirdRecord(1100, 'C');
+        const std::string reopenedRecord(1100, 'D');
+        const auto first = UbUtils::ResolveTraceSink(firstFile.string());
+        UbUtils::AppendTraceInfoNoTs(first, firstRecord);
+        UbUtils::AppendTraceInfoNoTs(UbUtils::ResolveTraceSink(secondFile.string()), secondRecord);
+        UbUtils::AppendTraceInfoNoTs(UbUtils::ResolveTraceSink(thirdFile.string()), thirdRecord);
+        UbUtils::AppendTraceInfoNoTs(first, reopenedRecord);
+
+        NS_TEST_ASSERT_MSG_EQ(UbUtils::trace_writer_stats.peakOpenFiles,
+                              2u,
+                              "Configured descriptor maximum must be enforced");
+        NS_TEST_ASSERT_MSG_EQ(UbUtils::trace_writer_stats.lruCloseCount,
+                              2u,
+                              "Third sink and reopen should each evict one flushed LRU stream");
+        UbUtils::Get()->Destroy();
+
+        std::ifstream input(firstFile);
+        std::string firstLine;
+        std::string secondLine;
+        std::getline(input, firstLine);
+        std::getline(input, secondLine);
+        NS_TEST_ASSERT_MSG_EQ(firstLine,
+                              firstRecord,
+                              "First write should survive descriptor eviction");
+        NS_TEST_ASSERT_MSG_EQ(secondLine,
+                              reopenedRecord,
+                              "Reopened sink must append instead of truncating old bytes");
+
+#ifndef _WIN32
+        const int openStatus = RunInChildProcess([]() {
+            UbUtils::Get()->Destroy();
+            GlobalValue::Bind("UB_TRACE_CHUNK_BYTES", UintegerValue(1024));
+            const auto sink = UbUtils::ResolveTraceSink("/dev/null/trace.tr");
+            UbUtils::AppendTraceInfoNoTs(sink, std::string(1100, 'X'));
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(openStatus),
+                              1,
+                              "Trace open failure must abort instead of losing enabled evidence");
+
+        const int writeStatus = RunInChildProcess([]() {
+            UbUtils::Get()->Destroy();
+            auto& state = UbUtils::GetTraceFile("/dev/null");
+            state.open = true;
+            UbUtils::trace_open_files = 1;
+            std::string chunk = "write failure";
+            UbUtils::CommitTraceChunk(state, chunk);
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(writeStatus),
+                              1,
+                              "Trace write failure must abort instead of losing enabled evidence");
+
+        const int flushStatus = RunInChildProcess([]() {
+            class FailingSyncBuffer : public std::streambuf
+            {
+              private:
+                std::streamsize xsputn(const char*, std::streamsize count) override
+                {
+                    return count;
+                }
+
+                int sync() override
+                {
+                    return -1;
+                }
+            } buffer;
+
+            UbUtils::Get()->Destroy();
+            auto& state = UbUtils::GetTraceFile("/dev/null");
+            static_cast<std::ostream&>(state.stream).rdbuf(&buffer);
+            state.stream.clear();
+            state.open = true;
+            UbUtils::trace_open_files = 1;
+            std::string chunk = "flush failure";
+            UbUtils::CommitTraceChunk(state, chunk);
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(flushStatus),
+                              1,
+                              "Trace flush failure must abort instead of losing enabled evidence");
+
+        const int closeStatus = RunInChildProcess([]() {
+            UbUtils::Get()->Destroy();
+            auto& state = UbUtils::GetTraceFile("/dev/null");
+            state.stream.open("/dev/null", std::ios::out | std::ios::app);
+            state.open = true;
+            UbUtils::trace_open_files = 1;
+            state.stream.setstate(std::ios::badbit);
+            UbUtils::CloseTraceFile(state, false);
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(closeStatus),
+                              1,
+                              "Trace close failure must abort instead of losing enabled evidence");
+#endif
+
+        GlobalValue::Bind("UB_TRACE_CHUNK_BYTES", UintegerValue(64 * 1024));
+        GlobalValue::Bind("UB_TRACE_OWNER_HIGH_WATER_BYTES", UintegerValue(1024 * 1024));
+        GlobalValue::Bind("UB_TRACE_OWNER_LOW_WATER_BYTES", UintegerValue(512 * 1024));
+        GlobalValue::Bind("UB_TRACE_MAX_OPEN_FILES", UintegerValue(1024));
+        UbUtils::Get()->Destroy();
+        fs::remove_all(caseDir, ec);
+    }
+};
+
 } // namespace utils
 
 class UbMpiRankExtractionHelperTest : public TestCase
@@ -25017,6 +25258,20 @@ class UbLifecycleTraceFocusedTestSuite : public TestSuite
 };
 
 static UbLifecycleTraceFocusedTestSuite g_ubLifecycleTraceFocusedTestSuite;
+
+class UbTraceWriterFocusedTestSuite : public TestSuite
+{
+  public:
+    UbTraceWriterFocusedTestSuite()
+        : TestSuite("unified-bus-trace-writer", Type::UNIT)
+    {
+        AddTestCase(new utils::UbTraceWriterBoundedTest(), TestCase::Duration::QUICK);
+        AddTestCase(new utils::UbTraceWriterDescriptorLruTest(), TestCase::Duration::QUICK);
+        AddTestCase(new utils::UbTraceFileConcurrencyTest(), TestCase::Duration::QUICK);
+    }
+};
+
+static UbTraceWriterFocusedTestSuite g_ubTraceWriterFocusedTestSuite;
 
 class UbParallelLifecycleFocusedTestSuite : public TestSuite
 {
