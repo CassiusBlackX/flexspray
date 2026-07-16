@@ -1297,44 +1297,6 @@ class UbAppCtpForwardsRoutingFlagsToServiceTest : public TestCase
     }
 };
 
-#ifndef _WIN32
-class UbAppCtpTrafficRecordRejectsInvalidPriorityTest : public TestCase
-{
-  public:
-    UbAppCtpTrafficRecordRejectsInvalidPriorityTest()
-        : TestCase("UnifiedBus - direct app CTP traffic record rejects out-of-range priority")
-    {
-    }
-
-  private:
-    void DoRun() override
-    {
-        int status = RunInChildProcess([]() {
-            Ptr<UbApp> app = CreateObject<UbApp>();
-
-            TrafficRecord record;
-            record.taskId = 1;
-            record.sourceNode = 3;
-            record.destNode = 4;
-            record.dataSize = 64;
-            record.opType = "URMA_WRITE";
-            record.priority = static_cast<int>(UB_PRIORITY_MAX) + 1;
-            record.delay = "0ns";
-            record.phaseId = 1;
-
-            app->SendCtpUrmaTraffic(record);
-        });
-
-        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status),
-                              1,
-                              "direct CTP TrafficRecord with invalid priority should abort");
-        NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status),
-                              SIGABRT,
-                              "invalid direct CTP TrafficRecord priority should fail with SIGABRT");
-    }
-};
-#endif
-
 class UbTrafficGenPhaseDependencyMemoryTest : public TestCase
 {
   public:
@@ -24772,10 +24734,6 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbAppCtpTransportModeEntryTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTrafficGenRuntimeTaskEntityFieldsTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbAppCtpRuntimeTaskEntityFallbackTest(), TestCase::Duration::QUICK);
-#ifndef _WIN32
-    AddTestCase(new UbAppCtpTrafficRecordRejectsInvalidPriorityTest(),
-                TestCase::Duration::QUICK);
-#endif
     AddTestCase(new UbAppCtpAdmissionBackpressurePreservesJettyTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbAppCtpForwardsRoutingFlagsToServiceTest(), TestCase::Duration::QUICK);

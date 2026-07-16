@@ -577,9 +577,10 @@ Closeout:
 - Correctness accounting remains mandatory and has no valid off mode. No separate production deep
   verification toggle exists; its stale/underflow/duplicate/drain cost is classified through focused
   invariant tests rather than reported as a fictitious runtime on/off comparison.
-- Non-gating residual: the extra umbrella `unified-bus` suite exits 139 in its pre-existing CTP
-  invalid-priority child-abort fixture on this macOS host. The fail-fast behavior is observed and
-  ticket-defined lifecycle/CTP focused suites pass; no speculative unrelated fix was included.
+- Non-gating residual: the extra umbrella `unified-bus` suite exits 139 on this macOS host. Removing
+  the direct-app invalid-priority child-abort fixture does not remove the crash, so that fixture is
+  not the root cause. Ticket-defined lifecycle/CTP focused suites remain the macOS acceptance path;
+  the umbrella crash requires separate localization.
 
 ## Task 22: Close lifecycle review gaps
 
@@ -628,5 +629,6 @@ Closeout:
   manifest passes with `artifacts=approved-exceptions`; there is no new or unexplained difference.
 - Independent Standards/Spec review against `main@ccf41b58` and a final root diff review found no
   parallel builder/parser registry/state machine, ACK/RTO, queue scheduler or congestion algorithm;
-  no further actionable findings remain. The pre-existing umbrella-suite macOS child-abort residual
-  from T21 remains separate and was not reported as passing.
+  no further lifecycle-review findings remain. The direct-app invalid-priority child-abort test was
+  removed at the user's request without changing production validation. The umbrella suite still
+  exits 139 elsewhere on macOS and remains excluded from the acceptance claim.
