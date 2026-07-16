@@ -601,8 +601,8 @@ only if the existing tracer bullet reproduces the failure.
       resource retirement.
 - [x] Direct CTP disposal detaches queue callbacks, unregisters live allocator sources, clears
       service queue ownership, and preserves explicit unresolved packet residue.
-- [x] Targeted build and ticket-defined focused suites pass serially with `-j2`; no ordinary T22
-      frozen-byte comparison is run.
+- [x] Targeted build and ticket-defined focused suites pass serially with `-j2`; the requested
+      supplemental T22 frozen-byte comparison against GitCode main has no unexplained difference.
 
 Closeout:
 
@@ -619,8 +619,13 @@ Closeout:
   CTP disposal reuses normal queue retirement order, detaches callbacks, unregisters a live allocator,
   clears service ownership, and leaves retained packet work explicitly unresolved.
 - Target build, 8 parser tests, 3 focused trace tests, lifecycle, CTP lifecycle and parallel lifecycle
-  suites passed serially. Both local-MTP tracer modes passed. T22 is not a frozen milestone, no
-  unexplained network artifact changed, and no byte comparison was run.
+  suites passed serially. Both local-MTP tracer modes passed.
+- The requested supplemental frozen comparison used candidate `94de7ef` and the
+  `medium-ctp-entity-vl-pressure` case. GitCode `origin/main` resolves to `ccf41b58`, exactly the
+  frozen source commit, and the immutable root verifies 369 files. All 44 managed artifacts are
+  accounted for: five inputs are byte-identical and the other 39 exactly match the accepted T20/T21
+  candidate hashes and offsets for the user-approved T14 strict-RR change. The path-bound T22
+  manifest passes with `artifacts=approved-exceptions`; there is no new or unexplained difference.
 - Independent Standards/Spec review against `main@ccf41b58` and a final root diff review found no
   parallel builder/parser registry/state machine, ACK/RTO, queue scheduler or congestion algorithm;
   no further actionable findings remain. The pre-existing umbrella-suite macOS child-abort residual
