@@ -796,7 +796,7 @@ bool UbSwitch::SinkTpDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Pars
     const uint32_t srcTpn = headers.transportHeader.GetSrcTpn();
     uint32_t dstTpn = headers.transportHeader.GetDestTpn();
     Ptr<UbController> controller = GetObject<UbController>();
-    auto targetTp = controller->ResolveInboundTp(srcTpn,
+    auto targetTp = controller->GetTransportChannelManager()->ResolveInboundTp(srcTpn,
                                                  dstTpn,
                                                  headers.ipv4Header.GetSource(),
                                                  headers.ipv4Header.GetDestination(),

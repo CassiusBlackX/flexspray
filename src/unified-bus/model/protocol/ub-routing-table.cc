@@ -216,32 +216,6 @@ UbRoutingTable::LookupOther(uint32_t destIp) const
     return ports == nullptr ? PortSetView() : PortSetView(*ports);
 }
 
-void
-UbRoutingTable::GetShortestOutPorts(uint32_t destIp, std::vector<uint16_t>& outPorts) const
-{
-    const PortSetView ports = LookupShortest(destIp);
-    outPorts.assign(ports.begin(), ports.end());
-}
-
-void
-UbRoutingTable::GetOtherOutPorts(uint32_t destIp, std::vector<uint16_t>& outPorts) const
-{
-    const PortSetView ports = LookupOther(destIp);
-    outPorts.assign(ports.begin(), ports.end());
-}
-
-std::vector<uint16_t>
-UbRoutingTable::GetAllOutPorts(uint32_t destIp) const
-{
-    const PortSetView other = LookupOther(destIp);
-    const PortSetView shortest = LookupShortest(destIp);
-    std::vector<uint16_t> result;
-    result.reserve(other.size() + shortest.size());
-    result.insert(result.end(), other.begin(), other.end());
-    result.insert(result.end(), shortest.begin(), shortest.end());
-    return result;
-}
-
 bool
 UbRoutingTable::RemoveShortestRoute(uint32_t destIp)
 {

@@ -592,13 +592,13 @@ PreloadLocalTpIfOwned(Ptr<Node> node,
 
     Ptr<UbController> ctrl = node->GetObject<UbController>();
     NS_ASSERT_MSG(ctrl != nullptr, "Preloaded TP endpoint must have UbController");
-    if (ctrl->IsTPExists(srcTpn))
+    if (ctrl->GetTransportChannelManager()->Contains(srcTpn))
     {
         return;
     }
 
     auto congestionCtrl = UbCongestionControl::Create(UB_DEVICE);
-    ctrl->CreateTp(src, dest, sport, dport, priority, srcTpn, dstTpn, congestionCtrl);
+    ctrl->GetTransportChannelManager()->CreateTp(src, dest, sport, dport, priority, srcTpn, dstTpn, congestionCtrl);
 }
 
 Ptr<UbLink>
@@ -2527,9 +2527,9 @@ void UbUtils::AddRoutingTable(const string &filename)
             for (const auto& [outport, metric] : row.value) {
                 std::vector<uint16_t> outPortGroup = {outport};
                 if (metric == shortestMetric) {
-                    rt->AddShortestRouteRange(destStart, destEnd, destport, outPortGroup);
+                    rt->GetRoutingTable().AddShortestRouteRange(destStart, destEnd, destport, outPortGroup);
                 } else {
-                    rt->AddOtherRouteRange(destStart, destEnd, destport, outPortGroup);
+                    rt->GetRoutingTable().AddOtherRouteRange(destStart, destEnd, destport, outPortGroup);
                 }
             }
             if (nodeId == nodeEnd) {
@@ -2544,9 +2544,9 @@ void UbUtils::AddRoutingTable(const string &filename)
             int i = 0;
             for (auto &metricrow : destiprow.second) {
                 if (i == 0) {
-                    rt->AddShortestRoute(ip, metricrow.second);
+                    rt->GetRoutingTable().AddShortestRoute(ip, metricrow.second);
                 } else {
-                    rt->AddOtherRoute(ip, metricrow.second);
+                    rt->GetRoutingTable().AddOtherRoute(ip, metricrow.second);
                 }
                 i++;
             }
@@ -3009,7 +3009,7 @@ void UbUtils::TopoTraceConnect()
 
         std::map<uint32_t, Ptr<UbTransportChannel>> tpnMap;
         if (ubCtrl) {
-            tpnMap = ubCtrl->GetTpnMap();
+            tpnMap = ubCtrl->GetTransportChannelManager()->GetTpnMap();
             for (const auto &pair : tpnMap) { // 设置 TP的trace callback
                 auto tp = pair.second;
                 if (tp) {
@@ -3112,7 +3112,7 @@ void UbUtils::SingleTpTraceConnect(uint32_t nodeId, uint32_t tpn)
 
     Ptr<Node> node = NodeList::GetNode(nodeId);
     Ptr<UbController> ubCtrl = node->GetObject<ns3::UbController>();
-    Ptr<UbTransportChannel> tp = ubCtrl->GetTpByTpn(tpn);
+    Ptr<UbTransportChannel> tp = ubCtrl->GetTransportChannelManager()->GetTp(tpn);
     if (tp) {
         if (PacketTraceEnable) {
             tp->TraceConnectWithoutContext("FirstPacketSendsNotify", MakeCallback(TpFirstPacketSendsNotify));
