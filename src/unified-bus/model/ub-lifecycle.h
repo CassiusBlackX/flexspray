@@ -125,7 +125,7 @@ struct UbPacketAttemptIdentity
 
 struct UbLifecycleControlRecord
 {
-    uint32_t sourceNodeId{0};
+    uint32_t sourceNodeId{Simulator::NO_CONTEXT};
     uint32_t targetNodeId{0};
     uint64_t sequence{0};
     int64_t visibleTs{0};

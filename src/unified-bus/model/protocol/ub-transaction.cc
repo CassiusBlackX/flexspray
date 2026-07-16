@@ -139,6 +139,9 @@ bool UbTransaction::JettyBindTp(uint32_t src, uint32_t dest, uint32_t jettyNum,
     if (ubJetty == nullptr) {
         return false;
     }
+    if (!GetFunction()->IsJettyAcceptingWqes(jettyNum)) {
+        return false;
+    }
 
     std::vector<Ptr<UbTransportChannel>> requestedTransports;
     requestedTransports.reserve(tpns.size());

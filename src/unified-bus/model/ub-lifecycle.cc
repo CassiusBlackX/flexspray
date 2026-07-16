@@ -595,11 +595,6 @@ UbLifecycleCoordinator::ReleaseLease(const UbLifecycleLeaseIdentity& lease)
         NS_ABORT_MSG("Unknown lifecycle lease kind");
     }
     state.activeLeases.erase(it);
-    const auto callback = state.stateChangedCallback;
-    if (!callback.IsNull())
-    {
-        callback(lease.owner);
-    }
     if (UbLifecycleTrace::IsDetailEnabled() && UbLifecycleTrace::SelectResource(lease.owner))
     {
         m_lifecycleTrace(MakeTraceRecord(lease.owner,
@@ -614,6 +609,11 @@ UbLifecycleCoordinator::ReleaseLease(const UbLifecycleLeaseIdentity& lease)
                                                 UbLifecycleTraceOutcome::NONE,
                                                 ToTraceReason(lease.kind),
                                                 UbLifecycleTraceSite::COORDINATOR_RELEASE_LEASE));
+    }
+    const auto callback = state.stateChangedCallback;
+    if (!callback.IsNull())
+    {
+        callback(lease.owner);
     }
 }
 
@@ -974,7 +974,7 @@ UbParallelLifecycleAdapter::RouteControl(UbLifecycleControlRecord record)
     {
         return GetOrCreate(NodeList::GetNode(record.targetNodeId))->Apply(record);
     }
-    record.sourceNodeId = RequireSourceNodeId();
+    record.sourceNodeId = RequireSourceNodeId(record.sourceNodeId);
     Route(record);
     return true;
 }

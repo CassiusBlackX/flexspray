@@ -7594,6 +7594,98 @@ class UbLifecycleTraceIdentityChainTest : public TestCase
     }
 };
 
+class UbLifecycleLeaseReleasePrecedesReentrantRetireTraceTest : public TestCase
+{
+  public:
+    UbLifecycleLeaseReleasePrecedesReentrantRetireTraceTest()
+        : TestCase("UnifiedBus - lease release trace precedes reentrant resource retirement")
+    {
+    }
+
+    void DoRun() override
+    {
+        std::vector<std::string> output;
+        UbLifecycleTrace::Configure("/tmp",
+                                    UbLifecycleTraceLevel::DETAIL,
+                                    1,
+                                    0,
+                                    0,
+                                    false,
+                                    [&output](const std::string&) {
+                                        return [&output](const std::string& line) {
+                                            output.push_back(line);
+                                        };
+                                    });
+
+        Ptr<Node> node = CreateObject<Node>();
+        m_coordinator = UbLifecycleCoordinator::GetOrCreate(node);
+        const UbLifecycleResourceIdentity owner =
+            m_coordinator->OpenResource(UbLifecycleResourceKind::RTP_ENDPOINT, 21);
+        const UbLifecycleLeaseIdentity lease =
+            m_coordinator->AcquireLease(owner, UbLifecycleLeaseKind::WORK, owner);
+        m_coordinator->SetResourceStateChangedCallback(
+            owner,
+            MakeCallback(
+                &UbLifecycleLeaseReleasePrecedesReentrantRetireTraceTest::RetireResource,
+                this));
+
+        m_coordinator->ReleaseLease(lease);
+
+        size_t releaseIndex = std::numeric_limits<size_t>::max();
+        size_t retireIndex = std::numeric_limits<size_t>::max();
+        for (size_t index = 0; index < output.size(); ++index)
+        {
+            const std::string& line = output[index];
+            if (line.empty() || line.front() < '0' || line.front() > '9')
+            {
+                continue;
+            }
+            std::vector<std::string> fields;
+            std::stringstream row(line);
+            std::string field;
+            while (std::getline(row, field, ','))
+            {
+                fields.push_back(field);
+            }
+            NS_TEST_ASSERT_MSG_EQ(fields.size(), 16u, "Lifecycle record must use fixed columns");
+            const auto event = static_cast<UbLifecycleTraceEvent>(std::stoul(fields[9]));
+            if (event == UbLifecycleTraceEvent::LEASE_RELEASE)
+            {
+                releaseIndex = index;
+            }
+            else if (event == UbLifecycleTraceEvent::RESOURCE_RETIRE)
+            {
+                retireIndex = index;
+            }
+        }
+        NS_TEST_ASSERT_MSG_NE(releaseIndex,
+                              std::numeric_limits<size_t>::max(),
+                              "DETAIL must contain the lease release");
+        NS_TEST_ASSERT_MSG_NE(retireIndex,
+                              std::numeric_limits<size_t>::max(),
+                              "DETAIL must contain callback-driven resource retirement");
+        NS_TEST_ASSERT_MSG_LT(releaseIndex,
+                              retireIndex,
+                              "Release evidence must precede its callback-driven retirement");
+        NS_TEST_ASSERT_MSG_EQ(m_coordinator->GetSnapshot(owner).retired,
+                              true,
+                              "Reentrant callback should still retire the drained resource");
+
+        Simulator::Destroy();
+        UbLifecycleTrace::Reset();
+        m_coordinator = nullptr;
+    }
+
+  private:
+    void RetireResource(UbLifecycleResourceIdentity identity)
+    {
+        m_coordinator->SetResourceStateChangedCallback(identity, {});
+        m_coordinator->RetireResource(identity);
+    }
+
+    Ptr<UbLifecycleCoordinator> m_coordinator;
+};
+
 class UbLifecycleEgressQueueFullDropTest : public TestCase
 {
   public:
@@ -15326,6 +15418,7 @@ class UbLifecyclePendingJettyDestroyTest : public TestCase
         Config::Reset();
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
+        InstallAdditionalTpPair(topo, 303, 404);
         m_function = topo.sender->GetObject<UbController>()->GetUbFunction();
         m_transaction = topo.sender->GetObject<UbController>()->GetUbTransaction();
         m_function->CreateJetty(topo.sender->GetId(),
@@ -15363,6 +15456,38 @@ class UbLifecyclePendingJettyDestroyTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(repeated),
                               static_cast<uint32_t>(UbDestroyStatus::PENDING),
                               "Repeated destroy should share the pending flow");
+
+        const UbRtpTransportReference* bindingBeforeReject =
+            m_transaction->FindRtpTransportReference(kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_NE(bindingBeforeReject,
+                              nullptr,
+                              "Pending destroy fixture should retain its direct binding");
+        const UbLifecycleResourceIdentity bindingIdentity = bindingBeforeReject->GetIdentity();
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->JettyBindTp(topo.sender->GetId(),
+                                                         topo.receiver->GetId(),
+                                                         kUrmaWriteRegressionJettyNum,
+                                                         false,
+                                                         {kUrmaWriteRegressionSenderTpn}),
+                              false,
+                              "Draining Jetty must reject direct-TP rebind before mutation");
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->JettyBindTp(topo.sender->GetId(),
+                                                         topo.receiver->GetId(),
+                                                         kUrmaWriteRegressionJettyNum,
+                                                         true,
+                                                         {kUrmaWriteRegressionSenderTpn, 303}),
+                              false,
+                              "Draining Jetty must reject TPG rebind before group creation");
+        const UbRtpTransportReference* bindingAfterReject =
+            m_transaction->FindRtpTransportReference(kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_NE(bindingAfterReject,
+                              nullptr,
+                              "Rejected rebind must preserve the existing direct binding");
+        NS_TEST_ASSERT_MSG_EQ(bindingAfterReject->IsDirectTp(),
+                              true,
+                              "Rejected TPG rebind must not replace the direct reference");
+        NS_TEST_ASSERT_MSG_EQ(bindingAfterReject->GetIdentity(),
+                              bindingIdentity,
+                              "Rejected rebind must preserve the exact transport generation");
 
         Ptr<UbWqe> rejected = m_function->CreateWqe(topo.sender->GetId(),
                                                     topo.receiver->GetId(),
@@ -23631,6 +23756,30 @@ class UbCtpQueueBackpressurePreservesPacketAndRegistrationTest : public TestCase
                               0u,
                               "a zero-capacity egress queue must not transmit the retained packet");
 
+        Ptr<UbLifecycleCoordinator> coordinator =
+            topo.sender->GetObject<UbLifecycleCoordinator>();
+        const UbLifecycleResourceIdentity owner = service->GetPacketLifecycleOwnerForTest();
+        const UbLifecycleResourceSnapshot beforeDispose = coordinator->GetSnapshot(owner);
+        service->Dispose();
+        NS_TEST_ASSERT_MSG_EQ(service->GetQueueCount(),
+                              0u,
+                              "direct CTP disposal must release service queue ownership");
+        NS_TEST_ASSERT_MSG_EQ(service->GetRegisteredQueueCountForTest(),
+                              0u,
+                              "direct CTP disposal must unregister every allocator source");
+        const UbLifecycleResourceSnapshot afterDispose = coordinator->GetSnapshot(owner);
+        NS_TEST_ASSERT_MSG_EQ(afterDispose.inFlightPackets,
+                              beforeDispose.inFlightPackets,
+                              "forced disposal must not invent a packet terminal");
+
+        topo.senderPort->GetUbQueue()->SetAttribute("MaxEgressBytes", UintegerValue(4096));
+        topo.senderPort->TriggerTransmit();
+        Simulator::Stop(NanoSeconds(200));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(owner).inFlightPackets,
+                              beforeDispose.inFlightPackets,
+                              "allocator progress after dispose must preserve unresolved residue");
+
         Simulator::Destroy();
     }
 };
@@ -25253,6 +25402,8 @@ class UbLifecycleTraceFocusedTestSuite : public TestSuite
     {
         AddTestCase(new UbLifecycleTraceLevelAndSummaryTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbLifecycleTraceIdentityChainTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbLifecycleLeaseReleasePrecedesReentrantRetireTraceTest(),
+                    TestCase::Duration::QUICK);
     }
 };
 

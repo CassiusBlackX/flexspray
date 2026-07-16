@@ -494,6 +494,7 @@ TpConnectionManager::NotifyEndpointMaterialized(uint32_t localNodeId,
         return;
     }
     UbLifecycleControlRecord control;
+    control.sourceNodeId = localNodeId;
     control.targetNodeId = connection.ownerNodeId;
     control.operation = UbLifecycleControlOperation::ENDPOINT_MATERIALIZED;
     control.resource = identity;
@@ -598,6 +599,7 @@ TpConnectionManager::DestroyConnection(uint32_t localNodeId,
                                                 PendingRemoteDestroy{identity, callback});
     }
     UbLifecycleControlRecord control;
+    control.sourceNodeId = m_ownerNodeId;
     control.targetNodeId = connection.ownerNodeId;
     control.operation = UbLifecycleControlOperation::CONNECTION_DESTROY_REQUEST;
     control.resource = identity;
@@ -690,6 +692,7 @@ TpConnectionManager::RequestDestroyNotice(const Connection& connection,
                                           bool ownerObservedActive)
 {
     UbLifecycleControlRecord control;
+    control.sourceNodeId = m_ownerNodeId;
     control.targetNodeId = slot == 1 ? connection.node1 : connection.node2;
     control.operation = UbLifecycleControlOperation::CONNECTION_DESTROY_NOTICE;
     control.resource = identity;
@@ -707,6 +710,7 @@ TpConnectionManager::RequestEndpointDestroy(const Connection& connection,
                                             UbDestroyReason reason)
 {
     UbLifecycleControlRecord control;
+    control.sourceNodeId = m_ownerNodeId;
     control.targetNodeId = slot == 1 ? connection.node1 : connection.node2;
     control.operation = UbLifecycleControlOperation::ENDPOINT_DESTROY_REQUEST;
     control.resource = identity;
@@ -726,6 +730,7 @@ TpConnectionManager::OnLocalEndpointDestroyed(UbLifecycleResourceIdentity connec
     NS_ABORT_MSG_IF(status != UbDestroyStatus::COMPLETED,
                     "Endpoint destroy callback must report completion");
     UbLifecycleControlRecord control;
+    control.sourceNodeId = m_ownerNodeId;
     control.targetNodeId = connectionIdentity.ownerNodeId;
     control.operation = UbLifecycleControlOperation::ENDPOINT_DESTROYED;
     control.resource = connectionIdentity;
@@ -800,6 +805,7 @@ TpConnectionManager::RequestEraseConnectionView(const Connection& connection,
                                                 uint8_t slot)
 {
     UbLifecycleControlRecord control;
+    control.sourceNodeId = m_ownerNodeId;
     control.targetNodeId = slot == 1 ? connection.node1 : connection.node2;
     control.operation = UbLifecycleControlOperation::ERASE_CONNECTION_VIEW;
     control.resource = identity;
@@ -863,6 +869,7 @@ TpConnectionManager::CompleteFinalizeConnection(const UbLifecycleResourceIdentit
     for (const auto& [callbackNodeId, requestId] : remoteCallbacks)
     {
         UbLifecycleControlRecord control;
+        control.sourceNodeId = m_ownerNodeId;
         control.targetNodeId = callbackNodeId;
         control.operation = UbLifecycleControlOperation::CONNECTION_DESTROY_COMPLETE;
         control.resource = identity;
@@ -994,6 +1001,7 @@ TpConnectionManager::ApplyLifecycleControl(const UbLifecycleControlRecord& contr
         }
         manager->EraseConnectionView(control.nodeId, control.tpn);
         UbLifecycleControlRecord complete;
+        complete.sourceNodeId = control.targetNodeId;
         complete.targetNodeId = control.resource.ownerNodeId;
         complete.operation = UbLifecycleControlOperation::ERASE_CONNECTION_VIEW_COMPLETE;
         complete.resource = control.resource;

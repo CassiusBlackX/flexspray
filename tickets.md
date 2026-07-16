@@ -580,3 +580,26 @@ Closeout:
 - Non-gating residual: the extra umbrella `unified-bus` suite exits 139 in its pre-existing CTP
   invalid-priority child-abort fixture on this macOS host. The fail-fast behavior is observed and
   ticket-defined lifecycle/CTP focused suites pass; no speculative unrelated fix was included.
+
+## Task 22: Close lifecycle review gaps
+
+**What to build:** Resolve confirmed post-acceptance review gaps at existing public seams: freeze
+draining Jetty rebind before side effects, validate lifecycle trace continuity and file ownership,
+preserve lease-release causal ordering under reentrant retirement, and close CTP allocator queue
+ownership during direct disposal. Verify the disputed pre-run owner-control source path and change it
+only if the existing tracer bullet reproduces the failure.
+
+**Blocked by:** T21 Run the full semantic and performance acceptance matrix.
+
+- [ ] Cross-owner initialization control is either proven valid at the supported seam or routes an
+      explicit caller-known source without relying on ambient simulator context.
+- [ ] Direct-TP and TPG rebind of a draining Jetty return a typed rejection before group, reference,
+      cursor, or lease mutation.
+- [ ] Lifecycle parser rejects missing/header-only trace evidence, sequence gaps, filename/content
+      owner mismatch, and metadata filename/content rank mismatch.
+- [ ] DETAIL evidence records `LEASE_RELEASE` after ledger mutation but before callback-driven
+      resource retirement.
+- [ ] Direct CTP disposal detaches queue callbacks, unregisters live allocator sources, clears
+      service queue ownership, and preserves explicit unresolved packet residue.
+- [ ] Targeted build and ticket-defined focused suites pass serially with `-j2`; no ordinary T22
+      frozen-byte comparison is run.

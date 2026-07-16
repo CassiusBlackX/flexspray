@@ -43,14 +43,20 @@ main(int argc, char* argv[])
 {
     bool hybrid = false;
     bool localMtp = false;
+    bool preRunControl = false;
     bool testing = false;
     CommandLine cmd(__FILE__);
     cmd.AddValue("hybrid", "Route lifecycle control to the target node's MTP LP", hybrid);
     cmd.AddValue("local-mtp", "Route lifecycle control between local MTP LPs", localMtp);
+    cmd.AddValue("pre-run-control",
+                 "Route an explicitly sourced lifecycle control before Simulator::Run",
+                 preRunControl);
     cmd.AddValue("test", "Print regression-test output", testing);
     cmd.Parse(argc, argv);
 
     NS_ABORT_MSG_IF(hybrid && localMtp, "Select either hybrid or local MTP execution");
+    NS_ABORT_MSG_IF(preRunControl && !localMtp,
+                    "Pre-run lifecycle control is a local MTP regression mode");
     if (localMtp)
     {
         MtpInterface::Enable(2, 2);
@@ -99,7 +105,18 @@ main(int argc, char* argv[])
         NS_ABORT_MSG_IF(opened != ownerIdentity || registered != packetIdentity,
                         "Parallel lifecycle tracer bullet constructed an unexpected identity");
     }
-    if (localMtp || rank == 1)
+    if (preRunControl)
+    {
+        UbLifecycleControlRecord record;
+        record.sourceNodeId = nodes.Get(1)->GetId();
+        record.targetNodeId = nodes.Get(0)->GetId();
+        record.operation = UbLifecycleControlOperation::PACKET_TERMINAL;
+        record.resource = ownerIdentity;
+        record.packet = packetIdentity;
+        record.value = static_cast<uint64_t>(UbPacketTerminal::ENDPOINT_CONSUMED);
+        UbParallelLifecycleAdapter::RouteControl(record);
+    }
+    else if (localMtp || rank == 1)
     {
         if (!localMtp)
         {
