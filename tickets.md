@@ -527,11 +527,25 @@ Closeout:
 
 **Blocked by:** T05 Preserve backpressure and TPG member lifecycle; T07 Migrate selective retransmission and remove full-packet retention; T10 Tear down a paired TP connection only after both slots drain; T12 Make CTP keys, queues, events, and finite children retire independently; T13 Close the LDST operation lifecycle; T14 Separate route storage from routing policy on the live packet path; T16 Balance VOQ ownership, allocator events, and queue disposal; T18 Publish lifecycle trace schema and parser semantics.
 
-- [ ] Every migrated collection has one owner and no old caller retains a mutable mirror or erase path.
-- [ ] Compatibility forwarding and aliases remain only where an explicit public compatibility decision requires them.
-- [ ] Protocol headers, value types, managers, queues, routing, and flow-control modules reflect their canonical domain ownership.
-- [ ] Pure movement/renaming is separated from behavior changes in reviewable commits.
-- [ ] Build, module tests, minimal cases, and all applicable byte-stable medium-case outputs remain green.
+- [x] Every migrated collection has one owner and no old caller retains a mutable mirror or erase path.
+- [x] Compatibility forwarding and aliases remain only where an explicit public compatibility decision requires them.
+- [x] Protocol headers, value types, managers, queues, routing, and flow-control modules reflect their canonical domain ownership.
+- [x] Pure movement/renaming is separated from behavior changes in reviewable commits.
+- [x] Build, module tests, minimal cases, and all applicable byte-stable medium-case outputs remain green.
+
+- Removed proven-dead `UbController` collections, migrated TP callers directly to the canonical
+  `UbTransportChannelManager`, and migrated route-storage callers directly to `UbRoutingTable`.
+  The receive path retains `UbRoutingProcess::GetOutPort`; documented compatibility contracts remain.
+- Independent review against `main@ccf41b58` found no rewritten builder/parser/state machine,
+  ACK/RTO, queue/scheduler, congestion, callback/timer, or cleanup algorithm, and no changed caller
+  arguments, state-update order, header/tag order, trace timing, or lifecycle semantics.
+- Targeted local-single and local-MTP builds passed with `-j2`. Lifecycle, TP reservation, routing,
+  flow-control, switch-VOQ, transport-retransmission, and quick-example suites passed serially, as
+  did the 33-case frozen-baseline harness.
+- Shared-TP milestone output differs only in two TaskTrace artifacts due to the reviewed T05
+  same-timestamp Sends/Completes ordering; its other 23 managed artifacts are byte-identical.
+  Retransmission, CTP pressure, local-single cross-owner, and local-MTP cross-owner outputs exactly
+  match their previously approved candidate trees under narrow runtime/path/hash-bound manifests.
 
 ## Task 21: Run the full semantic and performance acceptance matrix
 
