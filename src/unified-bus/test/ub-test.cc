@@ -286,8 +286,8 @@ AddShortestRoute(Ptr<Node> node, uint32_t destNodeId, uint32_t destPortId, uint1
 {
     std::vector<uint16_t> outPorts = {outPort};
     Ptr<UbRoutingProcess> routing = node->GetObject<UbSwitch>()->GetRoutingProcess();
-    routing->AddShortestRoute(NodeIdToIp(destNodeId).Get(), outPorts);
-    routing->AddShortestRoute(NodeIdToIp(destNodeId, destPortId).Get(), outPorts);
+    routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(destNodeId).Get(), outPorts);
+    routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(destNodeId, destPortId).Get(), outPorts);
 }
 
 Ptr<Node>
@@ -394,10 +394,10 @@ InstallStaticTpPair(const LocalTpTopology& topo)
                                                                   topo.receiver->GetId());
     }
 
-    if (!senderCtrl->IsTPExists(kUrmaWriteRegressionSenderTpn))
+    if (!senderCtrl->GetTransportChannelManager()->Contains(kUrmaWriteRegressionSenderTpn))
     {
         Ptr<UbCongestionControl> senderCc = UbCongestionControl::Create(UB_DEVICE);
-        senderCtrl->CreateTp(topo.sender->GetId(),
+        senderCtrl->GetTransportChannelManager()->CreateTp(topo.sender->GetId(),
                              topo.receiver->GetId(),
                              topo.senderPort->GetIfIndex(),
                              topo.receiverPort->GetIfIndex(),
@@ -407,10 +407,10 @@ InstallStaticTpPair(const LocalTpTopology& topo)
                              senderCc);
     }
 
-    if (!receiverCtrl->IsTPExists(kUrmaWriteRegressionReceiverTpn))
+    if (!receiverCtrl->GetTransportChannelManager()->Contains(kUrmaWriteRegressionReceiverTpn))
     {
         Ptr<UbCongestionControl> receiverCc = UbCongestionControl::Create(UB_DEVICE);
-        receiverCtrl->CreateTp(topo.receiver->GetId(),
+        receiverCtrl->GetTransportChannelManager()->CreateTp(topo.receiver->GetId(),
                                topo.sender->GetId(),
                                topo.receiverPort->GetIfIndex(),
                                topo.senderPort->GetIfIndex(),
@@ -426,7 +426,7 @@ InstallAdditionalTpPair(const LocalTpTopology& topo, uint32_t senderTpn, uint32_
 {
     Ptr<UbController> senderController = topo.sender->GetObject<UbController>();
     Ptr<UbController> receiverController = topo.receiver->GetObject<UbController>();
-    senderController->CreateTp(topo.sender->GetId(),
+    senderController->GetTransportChannelManager()->CreateTp(topo.sender->GetId(),
                                topo.receiver->GetId(),
                                topo.senderPort->GetIfIndex(),
                                topo.receiverPort->GetIfIndex(),
@@ -434,7 +434,7 @@ InstallAdditionalTpPair(const LocalTpTopology& topo, uint32_t senderTpn, uint32_
                                senderTpn,
                                receiverTpn,
                                UbCongestionControl::Create(UB_DEVICE));
-    receiverController->CreateTp(topo.receiver->GetId(),
+    receiverController->GetTransportChannelManager()->CreateTp(topo.receiver->GetId(),
                                  topo.sender->GetId(),
                                  topo.receiverPort->GetIfIndex(),
                                  topo.senderPort->GetIfIndex(),
@@ -806,7 +806,7 @@ Ptr<UbTransportChannel>
 CreateSelectiveReceiverTp(const LocalTpTopology& topo)
 {
     InstallStaticTpPair(topo);
-    return topo.receiver->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionReceiverTpn);
+    return topo.receiver->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionReceiverTpn);
 }
 
 #ifndef _WIN32
@@ -1023,7 +1023,7 @@ class UbAppCtpTransportModeEntryTest : public TestCase
         record.delay = "0ns";
         record.phaseId = 1;
 
-        const uint32_t initialTransportCount = controller->GetTransportCountForTest();
+        const uint32_t initialTransportCount = controller->GetTransportChannelManager()->GetCount();
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
         service->SetSourcePortHint(UbCtpEntityKey{.srcEntityId = 21,
                                                   .dstNodeId = 4,
@@ -1037,7 +1037,7 @@ class UbAppCtpTransportModeEntryTest : public TestCase
                            .dstEntityId = 22,
                            .vl = 5};
         NS_TEST_ASSERT_MSG_NE(service, nullptr, "CTP mode should initialize the CTP service");
-        NS_TEST_ASSERT_MSG_EQ(controller->GetTransportCountForTest(),
+        NS_TEST_ASSERT_MSG_EQ(controller->GetTransportChannelManager()->GetCount(),
                               initialTransportCount,
                               "CTP mode should not create RTP transport channels");
         NS_TEST_ASSERT_MSG_EQ(service->HasTransactionContextForTesting(key),
@@ -1138,7 +1138,7 @@ class UbAppCtpRuntimeTaskEntityFallbackTest : public TestCase
         task.hasSrcEntityId = true;
         task.hasDstEntityId = true;
 
-        const uint32_t initialTransportCount = controller->GetTransportCountForTest();
+        const uint32_t initialTransportCount = controller->GetTransportChannelManager()->GetCount();
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
         service->SetSourcePortHint(UbCtpEntityKey{.srcEntityId = 0,
                                                   .dstNodeId = 4,
@@ -1165,7 +1165,7 @@ class UbAppCtpRuntimeTaskEntityFallbackTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(explicitKey),
                               1u,
                               "runtime CTP branch should drain the single WQE segment into the explicit key queue");
-        NS_TEST_ASSERT_MSG_EQ(controller->GetTransportCountForTest(),
+        NS_TEST_ASSERT_MSG_EQ(controller->GetTransportChannelManager()->GetCount(),
                               initialTransportCount,
                               "CTP runtime task path should not create RTP transport channels");
 
@@ -1258,7 +1258,7 @@ class UbAppCtpForwardsRoutingFlagsToServiceTest : public TestCase
         app->SetAttribute("UsePacketSpray", BooleanValue(true));
 
         Ptr<UbRoutingProcess> routing = node->GetObject<UbSwitch>()->GetRoutingProcess();
-        routing->AddShortestRoute(NodeIdToIp(4).Get(), {0, 1});
+        routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(4).Get(), {0, 1});
 
         UbTrafficGen::RuntimeTask task;
         task.taskId = 44;
@@ -2126,66 +2126,65 @@ public:
 
     void DoRun() override
     {
-        Ptr<UbRoutingProcess> routing = CreateObject<UbRoutingProcess>();
+        UbRoutingTable routing;
         std::vector<uint16_t> rangePorts = {2, 3};
         std::vector<uint16_t> exactPorts = {7};
 
-        routing->AddShortestRouteRange(100, 199, rangePorts);
-        routing->AddShortestRoute(NodeIdToIp(123).Get(), exactPorts);
+        routing.AddShortestRouteRange(100, 199, rangePorts);
+        routing.AddShortestRoute(NodeIdToIp(123).Get(), exactPorts);
 
-        std::vector<uint16_t> outPorts;
-        routing->GetShortestOutPorts(NodeIdToIp(101).Get(), outPorts);
+        auto outPorts = routing.LookupShortest(NodeIdToIp(101).Get());
         NS_TEST_ASSERT_MSG_EQ(outPorts.size(), 2u, "range route should resolve inner host");
         NS_TEST_ASSERT_MSG_EQ(outPorts[0], 2u, "range route should preserve first output port");
         NS_TEST_ASSERT_MSG_EQ(outPorts[1], 3u, "range route should preserve second output port");
 
-        routing->GetShortestOutPorts(NodeIdToIp(101, 0).Get(), outPorts);
+        outPorts = routing.LookupShortest(NodeIdToIp(101, 0).Get());
         NS_TEST_ASSERT_MSG_EQ(outPorts.size(), 2u, "range route should resolve port-scoped host IP");
         NS_TEST_ASSERT_MSG_EQ(outPorts[0], 2u, "port-scoped range route should preserve first output port");
         NS_TEST_ASSERT_MSG_EQ(outPorts[1], 3u, "port-scoped range route should preserve second output port");
 
-        outPorts = routing->GetAllOutPorts(NodeIdToIp(101, 0).Get());
+        outPorts = routing.LookupShortest(NodeIdToIp(101, 0).Get());
         NS_TEST_ASSERT_MSG_EQ(outPorts.size(), 2u, "all route lookup should include range ports");
         NS_TEST_ASSERT_MSG_EQ(outPorts[0], 2u, "all route lookup should preserve first range port");
         NS_TEST_ASSERT_MSG_EQ(outPorts[1], 3u, "all route lookup should preserve second range port");
 
-        routing->GetShortestOutPorts(NodeIdToIp(123).Get(), outPorts);
+        outPorts = routing.LookupShortest(NodeIdToIp(123).Get());
         NS_TEST_ASSERT_MSG_EQ(outPorts.size(), 1u, "exact route should override range route");
         NS_TEST_ASSERT_MSG_EQ(outPorts[0], 7u, "exact route should keep configured output port");
 
-        routing->GetShortestOutPorts(NodeIdToIp(250).Get(), outPorts);
+        outPorts = routing.LookupShortest(NodeIdToIp(250).Get());
         NS_TEST_ASSERT_MSG_EQ(outPorts.empty(), true, "outside range should not resolve");
 
-        Ptr<UbRoutingProcess> overlapRouting = CreateObject<UbRoutingProcess>();
-        overlapRouting->AddShortestRouteRange(100, 199, std::vector<uint16_t>{2});
-        overlapRouting->AddShortestRouteRange(150, 160, std::vector<uint16_t>{3});
+        UbRoutingTable overlapRouting;
+        overlapRouting.AddShortestRouteRange(100, 199, std::vector<uint16_t>{2});
+        overlapRouting.AddShortestRouteRange(150, 160, std::vector<uint16_t>{3});
 
-        overlapRouting->GetShortestOutPorts(NodeIdToIp(149).Get(), outPorts);
+        outPorts = overlapRouting.LookupShortest(NodeIdToIp(149).Get());
         NS_TEST_ASSERT_MSG_EQ(outPorts.size(), 1u, "overlap route should keep prefix range");
         NS_TEST_ASSERT_MSG_EQ(outPorts[0], 2u, "overlap route should keep original prefix port");
 
-        overlapRouting->GetShortestOutPorts(NodeIdToIp(150).Get(), outPorts);
+        outPorts = overlapRouting.LookupShortest(NodeIdToIp(150).Get());
         NS_TEST_ASSERT_MSG_EQ(outPorts.size(), 2u, "overlap route should merge inner range ports");
         NS_TEST_ASSERT_MSG_EQ(outPorts[0], 2u, "overlap route should keep existing inner port");
         NS_TEST_ASSERT_MSG_EQ(outPorts[1], 3u, "overlap route should add new inner port");
 
-        overlapRouting->GetShortestOutPorts(NodeIdToIp(161).Get(), outPorts);
+        outPorts = overlapRouting.LookupShortest(NodeIdToIp(161).Get());
         NS_TEST_ASSERT_MSG_EQ(outPorts.size(), 1u, "overlap route should keep suffix range");
         NS_TEST_ASSERT_MSG_EQ(outPorts[0], 2u, "overlap route should keep original suffix port");
 
-        Ptr<UbRoutingProcess> portRouting = CreateObject<UbRoutingProcess>();
-        portRouting->AddShortestRouteRange(100, 199, 2, std::vector<uint16_t>{9});
-        portRouting->AddShortestRouteRange(100, 199, 0, std::vector<uint16_t>{4});
+        UbRoutingTable portRouting;
+        portRouting.AddShortestRouteRange(100, 199, 2, std::vector<uint16_t>{9});
+        portRouting.AddShortestRouteRange(100, 199, 0, std::vector<uint16_t>{4});
 
-        portRouting->GetShortestOutPorts(NodeIdToIp(101, 2).Get(), outPorts);
+        outPorts = portRouting.LookupShortest(NodeIdToIp(101, 2).Get());
         NS_TEST_ASSERT_MSG_EQ(outPorts.size(), 1u, "port-specific range route should resolve matching port");
         NS_TEST_ASSERT_MSG_EQ(outPorts[0], 9u, "port-specific range route should keep matching port route");
 
-        portRouting->GetShortestOutPorts(NodeIdToIp(101, 0).Get(), outPorts);
+        outPorts = portRouting.LookupShortest(NodeIdToIp(101, 0).Get());
         NS_TEST_ASSERT_MSG_EQ(outPorts.size(), 1u, "port 0 range should not use port 2 route");
         NS_TEST_ASSERT_MSG_EQ(outPorts[0], 4u, "port 0 range should use default node route");
 
-        portRouting->GetShortestOutPorts(NodeIdToIp(101).Get(), outPorts);
+        outPorts = portRouting.LookupShortest(NodeIdToIp(101).Get());
         NS_TEST_ASSERT_MSG_EQ(outPorts.size(),
                               2u,
                               "primary node IP should aggregate all destination-port range routes");
@@ -2486,7 +2485,7 @@ public:
         InstallStaticTpPair(topo);
 
         Ptr<UbTransportChannel> rxTp =
-            topo.receiver->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionReceiverTpn);
+            topo.receiver->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionReceiverTpn);
         Ptr<UbHostDcqcn> cc = DynamicCast<UbHostDcqcn>(rxTp->GetCongestionCtrlForTest());
         NS_TEST_ASSERT_MSG_NE(cc, nullptr, "Receiver TP should bind a host DCQCN instance");
         Ptr<UbLifecycleCoordinator> coordinator =
@@ -2546,7 +2545,7 @@ public:
         InstallStaticTpPair(topo);
 
         Ptr<UbTransportChannel> tp =
-            topo.receiver->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionReceiverTpn);
+            topo.receiver->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionReceiverTpn);
 
         Ptr<Packet> ackPacket = Create<Packet>(0);
         UbTransportHeader ackHeader;
@@ -3025,7 +3024,7 @@ public:
         InstallStaticTpPair(topo);
 
         Ptr<UbTransportChannel> rxTp =
-            topo.receiver->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionReceiverTpn);
+            topo.receiver->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionReceiverTpn);
 
         Ptr<Packet> data = Create<Packet>(16);
         UbFlowTag flowTag(kUrmaWriteRegressionTaskId, 16);
@@ -3485,7 +3484,7 @@ public:
         InstallStaticTpPair(topo);
 
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
 
         txTp->RetainSentPsnForTest(0, 16);
         txTp->RetainSentPsnForTest(1, 16);
@@ -3528,9 +3527,9 @@ public:
         InstallStaticTpPair(topo);
 
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         Ptr<UbTransportChannel> responseOwnerTp =
-            topo.receiver->GetObject<UbController>()->GetTpByTpn(
+            topo.receiver->GetObject<UbController>()->GetTransportChannelManager()->GetTp(
                 kUrmaWriteRegressionReceiverTpn);
         txTp->RetainSentPsnForTest(0, 16);
         txTp->SetPsnSndUnaForTest(0);
@@ -3609,7 +3608,7 @@ public:
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<UbTransportChannel> rxTp =
-            topo.receiver->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionReceiverTpn);
+            topo.receiver->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionReceiverTpn);
 
         rxTp->RecvDataPacket(BuildReceiverDataPacket(topo, 0, false));
         NS_TEST_ASSERT_MSG_EQ(rxTp->GetPendingAckCountForTest(), 1u, "PSN 0 should still produce ordinary TPACK");
@@ -3644,7 +3643,7 @@ public:
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
 
         for (uint32_t psn = 10; psn <= 13; ++psn)
         {
@@ -3688,7 +3687,7 @@ public:
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
 
         for (uint32_t psn = 10; psn <= 13; ++psn)
         {
@@ -3743,7 +3742,7 @@ public:
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
 
         for (uint32_t psn = 10; psn <= 12; ++psn)
         {
@@ -3810,7 +3809,7 @@ public:
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
 
         txTp->RetainSentPsnForTest(63, 16);
         txTp->RetainSentPsnForTest(64, 16);
@@ -3849,7 +3848,7 @@ public:
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
 
         txTp->RetainSentPsnForTest(11, 16);
         txTp->RetainSentPsnForTest(12, 16);
@@ -3888,7 +3887,7 @@ public:
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
 
         constexpr uint64_t ackBase = 0xFFFFFE;
         for (uint64_t psn = ackBase; psn <= ackBase + 3; ++psn)
@@ -3936,7 +3935,7 @@ public:
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
 
         txTp->RetainSentPsnForTest(0x1000000ull, 16);
         txTp->RetainSentPsnForTest(0x1000001ull, 16);
@@ -3979,7 +3978,7 @@ public:
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
 
         txTp->RetainSentPsnForTest(10, 16);
         txTp->RetainSentPsnForTest(11, 16);
@@ -4020,7 +4019,7 @@ public:
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
 
         txTp->RetainSentPsnForTest(0x1000000ull, 16);
         txTp->RetainSentPsnForTest(0x1000001ull, 16);
@@ -4062,7 +4061,7 @@ public:
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
 
         txTp->SetPsnSndUnaForTest(0x1000000ull);
         txTp->SetPsnSndNxtForTest(0x1000004ull);
@@ -4271,7 +4270,7 @@ class UbGbnSenderCumulativeAckRetiresDescriptorsTest : public TestCase
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         txTp->SetPsnSndUnaForTest(10);
         txTp->SetPsnSndNxtForTest(14);
         for (uint64_t psn = 10; psn < 14; ++psn)
@@ -4319,7 +4318,7 @@ class UbGbnFinalAckWithPendingTaResponseLeavesTimerStoppedTest : public TestCase
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
 
         Ptr<UbWqeSegment> request = CreateObject<UbWqeSegment>();
         request->SetSrc(topo.sender->GetId());
@@ -4432,7 +4431,7 @@ public:
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
 
         for (uint32_t psn = 10; psn <= 13; ++psn)
         {
@@ -4470,7 +4469,7 @@ public:
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
 
         txTp->RetainSentPsnForTest(10, 64);
         txTp->RetainSentPsnForTest(11, 64);
@@ -4509,7 +4508,7 @@ public:
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         Ptr<RecordingGbnHeaderCc> cc = CreateObject<RecordingGbnHeaderCc>();
         cc->hint = 17;
         txTp->SetCongestionControlForTest(cc);
@@ -4661,7 +4660,7 @@ public:
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
 
         txTp->RetainSentPsnForTest(11, 128);
         txTp->SetPsnSndUnaForTest(11);
@@ -4704,7 +4703,7 @@ public:
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
 
         txTp->RetainSentPsnForTest(11, 64);
         txTp->SetPsnSndUnaForTest(11);
@@ -4746,7 +4745,7 @@ public:
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
 
         txTp->RetainSentPsnForTest(11, 64);
         txTp->SetPsnSndUnaForTest(11);
@@ -4802,7 +4801,7 @@ public:
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
 
         txTp->RetainSentPsnForTest(10, 64);
         txTp->RetainSentPsnForTest(11, 64);
@@ -4839,7 +4838,7 @@ public:
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         Ptr<UbHostDcqcn> cc = DynamicCast<UbHostDcqcn>(txTp->GetCongestionCtrlForTest());
         NS_TEST_ASSERT_MSG_NE(cc, nullptr, "Sender TP should bind a host DCQCN instance");
         (void)cc->IsCcLimited(1);
@@ -4878,7 +4877,7 @@ public:
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         Ptr<RecordingRetransmissionCc> cc = CreateObject<RecordingRetransmissionCc>();
         txTp->SetCongestionControlForTest(cc);
 
@@ -5049,7 +5048,7 @@ public:
         InstallStaticTpPair(topo);
 
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         Ptr<UbHostDcqcn> cc = DynamicCast<UbHostDcqcn>(txTp->GetCongestionCtrlForTest());
         NS_TEST_ASSERT_MSG_NE(cc, nullptr, "Sender TP should bind a host DCQCN instance");
 
@@ -5087,7 +5086,7 @@ public:
         InstallStaticTpPair(topo);
 
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         uint32_t before = txTp->GetPsnSndUnaForTest();
 
         Ptr<Packet> cnpPacket = txTp->BuildDcqcnCnp(0x1, false);
@@ -5121,7 +5120,7 @@ public:
         InstallStaticTpPair(topo);
 
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         Ptr<UbHostDcqcn> cc = DynamicCast<UbHostDcqcn>(txTp->GetCongestionCtrlForTest());
         NS_TEST_ASSERT_MSG_NE(cc, nullptr, "Sender TP should bind a host DCQCN instance");
 
@@ -5161,7 +5160,7 @@ public:
         InstallStaticTpPair(topo);
 
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         Ptr<UbHostDcqcn> cc = DynamicCast<UbHostDcqcn>(txTp->GetCongestionCtrlForTest());
         NS_TEST_ASSERT_MSG_NE(cc, nullptr, "Sender TP should bind a host DCQCN instance");
 
@@ -5208,13 +5207,13 @@ public:
 
         Ptr<UbController> senderCtrl = topo.sender->GetObject<UbController>();
         Ptr<UbController> receiverCtrl = topo.receiver->GetObject<UbController>();
-        Ptr<UbTransportChannel> firstTp = senderCtrl->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        Ptr<UbTransportChannel> firstTp = senderCtrl->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         Ptr<UbHostDcqcn> firstCc = DynamicCast<UbHostDcqcn>(firstTp->GetCongestionCtrlForTest());
         NS_TEST_ASSERT_MSG_NE(firstCc, nullptr, "First sender TP should bind host DCQCN");
         (void)firstCc->IsCcLimited(1);
 
         Ptr<UbCongestionControl> senderCc2 = UbCongestionControl::Create(UB_DEVICE);
-        senderCtrl->CreateTp(topo.sender->GetId(),
+        senderCtrl->GetTransportChannelManager()->CreateTp(topo.sender->GetId(),
                              topo.receiver->GetId(),
                              topo.senderPort->GetIfIndex(),
                              topo.receiverPort->GetIfIndex(),
@@ -5223,7 +5222,7 @@ public:
                              404,
                              senderCc2);
         Ptr<UbCongestionControl> receiverCc2 = UbCongestionControl::Create(UB_DEVICE);
-        receiverCtrl->CreateTp(topo.receiver->GetId(),
+        receiverCtrl->GetTransportChannelManager()->CreateTp(topo.receiver->GetId(),
                                topo.sender->GetId(),
                                topo.receiverPort->GetIfIndex(),
                                topo.senderPort->GetIfIndex(),
@@ -5232,7 +5231,7 @@ public:
                                303,
                                receiverCc2);
 
-        Ptr<UbTransportChannel> txTp = senderCtrl->GetTpByTpn(303);
+        Ptr<UbTransportChannel> txTp = senderCtrl->GetTransportChannelManager()->GetTp(303);
         Ptr<UbHostDcqcn> cc = DynamicCast<UbHostDcqcn>(txTp->GetCongestionCtrlForTest());
         NS_TEST_ASSERT_MSG_NE(cc, nullptr, "Sender TP should bind a host DCQCN instance");
         (void)cc->IsCcLimited(1);
@@ -5282,7 +5281,7 @@ public:
         InstallStaticTpPair(topo);
 
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         Ptr<UbHostDcqcn> cc = DynamicCast<UbHostDcqcn>(txTp->GetCongestionCtrlForTest());
         NS_TEST_ASSERT_MSG_NE(cc, nullptr, "Sender TP should bind a host DCQCN instance");
 
@@ -5327,14 +5326,14 @@ public:
 
         Ptr<UbController> senderCtrl = topo.sender->GetObject<UbController>();
         Ptr<UbController> receiverCtrl = topo.receiver->GetObject<UbController>();
-        Ptr<UbTransportChannel> firstTp = senderCtrl->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        Ptr<UbTransportChannel> firstTp = senderCtrl->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         Ptr<UbHostDcqcn> firstCc = DynamicCast<UbHostDcqcn>(firstTp->GetCongestionCtrlForTest());
         NS_TEST_ASSERT_MSG_NE(firstCc, nullptr, "First sender TP should bind host DCQCN");
 
         (void)firstCc->IsCcLimited(1);
 
         Ptr<UbCongestionControl> senderCc2 = UbCongestionControl::Create(UB_DEVICE);
-        senderCtrl->CreateTp(topo.sender->GetId(),
+        senderCtrl->GetTransportChannelManager()->CreateTp(topo.sender->GetId(),
                              topo.receiver->GetId(),
                              topo.senderPort->GetIfIndex(),
                              topo.receiverPort->GetIfIndex(),
@@ -5344,7 +5343,7 @@ public:
                              senderCc2);
 
         Ptr<UbCongestionControl> receiverCc2 = UbCongestionControl::Create(UB_DEVICE);
-        receiverCtrl->CreateTp(topo.receiver->GetId(),
+        receiverCtrl->GetTransportChannelManager()->CreateTp(topo.receiver->GetId(),
                                topo.sender->GetId(),
                                topo.receiverPort->GetIfIndex(),
                                topo.senderPort->GetIfIndex(),
@@ -5353,7 +5352,7 @@ public:
                                303,
                                receiverCc2);
 
-        Ptr<UbTransportChannel> secondTp = senderCtrl->GetTpByTpn(303);
+        Ptr<UbTransportChannel> secondTp = senderCtrl->GetTransportChannelManager()->GetTp(303);
         Ptr<UbHostDcqcn> secondCc = DynamicCast<UbHostDcqcn>(secondTp->GetCongestionCtrlForTest());
         NS_TEST_ASSERT_MSG_NE(secondCc, nullptr, "Second sender TP should bind host DCQCN");
 
@@ -5404,7 +5403,7 @@ public:
                                                            tpns);
         NS_TEST_ASSERT_MSG_EQ(bindOk, true, "Sender Jetty should bind to static TP pair");
 
-        Ptr<UbTransportChannel> senderTp = senderCtrl->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        Ptr<UbTransportChannel> senderTp = senderCtrl->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         Ptr<UbHostDcqcn> cc = DynamicCast<UbHostDcqcn>(senderTp->GetCongestionCtrlForTest());
         NS_TEST_ASSERT_MSG_NE(cc, nullptr, "Sender TP should bind a host DCQCN instance");
         Ptr<UbJetty> jetty = senderFunction->GetJetty(kUrmaWriteRegressionJettyNum);
@@ -5465,7 +5464,7 @@ public:
         InstallStaticTpPair(topo);
 
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         Ptr<UbHostDcqcn> cc = DynamicCast<UbHostDcqcn>(txTp->GetCongestionCtrlForTest());
         NS_TEST_ASSERT_MSG_NE(cc, nullptr, "Sender TP should bind a host DCQCN instance");
         Ptr<UbLifecycleCoordinator> coordinator =
@@ -5558,7 +5557,7 @@ public:
                               "Completed flow should release the host active-flow slot");
 
         Ptr<UbCongestionControl> senderCc2 = UbCongestionControl::Create(UB_DEVICE);
-        senderCtrl->CreateTp(topo.sender->GetId(),
+        senderCtrl->GetTransportChannelManager()->CreateTp(topo.sender->GetId(),
                              topo.receiver->GetId(),
                              topo.senderPort->GetIfIndex(),
                              topo.receiverPort->GetIfIndex(),
@@ -5567,7 +5566,7 @@ public:
                              404,
                              senderCc2);
         Ptr<UbCongestionControl> receiverCc2 = UbCongestionControl::Create(UB_DEVICE);
-        receiverCtrl->CreateTp(topo.receiver->GetId(),
+        receiverCtrl->GetTransportChannelManager()->CreateTp(topo.receiver->GetId(),
                                topo.sender->GetId(),
                                topo.receiverPort->GetIfIndex(),
                                topo.senderPort->GetIfIndex(),
@@ -5576,7 +5575,7 @@ public:
                                303,
                                receiverCc2);
 
-        Ptr<UbTransportChannel> secondTp = senderCtrl->GetTpByTpn(303);
+        Ptr<UbTransportChannel> secondTp = senderCtrl->GetTransportChannelManager()->GetTp(303);
         Ptr<UbHostDcqcn> secondCc = DynamicCast<UbHostDcqcn>(secondTp->GetCongestionCtrlForTest());
         NS_TEST_ASSERT_MSG_NE(secondCc, nullptr, "Second sender TP should bind a host DCQCN instance");
         (void)secondCc->IsCcLimited(1);
@@ -5620,7 +5619,7 @@ public:
         InstallStaticTpPair(topo);
 
         Ptr<UbController> senderCtrl = topo.sender->GetObject<UbController>();
-        Ptr<UbTransportChannel> txTp = senderCtrl->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        Ptr<UbTransportChannel> txTp = senderCtrl->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         Ptr<UbHostDcqcn> cc = DynamicCast<UbHostDcqcn>(txTp->GetCongestionCtrlForTest());
         NS_TEST_ASSERT_MSG_NE(cc, nullptr, "Sender TP should bind a host DCQCN instance");
         Ptr<UbLifecycleCoordinator> coordinator =
@@ -5957,7 +5956,7 @@ class UbUrmaWriteCompletionNeedsTransactionResponseTest : public TestCase
         jetty->SetClientCallback(
             MakeCallback(&UbUrmaWriteCompletionNeedsTransactionResponseTest::OnTaskCompleted, this));
 
-        Ptr<UbTransportChannel> senderTp = senderCtrl->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        Ptr<UbTransportChannel> senderTp = senderCtrl->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         NS_TEST_ASSERT_MSG_NE(senderTp, nullptr, "Sender TP should exist");
         senderTp->TraceConnectWithoutContext(
             "LastPacketACKsNotify",
@@ -6102,7 +6101,7 @@ class UbUrmaReadCompletionNeedsReadResponseTest : public TestCase
         jetty->SetWqeCompletionCallback(
             MakeCallback(&UbUrmaReadCompletionNeedsReadResponseTest::OnWqeCompleted, this));
 
-        Ptr<UbTransportChannel> senderTp = senderCtrl->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        Ptr<UbTransportChannel> senderTp = senderCtrl->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         NS_TEST_ASSERT_MSG_NE(senderTp, nullptr, "Sender TP should exist");
         senderTp->TraceConnectWithoutContext(
             "LastPacketACKsNotify",
@@ -6265,7 +6264,7 @@ class UbUrmaReadMultiPacketResponseCountTest : public TestCase
         jetty->SetClientCallback(
             MakeCallback(&UbUrmaReadMultiPacketResponseCountTest::OnTaskCompleted, this));
 
-        Ptr<UbTransportChannel> senderTp = senderCtrl->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        Ptr<UbTransportChannel> senderTp = senderCtrl->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         NS_TEST_ASSERT_MSG_NE(senderTp, nullptr, "Sender TP should exist");
         senderTp->TraceConnectWithoutContext(
             "LastPacketReceivesNotify",
@@ -6362,7 +6361,7 @@ class UbUrmaReadMultiSliceRequestPacketSemanticsTest : public TestCase
             MakeCallback(&UbUrmaReadMultiSliceRequestPacketSemanticsTest::OnTaskCompleted, this));
 
         Ptr<UbController> receiverCtrl = topo.receiver->GetObject<UbController>();
-        Ptr<UbTransportChannel> receiverTp = receiverCtrl->GetTpByTpn(kUrmaWriteRegressionReceiverTpn);
+        Ptr<UbTransportChannel> receiverTp = receiverCtrl->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionReceiverTpn);
         NS_TEST_ASSERT_MSG_NE(receiverTp, nullptr, "Receiver TP should exist");
         receiverTp->TraceConnectWithoutContext(
             "TpRecvNotify",
@@ -6374,7 +6373,7 @@ class UbUrmaReadMultiSliceRequestPacketSemanticsTest : public TestCase
             MakeCallback(
                 &UbUrmaReadMultiSliceRequestPacketSemanticsTest::ObserveTargetReadRequestSlice,
                 this));
-        Ptr<UbTransportChannel> senderTp = senderCtrl->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        Ptr<UbTransportChannel> senderTp = senderCtrl->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         NS_TEST_ASSERT_MSG_NE(senderTp, nullptr, "Sender TP should exist");
         senderTp->TraceConnectWithoutContext(
             "LastPacketReceivesNotify",
@@ -6505,8 +6504,8 @@ class UbUrmaWriteOutOfOrderRequestSliceCompletionTest : public TestCase
 
         Ptr<UbController> senderCtrl = topo.sender->GetObject<UbController>();
         Ptr<UbController> receiverCtrl = topo.receiver->GetObject<UbController>();
-        Ptr<UbTransportChannel> senderTp = senderCtrl->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
-        Ptr<UbTransportChannel> receiverTp = receiverCtrl->GetTpByTpn(kUrmaWriteRegressionReceiverTpn);
+        Ptr<UbTransportChannel> senderTp = senderCtrl->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
+        Ptr<UbTransportChannel> receiverTp = receiverCtrl->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionReceiverTpn);
         NS_TEST_ASSERT_MSG_NE(senderTp, nullptr, "Sender TP should exist");
         NS_TEST_ASSERT_MSG_NE(receiverTp, nullptr, "Receiver TP should exist");
 
@@ -7785,10 +7784,10 @@ class UbParallelConnectionLifecycleControlTest : public TestCase
                                   topo.receiver->GetId(), connection.tpn2, ignored),
                               false,
                               "Typed cleanup should erase the receiver reservation view");
-        NS_TEST_ASSERT_MSG_EQ(sender->GetTpByTpn(connection.tpn1),
+        NS_TEST_ASSERT_MSG_EQ(sender->GetTransportChannelManager()->GetTp(connection.tpn1),
                               nullptr,
                               "Typed endpoint request should destroy the source endpoint");
-        NS_TEST_ASSERT_MSG_EQ(receiver->GetTpByTpn(connection.tpn2),
+        NS_TEST_ASSERT_MSG_EQ(receiver->GetTransportChannelManager()->GetTp(connection.tpn2),
                               nullptr,
                               "Typed endpoint request should destroy the receiver endpoint");
         NS_TEST_ASSERT_MSG_EQ(senderManager->GetCanonicalConnectionCountForTest(),
@@ -8043,7 +8042,7 @@ class UbLifecycleStaleRtpReferenceRejectsBeforeWqeGenerationTest : public TestCa
             Ptr<UbLifecycleCoordinator> directCoordinator =
                 UbLifecycleCoordinator::GetOrCreate(directTopo.sender);
             directCoordinator->RetirePacketOwner(
-                directController->GetTpByTpn(kUrmaWriteRegressionSenderTpn)->GetLifecycleOwner());
+                directController->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn)->GetLifecycleOwner());
             Ptr<UbWqe> directWqe = directFunction->CreateWqe(directTopo.sender->GetId(),
                                                              directTopo.receiver->GetId(),
                                                              64,
@@ -8072,7 +8071,7 @@ class UbLifecycleStaleRtpReferenceRejectsBeforeWqeGenerationTest : public TestCa
             InstallStaticTpPair(tpgTopo);
             Ptr<UbController> tpgController = tpgTopo.sender->GetObject<UbController>();
             Ptr<UbController> receiverController = tpgTopo.receiver->GetObject<UbController>();
-            tpgController->CreateTp(tpgTopo.sender->GetId(),
+            tpgController->GetTransportChannelManager()->CreateTp(tpgTopo.sender->GetId(),
                                     tpgTopo.receiver->GetId(),
                                     tpgTopo.senderPort->GetIfIndex(),
                                     tpgTopo.receiverPort->GetIfIndex(),
@@ -8080,7 +8079,7 @@ class UbLifecycleStaleRtpReferenceRejectsBeforeWqeGenerationTest : public TestCa
                                     303,
                                     404,
                                     UbCongestionControl::Create(UB_DEVICE));
-            receiverController->CreateTp(tpgTopo.receiver->GetId(),
+            receiverController->GetTransportChannelManager()->CreateTp(tpgTopo.receiver->GetId(),
                                          tpgTopo.sender->GetId(),
                                          tpgTopo.receiverPort->GetIfIndex(),
                                          tpgTopo.senderPort->GetIfIndex(),
@@ -8170,7 +8169,7 @@ class UbLifecycleStaleRtpReferenceRejectsBeforeWqeGenerationTest : public TestCa
             Ptr<UbLifecycleCoordinator> useTimeCoordinator =
                 UbLifecycleCoordinator::GetOrCreate(useTimeTopo.sender);
             useTimeCoordinator->RetirePacketOwner(
-                useTimeController->GetTpByTpn(kUrmaWriteRegressionSenderTpn)
+                useTimeController->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn)
                     ->GetLifecycleOwner());
             Simulator::Stop(NanoSeconds(1));
             Simulator::Run();
@@ -8223,7 +8222,7 @@ class UbLifecycleTwoMemberTpgSubmissionUsesAtomicRtpPathTest : public TestCase
 
         Ptr<UbController> senderController = topo.sender->GetObject<UbController>();
         Ptr<UbController> receiverController = topo.receiver->GetObject<UbController>();
-        senderController->CreateTp(topo.sender->GetId(),
+        senderController->GetTransportChannelManager()->CreateTp(topo.sender->GetId(),
                                    topo.receiver->GetId(),
                                    topo.senderPort->GetIfIndex(),
                                    topo.receiverPort->GetIfIndex(),
@@ -8231,7 +8230,7 @@ class UbLifecycleTwoMemberTpgSubmissionUsesAtomicRtpPathTest : public TestCase
                                    303,
                                    404,
                                    UbCongestionControl::Create(UB_DEVICE));
-        receiverController->CreateTp(topo.receiver->GetId(),
+        receiverController->GetTransportChannelManager()->CreateTp(topo.receiver->GetId(),
                                      topo.sender->GetId(),
                                      topo.receiverPort->GetIfIndex(),
                                      topo.senderPort->GetIfIndex(),
@@ -8289,11 +8288,11 @@ class UbLifecycleTwoMemberTpgSubmissionUsesAtomicRtpPathTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
                               0u,
                               "Completed TPG WQE should retire its lifecycle operation");
-        NS_TEST_ASSERT_MSG_EQ(senderController->GetTpByTpn(kUrmaWriteRegressionSenderTpn)
+        NS_TEST_ASSERT_MSG_EQ(senderController->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn)
                                   ->GetWqeSegmentVecSize(),
                               0u,
                               "First TPG member should drain its segment queue");
-        NS_TEST_ASSERT_MSG_EQ(senderController->GetTpByTpn(303)->GetWqeSegmentVecSize(),
+        NS_TEST_ASSERT_MSG_EQ(senderController->GetTransportChannelManager()->GetTp(303)->GetWqeSegmentVecSize(),
                               0u,
                               "Second TPG member should drain its segment queue");
 
@@ -8335,7 +8334,7 @@ class UbLifecycleCurrentTpgMemberBackpressurePreservesAtomicStateTest : public T
 
         Ptr<UbController> controller = topo.sender->GetObject<UbController>();
         Ptr<UbController> receiverController = topo.receiver->GetObject<UbController>();
-        controller->CreateTp(topo.sender->GetId(),
+        controller->GetTransportChannelManager()->CreateTp(topo.sender->GetId(),
                              topo.receiver->GetId(),
                              topo.senderPort->GetIfIndex(),
                              topo.receiverPort->GetIfIndex(),
@@ -8343,7 +8342,7 @@ class UbLifecycleCurrentTpgMemberBackpressurePreservesAtomicStateTest : public T
                              303,
                              404,
                              UbCongestionControl::Create(UB_DEVICE));
-        receiverController->CreateTp(topo.receiver->GetId(),
+        receiverController->GetTransportChannelManager()->CreateTp(topo.receiver->GetId(),
                                      topo.sender->GetId(),
                                      topo.receiverPort->GetIfIndex(),
                                      topo.senderPort->GetIfIndex(),
@@ -8367,8 +8366,8 @@ class UbLifecycleCurrentTpgMemberBackpressurePreservesAtomicStateTest : public T
                               "Two-member TPG Jetty binding should succeed");
 
         m_jetty = function->GetJetty(kUrmaWriteRegressionJettyNum);
-        m_tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
-        m_secondTp = controller->GetTpByTpn(303);
+        m_tp = controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
+        m_secondTp = controller->GetTransportChannelManager()->GetTp(303);
         m_wqe = function->CreateWqe(topo.sender->GetId(),
                                     topo.receiver->GetId(),
                                     64,
@@ -8567,7 +8566,7 @@ class UbLifecycleDirectCapacityTransitionWakesDeferredSourceTest : public TestCa
         Ptr<UbController> controller = topo.sender->GetObject<UbController>();
         Ptr<UbFunction> function = controller->GetUbFunction();
         m_transaction = controller->GetUbTransaction();
-        m_tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        m_tp = controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         m_tp->TraceConnectWithoutContext(
             "WqeSegmentSendsNotify",
             MakeCallback(&UbLifecycleDirectCapacityTransitionWakesDeferredSourceTest::ObserveAdmission,
@@ -8719,7 +8718,7 @@ class UbLifecycleReadySourceRoundRobinReportsFairnessTest : public TestCase
         Ptr<UbFunction> function = controller->GetUbFunction();
         Ptr<UbTransaction> transaction = controller->GetUbTransaction();
         Ptr<UbTransportChannel> tp =
-            controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         tp->TraceConnectWithoutContext(
             "WqeSegmentSendsNotify",
             MakeCallback(&UbLifecycleReadySourceRoundRobinReportsFairnessTest::ObserveAdmission,
@@ -8841,7 +8840,7 @@ class UbLifecycleLocalAndRemoteReadySourcesShareFixedOrderTest : public TestCase
         Ptr<UbController> controller = topo.sender->GetObject<UbController>();
         Ptr<UbFunction> function = controller->GetUbFunction();
         m_transaction = controller->GetUbTransaction();
-        m_tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        m_tp = controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         function->CreateJetty(topo.sender->GetId(),
                               topo.receiver->GetId(),
                               kUrmaWriteRegressionJettyNum);
@@ -8992,7 +8991,7 @@ class UbLifecycleTpgRealCapacityTransitionsCoalesceWakeTest : public TestCase
         InstallStaticTpPair(topo);
         Ptr<UbController> controller = topo.sender->GetObject<UbController>();
         Ptr<UbController> receiverController = topo.receiver->GetObject<UbController>();
-        controller->CreateTp(topo.sender->GetId(),
+        controller->GetTransportChannelManager()->CreateTp(topo.sender->GetId(),
                              topo.receiver->GetId(),
                              topo.senderPort->GetIfIndex(),
                              topo.receiverPort->GetIfIndex(),
@@ -9000,7 +8999,7 @@ class UbLifecycleTpgRealCapacityTransitionsCoalesceWakeTest : public TestCase
                              303,
                              404,
                              UbCongestionControl::Create(UB_DEVICE));
-        receiverController->CreateTp(topo.receiver->GetId(),
+        receiverController->GetTransportChannelManager()->CreateTp(topo.receiver->GetId(),
                                      topo.sender->GetId(),
                                      topo.receiverPort->GetIfIndex(),
                                      topo.senderPort->GetIfIndex(),
@@ -9011,8 +9010,8 @@ class UbLifecycleTpgRealCapacityTransitionsCoalesceWakeTest : public TestCase
 
         Ptr<UbFunction> function = controller->GetUbFunction();
         m_transaction = controller->GetUbTransaction();
-        m_firstTp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
-        m_secondTp = controller->GetTpByTpn(303);
+        m_firstTp = controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
+        m_secondTp = controller->GetTransportChannelManager()->GetTp(303);
         m_firstTp->TraceConnectWithoutContext(
             "WqeSegmentSendsNotify",
             MakeCallback(&UbLifecycleTpgRealCapacityTransitionsCoalesceWakeTest::ObserveFirstTp,
@@ -9239,7 +9238,7 @@ class UbLifecycleLiveTpgDestroyReleasesExactBindingTest : public TestCase
         InstallStaticTpPair(topo);
         Ptr<UbController> controller = topo.sender->GetObject<UbController>();
         Ptr<UbController> receiverController = topo.receiver->GetObject<UbController>();
-        controller->CreateTp(topo.sender->GetId(),
+        controller->GetTransportChannelManager()->CreateTp(topo.sender->GetId(),
                              topo.receiver->GetId(),
                              topo.senderPort->GetIfIndex(),
                              topo.receiverPort->GetIfIndex(),
@@ -9247,7 +9246,7 @@ class UbLifecycleLiveTpgDestroyReleasesExactBindingTest : public TestCase
                              303,
                              404,
                              UbCongestionControl::Create(UB_DEVICE));
-        receiverController->CreateTp(topo.receiver->GetId(),
+        receiverController->GetTransportChannelManager()->CreateTp(topo.receiver->GetId(),
                                      topo.sender->GetId(),
                                      topo.receiverPort->GetIfIndex(),
                                      topo.senderPort->GetIfIndex(),
@@ -9290,8 +9289,8 @@ class UbLifecycleLiveTpgDestroyReleasesExactBindingTest : public TestCase
         const UbLifecycleResourceIdentity directIdentity = directReference->GetIdentity();
         Ptr<UbTransportGroup> group = controller->ResolveRtpTpGroup(groupIdentity);
         Ptr<UbTransportChannel> firstTp =
-            controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
-        Ptr<UbTransportChannel> secondTp = controller->GetTpByTpn(303);
+            controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
+        Ptr<UbTransportChannel> secondTp = controller->GetTransportChannelManager()->GetTp(303);
         NS_TEST_ASSERT_MSG_NE(group, nullptr, "Canonical TPG should resolve before destroy");
         NS_TEST_ASSERT_MSG_NE(firstTp, nullptr, "First member TP should resolve before destroy");
         NS_TEST_ASSERT_MSG_NE(secondTp, nullptr, "Second member TP should resolve before destroy");
@@ -9344,10 +9343,10 @@ class UbLifecycleLiveTpgDestroyReleasesExactBindingTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(directJettyIdentity).activeBindingLeases,
                               1u,
                               "TPG destroy must not release an unrelated direct binding lease");
-        NS_TEST_ASSERT_MSG_EQ(controller->GetTpByTpn(firstTp->GetTpn()),
+        NS_TEST_ASSERT_MSG_EQ(controller->GetTransportChannelManager()->GetTp(firstTp->GetTpn()),
                               firstTp,
                               "TPG destroy must retain the first member TP");
-        NS_TEST_ASSERT_MSG_EQ(controller->GetTpByTpn(secondTp->GetTpn()),
+        NS_TEST_ASSERT_MSG_EQ(controller->GetTransportChannelManager()->GetTp(secondTp->GetTpn()),
                               secondTp,
                               "TPG destroy must retain the second member TP");
         NS_TEST_ASSERT_MSG_EQ(coordinator->IsResourceActive(firstTp->GetLifecycleOwner()),
@@ -9418,9 +9417,9 @@ class UbLifecycleAddTpgMemberRestoresActiveEmptyGroupTest : public TestCase
         const UbLifecycleResourceIdentity groupIdentity = reference->GetIdentity();
         Ptr<UbTransportGroup> group = controller->ResolveRtpTpGroup(groupIdentity);
         Ptr<UbTransportChannel> firstTp =
-            controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
-        Ptr<UbTransportChannel> secondTp = controller->GetTpByTpn(303);
-        Ptr<UbTransportChannel> foreignTp = controller->GetTpByTpn(305);
+            controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
+        Ptr<UbTransportChannel> secondTp = controller->GetTransportChannelManager()->GetTp(303);
+        Ptr<UbTransportChannel> foreignTp = controller->GetTransportChannelManager()->GetTp(305);
         NS_TEST_ASSERT_MSG_NE(group, nullptr, "Canonical group should resolve");
         NS_TEST_ASSERT_MSG_NE(firstTp, nullptr, "First member should resolve");
         NS_TEST_ASSERT_MSG_NE(secondTp, nullptr, "Second member should resolve");
@@ -9535,7 +9534,7 @@ class UbLifecycleLastTpgMemberRemovalWaitsForUseLeaseTest : public TestCase
         InstallStaticTpPair(topo);
         m_controller = topo.sender->GetObject<UbController>();
         Ptr<UbController> receiverController = topo.receiver->GetObject<UbController>();
-        m_controller->CreateTp(topo.sender->GetId(),
+        m_controller->GetTransportChannelManager()->CreateTp(topo.sender->GetId(),
                                topo.receiver->GetId(),
                                topo.senderPort->GetIfIndex(),
                                topo.receiverPort->GetIfIndex(),
@@ -9543,7 +9542,7 @@ class UbLifecycleLastTpgMemberRemovalWaitsForUseLeaseTest : public TestCase
                                303,
                                404,
                                UbCongestionControl::Create(UB_DEVICE));
-        receiverController->CreateTp(topo.receiver->GetId(),
+        receiverController->GetTransportChannelManager()->CreateTp(topo.receiver->GetId(),
                                      topo.sender->GetId(),
                                      topo.receiverPort->GetIfIndex(),
                                      topo.senderPort->GetIfIndex(),
@@ -9571,8 +9570,8 @@ class UbLifecycleLastTpgMemberRemovalWaitsForUseLeaseTest : public TestCase
         m_groupIdentity = reference->GetIdentity();
         m_group = m_controller->ResolveRtpTpGroup(m_groupIdentity);
         NS_TEST_ASSERT_MSG_NE(m_group, nullptr, "Typed TPG reference should resolve");
-        m_lastTp = m_controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
-        Ptr<UbTransportChannel> removedTp = m_controller->GetTpByTpn(303);
+        m_lastTp = m_controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
+        Ptr<UbTransportChannel> removedTp = m_controller->GetTransportChannelManager()->GetTp(303);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(m_controller->RemoveRtpTpGroupMember(
                 m_groupIdentity,
@@ -9638,7 +9637,7 @@ class UbLifecycleLastTpgMemberRemovalWaitsForUseLeaseTest : public TestCase
             m_coordinator->GetSnapshot(m_groupIdentity).activeTransportUseLeases,
             0u,
             "Final assignment should release the exact TPG-use lease");
-        NS_TEST_ASSERT_MSG_EQ(m_controller->GetTpByTpn(m_lastTp->GetTpn()),
+        NS_TEST_ASSERT_MSG_EQ(m_controller->GetTransportChannelManager()->GetTp(m_lastTp->GetTpn()),
                               m_lastTp,
                               "Member removal must not destroy the member TP");
         NS_TEST_ASSERT_MSG_EQ(m_coordinator->IsResourceActive(m_lastTp->GetLifecycleOwner()),
@@ -9740,9 +9739,9 @@ class UbLifecyclePendingLastRemovalAddMemberWakesHolderTest : public TestCase
         NS_TEST_ASSERT_MSG_NE(reference, nullptr, "Fixture should expose the exact TPG reference");
         m_groupIdentity = reference->GetIdentity();
         m_group = m_controller->ResolveRtpTpGroup(m_groupIdentity);
-        m_oldTp = m_controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
-        Ptr<UbTransportChannel> setupTp = m_controller->GetTpByTpn(303);
-        m_newTp = m_controller->GetTpByTpn(305);
+        m_oldTp = m_controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
+        Ptr<UbTransportChannel> setupTp = m_controller->GetTransportChannelManager()->GetTp(303);
+        m_newTp = m_controller->GetTransportChannelManager()->GetTp(305);
         NS_TEST_ASSERT_MSG_NE(m_group, nullptr, "Canonical group should resolve");
         NS_TEST_ASSERT_MSG_NE(m_oldTp, nullptr, "Old last member should resolve");
         NS_TEST_ASSERT_MSG_NE(m_newTp, nullptr, "Replacement member should resolve");
@@ -9857,7 +9856,7 @@ class UbLifecyclePendingLastRemovalAddMemberWakesHolderTest : public TestCase
             m_coordinator->GetSnapshot(m_newTp->GetLifecycleOwner()).activeBindingLeases,
             1u,
             "Replacement member should acquire one exact membership lease");
-        NS_TEST_ASSERT_MSG_EQ(m_controller->GetTpByTpn(m_oldTp->GetTpn()),
+        NS_TEST_ASSERT_MSG_EQ(m_controller->GetTransportChannelManager()->GetTp(m_oldTp->GetTpn()),
                               m_oldTp,
                               "Replacing membership must not destroy the old TP");
         NS_TEST_ASSERT_MSG_EQ(m_coordinator->IsResourceActive(m_oldTp->GetLifecycleOwner()),
@@ -9990,8 +9989,8 @@ class UbLifecycleNonLastTpgMemberRemovalPinsAcceptedSegmentTest : public TestCas
         NS_TEST_ASSERT_MSG_NE(reference, nullptr, "Fixture should expose the exact TPG reference");
         m_groupIdentity = reference->GetIdentity();
         m_group = m_controller->ResolveRtpTpGroup(m_groupIdentity);
-        m_firstTp = m_controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
-        m_secondTp = m_controller->GetTpByTpn(303);
+        m_firstTp = m_controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
+        m_secondTp = m_controller->GetTransportChannelManager()->GetTp(303);
         NS_TEST_ASSERT_MSG_NE(m_group, nullptr, "Canonical group should resolve");
         NS_TEST_ASSERT_MSG_NE(m_firstTp, nullptr, "First member should resolve");
         NS_TEST_ASSERT_MSG_NE(m_secondTp, nullptr, "Second member should resolve");
@@ -10078,7 +10077,7 @@ class UbLifecycleNonLastTpgMemberRemovalPinsAcceptedSegmentTest : public TestCas
         NS_TEST_ASSERT_MSG_EQ(coordinator->IsResourceActive(m_firstTp->GetLifecycleOwner()),
                               true,
                               "Removed member TP generation must remain active");
-        NS_TEST_ASSERT_MSG_EQ(m_controller->GetTpByTpn(m_firstTp->GetTpn()),
+        NS_TEST_ASSERT_MSG_EQ(m_controller->GetTransportChannelManager()->GetTp(m_firstTp->GetTpn()),
                               m_firstTp,
                               "Non-last removal must not destroy the member TP");
 
@@ -10175,8 +10174,8 @@ class UbLifecycleActiveUseTpgDestroyFinalizesOnceTest : public TestCase
             m_transaction->FindRtpTransportReference(kUrmaWriteRegressionJettyNum);
         NS_TEST_ASSERT_MSG_NE(reference, nullptr, "Fixture should expose the exact TPG reference");
         m_groupIdentity = reference->GetIdentity();
-        m_firstTp = m_controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
-        m_secondTp = m_controller->GetTpByTpn(303);
+        m_firstTp = m_controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
+        m_secondTp = m_controller->GetTransportChannelManager()->GetTp(303);
         Ptr<UbJetty> jetty = m_function->GetJetty(kUrmaWriteRegressionJettyNum);
         jetty->SetTaSegmentBytes(64);
         jetty->SetClientCallback(
@@ -10421,8 +10420,8 @@ class UbLifecycleTypedTpgCleanupTerminatesBlockedTailTest : public TestCase
         Ptr<UbTransaction> transaction = controller->GetUbTransaction();
         Ptr<UbLifecycleCoordinator> coordinator =
             UbLifecycleCoordinator::GetOrCreate(topo.sender);
-        m_firstTp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
-        m_secondTp = controller->GetTpByTpn(303);
+        m_firstTp = controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
+        m_secondTp = controller->GetTransportChannelManager()->GetTp(303);
         m_firstTp->TraceConnectWithoutContext(
             "FirstPacketSendsNotify",
             MakeCallback(&UbLifecycleTypedTpgCleanupTerminatesBlockedTailTest::ObserveFirstPacket,
@@ -10630,9 +10629,9 @@ class UbLifecycleTypedLastTpgMemberRemovalTerminatesActiveUseTest : public TestC
         m_function = m_controller->GetUbFunction();
         m_transaction = m_controller->GetUbTransaction();
         m_coordinator = UbLifecycleCoordinator::GetOrCreate(topo.sender);
-        m_memberTp = m_controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
-        m_directTp = m_controller->GetTpByTpn(303);
-        Ptr<UbTransportChannel> removedTp = m_controller->GetTpByTpn(305);
+        m_memberTp = m_controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
+        m_directTp = m_controller->GetTransportChannelManager()->GetTp(303);
+        Ptr<UbTransportChannel> removedTp = m_controller->GetTransportChannelManager()->GetTp(305);
 
         constexpr uint32_t groupJetty = kUrmaWriteRegressionJettyNum;
         constexpr uint32_t directJetty = kUrmaWriteRegressionJettyNum + 1;
@@ -10737,7 +10736,7 @@ class UbLifecycleTypedLastTpgMemberRemovalTerminatesActiveUseTest : public TestC
             m_coordinator->GetSnapshot(m_memberTp->GetLifecycleOwner()).activeBindingLeases,
             0u,
             "Typed last-member cleanup should release membership exactly once");
-        NS_TEST_ASSERT_MSG_EQ(m_controller->GetTpByTpn(m_memberTp->GetTpn()),
+        NS_TEST_ASSERT_MSG_EQ(m_controller->GetTransportChannelManager()->GetTp(m_memberTp->GetTpn()),
                               m_memberTp,
                               "Typed last-member cleanup must retain the member TP");
         NS_TEST_ASSERT_MSG_EQ(
@@ -11063,8 +11062,8 @@ class UbLifecycleControllerDisposeForceCleansCanonicalTpgTest : public TestCase
         Ptr<UbLifecycleCoordinator> coordinator =
             UbLifecycleCoordinator::GetOrCreate(topo.sender);
         Ptr<UbTransportChannel> firstTp =
-            controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
-        Ptr<UbTransportChannel> secondTp = controller->GetTpByTpn(303);
+            controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
+        Ptr<UbTransportChannel> secondTp = controller->GetTransportChannelManager()->GetTp(303);
         function->CreateJetty(topo.sender->GetId(),
                               topo.receiver->GetId(),
                               kUrmaWriteRegressionJettyNum);
@@ -11166,7 +11165,7 @@ class UbLifecycleMultiSegmentTpgRoundRobinPinsGenerationsTest : public TestCase
         InstallStaticTpPair(topo);
         Ptr<UbController> controller = topo.sender->GetObject<UbController>();
         Ptr<UbController> receiverController = topo.receiver->GetObject<UbController>();
-        controller->CreateTp(topo.sender->GetId(),
+        controller->GetTransportChannelManager()->CreateTp(topo.sender->GetId(),
                              topo.receiver->GetId(),
                              topo.senderPort->GetIfIndex(),
                              topo.receiverPort->GetIfIndex(),
@@ -11174,7 +11173,7 @@ class UbLifecycleMultiSegmentTpgRoundRobinPinsGenerationsTest : public TestCase
                              303,
                              404,
                              UbCongestionControl::Create(UB_DEVICE));
-        receiverController->CreateTp(topo.receiver->GetId(),
+        receiverController->GetTransportChannelManager()->CreateTp(topo.receiver->GetId(),
                                      topo.sender->GetId(),
                                      topo.receiverPort->GetIfIndex(),
                                      topo.senderPort->GetIfIndex(),
@@ -11197,8 +11196,8 @@ class UbLifecycleMultiSegmentTpgRoundRobinPinsGenerationsTest : public TestCase
                               "Two-member TPG binding should succeed");
         Ptr<UbJetty> jetty = function->GetJetty(kUrmaWriteRegressionJettyNum);
         jetty->SetTaSegmentBytes(64);
-        m_firstTp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
-        m_secondTp = controller->GetTpByTpn(303);
+        m_firstTp = controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
+        m_secondTp = controller->GetTransportChannelManager()->GetTp(303);
         m_firstTp->TraceConnectWithoutContext(
             "WqeSegmentSendsNotify",
             MakeCallback(&UbLifecycleMultiSegmentTpgRoundRobinPinsGenerationsTest::ObserveFirst,
@@ -11301,10 +11300,10 @@ class UbLifecycleMultiSegmentTpgRoundRobinPinsGenerationsTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(owner->ResolveRtpTpGroup(group->GetLifecycleIdentity()),
                               nullptr,
                               "Canonical TPG teardown should erase the group generation");
-        NS_TEST_ASSERT_MSG_EQ(owner->GetTpByTpn(m_firstTp->GetTpn()),
+        NS_TEST_ASSERT_MSG_EQ(owner->GetTransportChannelManager()->GetTp(m_firstTp->GetTpn()),
                               m_firstTp,
                               "TPG teardown must retain the first member TP");
-        NS_TEST_ASSERT_MSG_EQ(owner->GetTpByTpn(m_secondTp->GetTpn()),
+        NS_TEST_ASSERT_MSG_EQ(owner->GetTransportChannelManager()->GetTp(m_secondTp->GetTpn()),
                               m_secondTp,
                               "TPG teardown must retain the second member TP");
         coordinator->RetirePacketOwner(m_firstTp->GetLifecycleOwner());
@@ -11382,7 +11381,7 @@ class UbLifecycleTpgRetransmissionPinsResolvedTpGenerationTest : public TestCase
         InstallStaticTpPair(topo);
         Ptr<UbController> controller = topo.sender->GetObject<UbController>();
         Ptr<UbController> receiverController = topo.receiver->GetObject<UbController>();
-        controller->CreateTp(topo.sender->GetId(),
+        controller->GetTransportChannelManager()->CreateTp(topo.sender->GetId(),
                              topo.receiver->GetId(),
                              topo.senderPort->GetIfIndex(),
                              topo.receiverPort->GetIfIndex(),
@@ -11390,7 +11389,7 @@ class UbLifecycleTpgRetransmissionPinsResolvedTpGenerationTest : public TestCase
                              303,
                              404,
                              UbCongestionControl::Create(UB_DEVICE));
-        receiverController->CreateTp(topo.receiver->GetId(),
+        receiverController->GetTransportChannelManager()->CreateTp(topo.receiver->GetId(),
                                      topo.sender->GetId(),
                                      topo.receiverPort->GetIfIndex(),
                                      topo.senderPort->GetIfIndex(),
@@ -11412,8 +11411,8 @@ class UbLifecycleTpgRetransmissionPinsResolvedTpGenerationTest : public TestCase
                               true,
                               "Two-member TPG binding should succeed");
 
-        m_firstTp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
-        m_secondTp = controller->GetTpByTpn(303);
+        m_firstTp = controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
+        m_secondTp = controller->GetTransportChannelManager()->GetTp(303);
         m_recordingCc = CreateObject<RecordingGbnHeaderCc>();
         m_recordingCc->hint = kStableHint;
         m_firstTp->SetCongestionControlForTest(m_recordingCc);
@@ -11727,7 +11726,7 @@ class UbLifecycleGbnRetransmissionTraceCleanupTest : public TestCase
         Ptr<UbController> controller = topo.sender->GetObject<UbController>();
         m_function = controller->GetUbFunction();
         m_transaction = controller->GetUbTransaction();
-        m_tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        m_tp = controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         m_function->CreateJetty(topo.sender->GetId(),
                                 topo.receiver->GetId(),
                                 kUrmaWriteRegressionJettyNum);
@@ -11914,7 +11913,7 @@ class UbLifecycleSelectiveRetransmissionTraceCleanupTest : public TestCase
         Ptr<UbController> controller = topo.sender->GetObject<UbController>();
         m_function = controller->GetUbFunction();
         m_transaction = controller->GetUbTransaction();
-        m_tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        m_tp = controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         m_function->CreateJetty(topo.sender->GetId(),
                                 topo.receiver->GetId(),
                                 kUrmaWriteRegressionJettyNum);
@@ -12060,7 +12059,7 @@ class UbLifecycleTpgRoundRobinPreservesCrossJettyInitialPhaseTest : public TestC
         InstallStaticTpPair(topo);
         Ptr<UbController> controller = topo.sender->GetObject<UbController>();
         Ptr<UbController> receiverController = topo.receiver->GetObject<UbController>();
-        controller->CreateTp(topo.sender->GetId(),
+        controller->GetTransportChannelManager()->CreateTp(topo.sender->GetId(),
                              topo.receiver->GetId(),
                              topo.senderPort->GetIfIndex(),
                              topo.receiverPort->GetIfIndex(),
@@ -12068,7 +12067,7 @@ class UbLifecycleTpgRoundRobinPreservesCrossJettyInitialPhaseTest : public TestC
                              303,
                              404,
                              UbCongestionControl::Create(UB_DEVICE));
-        receiverController->CreateTp(topo.receiver->GetId(),
+        receiverController->GetTransportChannelManager()->CreateTp(topo.receiver->GetId(),
                                      topo.sender->GetId(),
                                      topo.receiverPort->GetIfIndex(),
                                      topo.senderPort->GetIfIndex(),
@@ -12079,13 +12078,13 @@ class UbLifecycleTpgRoundRobinPreservesCrossJettyInitialPhaseTest : public TestC
 
         Ptr<UbFunction> function = controller->GetUbFunction();
         Ptr<UbTransaction> transaction = controller->GetUbTransaction();
-        controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn)
+        controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn)
             ->TraceConnectWithoutContext(
                 "WqeSegmentSendsNotify",
                 MakeCallback(
                     &UbLifecycleTpgRoundRobinPreservesCrossJettyInitialPhaseTest::ObserveFirst,
                     this));
-        controller->GetTpByTpn(303)->TraceConnectWithoutContext(
+        controller->GetTransportChannelManager()->GetTp(303)->TraceConnectWithoutContext(
             "WqeSegmentSendsNotify",
             MakeCallback(&UbLifecycleTpgRoundRobinPreservesCrossJettyInitialPhaseTest::ObserveSecond,
                          this));
@@ -12199,7 +12198,7 @@ class UbLifecycleSameJettyConcurrentWqesMakeIndependentProgressTest : public Tes
                                                        {kUrmaWriteRegressionSenderTpn}),
                               true,
                               "Concurrent WQEs should share one direct TP binding");
-        controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn)
+        controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn)
             ->TraceConnectWithoutContext(
                 "WqeSegmentSendsNotify",
                 MakeCallback(
@@ -12341,7 +12340,7 @@ class UbLifecycleStrongOrderTerminalWakesSuccessorTest : public TestCase
                               true,
                               "Strong-order WQEs should share one direct TP binding");
 
-        m_tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        m_tp = controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         m_tp->TraceConnectWithoutContext(
             "WqeSegmentSendsNotify",
             MakeCallback(&UbLifecycleStrongOrderTerminalWakesSuccessorTest::OnAdmitted,
@@ -12637,7 +12636,7 @@ class UbLifecycleSharedTpNonTailUnsentTerminalTest : public TestCase
         Ptr<UbController> controller = topo.sender->GetObject<UbController>();
         Ptr<UbFunction> function = controller->GetUbFunction();
         m_transaction = controller->GetUbTransaction();
-        m_tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        m_tp = controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
 
         for (uint32_t jettyNum : {kUrmaWriteRegressionJettyNum,
                                   kUrmaWriteRegressionJettyNum + 1})
@@ -12797,7 +12796,7 @@ class UbLifecycleStartedTerminalRetainsCorrelationUntilResponseTest : public Tes
         Ptr<UbFunction> function = controller->GetUbFunction();
         m_function = function;
         m_transaction = controller->GetUbTransaction();
-        m_tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        m_tp = controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         m_coordinator = UbLifecycleCoordinator::GetOrCreate(topo.sender);
         m_tp->SetRetransmissionMode(UbRetransmissionMode::GBN);
         m_tp->SetRetransEnable(true);
@@ -13076,7 +13075,7 @@ class UbLifecycleStartedTerminalPendingForcedDrainTest : public TestCase
         Ptr<UbFunction> function = controller->GetUbFunction();
         m_function = function;
         Ptr<UbTransaction> transaction = controller->GetUbTransaction();
-        Ptr<UbTransportChannel> tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        Ptr<UbTransportChannel> tp = controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         Ptr<UbLifecycleCoordinator> coordinator =
             UbLifecycleCoordinator::GetOrCreate(topo.sender);
 
@@ -13238,7 +13237,7 @@ class UbLifecycleResponseBearingTpAckBeforeTerminalTest : public TestCase
         Ptr<UbController> controller = topo.sender->GetObject<UbController>();
         Ptr<UbFunction> function = controller->GetUbFunction();
         m_transaction = controller->GetUbTransaction();
-        m_tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        m_tp = controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         m_coordinator = UbLifecycleCoordinator::GetOrCreate(topo.sender);
 
         function->CreateJetty(topo.sender->GetId(),
@@ -13373,7 +13372,7 @@ class UbLifecycleForceRemoveMissingUnackedFailsFastTest : public TestCase
             InstallStaticTpPair(topo);
             Ptr<UbController> controller = topo.sender->GetObject<UbController>();
             Ptr<UbTransportChannel> tp =
-                controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+                controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
             Ptr<UbLifecycleCoordinator> coordinator =
                 UbLifecycleCoordinator::GetOrCreate(topo.sender);
             const UbLifecycleResourceIdentity operationIdentity = coordinator->OpenResource(
@@ -13451,7 +13450,7 @@ class UbLifecycleExplicitDrainContinuesStrongSuccessorTest : public TestCase
                                                          {kUrmaWriteRegressionSenderTpn}),
                               true,
                               "Explicit drain fixture should establish a direct TP binding");
-        controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn)
+        controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn)
             ->TraceConnectWithoutContext(
                 "WqeSegmentSendsNotify",
                 MakeCallback(
@@ -13620,7 +13619,7 @@ class UbLifecycleGracefulAbortUpgradeTest : public TestCase
                                   {kUrmaWriteRegressionSenderTpn}),
                               true,
                               "Mode-upgrade fixture should bind one direct TP");
-        controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn)
+        controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn)
             ->TraceConnectWithoutContext(
                 "WqeSegmentSendsNotify",
                 MakeCallback(&UbLifecycleGracefulAbortUpgradeTest::OnAdmitted, this));
@@ -13756,7 +13755,7 @@ class UbLifecycleForcedStrongOrderDrainDoesNotWakeSuccessorTest : public TestCas
                                                          {kUrmaWriteRegressionSenderTpn}),
                               true,
                               "Forced strong WQEs should share one direct TP");
-        controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn)
+        controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn)
             ->TraceConnectWithoutContext(
                 "WqeSegmentSendsNotify",
                 MakeCallback(
@@ -13895,7 +13894,7 @@ class UbLifecycleAcceptedTpWorkBlocksGenerationRetirementTest : public TestCase
                 std::_Exit(1);
             }
             Ptr<UbTransportChannel> tp =
-                controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+                controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
             tp->TraceConnectWithoutContext(
                 "WqeSegmentSendsNotify",
                 MakeCallback(&UbLifecycleAcceptedTpWorkBlocksGenerationRetirementTest::
@@ -13985,7 +13984,7 @@ class UbLifecycleRejectedTpAdmissionPreservesLazyCursorTest : public TestCase
                               "WQE submission should succeed before TP capacity admission");
 
         Ptr<UbJetty> jetty = function->GetJetty(kUrmaWriteRegressionJettyNum);
-        Ptr<UbTransportChannel> tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        Ptr<UbTransportChannel> tp = controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         const uint64_t bytesBefore = wqe->GetBytesLeft();
         const uint32_t tassnBefore = jetty->GetTaSsnSndNxtForTest();
         Ptr<UbWqeSegment> prepared = jetty->PrepareNextWqeSegment();
@@ -14065,7 +14064,7 @@ class UbLifecycleSchedulerRaceBackpressureTest : public TestCase
                               "Direct TP binding should succeed");
 
         m_jetty = function->GetJetty(kUrmaWriteRegressionJettyNum);
-        m_tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        m_tp = controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         m_wqe = function->CreateWqe(topo.sender->GetId(),
                                     topo.receiver->GetId(),
                                     64,
@@ -14189,7 +14188,7 @@ class UbLifecycleDirectWriteCompletionTest : public TestCase
             MakeCallback(&UbLifecycleDirectWriteCompletionTest::OnTaskCompleted, this));
         m_jetty->SetWqeCompletionCallback(
             MakeCallback(&UbLifecycleDirectWriteCompletionTest::OnWqeCompleted, this));
-        m_tp = controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        m_tp = controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         m_tp->TraceConnectWithoutContext(
             "WqeSegmentSendsNotify",
             MakeCallback(&UbLifecycleDirectWriteCompletionTest::ObserveSegmentAdmission, this));
@@ -14411,7 +14410,7 @@ class UbLifecycleSegmentCompletionRequiresResolvedTpGenerationTest : public Test
         InstallStaticTpPair(topo);
         Ptr<UbController> controller = topo.sender->GetObject<UbController>();
         Ptr<UbController> receiverController = topo.receiver->GetObject<UbController>();
-        controller->CreateTp(topo.sender->GetId(),
+        controller->GetTransportChannelManager()->CreateTp(topo.sender->GetId(),
                              topo.receiver->GetId(),
                              topo.senderPort->GetIfIndex(),
                              topo.receiverPort->GetIfIndex(),
@@ -14419,7 +14418,7 @@ class UbLifecycleSegmentCompletionRequiresResolvedTpGenerationTest : public Test
                              303,
                              404,
                              UbCongestionControl::Create(UB_DEVICE));
-        receiverController->CreateTp(topo.receiver->GetId(),
+        receiverController->GetTransportChannelManager()->CreateTp(topo.receiver->GetId(),
                                      topo.sender->GetId(),
                                      topo.receiverPort->GetIfIndex(),
                                      topo.senderPort->GetIfIndex(),
@@ -14442,7 +14441,7 @@ class UbLifecycleSegmentCompletionRequiresResolvedTpGenerationTest : public Test
                               "Direct TP binding should succeed");
 
         Ptr<UbTransportChannel> directTp =
-            controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         directTp->TraceConnectWithoutContext(
             "WqeSegmentSendsNotify",
             MakeCallback(
@@ -14489,7 +14488,7 @@ class UbLifecycleSegmentCompletionRequiresResolvedTpGenerationTest : public Test
                               "Admitted direct operation should expose one exact segment");
 
         Ptr<UbWqeSegment> wrongCompletion = BuildCompletion(
-            controller->GetTpByTpn(303)->GetLifecycleOwner(),
+            controller->GetTransportChannelManager()->GetTp(303)->GetLifecycleOwner(),
             beforeMismatch.operationIdentity,
             beforeMismatch.segmentIdentities[0]);
         const bool wrongAccepted = transaction->ProcessInboundTaResponse(wrongCompletion);
@@ -14582,7 +14581,7 @@ class UbLifecycleLateCompletionRejectsReusedJettyWqeAndTassnTest : public TestCa
         Ptr<UbFunction> function = controller->GetUbFunction();
         Ptr<UbTransaction> transaction = controller->GetUbTransaction();
         Ptr<UbTransportChannel> directTp =
-            controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         directTp->TraceConnectWithoutContext(
             "WqeSegmentSendsNotify",
             MakeCallback(&UbLifecycleLateCompletionRejectsReusedJettyWqeAndTassnTest::
@@ -14757,7 +14756,7 @@ class UbLifecycleLateCompletionRejectsDifferentWqeOnReusedTassnTest : public Tes
         Ptr<UbFunction> function = controller->GetUbFunction();
         Ptr<UbTransaction> transaction = controller->GetUbTransaction();
         Ptr<UbTransportChannel> directTp =
-            controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+            controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         directTp->TraceConnectWithoutContext(
             "WqeSegmentSendsNotify",
             MakeCallback(
@@ -15733,7 +15732,7 @@ class UbLifecycleReentrantForcedStopDefersRunningFinishTest : public TestCase
             UbLifecycleReentrantForcedStopObserver observer;
             observer.function = function;
             Ptr<UbTransportChannel> tp =
-                controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+                controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
             tp->TraceConnectWithoutContext(
                 "WqeSegmentSendsNotify",
                 MakeCallback(&UbLifecycleReentrantForcedStopObserver::OnSegmentScheduled,
@@ -16164,7 +16163,7 @@ class UbLifecycleCancelBetweenTrackedSchedulePhasesTest : public TestCase
                 std::_Exit(2);
             }
             Ptr<UbTransportChannel> tp =
-                controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+                controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
             Ptr<UbWqe> wqe = function->CreateWqe(topo.sender->GetId(),
                                                  topo.receiver->GetId(),
                                                  64,
@@ -16245,7 +16244,7 @@ class UbLifecycleSameJettyWqeReuseRejectsStaleFinishTest : public TestCase
                 std::_Exit(2);
             }
             Ptr<UbTransportChannel> tp =
-                controller->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+                controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
             Ptr<UbWqe> oldWqe = function->CreateWqe(topo.sender->GetId(),
                                                     topo.receiver->GetId(),
                                                     64,
@@ -17082,7 +17081,7 @@ class UbLifecycleMalformedTpsackIntegrationTest : public TestCase
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<UbTransportChannel> txTp =
-            topo.sender->GetObject<UbController>()->GetTpByTpn(
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(
                 kUrmaWriteRegressionSenderTpn);
         Ptr<UbLifecycleCoordinator> coordinator =
             UbLifecycleCoordinator::GetOrCreate(topo.sender);
@@ -17118,7 +17117,7 @@ Ptr<Packet>
 BuildLifecycleTracerPacket(const LocalTpTopology& topo)
 {
     Ptr<UbTransportChannel> senderTp =
-        topo.sender->GetObject<UbController>()->GetTpByTpn(kUrmaWriteRegressionSenderTpn);
+        topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
     Ptr<UbWqeSegment> segment = CreateObject<UbWqeSegment>();
     segment->SetSrc(topo.sender->GetId());
     segment->SetDest(topo.receiver->GetId());
@@ -17249,8 +17248,8 @@ class UbLifecycleRtpRouteDropIntegrationTest : public TestCase
         const UbLifecycleResourceIdentity owner = tag.GetIdentity().owner;
         Ptr<UbRoutingProcess> switchRouting =
             topo.switch0->GetObject<UbSwitch>()->GetRoutingProcess();
-        switchRouting->RemoveShortestRoute(NodeIdToIp(topo.receiver->GetId()).Get());
-        switchRouting->RemoveShortestRoute(
+        switchRouting->GetRoutingTable().RemoveShortestRoute(NodeIdToIp(topo.receiver->GetId()).Get());
+        switchRouting->GetRoutingTable().RemoveShortestRoute(
             NodeIdToIp(topo.receiver->GetId(), topo.receiverPort->GetIfIndex()).Get());
 
         NS_TEST_ASSERT_MSG_EQ(topo.senderPort->EnqueueToEgress(
@@ -19426,8 +19425,8 @@ class UbCreateTpPreloadInstancesTest : public TestCase
         Ptr<UbController> c0 = n0->GetObject<UbController>();
         Ptr<UbController> c1 = n1->GetObject<UbController>();
 
-        NS_TEST_ASSERT_MSG_EQ(c0->IsTPExists(11), true, "Source-side TP should be preloaded from config");
-        NS_TEST_ASSERT_MSG_EQ(c1->IsTPExists(22), true, "Destination-side TP should be preloaded from config");
+        NS_TEST_ASSERT_MSG_EQ(c0->GetTransportChannelManager()->Contains(11), true, "Source-side TP should be preloaded from config");
+        NS_TEST_ASSERT_MSG_EQ(c1->GetTransportChannelManager()->Contains(22), true, "Destination-side TP should be preloaded from config");
 
         fs::remove_all(caseDir, ec);
         Simulator::Destroy();
@@ -19457,7 +19456,7 @@ class UbCreateTpUsesPerPortIpTest : public TestCase
         const uint32_t senderTpn = 1101;
         const uint32_t receiverTpn = 2201;
 
-        controller->CreateTp(sender->GetId(),
+        controller->GetTransportChannelManager()->CreateTp(sender->GetId(),
                              receiver->GetId(),
                              senderPort,
                              receiverPort,
@@ -19466,7 +19465,7 @@ class UbCreateTpUsesPerPortIpTest : public TestCase
                              receiverTpn,
                              cc);
 
-        Ptr<UbTransportChannel> tp = controller->GetTpByTpn(senderTpn);
+        Ptr<UbTransportChannel> tp = controller->GetTransportChannelManager()->GetTp(senderTpn);
         NS_TEST_ASSERT_MSG_NE(tp, nullptr, "Created TP should be visible by TPN");
         NS_TEST_ASSERT_MSG_EQ(tp->GetSip(),
                               NodeIdToIp(sender->GetId(), senderPort),
@@ -19508,15 +19507,15 @@ class UbControllerMissingTpnLookupDoesNotInsertTest : public TestCase
 
         Ptr<UbController> controller = node->GetObject<UbController>();
         const uint32_t missingTpn = 9999;
-        const uint32_t beforeCount = controller->GetTransportCountForTest();
+        const uint32_t beforeCount = controller->GetTransportChannelManager()->GetCount();
 
-        NS_TEST_ASSERT_MSG_EQ(controller->GetTpByTpn(missingTpn),
+        NS_TEST_ASSERT_MSG_EQ(controller->GetTransportChannelManager()->GetTp(missingTpn),
                               nullptr,
                               "Missing TPN lookup should return nullptr");
-        NS_TEST_ASSERT_MSG_EQ(controller->GetTransportCountForTest(),
+        NS_TEST_ASSERT_MSG_EQ(controller->GetTransportChannelManager()->GetCount(),
                               beforeCount,
                               "Missing TPN lookup should not mutate the TP map");
-        NS_TEST_ASSERT_MSG_EQ(controller->IsTPExists(missingTpn),
+        NS_TEST_ASSERT_MSG_EQ(controller->GetTransportChannelManager()->Contains(missingTpn),
                               false,
                               "Missing TPN lookup should not create an existing TPN marker");
 
@@ -19557,10 +19556,10 @@ class UbTrafficDrivenReservationDoesNotRemoteCreateReceiverTpTest : public TestC
         NS_TEST_ASSERT_MSG_EQ(receiverTpns.size(),
                               1u,
                               "Traffic load should reserve one receiver TPN");
-        NS_TEST_ASSERT_MSG_EQ(senderCtrl->IsTPExists(reservedSenderTpns[0].first),
+        NS_TEST_ASSERT_MSG_EQ(senderCtrl->GetTransportChannelManager()->Contains(reservedSenderTpns[0].first),
                               false,
                               "Reservation should not materialize the sender endpoint");
-        NS_TEST_ASSERT_MSG_EQ(receiverCtrl->IsTPExists(receiverTpns[0].first),
+        NS_TEST_ASSERT_MSG_EQ(receiverCtrl->GetTransportChannelManager()->Contains(receiverTpns[0].first),
                               false,
                               "Reservation should not materialize the receiver endpoint");
 
@@ -19576,7 +19575,7 @@ class UbTrafficDrivenReservationDoesNotRemoteCreateReceiverTpTest : public TestC
         NS_TEST_ASSERT_MSG_EQ(senderTpns.size(),
                               1u,
                               "Single-path reservation should pick one sender TPN");
-        NS_TEST_ASSERT_MSG_EQ(senderCtrl->IsTPExists(senderTpns[0]),
+        NS_TEST_ASSERT_MSG_EQ(senderCtrl->GetTransportChannelManager()->Contains(senderTpns[0]),
                               true,
                               "Sender endpoint should be materialized by TP resolution");
 
@@ -19584,7 +19583,7 @@ class UbTrafficDrivenReservationDoesNotRemoteCreateReceiverTpTest : public TestC
                               1u,
                               "Receiver reservation should be visible in the local manager");
         const uint32_t receiverTpn = receiverTpns[0].first;
-        NS_TEST_ASSERT_MSG_EQ(receiverCtrl->IsTPExists(receiverTpn),
+        NS_TEST_ASSERT_MSG_EQ(receiverCtrl->GetTransportChannelManager()->Contains(receiverTpn),
                               false,
                               "Receiver endpoint should not be materialized before packet arrival");
 
@@ -19624,12 +19623,12 @@ class UbReservedReceiverTpnMaterializesLocallyTest : public TestCase
                               "Receiver should have one reserved local TPN");
         const uint32_t receiverTpn = receiverTpns[0].first;
 
-        Ptr<UbTransportChannel> receiverTp = receiverCtrl->CreateReservedTpEndpoint(receiverTpn);
+        Ptr<UbTransportChannel> receiverTp = receiverCtrl->GetTransportChannelManager()->CreateReservedTpEndpoint(receiverTpn);
         NS_TEST_ASSERT_MSG_NE(receiverTp,
                               nullptr,
                               "Reserved receiver TPN should create a local endpoint");
         NS_TEST_ASSERT_MSG_EQ(
-            receiverCtrl->IsTPExists(receiverTpn),
+            receiverCtrl->GetTransportChannelManager()->Contains(receiverTpn),
             true,
             "Materialized reserved TPN should be visible in the receiver controller");
         NS_TEST_ASSERT_MSG_EQ(
@@ -19718,7 +19717,7 @@ class UbInboundTpChannelKeyValidationTest : public TestCase
         Ptr<Packet> packet =
             BuildInboundTpPacket(topo, srcTpn, dstTpn, sourceIp, destinationIp, priority);
         topo.receiver->GetObject<UbSwitch>()->SwitchHandlePacket(topo.receiverPort, packet);
-        NS_ABORT_MSG_IF(!receiverCtrl->IsTPExists(dstTpn),
+        NS_ABORT_MSG_IF(!receiverCtrl->GetTransportChannelManager()->Contains(dstTpn),
                         "Valid inbound packet did not materialize its receiver TP");
     }
 
@@ -19859,7 +19858,7 @@ class UbConcurrentReservedReceiverTpnMaterializationTest : public TestCase
         {
             workers.emplace_back([&, index]() {
                 startBarrier.arrive_and_wait();
-                results[index] = receiverCtrl->CreateReservedTpEndpoint(receiverTpn);
+                results[index] = receiverCtrl->GetTransportChannelManager()->CreateReservedTpEndpoint(receiverTpn);
             });
         }
         for (auto& worker : workers)
@@ -19867,7 +19866,7 @@ class UbConcurrentReservedReceiverTpnMaterializationTest : public TestCase
             worker.join();
         }
 
-        Ptr<UbTransportChannel> materialized = receiverCtrl->GetTpByTpn(receiverTpn);
+        Ptr<UbTransportChannel> materialized = receiverCtrl->GetTransportChannelManager()->GetTp(receiverTpn);
         NS_TEST_ASSERT_MSG_NE(materialized,
                               nullptr,
                               "Concurrent materialization should create the receiver TP");
@@ -19877,7 +19876,7 @@ class UbConcurrentReservedReceiverTpnMaterializationTest : public TestCase
                                   materialized,
                                   "All concurrent callers should observe the same receiver TP");
         }
-        NS_TEST_ASSERT_MSG_EQ(receiverCtrl->GetTransportCountForTest(),
+        NS_TEST_ASSERT_MSG_EQ(receiverCtrl->GetTransportChannelManager()->GetCount(),
                               1u,
                               "Concurrent materialization should count exactly one receiver TP");
 
@@ -19915,8 +19914,8 @@ class UbRepeatedTpResolutionReusesReservationTest : public TestCase
         const size_t senderConnectionCount = senderCtrl->GetTpConnManager()->GetConnectionCount();
         const size_t receiverConnectionCount =
             receiverCtrl->GetTpConnManager()->GetConnectionCount();
-        const uint32_t senderTransportCount = senderCtrl->GetTransportCountForTest();
-        const uint32_t receiverTransportCount = receiverCtrl->GetTransportCountForTest();
+        const uint32_t senderTransportCount = senderCtrl->GetTransportChannelManager()->GetCount();
+        const uint32_t receiverTransportCount = receiverCtrl->GetTransportChannelManager()->GetCount();
 
         std::vector<uint32_t> secondTpns = resolveTpns();
 
@@ -19934,10 +19933,10 @@ class UbRepeatedTpResolutionReusesReservationTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(receiverCtrl->GetTpConnManager()->GetConnectionCount(),
                               receiverConnectionCount,
                               "Repeated TP resolution should not add receiver connection records");
-        NS_TEST_ASSERT_MSG_EQ(senderCtrl->GetTransportCountForTest(),
+        NS_TEST_ASSERT_MSG_EQ(senderCtrl->GetTransportChannelManager()->GetCount(),
                               senderTransportCount,
                               "Repeated TP resolution should reuse the sender endpoint");
-        NS_TEST_ASSERT_MSG_EQ(receiverCtrl->GetTransportCountForTest(),
+        NS_TEST_ASSERT_MSG_EQ(receiverCtrl->GetTransportChannelManager()->GetCount(),
                               receiverTransportCount,
                               "Repeated TP resolution should not materialize receiver endpoints");
 
@@ -19961,15 +19960,15 @@ class UbUnreservedReceiverTpnDoesNotMaterializeTest : public TestCase
 
         Ptr<UbController> controller = node->GetObject<UbController>();
         const uint32_t unreservedTpn = 9090;
-        const uint32_t beforeCount = controller->GetTransportCountForTest();
+        const uint32_t beforeCount = controller->GetTransportChannelManager()->GetCount();
 
-        NS_TEST_ASSERT_MSG_EQ(controller->CreateReservedTpEndpoint(unreservedTpn),
+        NS_TEST_ASSERT_MSG_EQ(controller->GetTransportChannelManager()->CreateReservedTpEndpoint(unreservedTpn),
                               nullptr,
                               "Unreserved TPN should not create a local endpoint");
-        NS_TEST_ASSERT_MSG_EQ(controller->GetTransportCountForTest(),
+        NS_TEST_ASSERT_MSG_EQ(controller->GetTransportChannelManager()->GetCount(),
                               beforeCount,
                               "Unreserved TPN materialization attempt should not mutate TP map");
-        NS_TEST_ASSERT_MSG_EQ(controller->IsTPExists(unreservedTpn),
+        NS_TEST_ASSERT_MSG_EQ(controller->GetTransportChannelManager()->Contains(unreservedTpn),
                               false,
                               "Unreserved TPN should remain absent");
 
@@ -19992,7 +19991,7 @@ class UbExplicitTpDestroyDrainsAndRematerializesTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(status),
                               static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
                               "Destroy callback should report completion");
-        NS_TEST_ASSERT_MSG_EQ(m_controller->GetTpByTpn(static_cast<uint32_t>(identity.localId)),
+        NS_TEST_ASSERT_MSG_EQ(m_controller->GetTransportChannelManager()->GetTp(static_cast<uint32_t>(identity.localId)),
                               nullptr,
                               "Destroy callback should run after canonical endpoint erase");
         m_callbackIdentity = identity;
@@ -20037,7 +20036,7 @@ class UbExplicitTpDestroyDrainsAndRematerializesTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(connectionSnapshot.slot2),
                               static_cast<uint32_t>(EndpointSlotState::UNMATERIALIZED),
                               "Receiver slot should begin unmaterialized");
-        Ptr<UbTransportChannel> first = m_controller->CreateReservedTpEndpoint(tpn);
+        Ptr<UbTransportChannel> first = m_controller->GetTransportChannelManager()->CreateReservedTpEndpoint(tpn);
         NS_TEST_ASSERT_MSG_NE(first, nullptr, "Reserved endpoint should materialize");
         NS_TEST_ASSERT_MSG_EQ(sender->GetTpConnManager()->GetConnectionLifecycleSnapshot(
                                   senderTpns[0].first, connectionSnapshot),
@@ -20057,14 +20056,14 @@ class UbExplicitTpDestroyDrainsAndRematerializesTest : public TestCase
             firstIdentity,
             UbLifecycleLeaseKind::TRANSPORT_WORK,
             firstIdentity);
-        const UbDestroyStatus pending = m_controller->DestroyTp(
+        const UbDestroyStatus pending = m_controller->GetTransportChannelManager()->DestroyTp(
             tpn,
             UbDestroyReason::EXPLICIT,
             MakeCallback(&UbExplicitTpDestroyDrainsAndRematerializesTest::OnDestroyed, this));
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(pending),
                               static_cast<uint32_t>(UbDestroyStatus::PENDING),
                               "Active lifecycle work should defer endpoint finalization");
-        NS_TEST_ASSERT_MSG_EQ(m_controller->GetTpByTpn(tpn),
+        NS_TEST_ASSERT_MSG_EQ(m_controller->GetTransportChannelManager()->GetTp(tpn),
                               first,
                               "Pending destroy should retain the canonical endpoint");
         NS_TEST_ASSERT_MSG_EQ(first->CanAdmitWqeSegment(nullptr),
@@ -20073,7 +20072,7 @@ class UbExplicitTpDestroyDrainsAndRematerializesTest : public TestCase
 
         coordinator->ReleaseLease(gate);
         NS_TEST_ASSERT_MSG_EQ(m_callbackCount, 1u, "Pending callback should run exactly once");
-        NS_TEST_ASSERT_MSG_EQ(m_controller->GetTpByTpn(tpn),
+        NS_TEST_ASSERT_MSG_EQ(m_controller->GetTransportChannelManager()->GetTp(tpn),
                               nullptr,
                               "Last lifecycle release should finalize without a second destroy");
         NS_TEST_ASSERT_MSG_EQ(m_callbackIdentity,
@@ -20084,7 +20083,7 @@ class UbExplicitTpDestroyDrainsAndRematerializesTest : public TestCase
                               true,
                               "Local endpoint destroy should preserve its reservation");
 
-        Ptr<UbTransportChannel> second = m_controller->CreateReservedTpEndpoint(tpn);
+        Ptr<UbTransportChannel> second = m_controller->GetTransportChannelManager()->CreateReservedTpEndpoint(tpn);
         NS_TEST_ASSERT_MSG_NE(second, nullptr, "Later demand should rematerialize the endpoint");
         NS_TEST_ASSERT_MSG_NE(second->GetLifecycleOwner().generation,
                               firstIdentity.generation,
@@ -20094,7 +20093,7 @@ class UbExplicitTpDestroyDrainsAndRematerializesTest : public TestCase
         NS_TEST_ASSERT_MSG_NE(secondCc, nullptr, "Rematerialized TP should use configured DCQCN");
         (void)secondCc->IsCcLimited(1);
         secondCc->ApplySyntheticCnpForTest();
-        const UbDestroyStatus eventDrain = m_controller->DestroyTp(
+        const UbDestroyStatus eventDrain = m_controller->GetTransportChannelManager()->DestroyTp(
             tpn,
             UbDestroyReason::EXPLICIT,
             MakeCallback(&UbExplicitTpDestroyDrainsAndRematerializesTest::OnDestroyed, this));
@@ -20104,7 +20103,7 @@ class UbExplicitTpDestroyDrainsAndRematerializesTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(m_callbackCount,
                               2u,
                               "Tracked-event cancellation should finalize reentrantly once");
-        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_controller->DestroyTp(999999)),
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_controller->GetTransportChannelManager()->DestroyTp(999999)),
                               static_cast<uint32_t>(UbDestroyStatus::NOT_FOUND),
                               "Destroying an unknown TPN should not insert an endpoint");
 
@@ -20144,10 +20143,10 @@ class UbExplicitConnectionDestroyAggregatesBothEndpointsTest : public TestCase
                                   m_connection.node2, m_connection.tpn2, ignored),
                               false,
                               "Connection callback should run after receiver reservation erase");
-        NS_TEST_ASSERT_MSG_EQ(m_senderController->GetTpByTpn(m_connection.tpn1),
+        NS_TEST_ASSERT_MSG_EQ(m_senderController->GetTransportChannelManager()->GetTp(m_connection.tpn1),
                               nullptr,
                               "Connection callback should observe source endpoint erase");
-        NS_TEST_ASSERT_MSG_EQ(m_receiverController->GetTpByTpn(m_connection.tpn2),
+        NS_TEST_ASSERT_MSG_EQ(m_receiverController->GetTransportChannelManager()->GetTp(m_connection.tpn2),
                               nullptr,
                               "Connection callback should observe receiver endpoint erase");
         m_destroyedIdentity = identity;
@@ -20177,9 +20176,9 @@ class UbExplicitConnectionDestroyAggregatesBothEndpointsTest : public TestCase
                               true,
                               "Expected the source reservation");
         Ptr<UbTransportChannel> receiverTp =
-            m_receiverController->CreateReservedTpEndpoint(m_connection.tpn2);
+            m_receiverController->GetTransportChannelManager()->CreateReservedTpEndpoint(m_connection.tpn2);
         NS_TEST_ASSERT_MSG_NE(receiverTp, nullptr, "Expected one materialized receiver endpoint");
-        Ptr<UbTransportChannel> senderTp = m_senderController->GetTpByTpn(m_connection.tpn1);
+        Ptr<UbTransportChannel> senderTp = m_senderController->GetTransportChannelManager()->GetTp(m_connection.tpn1);
         NS_TEST_ASSERT_MSG_NE(senderTp, nullptr, "Expected one materialized sender endpoint");
 
         ConnectionLifecycleSnapshot before;
@@ -20272,7 +20271,7 @@ class UbExplicitConnectionDestroyAggregatesBothEndpointsTest : public TestCase
                               "Expected replacement source reservation");
         m_connection = replacement;
         Ptr<UbTransportChannel> replacementSender =
-            m_senderController->GetTpByTpn(replacement.tpn1);
+            m_senderController->GetTransportChannelManager()->GetTp(replacement.tpn1);
         const UbLifecycleLeaseIdentity lateGate =
             UbLifecycleCoordinator::GetOrCreate(topo.sender)
                 ->AcquireLease(replacementSender->GetLifecycleOwner(),
@@ -20287,11 +20286,11 @@ class UbExplicitConnectionDestroyAggregatesBothEndpointsTest : public TestCase
                              this))),
             static_cast<uint32_t>(UbDestroyStatus::PENDING),
             "Source endpoint gate should keep replacement destroy pending");
-        NS_TEST_ASSERT_MSG_EQ(m_receiverController->CreateReservedTpEndpoint(replacement.tpn2),
+        NS_TEST_ASSERT_MSG_EQ(m_receiverController->GetTransportChannelManager()->CreateReservedTpEndpoint(replacement.tpn2),
                               nullptr,
                               "Closing connection should reject new application materialization");
 
-        Ptr<UbTransportChannel> drainOnly = m_receiverController->ResolveInboundTp(
+        Ptr<UbTransportChannel> drainOnly = m_receiverController->GetTransportChannelManager()->ResolveInboundTp(
             replacement.tpn1,
             replacement.tpn2,
             NodeIdToIp(topo.sender->GetId(), topo.senderPort->GetIfIndex()),
@@ -20313,7 +20312,7 @@ class UbExplicitConnectionDestroyAggregatesBothEndpointsTest : public TestCase
                               "Late endpoint should bind directly to the draining slot");
         Simulator::Stop(NanoSeconds(1));
         Simulator::Run();
-        NS_TEST_ASSERT_MSG_EQ(m_receiverController->GetTpByTpn(replacement.tpn2),
+        NS_TEST_ASSERT_MSG_EQ(m_receiverController->GetTransportChannelManager()->GetTp(replacement.tpn2),
                               nullptr,
                               "Idle drain-only endpoint should retire after the current handler");
         UbLifecycleCoordinator::GetOrCreate(topo.sender)->ReleaseLease(lateGate);
@@ -21348,7 +21347,7 @@ class UbPacketSprayUsesEvenRoundRobinAcrossEqualPortsTest : public TestCase
         Ptr<UbRoutingProcess> routing = CreateObject<UbRoutingProcess>();
         routing->SetNodeId(0);
         const std::vector<uint16_t> equalPorts = {10, 11, 12};
-        routing->AddShortestRoute(NodeIdToIp(42).Get(), equalPorts);
+        routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(42).Get(), equalPorts);
 
         RoutingKey rtKey{};
         rtKey.sip = NodeIdToIp(1).Get();
@@ -21423,8 +21422,8 @@ class UbRoutingPolicyPreservesCandidateSemanticsTest : public TestCase
     {
         Ptr<UbRoutingProcess> routing = CreateObject<UbRoutingProcess>();
         routing->SetNodeId(0);
-        routing->AddShortestRoute(NodeIdToIp(42).Get(), {2, 3});
-        routing->AddOtherRoute(NodeIdToIp(42).Get(), {4, 5});
+        routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(42).Get(), {2, 3});
+        routing->GetRoutingTable().AddOtherRoute(NodeIdToIp(42).Get(), {4, 5});
 
         RoutingKey key{};
         key.sip = NodeIdToIp(1).Get();
@@ -21452,7 +21451,7 @@ class UbRoutingPolicyPreservesCandidateSemanticsTest : public TestCase
                               true,
                               "Shortest-only lookup must exclude non-shortest ports");
 
-        routing->AddShortestRoute(NodeIdToIp(43).Get(), {7, 8});
+        routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(43).Get(), {7, 8});
         key.dip = NodeIdToIp(43).Get();
         bool filteredIsShortest = false;
         const int filteredPort = routing->GetOutPort(key, filteredIsShortest, 7);
@@ -21490,7 +21489,7 @@ class UbRoutingAdaptiveFirstMinimumTest : public TestCase
         InitNode(node, UB_SWITCH, 3);
         Ptr<UbRoutingProcess> routing = node->GetObject<UbSwitch>()->GetRoutingProcess();
         routing->SetAttribute("RoutingAlgorithm", StringValue("ADAPTIVE"));
-        routing->AddShortestRoute(NodeIdToIp(42).Get(), {0, 1});
+        routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(42).Get(), {0, 1});
 
         RoutingKey key{};
         key.sip = NodeIdToIp(1).Get();
@@ -21526,7 +21525,7 @@ class UbRoutingHotPathContainerBalanceTest : public TestCase
     {
         Ptr<UbRoutingProcess> routing = CreateObject<UbRoutingProcess>();
         routing->SetNodeId(0);
-        routing->AddShortestRoute(NodeIdToIp(42).Get(), {2, 3, 4, 5});
+        routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(42).Get(), {2, 3, 4, 5});
 
         RoutingKey key{};
         key.sip = NodeIdToIp(1).Get();
@@ -22295,7 +22294,7 @@ class UbCtpServiceDoesNotCreateRtpTpTest : public TestCase
         Ptr<Node> node = BuildSinglePortCtpNode();
         Ptr<UbController> controller = node->GetObject<UbController>();
 
-        const uint32_t initialTransportCount = controller->GetTransportCountForTest();
+        const uint32_t initialTransportCount = controller->GetTransportChannelManager()->GetCount();
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
         UbCtpEntityKey key{.srcEntityId = 10,
                            .dstNodeId = 1,
@@ -22304,13 +22303,13 @@ class UbCtpServiceDoesNotCreateRtpTpTest : public TestCase
         service->SetSourcePortHint(key, 0);
 
         service->GetOrCreateTransactionContext(key);
-        NS_TEST_ASSERT_MSG_EQ(controller->GetTransportCountForTest(),
+        NS_TEST_ASSERT_MSG_EQ(controller->GetTransportChannelManager()->GetCount(),
                               initialTransportCount,
                               "Creating a CTP context must not allocate RTP transport channels");
 
         Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(0);
         NS_TEST_ASSERT_MSG_EQ(service->SendSegment(segment, key), true, "CTP send should admit seq 0");
-        NS_TEST_ASSERT_MSG_EQ(controller->GetTransportCountForTest(),
+        NS_TEST_ASSERT_MSG_EQ(controller->GetTransportChannelManager()->GetCount(),
                               initialTransportCount,
                               "Sending a CTP segment must not allocate RTP transport channels");
 
@@ -22603,7 +22602,7 @@ class UbCtpTaAckInheritsPacketSprayRoutingPolicyTest : public TestCase
 
         Ptr<UbRoutingProcess> routing =
             receiver->GetObject<UbSwitch>()->GetRoutingProcess();
-        routing->AddShortestRoute(NodeIdToIp(0).Get(), std::vector<uint16_t>{0, 1});
+        routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(0).Get(), std::vector<uint16_t>{0, 1});
 
         Ptr<UbCtpTransportService> packetBuilder = CreateObject<UbCtpTransportService>();
         packetBuilder->SetNode(sender);
@@ -23746,8 +23745,8 @@ class UbCtpRouteLossKeepsTransactionOutstandingTest : public TestCase
 
         Ptr<UbRoutingProcess> switchRouting =
             topo.switch0->GetObject<UbSwitch>()->GetRoutingProcess();
-        switchRouting->RemoveShortestRoute(NodeIdToIp(topo.receiver->GetId()).Get());
-        switchRouting->RemoveShortestRoute(
+        switchRouting->GetRoutingTable().RemoveShortestRoute(NodeIdToIp(topo.receiver->GetId()).Get());
+        switchRouting->GetRoutingTable().RemoveShortestRoute(
             NodeIdToIp(topo.receiver->GetId(), topo.receiverPort->GetIfIndex()).Get());
 
         Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(0);
@@ -24190,7 +24189,7 @@ class UbCtpReadWriteUsesTransactionLifecycleTest : public TestCase
         Ptr<UbController> controller = node->GetObject<UbController>();
         Ptr<UbTransaction> transaction = controller->GetUbTransaction();
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-        const uint32_t initialRtpCount = controller->GetTransportCountForTest();
+        const uint32_t initialRtpCount = controller->GetTransportChannelManager()->GetCount();
 
         Ptr<UbApp> app = CreateObject<UbApp>();
         node->AddApplication(app);
@@ -24254,7 +24253,7 @@ class UbCtpReadWriteUsesTransactionLifecycleTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
                               0u,
                               "Final READ response should retire the common Transaction operation");
-        NS_TEST_ASSERT_MSG_EQ(controller->GetTransportCountForTest(),
+        NS_TEST_ASSERT_MSG_EQ(controller->GetTransportChannelManager()->GetCount(),
                               initialRtpCount,
                               "CTP READ/WRITE lifecycle must not create RTP TP state");
 

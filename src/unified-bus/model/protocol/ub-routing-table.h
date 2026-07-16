@@ -36,9 +36,6 @@ class UbRoutingTable
 
     PortSetView LookupShortest(uint32_t destIp) const;
     PortSetView LookupOther(uint32_t destIp) const;
-    void GetShortestOutPorts(uint32_t destIp, std::vector<uint16_t>& outPorts) const;
-    void GetOtherOutPorts(uint32_t destIp, std::vector<uint16_t>& outPorts) const;
-    std::vector<uint16_t> GetAllOutPorts(uint32_t destIp) const;
 
     bool RemoveShortestRoute(uint32_t destIp);
     bool RemoveOtherRoute(uint32_t destIp);

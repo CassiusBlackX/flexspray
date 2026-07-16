@@ -5,7 +5,6 @@
 #include <limits>
 #include <set>
 #include "protocol/ub-transport.h"
-#include "protocol/ub-datalink.h"
 #include "protocol/ub-transaction.h"
 #include "ns3/ub-network-address.h"
 #include "ns3/ub-utils.h"
@@ -59,11 +58,7 @@ UbController::~UbController()
                   "UbController must force-clean canonical TPs in DoDispose");
     m_rtpTpGroups.clear();
     m_rtpTpGroupByTpn.clear();
-    m_ports.clear();
     m_destinationToPortsMap.clear();
-    m_portPairsToIter.clear();
-    m_dstPriToTp.clear();
-    m_dstPriToTpRrIndex.clear();
 }
 
 void
@@ -108,59 +103,15 @@ UbController::DoDispose()
     m_transaction = nullptr;
     m_function = nullptr;
     m_transportChannelManager = nullptr;
-    m_ports.clear();
-    m_datalink = nullptr;
     m_destinationToPortsMap.clear();
-    m_destinationToPortPairMap.clear();
-    m_portPairsToIter.clear();
-    m_dstPriToTp.clear();
-    m_dstPriToTpRrIndex.clear();
     m_tpnConn = nullptr;
     Object::DoDispose();
 }
 
-Ptr<UbTransportChannel> UbController::GetTpByTpn(uint32_t tpn)
+Ptr<UbTransportChannelManager>
+UbController::GetTransportChannelManager() const
 {
-    return m_transportChannelManager->GetTp(tpn);
-}
-
-// Transport channel management
-bool UbController::CreateTp(uint32_t src, uint32_t dest, uint8_t sport,
-                            uint8_t dport, UbPriority priority, uint32_t srcTpn,
-                            uint32_t dstTpn, Ptr<UbCongestionControl> congestionCtrl)
-{
-    return m_transportChannelManager->CreateTp(
-        src, dest, sport, dport, priority, srcTpn, dstTpn, congestionCtrl);
-}
-
-Ptr<UbTransportChannel>
-UbController::CreateReservedTpEndpoint(uint32_t tpn)
-{
-    return m_transportChannelManager->CreateReservedTpEndpoint(tpn);
-}
-
-Ptr<UbTransportChannel>
-UbController::ResolveInboundTp(uint32_t srcTpn,
-                               uint32_t dstTpn,
-                               Ipv4Address sourceIp,
-                               Ipv4Address destinationIp,
-                               UbPriority priority)
-{
-    return m_transportChannelManager->ResolveInboundTp(
-        srcTpn, dstTpn, sourceIp, destinationIp, priority);
-}
-
-Ptr<UbTransportChannel> UbController::GetTp(uint32_t tpn)
-{
-    NS_LOG_FUNCTION(this);
-
-    return m_transportChannelManager->GetTp(tpn);
-}
-
-UbDestroyStatus
-UbController::DestroyTp(uint32_t tpn, UbDestroyReason reason, UbDestroyCallback callback)
-{
-    return m_transportChannelManager->DestroyTp(tpn, reason, callback);
+    return m_transportChannelManager;
 }
 
 Ptr<UbTransportGroup>
@@ -670,46 +621,4 @@ UbController::SetCtpPacketTimingTraceCallbacks(CtpPacketTimingCallback firstPack
     }
 }
 
-std::map<uint32_t, Ptr<UbTransportChannel>> UbController::GetTpnMap() const
-{
-    return m_transportChannelManager->GetTpnMap();
-}
-
-bool UbController::AddTpMapping(uint32_t key, Ptr<UbTransportChannel> tp)
-{
-    bool ret = false;
-
-    auto it = m_tpsMapInIngressSource.find(key);
-    if (it != m_tpsMapInIngressSource.end()) { // 当前tp已经映射过
-        ret = false;
-    } else {
-        m_tpsMapInIngressSource.insert(std::make_pair(key, tp));
-        ret = true;
-    }
-
-    return ret;
-}
-
-Ptr<UbTransportChannel> UbController::GetTpByMap(uint32_t key)
-{
-    auto it = m_tpsMapInIngressSource.find(key);
-    if (it != m_tpsMapInIngressSource.end()) {
-        return it->second;
-    } else {
-        NS_LOG_WARN("Map error!");
-    }
-
-    return nullptr;
-}
-
-bool UbController::IsTPExists(uint32_t tpn)
-{
-    return m_transportChannelManager->Contains(tpn);
-}
-
-uint32_t
-UbController::GetTransportCountForTest() const
-{
-    return m_transportChannelManager->GetCount();
-}
 } // namespace ns3

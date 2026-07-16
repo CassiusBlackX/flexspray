@@ -4,7 +4,9 @@
 
 #include "ns3/ub-datatype.h"
 #include "ns3/ub-controller.h"
+#include "ns3/ub-datalink.h"
 #include "ns3/ub-ldst-api.h"
+#include "ns3/ub-port.h"
 
 namespace ns3 {
 NS_LOG_COMPONENT_DEFINE("UbLdstApi");

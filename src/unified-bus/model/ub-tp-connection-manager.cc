@@ -556,7 +556,7 @@ TpConnectionManager::DestroyDrainOnlyEndpoint(uint32_t localNodeId, uint32_t loc
     const uint8_t slot = localNodeId == connection.ownerNodeId ? 1 : 2;
     Ptr<ns3::UbController> localController =
         NodeList::GetNode(localNodeId)->GetObject<ns3::UbController>();
-    localController->DestroyTp(
+    localController->GetTransportChannelManager()->DestroyTp(
         localTpn,
         UbDestroyReason::EXPLICIT,
         MakeCallback(&TpConnectionManager::OnLocalEndpointDestroyed, this).Bind(identity, slot));
@@ -942,9 +942,9 @@ TpConnectionManager::ApplyLifecycleControl(const UbLifecycleControlRecord& contr
         }
         const bool ownerObservedActive = (control.requestId & 0x100) != 0;
         const uint8_t slot = static_cast<uint8_t>(control.requestId & 0xff);
-        if (!ownerObservedActive && controller->GetTpByTpn(control.tpn) != nullptr)
+        if (!ownerObservedActive && controller->GetTransportChannelManager()->GetTp(control.tpn) != nullptr)
         {
-            controller->DestroyTp(
+            controller->GetTransportChannelManager()->DestroyTp(
                 control.tpn,
                 static_cast<UbDestroyReason>(control.value),
                 MakeCallback(&TpConnectionManager::OnLocalEndpointDestroyed, PeekPointer(manager))
@@ -963,7 +963,7 @@ TpConnectionManager::ApplyLifecycleControl(const UbLifecycleControlRecord& contr
             manager->m_destroyRequestedViews.insert({control.nodeId, control.tpn});
         }
         const uint8_t slot = static_cast<uint8_t>(control.requestId);
-        const UbDestroyStatus status = controller->DestroyTp(
+        const UbDestroyStatus status = controller->GetTransportChannelManager()->DestroyTp(
             control.tpn,
             static_cast<UbDestroyReason>(control.value),
             MakeCallback(&TpConnectionManager::OnLocalEndpointDestroyed, PeekPointer(manager))
@@ -1254,19 +1254,18 @@ TpConnectionManager::ReserveNewTpConnections(uint32_t src,
     for (uint32_t dstPort = 0; dstPort < NodeList::GetNode(dst)->GetNDevices(); dstPort++) {
         // 查找去往该ip的出端口，若非空则记录
         Ipv4Address dstPortIp = NodeIdToIp(dst, dstPort);
-        std::vector<uint16_t> shortestOutPortsVec, otherOutPortsVec;
-        rt->GetShortestOutPorts(dstPortIp.Get(), shortestOutPortsVec);
-        rt->GetOtherOutPorts(dstPortIp.Get(), otherOutPortsVec);
-        if (!shortestOutPortsVec.empty()) {
+        const auto shortestOutPorts = rt->GetRoutingTable().LookupShortest(dstPortIp.Get());
+        const auto otherOutPorts = rt->GetRoutingTable().LookupOther(dstPortIp.Get());
+        if (!shortestOutPorts.empty()) {
             routingEntries[dstPortIp] = std::vector<std::pair<uint16_t, uint32_t>>();
-            for (uint16_t outPort : shortestOutPortsVec) {
+            for (uint16_t outPort : shortestOutPorts) {
                 routingEntries[dstPortIp].push_back(std::make_pair(outPort, 0));
             }
         }
         // 仅在开启非最短路模式的情况下加入非最短路由
-        if (!otherOutPortsVec.empty() && !useShortestPath) {
+        if (!otherOutPorts.empty() && !useShortestPath) {
             routingEntries[dstPortIp] = std::vector<std::pair<uint16_t, uint32_t>>();
-            for (uint16_t outPort : otherOutPortsVec) {
+            for (uint16_t outPort : otherOutPorts) {
                 routingEntries[dstPortIp].push_back(std::make_pair(outPort, 1));
             }
         }
@@ -1322,9 +1321,9 @@ std::vector<uint32_t> TpConnectionManager::ReconstructTPs(std::vector<uint32_t> 
 uint32_t TpConnectionManager::ReconstructTp(Connection conn)
 {
     Ptr<UbController> sendCtrl = NodeList::GetNode(conn.node1)->GetObject<UbController>();
-    if (!sendCtrl->IsTPExists(conn.tpn1)) { // 不存在，创建
+    if (!sendCtrl->GetTransportChannelManager()->Contains(conn.tpn1)) { // 不存在，创建
         auto sendHostCaqm = UbCongestionControl::Create(UB_DEVICE);
-        sendCtrl->CreateTp(conn.node1, conn.node2, conn.port1, conn.port2,
+        sendCtrl->GetTransportChannelManager()->CreateTp(conn.node1, conn.node2, conn.port1, conn.port2,
                            conn.priority, conn.tpn1, conn.tpn2, sendHostCaqm);
     }
     return conn.tpn1;

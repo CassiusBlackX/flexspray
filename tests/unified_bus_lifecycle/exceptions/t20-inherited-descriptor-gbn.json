@@ -1,0 +1,388 @@
+{
+  "schema_version": 1,
+  "ticket": "T20",
+  "case": "medium-multi-tp-retransmission",
+  "runtime": "local-single",
+  "approval": {
+    "status": "approved",
+    "source": "known acceptable difference policy",
+    "date": "2026-07-14",
+    "policy_statement": "A byte difference may pass only when root review confirms an exact, evidenced, acceptable cause and every other managed artifact remains accounted for.",
+    "approved_by": "root-review",
+    "approved_cause_ids": [
+      "t05-remote-response-same-timestamp-order",
+      "t06-cumulative-ack-retires-canonical-gbn-descriptors"
+    ]
+  },
+  "evidence": {
+    "specification": "tickets.md Task 06 requires cumulative ACK retirement of retained GBN descriptors",
+    "reference_root": ".openusim/unified-bus-lifecycle/reference/runs/local-single/medium-multi-tp-retransmission/run-1/case",
+    "candidate_root": ".openusim/unified-bus-lifecycle/candidate/t20/medium-multi-tp-retransmission/case",
+    "diagnostics_root": ".openusim/unified-bus-lifecycle/diagnostics/t20-retrans-approved",
+    "comparison_result": "expected-differences-only",
+    "managed_artifact_count": 34,
+    "affected_artifact_count": 16,
+    "unaffected_artifact_count": 18,
+    "records": [
+      {
+        "id": "t05-precontrol-tasktrace-order",
+        "kind": "independent-comparison-control",
+        "summary": "The pre-T06 control isolates the T05 same-timestamp ordering delta to TaskTrace_node_1.tr.",
+        "ticket": "T20",
+        "runtime": "local-single",
+        "source_commit": "62bb1f1",
+        "reference_root": ".openusim/unified-bus-lifecycle/diagnostics/t06-precontrol/reference",
+        "candidate_root": ".openusim/unified-bus-lifecycle/diagnostics/t06-precontrol/candidate",
+        "diagnostics_root": ".openusim/unified-bus-lifecycle/diagnostics/t06-precontrol",
+        "artifact": "runlog/TaskTrace_node_1.tr",
+        "first_byte_offset": 25,
+        "reference_sha256": "503ea0ea05b24e8e9ceda1381d594baa1e55d78b76044bd5437be9ff66168055",
+        "candidate_sha256": "69462302c8f6aeb34afac21a92bc0d91b3f6ab43f7bac3dce8ef4d24141ba9ae",
+        "affected_artifacts": [
+          "runlog/TaskTrace_node_1.tr"
+        ]
+      },
+      {
+        "id": "t06-focused-acceptance",
+        "kind": "milestone-acceptance",
+        "summary": "Focused tests and frozen output evidence show that cumulative ACK retirement removes exactly three redundant attempts.",
+        "ticket": "T20",
+        "runtime": "local-single",
+        "reference_root": ".openusim/unified-bus-lifecycle/reference/runs/local-single/medium-multi-tp-retransmission/run-1/case",
+        "candidate_root": ".openusim/unified-bus-lifecycle/candidate/t20/medium-multi-tp-retransmission/case",
+        "claims": {
+          "focused_test_ids": [
+            "UnifiedBus - GBN cumulative ACK retires descriptor prefix",
+            "UnifiedBus - final GBN ACK with pending TA response leaves timer stopped",
+            "UnifiedBus - TPG retransmission stays on the resolved TP generation",
+            "UnifiedBus - GBN retransmission trace cleanup error",
+            "UnifiedBus - GBN retransmission trace cleanup simulation-stop",
+            "UnifiedBus - GBN retransmission trace cleanup replacement identity"
+          ],
+          "omitted_attempt_count": 3,
+          "completion_advance_ns": 251,
+          "goodput_gbps": {
+            "reference": 73.2909,
+            "candidate": 73.938
+          }
+        },
+        "affected_artifacts": [
+          "canonical-events.rank0.txt",
+          "output/task_statistics.csv",
+          "output/throughput.csv",
+          "runlog/AllPacketTrace_ACK_node_0.tr",
+          "runlog/AllPacketTrace_ACK_node_1.tr",
+          "runlog/AllPacketTrace_PKT_node_0.tr",
+          "runlog/AllPacketTrace_PKT_node_1.tr",
+          "runlog/PacketTrace_node_0.tr",
+          "runlog/PacketTrace_node_1.tr",
+          "runlog/PacketTrace_node_2.tr",
+          "runlog/PortTrace_node_0_port_0.tr",
+          "runlog/PortTrace_node_1_port_0.tr",
+          "runlog/PortTrace_node_2_port_0.tr",
+          "runlog/PortTrace_node_2_port_1.tr",
+          "runlog/TaskTrace_node_0.tr",
+          "runlog/TaskTrace_node_1.tr"
+        ]
+      }
+    ]
+  },
+  "causes": [
+    {
+      "id": "t05-remote-response-same-timestamp-order",
+      "introduced_by": "T05",
+      "cause": "Remote response admission wakes synchronously inside the existing ready-source domain, so same-timestamp response Sends records can precede inbound Completes records.",
+      "impact": "Event membership and timestamps are preserved; only same-timestamp TaskTrace ordering changes.",
+      "evidence": {
+        "ids": [
+          "t05-precontrol-tasktrace-order"
+        ]
+      },
+      "artifacts": [
+        "runlog/TaskTrace_node_1.tr"
+      ]
+    },
+    {
+      "id": "t06-cumulative-ack-retires-canonical-gbn-descriptors",
+      "introduced_by": "T06",
+      "cause": "A cumulative ACK retires acknowledged descriptors from the canonical GBN map and clears a selected cursor that no longer names outstanding data.",
+      "impact": "Three already-acknowledged retransmission attempts are omitted and completion advances by 251 ns. Task goodput increases from 73.2909 to 73.938 Gbps; affected port byte-throughput decreases because it no longer counts the three redundant attempts. Packet UIDs and downstream trace times change transitively while topology, inputs, unaffected ports, and unaffected nodes remain byte-identical.",
+      "evidence": {
+        "ids": [
+          "t06-focused-acceptance"
+        ]
+      },
+      "artifacts": [
+        "canonical-events.rank0.txt",
+        "output/task_statistics.csv",
+        "output/throughput.csv",
+        "runlog/AllPacketTrace_ACK_node_0.tr",
+        "runlog/AllPacketTrace_ACK_node_1.tr",
+        "runlog/AllPacketTrace_PKT_node_0.tr",
+        "runlog/AllPacketTrace_PKT_node_1.tr",
+        "runlog/PacketTrace_node_0.tr",
+        "runlog/PacketTrace_node_1.tr",
+        "runlog/PacketTrace_node_2.tr",
+        "runlog/PortTrace_node_0_port_0.tr",
+        "runlog/PortTrace_node_1_port_0.tr",
+        "runlog/PortTrace_node_2_port_0.tr",
+        "runlog/PortTrace_node_2_port_1.tr",
+        "runlog/TaskTrace_node_0.tr",
+        "runlog/TaskTrace_node_1.tr"
+      ]
+    }
+  ],
+  "affected_artifacts": [
+    {
+      "path": "canonical-events.rank0.txt",
+      "cause_ids": [
+        "t06-cumulative-ack-retires-canonical-gbn-descriptors"
+      ],
+      "first_byte_offset": 17,
+      "reference_byte_hex": "36",
+      "candidate_byte_hex": "33",
+      "reference_sha256": "68ab18cc7e025e09049f1bcef576b8340acc53f8bf7e1fa3fb9c3444e461e9ea",
+      "candidate_sha256": "f526d0e594556dba30ff586a0c5e84c300187d77670dfad989a51468ae870698"
+    },
+    {
+      "path": "output/task_statistics.csv",
+      "cause_ids": [
+        "t06-cumulative-ack-retires-canonical-gbn-descriptors"
+      ],
+      "first_byte_offset": 231,
+      "reference_byte_hex": "36",
+      "candidate_byte_hex": "33",
+      "reference_sha256": "3a428acc0242596cf0781bf2c83792a4cfd4de168426a6d998216c08a065ec14",
+      "candidate_sha256": "8e7db0ef175b425e3a3a7aa677f3095c4f5d57da1dcbdc95fc938f41f57f5938"
+    },
+    {
+      "path": "output/throughput.csv",
+      "cause_ids": [
+        "t06-cumulative-ack-retires-canonical-gbn-descriptors"
+      ],
+      "first_byte_offset": 110,
+      "reference_byte_hex": "36",
+      "candidate_byte_hex": "33",
+      "reference_sha256": "3045f10eb87e4ece7fc186a88bb736a6e27956bf77988c2ef5f9af4e4db4392b",
+      "candidate_sha256": "5e8503b3c82fe3c3b9e64ca2bc3e8f7003a60f8968cc1f5fc80992b2b7746ce0"
+    },
+    {
+      "path": "runlog/AllPacketTrace_ACK_node_0.tr",
+      "cause_ids": [
+        "t06-cumulative-ack-retires-canonical-gbn-descriptors"
+      ],
+      "first_byte_offset": 753,
+      "reference_byte_hex": "31",
+      "candidate_byte_hex": "30",
+      "reference_sha256": "53055f8d14d8c059f036ed6873f21c7643eb252ef4d60f57d3db65b8bb749481",
+      "candidate_sha256": "8d975cf4a486768763ff2b8e78b9f602a607541b1ce0b4b225cab00d5100d7a3"
+    },
+    {
+      "path": "runlog/AllPacketTrace_ACK_node_1.tr",
+      "cause_ids": [
+        "t06-cumulative-ack-retires-canonical-gbn-descriptors"
+      ],
+      "first_byte_offset": 12067,
+      "reference_byte_hex": "38",
+      "candidate_byte_hex": "32",
+      "reference_sha256": "16fa8cdbf17d59589092e4e4b20d1a5ed43b8ebeb3e86eebda8d87f6f624ae96",
+      "candidate_sha256": "51b93d31d29739497f73210f49f96620b4f4f3a5ff47af35776f0678d172d99b"
+    },
+    {
+      "path": "runlog/AllPacketTrace_PKT_node_0.tr",
+      "cause_ids": [
+        "t06-cumulative-ack-retires-canonical-gbn-descriptors"
+      ],
+      "first_byte_offset": 14807,
+      "reference_byte_hex": "36",
+      "candidate_byte_hex": "39",
+      "reference_sha256": "f3abbbb0189ab9bf13ee06b888fe689b2654dedcfee39f0186d5197b035364f7",
+      "candidate_sha256": "419a61f49778ad72e0bfe6fb9f814450fc61f5ce8c3411bb35013a766f333062"
+    },
+    {
+      "path": "runlog/AllPacketTrace_PKT_node_1.tr",
+      "cause_ids": [
+        "t06-cumulative-ack-retires-canonical-gbn-descriptors"
+      ],
+      "first_byte_offset": 669,
+      "reference_byte_hex": "31",
+      "candidate_byte_hex": "30",
+      "reference_sha256": "5d834cb8d547f7525647cf11712b0e9bfcaa1723775ca89193734a18f10539d5",
+      "candidate_sha256": "db1c262da22d40555307ef3c00c619c82d27116d08c4bdd196177359f488161d"
+    },
+    {
+      "path": "runlog/PacketTrace_node_0.tr",
+      "cause_ids": [
+        "t06-cumulative-ack-retires-canonical-gbn-descriptors"
+      ],
+      "first_byte_offset": 1836,
+      "reference_byte_hex": "39",
+      "candidate_byte_hex": "37",
+      "reference_sha256": "44c86407873022f0d6c70c425bdf520f78db12149e1211b90eed44091e672fb0",
+      "candidate_sha256": "491f9806245fd9d5fe3d3eec8620d82f1bf5d7b4af7c787a11084e34f098f458"
+    },
+    {
+      "path": "runlog/PacketTrace_node_1.tr",
+      "cause_ids": [
+        "t06-cumulative-ack-retires-canonical-gbn-descriptors"
+      ],
+      "first_byte_offset": 1622,
+      "reference_byte_hex": "37",
+      "candidate_byte_hex": "36",
+      "reference_sha256": "3bdca345ecd8b53359c7d100efeaa98d893415d87fa255085fd627080f3a3593",
+      "candidate_sha256": "f5c45dc5798607de15d2a4ed31d226ee99ab57f299f090bfb5c79205b2002305"
+    },
+    {
+      "path": "runlog/PacketTrace_node_2.tr",
+      "cause_ids": [
+        "t06-cumulative-ack-retires-canonical-gbn-descriptors"
+      ],
+      "first_byte_offset": 2,
+      "reference_byte_hex": "37",
+      "candidate_byte_hex": "36",
+      "reference_sha256": "a1db049c71e475b98a32e921970b4021112ad066a6a6050cf6e42c295ddd8dc0",
+      "candidate_sha256": "4eec98571c448d517407428dd13859d6959edd5b343cddc9244ec610aac6ff0d"
+    },
+    {
+      "path": "runlog/PortTrace_node_0_port_0.tr",
+      "cause_ids": [
+        "t06-cumulative-ack-retires-canonical-gbn-descriptors"
+      ],
+      "first_byte_offset": 1855,
+      "reference_byte_hex": "31",
+      "candidate_byte_hex": "30",
+      "reference_sha256": "9cfaec6368ec3f2075dd23273ff75234239a0c6e704fe2a843364a1208bee422",
+      "candidate_sha256": "148a0585d0466b30468f0884b133dcaf41ab10c9fe77cc7bec4d676adea6c498"
+    },
+    {
+      "path": "runlog/PortTrace_node_1_port_0.tr",
+      "cause_ids": [
+        "t06-cumulative-ack-retires-canonical-gbn-descriptors"
+      ],
+      "first_byte_offset": 1650,
+      "reference_byte_hex": "37",
+      "candidate_byte_hex": "36",
+      "reference_sha256": "af3f95de832aed3cb7554deee0226abdf799d275aebdefe920efe5985f216e71",
+      "candidate_sha256": "5c1f9abcdd165b2864665f07dafe0cf65bc8d8a5864c2d7cd75b38312b48acbc"
+    },
+    {
+      "path": "runlog/PortTrace_node_2_port_0.tr",
+      "cause_ids": [
+        "t06-cumulative-ack-retires-canonical-gbn-descriptors"
+      ],
+      "first_byte_offset": 1754,
+      "reference_byte_hex": "35",
+      "candidate_byte_hex": "31",
+      "reference_sha256": "be9497e9a8093c0aa16a1d4a71d186943e974ccec776edcca157dddcfc9d6ba1",
+      "candidate_sha256": "3aa150e44875f9fe55873f6aa1cf46f51cd901407f1cf2121d1f885b63239438"
+    },
+    {
+      "path": "runlog/PortTrace_node_2_port_1.tr",
+      "cause_ids": [
+        "t06-cumulative-ack-retires-canonical-gbn-descriptors"
+      ],
+      "first_byte_offset": 1704,
+      "reference_byte_hex": "35",
+      "candidate_byte_hex": "31",
+      "reference_sha256": "e2f85cd84167a6d254119e75e14b241372f32f48faa8eb78f9399c7d7006650f",
+      "candidate_sha256": "b4e19134372a98999735303682c31f9a297ba24c50d923357b0f2f4746d07c6d"
+    },
+    {
+      "path": "runlog/TaskTrace_node_0.tr",
+      "cause_ids": [
+        "t06-cumulative-ack-retires-canonical-gbn-descriptors"
+      ],
+      "first_byte_offset": 667,
+      "reference_byte_hex": "32",
+      "candidate_byte_hex": "30",
+      "reference_sha256": "d007ea503eb9ef335fc3ef1325db5c025ec92504dc5ed0e62c00d280300b9913",
+      "candidate_sha256": "f43c83d254106481ac615d598d7796cdeeee40fd65b16c2212df0289aa93e05f"
+    },
+    {
+      "path": "runlog/TaskTrace_node_1.tr",
+      "cause_ids": [
+        "t05-remote-response-same-timestamp-order",
+        "t06-cumulative-ack-retires-canonical-gbn-descriptors"
+      ],
+      "first_byte_offset": 25,
+      "reference_byte_hex": "43",
+      "candidate_byte_hex": "53",
+      "reference_sha256": "503ea0ea05b24e8e9ceda1381d594baa1e55d78b76044bd5437be9ff66168055",
+      "candidate_sha256": "189692d75b67aab44e87f882b0f9b9beb359d1b666e91ae2f708d037a76a1c82"
+    }
+  ],
+  "unaffected_artifacts": [
+    {
+      "path": "fault.csv",
+      "sha256": "e8def2a40dd549b50acf307f307860cd9e97d121a60d580f251b56b9981f7b63"
+    },
+    {
+      "path": "network_attribute.txt",
+      "sha256": "6199fe2b52655e65d7339bd84099f24d19065e7d3aaa7026d523cdcb061e44e0"
+    },
+    {
+      "path": "node.csv",
+      "sha256": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac"
+    },
+    {
+      "path": "retrans_fault.csv",
+      "sha256": "98c74715bb7884c5f24f4f734f5063c6617f48a05634c595442fe86eea09015f"
+    },
+    {
+      "path": "routing_table.csv",
+      "sha256": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba"
+    },
+    {
+      "path": "runlog/PacketTrace_node_3.tr",
+      "sha256": "e5ddaffe581c4cfdcaa2318753636a28f8d7778745bbb0a3fd827a3dbebbc6d6"
+    },
+    {
+      "path": "runlog/PacketTrace_node_4.tr",
+      "sha256": "aeaccb962eaddb5427c77a7fb29eb9ac1dc43dd3da354f01b3d3a5dfc4dd05e7"
+    },
+    {
+      "path": "runlog/PortTrace_node_0_port_1.tr",
+      "sha256": "18135f5e45af2e67ec08f0469d2d712c8cc7483dd6ddfa277d5bbdfc54c8580b"
+    },
+    {
+      "path": "runlog/PortTrace_node_0_port_2.tr",
+      "sha256": "7134ffc6888b99b3dbd5d2cda5ab5b336d04c2a6a05b7d6c8e301274e0e23d10"
+    },
+    {
+      "path": "runlog/PortTrace_node_1_port_1.tr",
+      "sha256": "e63ccadffbc571e9a19e92b7cfede4e0c8d1f9c1c9b6ba47db59069b38f3e770"
+    },
+    {
+      "path": "runlog/PortTrace_node_1_port_2.tr",
+      "sha256": "5b4ffdfe86ca8cec6d5bd79f80c4e6bd98f97f49ad5f06ccf6c9062459168dde"
+    },
+    {
+      "path": "runlog/PortTrace_node_3_port_0.tr",
+      "sha256": "87025f6e8f1dbd3cc9c77e568b27b4545d935849546eb4b2babf14aa1bafe0ed"
+    },
+    {
+      "path": "runlog/PortTrace_node_3_port_1.tr",
+      "sha256": "b0d9b7eba05c989490d73cf4047092d7e04818d6d5d3d09b9b58f22ebc5c7927"
+    },
+    {
+      "path": "runlog/PortTrace_node_4_port_0.tr",
+      "sha256": "87025f6e8f1dbd3cc9c77e568b27b4545d935849546eb4b2babf14aa1bafe0ed"
+    },
+    {
+      "path": "runlog/PortTrace_node_4_port_1.tr",
+      "sha256": "b0d9b7eba05c989490d73cf4047092d7e04818d6d5d3d09b9b58f22ebc5c7927"
+    },
+    {
+      "path": "topology.csv",
+      "sha256": "3a6733d6ca53dc7b2e6f4c0303f52715e4fb016c0e7ee72c087d838a812a0d71"
+    },
+    {
+      "path": "traffic.csv",
+      "sha256": "a26652f940be2ed897d9c378bf1c717ede259afb9ae31bc2b5639376375f11d3"
+    },
+    {
+      "path": "transport_channel.csv",
+      "sha256": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+    }
+  ]
+}

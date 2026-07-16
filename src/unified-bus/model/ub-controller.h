@@ -10,7 +10,6 @@
 #include "ns3/callback.h"
 #include "ns3/ub-switch-allocator.h"
 #include "protocol/ub-function.h"
-#include "protocol/ub-datalink.h"
 #include "protocol/ub-ctp.h"
 #include "ns3/ub-tp-connection-manager.h"
 #include "ns3/ub-transport-channel-manager.h"
@@ -24,7 +23,6 @@ class UbFunction;
 class UbTransaction;
 class UbTransportChannel;
 class UbTransportGroup;
-class UbDataLink;
 class UbPort;
 
 /**
@@ -37,32 +35,7 @@ public:
     UbController();
     ~UbController();
 
-    // Transport channel management
-    /**
-     * @brief Create a new transport channel
-     * @param src Source identifier
-     * @param dest Destination identifier
-     * @param sport Source port
-     * @param dport Destination port
-     * @param tpn Transport identifier
-     * @return Pointer to created transport channel
-     */
-    bool CreateTp(uint32_t src, uint32_t dest, uint8_t sport, uint8_t dport, UbPriority priority,
-                  uint32_t srcTpn, uint32_t dstTpn, Ptr<UbCongestionControl> congestionCtrl);
-
-    /**
-     * @brief Get tp by tpn
-     * @param tpn tpn number
-     **/
-    Ptr<UbTransportChannel> GetTp(uint32_t tpn);
-
-    /**
-     * @brief destroy tp instance
-     * @param tpn tpn number
-     **/
-    UbDestroyStatus DestroyTp(uint32_t tpn,
-                              UbDestroyReason reason = UbDestroyReason::EXPLICIT,
-                              UbDestroyCallback callback = {});
+    Ptr<UbTransportChannelManager> GetTransportChannelManager() const;
 
     Ptr<UbTransportGroup> CreateRtpTpGroup(
         const std::vector<Ptr<UbTransportChannel>>& members,
@@ -137,48 +110,11 @@ public:
      */
     void CreateUbTransaction();
 
-    std::unordered_map<uint32_t, Ptr<UbTransportChannel>> m_tpsMapInIngressSource; // 统一存到voq队列中，tps的位置
-
-    bool AddTpMapping(uint32_t key, Ptr<UbTransportChannel> tp);
-    Ptr<UbTransportChannel> GetTpByMap(uint32_t key);       // 通过调度计算得到的inport获取对应的TP
-
-    /**
-     * @brief Get transport channel by TPN
-     * @param tpn Transport number
-     * @return Pointer to transport channel or nullptr if not found
-     */
-    Ptr<UbTransportChannel> GetTpByTpn(uint32_t tpn);
-
-    /**
-     * @brief Create a local TP endpoint from a reserved local TPN.
-     * @param tpn Local transport number.
-     * @return Pointer to the local TP endpoint, or nullptr if the TPN is not reserved locally.
-     */
-    Ptr<UbTransportChannel> CreateReservedTpEndpoint(uint32_t tpn);
-
-    /**
-     * @brief Resolve an inbound TP only when the packet matches its local channel key.
-     * @return The existing or newly materialized local endpoint, or nullptr on mismatch.
-     */
-    Ptr<UbTransportChannel> ResolveInboundTp(uint32_t srcTpn,
-                                             uint32_t dstTpn,
-                                             Ipv4Address sourceIp,
-                                             Ipv4Address destinationIp,
-                                             UbPriority priority);
-
-    std::map<uint32_t, Ptr<UbTransportChannel>> GetTpnMap() const;
-    uint32_t GetTransportCountForTest() const;
-
     void SetTpConnManager(Ptr<TpConnectionManager> conn)
     {
         m_tpnConn = conn;
     }
     Ptr<TpConnectionManager> GetTpConnManager() { return m_tpnConn; }
-
-    /**
-     * @brief 判断TP实例是否存在
-     */
-    bool IsTPExists(uint32_t tpn);
 
     uint32_t GetActiveSenderFlowCount() const { return m_activeSenderFlowCount; }
     bool IsDisposing() const { return m_disposing; }
@@ -205,19 +141,7 @@ private:
   uint64_t m_nextRtpTpGroupId{0};
   std::map<uint64_t, Ptr<UbTransportGroup>> m_rtpTpGroups{};
   std::map<uint32_t, uint64_t> m_rtpTpGroupByTpn{};
-  std::map<uint64_t, Ptr<UbPort>> m_ports{};
-  Ptr<UbDataLink> m_datalink = nullptr;
-
   std::unordered_map<uint32_t, std::vector<Ptr<UbPort>>> m_destinationToPortsMap{};
-  std::unordered_map<uint32_t, std::vector<std::pair<uint8_t, uint8_t>>>
-      m_destinationToPortPairMap{};
-  // src:0 dst:1
-  // ub-config 0->1: p0-p0 p1-p1
-  std::map<std::vector<std::pair<uint8_t, uint8_t>>, uint8_t> m_portPairsToIter{};
-  std::vector<std::vector<std::vector<uint32_t>>>
-      m_dstPriToTp{}; // level_0 dst_node, level_1 priority, level_2 tpns
-  std::vector<std::vector<uint8_t>>
-      m_dstPriToTpRrIndex{}; // level_0 dst_node, level_1 priority, level_2 iteration
 
   Ptr<TpConnectionManager> m_tpnConn; // 当前节点维护的tpnConn
   uint32_t m_activeSenderFlowCount{0};

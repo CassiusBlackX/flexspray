@@ -177,8 +177,8 @@ AddShortestRoute(Ptr<Node> node, uint32_t destNodeId, uint32_t destPortId, uint1
 {
     std::vector<uint16_t> outPorts = {outPort};
     Ptr<UbRoutingProcess> routing = node->GetObject<UbSwitch>()->GetRoutingProcess();
-    routing->AddShortestRoute(NodeIdToIp(destNodeId).Get(), outPorts);
-    routing->AddShortestRoute(NodeIdToIp(destNodeId, destPortId).Get(), outPorts);
+    routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(destNodeId).Get(), outPorts);
+    routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(destNodeId, destPortId).Get(), outPorts);
 }
 
 HybridTpTopology
@@ -246,10 +246,10 @@ InstallStaticTpPair(const HybridTpTopology& topo)
     Ptr<UbController> senderCtrl = topo.device0->GetObject<UbController>();
     Ptr<UbController> receiverCtrl = topo.device1->GetObject<UbController>();
 
-    if (!senderCtrl->IsTPExists(kSenderTpn))
+    if (!senderCtrl->GetTransportChannelManager()->Contains(kSenderTpn))
     {
         Ptr<UbCongestionControl> senderCc = UbCongestionControl::Create(UB_DEVICE);
-        senderCtrl->CreateTp(topo.device0->GetId(),
+        senderCtrl->GetTransportChannelManager()->CreateTp(topo.device0->GetId(),
                              topo.device1->GetId(),
                              topo.device0Port->GetIfIndex(),
                              topo.device1Port->GetIfIndex(),
@@ -259,10 +259,10 @@ InstallStaticTpPair(const HybridTpTopology& topo)
                              senderCc);
     }
 
-    if (!receiverCtrl->IsTPExists(kReceiverTpn))
+    if (!receiverCtrl->GetTransportChannelManager()->Contains(kReceiverTpn))
     {
         Ptr<UbCongestionControl> receiverCc = UbCongestionControl::Create(UB_DEVICE);
-        receiverCtrl->CreateTp(topo.device1->GetId(),
+        receiverCtrl->GetTransportChannelManager()->CreateTp(topo.device1->GetId(),
                                topo.device0->GetId(),
                                topo.device1Port->GetIfIndex(),
                                topo.device0Port->GetIfIndex(),
@@ -296,8 +296,8 @@ PrepareTpFlow(Ptr<Node> sender, uint32_t receiverId, uint32_t flowSize)
 void
 SetupTpMode(uint32_t systemId, const HybridTpTopology& topo, uint32_t flowSize)
 {
-    Ptr<UbTransportChannel> senderTp = topo.device0->GetObject<UbController>()->GetTpByTpn(kSenderTpn);
-    Ptr<UbTransportChannel> receiverTp = topo.device1->GetObject<UbController>()->GetTpByTpn(kReceiverTpn);
+    Ptr<UbTransportChannel> senderTp = topo.device0->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kSenderTpn);
+    Ptr<UbTransportChannel> receiverTp = topo.device1->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kReceiverTpn);
     NS_ABORT_MSG_IF(senderTp == nullptr, "Failed to get sender TP");
     NS_ABORT_MSG_IF(receiverTp == nullptr, "Failed to get receiver TP");
     senderTp->TraceConnectWithoutContext("TpRecvNotify", MakeCallback(&ObserveSenderTpRecv));

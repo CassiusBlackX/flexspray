@@ -28,49 +28,12 @@ class UbRoutingProcess : public Object
     ~UbRoutingProcess() override = default;
     static TypeId GetTypeId();
     void SetNodeId(uint32_t nodeId);
-
-    void AddShortestRoute(uint32_t destIp, const std::vector<uint16_t>& outPorts);
-    void AddOtherRoute(uint32_t destIp, const std::vector<uint16_t>& outPorts);
-    void AddShortestRouteRange(uint32_t startNodeId,
-                               uint32_t endNodeId,
-                               const std::vector<uint16_t>& outPorts);
-    void AddOtherRouteRange(uint32_t startNodeId,
-                            uint32_t endNodeId,
-                            const std::vector<uint16_t>& outPorts);
-    void AddShortestRouteRange(uint32_t startNodeId,
-                               uint32_t endNodeId,
-                               uint32_t dstPortId,
-                               const std::vector<uint16_t>& outPorts);
-    void AddOtherRouteRange(uint32_t startNodeId,
-                            uint32_t endNodeId,
-                            uint32_t dstPortId,
-                            const std::vector<uint16_t>& outPorts);
-
-    void GetShortestOutPorts(uint32_t destIp, std::vector<uint16_t>& outPorts);
-    void GetOtherOutPorts(uint32_t destIp, std::vector<uint16_t>& outPorts);
-    const std::vector<uint16_t> GetAllOutPorts(uint32_t destIp);
-    void GetShortestCandidates(uint32_t& dip,
-                               uint16_t inPortId,
-                               std::vector<uint16_t>& outPorts);
-    void GetNonShortestCandidates(uint32_t& dip,
-                                  uint16_t inPortId,
-                                  std::vector<uint16_t>& outPorts);
+    UbRoutingTable& GetRoutingTable();
+    const UbRoutingTable& GetRoutingTable() const;
 
     int GetOutPort(RoutingKey& key,
                    bool& selectedShortestPath,
                    uint16_t inPort = UINT16_MAX);
-    int SelectOutPort(RoutingKey& key,
-                      const std::vector<uint16_t>& shortestPorts,
-                      const std::vector<uint16_t>& nonShortestPorts,
-                      bool& selectedShortestPath);
-    int SelectAdaptiveOutPort(RoutingKey& key,
-                              const std::vector<uint16_t>& shortestPorts,
-                              const std::vector<uint16_t>& nonShortestPorts,
-                              bool& selectedShortestPath);
-
-    bool RemoveShortestRoute(uint32_t destIp);
-    bool RemoveOtherRoute(uint32_t destIp);
-
     uint64_t GetHotPathLookupCountForTest() const;
     uint64_t GetHotPathTemporaryContainerAllocationCountForTest() const;
 

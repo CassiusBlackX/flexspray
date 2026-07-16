@@ -40,68 +40,16 @@ UbRoutingProcess::SetNodeId(uint32_t nodeId)
     m_nodeId = nodeId;
 }
 
-void
-UbRoutingProcess::AddShortestRoute(uint32_t destIp, const std::vector<uint16_t>& outPorts)
+UbRoutingTable&
+UbRoutingProcess::GetRoutingTable()
 {
-    m_table.AddShortestRoute(destIp, outPorts);
+    return m_table;
 }
 
-void
-UbRoutingProcess::AddOtherRoute(uint32_t destIp, const std::vector<uint16_t>& outPorts)
+const UbRoutingTable&
+UbRoutingProcess::GetRoutingTable() const
 {
-    m_table.AddOtherRoute(destIp, outPorts);
-}
-
-void
-UbRoutingProcess::AddShortestRouteRange(uint32_t startNodeId,
-                                        uint32_t endNodeId,
-                                        const std::vector<uint16_t>& outPorts)
-{
-    m_table.AddShortestRouteRange(startNodeId, endNodeId, outPorts);
-}
-
-void
-UbRoutingProcess::AddOtherRouteRange(uint32_t startNodeId,
-                                     uint32_t endNodeId,
-                                     const std::vector<uint16_t>& outPorts)
-{
-    m_table.AddOtherRouteRange(startNodeId, endNodeId, outPorts);
-}
-
-void
-UbRoutingProcess::AddShortestRouteRange(uint32_t startNodeId,
-                                        uint32_t endNodeId,
-                                        uint32_t dstPortId,
-                                        const std::vector<uint16_t>& outPorts)
-{
-    m_table.AddShortestRouteRange(startNodeId, endNodeId, dstPortId, outPorts);
-}
-
-void
-UbRoutingProcess::AddOtherRouteRange(uint32_t startNodeId,
-                                     uint32_t endNodeId,
-                                     uint32_t dstPortId,
-                                     const std::vector<uint16_t>& outPorts)
-{
-    m_table.AddOtherRouteRange(startNodeId, endNodeId, dstPortId, outPorts);
-}
-
-void
-UbRoutingProcess::GetShortestOutPorts(uint32_t destIp, std::vector<uint16_t>& outPorts)
-{
-    m_table.GetShortestOutPorts(destIp, outPorts);
-}
-
-void
-UbRoutingProcess::GetOtherOutPorts(uint32_t destIp, std::vector<uint16_t>& outPorts)
-{
-    m_table.GetOtherOutPorts(destIp, outPorts);
-}
-
-const std::vector<uint16_t>
-UbRoutingProcess::GetAllOutPorts(uint32_t destIp)
-{
-    return m_table.GetAllOutPorts(destIp);
+    return m_table;
 }
 
 UbRoutingTable::PortSetView
@@ -121,52 +69,6 @@ UbRoutingProcess::LookupCandidatePorts(uint32_t& dip, bool shortest) const
     ports = shortest ? m_table.LookupShortest(maskedDip) : m_table.LookupOther(maskedDip);
     dip = maskedDip;
     return ports;
-}
-
-void
-UbRoutingProcess::GetShortestCandidates(uint32_t& dip,
-                                        uint16_t inPortId,
-                                        std::vector<uint16_t>& outPorts)
-{
-    const auto ports = LookupCandidatePorts(dip, true);
-    outPorts.assign(ports.begin(), ports.end());
-    if (inPortId != UINT16_MAX)
-    {
-        outPorts.erase(std::remove(outPorts.begin(), outPorts.end(), inPortId), outPorts.end());
-    }
-}
-
-void
-UbRoutingProcess::GetNonShortestCandidates(uint32_t& dip,
-                                           uint16_t inPortId,
-                                           std::vector<uint16_t>& outPorts)
-{
-    const auto ports = LookupCandidatePorts(dip, false);
-    outPorts.assign(ports.begin(), ports.end());
-    if (inPortId != UINT16_MAX)
-    {
-        outPorts.erase(std::remove(outPorts.begin(), outPorts.end(), inPortId), outPorts.end());
-    }
-}
-
-int
-UbRoutingProcess::SelectOutPort(RoutingKey& key,
-                                const std::vector<uint16_t>& shortestPorts,
-                                const std::vector<uint16_t>& nonShortestPorts,
-                                bool& selectedShortestPath)
-{
-    const UbRoutingCandidateView candidates{shortestPorts, nonShortestPorts, UINT16_MAX};
-    return UbRoutingPolicy::SelectHash(key, candidates, m_nodeId, selectedShortestPath);
-}
-
-int
-UbRoutingProcess::SelectAdaptiveOutPort(RoutingKey& key,
-                                        const std::vector<uint16_t>& shortestPorts,
-                                        const std::vector<uint16_t>& nonShortestPorts,
-                                        bool& selectedShortestPath)
-{
-    const UbRoutingCandidateView candidates{shortestPorts, nonShortestPorts, UINT16_MAX};
-    return UbRoutingPolicy::SelectAdaptive(key, candidates, m_nodeId, selectedShortestPath);
 }
 
 int
@@ -217,18 +119,6 @@ UbRoutingProcess::GetOutPort(RoutingKey& key,
 
     NS_ASSERT_MSG(outPort != -1, "No available output port found");
     return outPort;
-}
-
-bool
-UbRoutingProcess::RemoveShortestRoute(uint32_t destIp)
-{
-    return m_table.RemoveShortestRoute(destIp);
-}
-
-bool
-UbRoutingProcess::RemoveOtherRoute(uint32_t destIp)
-{
-    return m_table.RemoveOtherRoute(destIp);
 }
 
 uint64_t
