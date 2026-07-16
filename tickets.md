@@ -496,13 +496,30 @@ Closeout:
 
 **Blocked by:** T18 Publish lifecycle trace schema and parser semantics.
 
-- [ ] Default chunks are 64 KiB and are created lazily; no owner/sink holds more than one unfinished chunk.
-- [ ] Each execution owner enforces the 1 MiB/512 KiB high/low-water budget without a polling timer or unbounded completed-chunk queue.
-- [ ] Effective open-file count respects the configured 1024 maximum, platform soft limit minus reserved descriptors, and conservative fallback.
-- [ ] File reopen uses append mode, and open/write/flush/close errors cannot silently lose enabled evidence.
-- [ ] Existing final filenames and parser inputs remain unchanged.
-- [ ] Benchmarks report 16/64/256 KiB results, wall time, syscall count, RSS, trace bytes, descriptor pressure, visibility behavior, and MTP scaling.
-- [ ] At the trace/writer milestone, the verified frozen baseline byte-matches every applicable existing network artifact while writer-specific outputs retain their filename and parser contracts.
+- [x] Default chunks are 64 KiB and are created lazily; no owner/sink holds more than one unfinished chunk.
+- [x] Each execution owner enforces the 1 MiB/512 KiB high/low-water budget without a polling timer or unbounded completed-chunk queue.
+- [x] Effective open-file count respects the configured 1024 maximum, platform soft limit minus reserved descriptors, and conservative fallback.
+- [x] File reopen uses append mode, and open/write/flush/close errors cannot silently lose enabled evidence.
+- [x] Existing final filenames and parser inputs remain unchanged.
+- [x] Benchmarks report 16/64/256 KiB results, wall time, syscall count, RSS, trace bytes, descriptor pressure, visibility behavior, and MTP scaling.
+- [x] At the trace/writer milestone, the verified frozen baseline byte-matches every applicable existing network artifact while writer-specific outputs retain their filename and parser contracts.
+
+- The pre-refactor `UbUtils` trace registry and buffered append path now expose stable sink handles,
+  lazy owner-local chunks, synchronous high/low-water pressure flushing, and pinned-write-aware FD
+  LRU. Parent creation and append-mode open remain on the old active path; all I/O failures are fatal.
+- The configured FD maximum is 1024, bounded by `RLIMIT_NOFILE - 128` with a 256 fallback. Focused
+  tests cover lazy allocation, owner capacity, teardown tails, concurrency, two-FD eviction/reopen,
+  and isolated parent/open/write/flush/close failures.
+- On the same local CTP case and binary, 16/64/256 KiB chunks produced byte-identical 13,942,960-byte
+  runlog trees. Total wall times were 393.081/358.437/435.237 ms; writes were 885/252/205; only the
+  256 KiB setting caused pressure flushes (23). The measured default remains 64 KiB.
+- The exact local-MTP case completed with two threads, 10 writes/flushes, no pressure flush or LRU
+  close, 10 peak descriptors, 1,050 peak buffered bytes, and 18,006,016-byte max RSS. Focused writer,
+  lifecycle trace, lifecycle ledger, OpenUSim helper, and frozen harness suites passed serially.
+- Frozen comparison passed with two runtime-bound narrow exceptions: the local CTP tree contains only
+  T14's user-approved strict-RR routing differences, proven identical to a pre-T19 control tree; the
+  local-MTP tree contains only the T05/T17-reviewed same-timestamp task-trace order. Every managed
+  artifact and hash is accounted for, and existing filenames/parser inputs are unchanged.
 
 ## Task 20: Contract compatibility layers after all owners migrate
 
