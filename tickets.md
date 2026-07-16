@@ -591,15 +591,37 @@ only if the existing tracer bullet reproduces the failure.
 
 **Blocked by:** T21 Run the full semantic and performance acceptance matrix.
 
-- [ ] Cross-owner initialization control is either proven valid at the supported seam or routes an
+- [x] Cross-owner initialization control is either proven valid at the supported seam or routes an
       explicit caller-known source without relying on ambient simulator context.
-- [ ] Direct-TP and TPG rebind of a draining Jetty return a typed rejection before group, reference,
+- [x] Direct-TP and TPG rebind of a draining Jetty return a typed rejection before group, reference,
       cursor, or lease mutation.
-- [ ] Lifecycle parser rejects missing/header-only trace evidence, sequence gaps, filename/content
+- [x] Lifecycle parser rejects missing/header-only trace evidence, sequence gaps, filename/content
       owner mismatch, and metadata filename/content rank mismatch.
-- [ ] DETAIL evidence records `LEASE_RELEASE` after ledger mutation but before callback-driven
+- [x] DETAIL evidence records `LEASE_RELEASE` after ledger mutation but before callback-driven
       resource retirement.
-- [ ] Direct CTP disposal detaches queue callbacks, unregisters live allocator sources, clears
+- [x] Direct CTP disposal detaches queue callbacks, unregisters live allocator sources, clears
       service queue ownership, and preserves explicit unresolved packet residue.
-- [ ] Targeted build and ticket-defined focused suites pass serially with `-j2`; no ordinary T22
+- [x] Targeted build and ticket-defined focused suites pass serially with `-j2`; no ordinary T22
       frozen-byte comparison is run.
+
+Closeout:
+
+- Pre-run local-MTP control reproduced the ambient-context abort while carrying a valid explicit
+  source. `RouteControl` now preserves that source, every TP control builder supplies its known local
+  node, and both scheduled and pre-run tracer modes apply one terminal with zero pending/balance.
+- Draining direct-TP and TPG rebind now reuse the existing Jetty admission query before the old
+  binding branches. Rejection preserves the exact reference and does not advance group/cursor/lease
+  state; successful binding order and selection algorithms are unchanged.
+- The production parser now rejects missing/header-only evidence, sequence gaps, record/file owner
+  mismatch and metadata filename/content rank mismatch while retaining the two-argument direct parse
+  interface and C++-owned enum registry.
+- Lease release evidence now follows the ledger mutation and precedes its reentrant callback. Direct
+  CTP disposal reuses normal queue retirement order, detaches callbacks, unregisters a live allocator,
+  clears service ownership, and leaves retained packet work explicitly unresolved.
+- Target build, 8 parser tests, 3 focused trace tests, lifecycle, CTP lifecycle and parallel lifecycle
+  suites passed serially. Both local-MTP tracer modes passed. T22 is not a frozen milestone, no
+  unexplained network artifact changed, and no byte comparison was run.
+- Independent Standards/Spec review against `main@ccf41b58` and a final root diff review found no
+  parallel builder/parser registry/state machine, ACK/RTO, queue scheduler or congestion algorithm;
+  no further actionable findings remain. The pre-existing umbrella-suite macOS child-abort residual
+  from T21 remains separate and was not reported as passing.
