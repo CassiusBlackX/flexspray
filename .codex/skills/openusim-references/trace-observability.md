@@ -35,6 +35,15 @@ Do not hardcode switch names in experiment specs or agent logic.
 - Lifecycle `EVENT` and `DETAIL` write fixed numeric records plus `LifecycleTraceSchema.json`.
   `DETAIL` sampling uses a deterministic identity stride/offset and retains complete selected
   resource generations or packet attempts; it never randomly drops individual events.
+- Trace records use lazy owner-local chunks. Defaults are 64 KiB per owner/sink, a 1 MiB owner
+  high-water mark, and a 512 KiB pressure-flush target. Pressure is handled synchronously by the
+  current append; there is no polling timer or asynchronous writer thread.
+- `UB_TRACE_MAX_OPEN_FILES` defaults to 1024, but the process uses the smaller of that value and the
+  platform soft descriptor limit minus 128 reserved descriptors. A platform-query failure falls
+  back to 256. Flushed LRU files are reopened in append mode without changing final filenames.
+- `UB_TRACE_CHUNK_BYTES`, `UB_TRACE_OWNER_HIGH_WATER_BYTES`,
+  `UB_TRACE_OWNER_LOW_WATER_BYTES`, and `UB_TRACE_MAX_OPEN_FILES` are host-I/O controls. Changing
+  them must not change simulation time, protocol state, trace record bytes, or parser inputs.
 - These category gates default to `false`, so experiments must opt in explicitly when these files are needed.
 
 ## Non-Implications

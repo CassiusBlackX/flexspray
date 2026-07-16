@@ -5,6 +5,7 @@
 
 #include <array>
 #include <filesystem>
+#include <map>
 #include <mutex>
 #include <set>
 #include <sstream>
@@ -145,9 +146,23 @@ uint64_t g_detailSampleOffset = 0;
 uint32_t g_rank = 0;
 bool g_rankScoped = false;
 std::string g_outputRoot;
-UbLifecycleTrace::Append g_append;
+UbLifecycleTrace::SinkResolver g_resolveSink;
+UbLifecycleTrace::ResolvedSink g_metadataSink;
+std::map<std::string, UbLifecycleTrace::ResolvedSink> g_recordSinks;
 bool g_metadataEmitted = false;
 std::set<std::string> g_initializedRecordFiles;
+
+std::string
+GetRecordFilename(uint32_t ownerNode)
+{
+    const std::filesystem::path runlog = std::filesystem::path(g_outputRoot) / "runlog";
+    std::string leaf = "LifecycleTrace_node_" + std::to_string(ownerNode);
+    if (g_rankScoped)
+    {
+        leaf += "_rank_" + std::to_string(g_rank);
+    }
+    return (runlog / (leaf + ".tr")).string();
+}
 
 template <typename Enum, std::size_t Size>
 void
@@ -237,13 +252,13 @@ UbLifecycleTrace::Configure(const std::string& outputRoot,
                             uint64_t detailSampleOffset,
                             uint32_t rank,
                             bool rankScoped,
-                            Append append)
+                            SinkResolver resolveSink)
 {
     NS_ABORT_MSG_IF(detailSampleStride == 0, "Lifecycle detail sample stride must be non-zero");
     NS_ABORT_MSG_IF(detailSampleOffset >= detailSampleStride,
                     "Lifecycle detail sample offset must be smaller than the stride");
-    NS_ABORT_MSG_IF(level != UbLifecycleTraceLevel::OFF && !append,
-                    "Enabled lifecycle trace requires an append sink");
+    NS_ABORT_MSG_IF(level != UbLifecycleTraceLevel::OFF && !resolveSink,
+                    "Enabled lifecycle trace requires a sink resolver");
 
     std::lock_guard<std::mutex> guard(g_mutex);
     g_outputRoot = outputRoot;
@@ -252,7 +267,9 @@ UbLifecycleTrace::Configure(const std::string& outputRoot,
     g_detailSampleOffset = detailSampleOffset;
     g_rank = rank;
     g_rankScoped = rankScoped;
-    g_append = std::move(append);
+    g_resolveSink = std::move(resolveSink);
+    g_metadataSink = {};
+    g_recordSinks.clear();
     g_metadataEmitted = false;
     g_initializedRecordFiles.clear();
 }
@@ -267,7 +284,9 @@ UbLifecycleTrace::Reset()
     g_rank = 0;
     g_rankScoped = false;
     g_outputRoot.clear();
-    g_append = {};
+    g_resolveSink = {};
+    g_metadataSink = {};
+    g_recordSinks.clear();
     g_metadataEmitted = false;
     g_initializedRecordFiles.clear();
 }
@@ -306,6 +325,21 @@ UbLifecycleTrace::SelectPacket(const UbPacketAttemptIdentity& identity)
                g_detailSampleOffset;
 }
 
+void
+UbLifecycleTrace::PrepareOwner(uint32_t ownerNode)
+{
+    std::lock_guard<std::mutex> guard(g_mutex);
+    if (g_level == UbLifecycleTraceLevel::OFF)
+    {
+        return;
+    }
+    const std::string filename = GetRecordFilename(ownerNode);
+    if (g_recordSinks.find(filename) == g_recordSinks.end())
+    {
+        g_recordSinks.emplace(filename, g_resolveSink(filename));
+    }
+}
+
 std::string
 UbLifecycleTrace::BuildMetadataJson(uint32_t rank)
 {
@@ -336,7 +370,9 @@ UbLifecycleTrace::EmitMetadata()
         (runlog / (g_rankScoped ? "LifecycleTraceSchema_rank_" + std::to_string(g_rank) + ".json"
                                : "LifecycleTraceSchema.json"))
             .string();
-    g_append(filename, BuildMetadataJson(g_rank));
+    g_metadataSink = g_resolveSink(filename);
+    NS_ABORT_MSG_IF(!g_metadataSink, "Lifecycle metadata sink resolver returned an empty sink");
+    g_metadataSink(BuildMetadataJson(g_rank));
     g_metadataEmitted = true;
 }
 
@@ -366,24 +402,24 @@ void
 UbLifecycleTrace::Emit(const UbLifecycleTraceRecord& record)
 {
     std::lock_guard<std::mutex> guard(g_mutex);
-    if (g_level == UbLifecycleTraceLevel::OFF || !g_append)
+    if (g_level == UbLifecycleTraceLevel::OFF || !g_resolveSink)
     {
         return;
     }
 
-    const std::filesystem::path runlog = std::filesystem::path(g_outputRoot) / "runlog";
-    std::string leaf = "LifecycleTrace_node_" + std::to_string(record.ownerNode);
-    if (g_rankScoped)
+    const std::string filename = GetRecordFilename(record.ownerNode);
+    auto sink = g_recordSinks.find(filename);
+    if (sink == g_recordSinks.end())
     {
-        leaf += "_rank_" + std::to_string(g_rank);
+        sink = g_recordSinks.emplace(filename, g_resolveSink(filename)).first;
     }
-    const std::string filename = (runlog / (leaf + ".tr")).string();
+    NS_ABORT_MSG_IF(!sink->second, "Lifecycle record sink resolver returned an empty sink");
     if (g_initializedRecordFiles.insert(filename).second)
     {
-        g_append(filename, "# schema=ub.lifecycle.v1,timeUnit=ns");
-        g_append(filename, GetRecordHeader());
+        sink->second("# schema=ub.lifecycle.v1,timeUnit=ns");
+        sink->second(GetRecordHeader());
     }
-    g_append(filename, EncodeRecord(record));
+    sink->second(EncodeRecord(record));
 }
 
 } // namespace ns3

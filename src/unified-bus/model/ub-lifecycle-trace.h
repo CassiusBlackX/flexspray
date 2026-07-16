@@ -138,7 +138,8 @@ struct UbLifecycleTraceRecord
 class UbLifecycleTrace
 {
   public:
-    using Append = std::function<void(const std::string&, const std::string&)>;
+    using ResolvedSink = std::function<void(const std::string&)>;
+    using SinkResolver = std::function<ResolvedSink(const std::string&)>;
 
     static constexpr int64_t NOT_APPLICABLE = INT64_MIN;
 
@@ -150,7 +151,7 @@ class UbLifecycleTrace
                           uint64_t detailSampleOffset,
                           uint32_t rank,
                           bool rankScoped,
-                          Append append);
+                          SinkResolver resolveSink);
     static void Reset();
 
     static UbLifecycleTraceLevel GetLevel();
@@ -159,6 +160,7 @@ class UbLifecycleTrace
     static bool SelectResource(const UbLifecycleResourceIdentity& identity);
     static bool SelectPacket(const UbPacketAttemptIdentity& identity);
 
+    static void PrepareOwner(uint32_t ownerNode);
     static void EmitMetadata();
     static void Emit(const UbLifecycleTraceRecord& record);
     static std::string BuildMetadataJson(uint32_t rank);
