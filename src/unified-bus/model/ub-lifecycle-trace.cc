@@ -202,6 +202,24 @@ NormalizeLevel(std::string_view value)
     return normalized;
 }
 
+UbLifecycleTrace::ResolvedSink&
+ResolveRecordSinkLocked(uint32_t ownerNode)
+{
+    const std::string filename = GetRecordFilename(ownerNode);
+    auto sink = g_recordSinks.find(filename);
+    if (sink == g_recordSinks.end())
+    {
+        sink = g_recordSinks.emplace(filename, g_resolveSink(filename)).first;
+    }
+    NS_ABORT_MSG_IF(!sink->second, "Lifecycle record sink resolver returned an empty sink");
+    if (g_initializedRecordFiles.insert(filename).second)
+    {
+        sink->second("# schema=ub.lifecycle.v1,timeUnit=ns");
+        sink->second(UbLifecycleTrace::GetRecordHeader());
+    }
+    return sink->second;
+}
+
 } // namespace
 
 UbLifecycleTraceLevel
@@ -230,7 +248,11 @@ UbLifecycleTrace::ResolveLevel(std::string_view preset, std::string_view customL
     }
 
     const std::string normalizedPreset = NormalizeLevel(preset);
-    if (normalizedPreset == "MINIMAL" || normalizedPreset == "BALANCED")
+    if (normalizedPreset == "MINIMAL")
+    {
+        return UbLifecycleTraceLevel::OFF;
+    }
+    if (normalizedPreset == "BALANCED")
     {
         return UbLifecycleTraceLevel::SUMMARY;
     }
@@ -407,19 +429,30 @@ UbLifecycleTrace::Emit(const UbLifecycleTraceRecord& record)
         return;
     }
 
-    const std::string filename = GetRecordFilename(record.ownerNode);
-    auto sink = g_recordSinks.find(filename);
-    if (sink == g_recordSinks.end())
+    ResolveRecordSinkLocked(record.ownerNode)(EncodeRecord(record));
+}
+
+void
+UbLifecycleTrace::EmitBatch(const std::vector<UbLifecycleTraceRecord>& records)
+{
+    std::lock_guard<std::mutex> guard(g_mutex);
+    if (g_level == UbLifecycleTraceLevel::OFF || !g_resolveSink || records.empty())
     {
-        sink = g_recordSinks.emplace(filename, g_resolveSink(filename)).first;
+        return;
     }
-    NS_ABORT_MSG_IF(!sink->second, "Lifecycle record sink resolver returned an empty sink");
-    if (g_initializedRecordFiles.insert(filename).second)
+
+    const uint32_t ownerNode = records.front().ownerNode;
+    for (const auto& record : records)
     {
-        sink->second("# schema=ub.lifecycle.v1,timeUnit=ns");
-        sink->second(GetRecordHeader());
+        NS_ABORT_MSG_IF(record.ownerNode != ownerNode,
+                        "Lifecycle trace batch spans multiple owner nodes");
     }
-    sink->second(EncodeRecord(record));
+
+    auto& sink = ResolveRecordSinkLocked(ownerNode);
+    for (const auto& record : records)
+    {
+        sink(EncodeRecord(record));
+    }
 }
 
 } // namespace ns3

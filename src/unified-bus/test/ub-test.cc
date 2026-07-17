@@ -7351,10 +7351,9 @@ class UbLifecycleTraceLevelAndSummaryTest : public TestCase
 
     void DoRun() override
     {
-        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(
-                                  UbLifecycleTrace::ResolveLevel("minimal", "")),
-                              static_cast<uint32_t>(UbLifecycleTraceLevel::SUMMARY),
-                              "Minimal preset should read the existing summary ledger");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(UbLifecycleTrace::ResolveLevel("minimal", "")),
+                              static_cast<uint32_t>(UbLifecycleTraceLevel::OFF),
+                              "Minimal preset should omit lifecycle output by default");
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(
                                   UbLifecycleTrace::ResolveLevel("balanced", "")),
                               static_cast<uint32_t>(UbLifecycleTraceLevel::SUMMARY),
@@ -7367,6 +7366,22 @@ class UbLifecycleTraceLevelAndSummaryTest : public TestCase
                                   UbLifecycleTrace::ResolveLevel("custom", "DETAIL")),
                               static_cast<uint32_t>(UbLifecycleTraceLevel::DETAIL),
                               "Custom preset should allow explicit lifecycle detail");
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(UbLifecycleTrace::ResolveLevel("detailed", "OFF")),
+            static_cast<uint32_t>(UbLifecycleTraceLevel::OFF),
+            "Explicit OFF should override a detailed preset");
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(UbLifecycleTrace::ResolveLevel("minimal", "SUMMARY")),
+            static_cast<uint32_t>(UbLifecycleTraceLevel::SUMMARY),
+            "Explicit SUMMARY should override a minimal preset");
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(UbLifecycleTrace::ResolveLevel("minimal", "EVENT")),
+            static_cast<uint32_t>(UbLifecycleTraceLevel::EVENT),
+            "Explicit EVENT should override a minimal preset");
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(UbLifecycleTrace::ResolveLevel("minimal", "DETAIL")),
+            static_cast<uint32_t>(UbLifecycleTraceLevel::DETAIL),
+            "Explicit DETAIL should override a minimal preset");
 
         std::vector<std::string> output;
         std::map<std::string, uint32_t> resolutions;
@@ -7542,6 +7557,85 @@ class UbLifecycleTraceIdentityChainTest : public TestCase
 
         Simulator::Destroy();
         UbLifecycleTrace::Reset();
+    }
+};
+
+class UbLifecycleTraceBatchEncodingTest : public TestCase
+{
+  public:
+    UbLifecycleTraceBatchEncodingTest()
+        : TestCase("UnifiedBus - lifecycle batch output matches sequential bytes")
+    {
+    }
+
+    void DoRun() override
+    {
+        const std::vector<UbLifecycleTraceRecord> records = {
+            {10,
+             7,
+             41,
+             UbLifecycleTraceRecordType::SUMMARY,
+             UbLifecycleResourceKind::RTP_ENDPOINT,
+             12,
+             3,
+             UbLifecycleTraceSubjectKind::RESOURCE,
+             12,
+             UbLifecycleTraceEvent::SUMMARY_REGISTERED_PACKETS,
+             UbLifecycleTrace::NOT_APPLICABLE,
+             UbLifecycleTrace::NOT_APPLICABLE,
+             9,
+             UbLifecycleTraceOutcome::NONE,
+             UbLifecycleTraceReason::NONE,
+             UbLifecycleTraceSite::COORDINATOR_SUMMARY},
+            {10,
+             7,
+             42,
+             UbLifecycleTraceRecordType::SUMMARY,
+             UbLifecycleResourceKind::RTP_ENDPOINT,
+             12,
+             3,
+             UbLifecycleTraceSubjectKind::RESOURCE,
+             12,
+             UbLifecycleTraceEvent::SUMMARY_ENDPOINT_CONSUMED,
+             UbLifecycleTrace::NOT_APPLICABLE,
+             UbLifecycleTrace::NOT_APPLICABLE,
+             9,
+             UbLifecycleTraceOutcome::NONE,
+             UbLifecycleTraceReason::NONE,
+             UbLifecycleTraceSite::COORDINATOR_SUMMARY},
+        };
+
+        const auto configure = [](std::map<std::string, std::vector<std::string>>& output) {
+            UbLifecycleTrace::Configure("/tmp",
+                                        UbLifecycleTraceLevel::SUMMARY,
+                                        1,
+                                        0,
+                                        0,
+                                        false,
+                                        [&output](const std::string& filename) {
+                                            return [&output, filename](const std::string& line) {
+                                                output[filename].push_back(line);
+                                            };
+                                        });
+        };
+
+        std::map<std::string, std::vector<std::string>> sequential;
+        configure(sequential);
+        for (const auto& record : records)
+        {
+            UbLifecycleTrace::Emit(record);
+        }
+        UbLifecycleTrace::Reset();
+
+        std::map<std::string, std::vector<std::string>> batched;
+        configure(batched);
+        UbLifecycleTrace::EmitBatch(records);
+        UbLifecycleTrace::Reset();
+
+        const bool outputMatches = batched == sequential;
+        NS_TEST_ASSERT_MSG_EQ(outputMatches,
+                              true,
+                              "Batch emission must preserve every resolved filename and line byte");
     }
 };
 
@@ -25805,6 +25899,7 @@ class UbLifecycleTraceFocusedTestSuite : public TestSuite
     {
         AddTestCase(new UbLifecycleTraceLevelAndSummaryTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbLifecycleTraceIdentityChainTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbLifecycleTraceBatchEncodingTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbLifecycleLeaseReleasePrecedesReentrantRetireTraceTest(),
                     TestCase::Duration::QUICK);
     }

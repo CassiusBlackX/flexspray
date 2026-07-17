@@ -73,7 +73,7 @@ class OpenUSimRunExperimentHelpersTest(unittest.TestCase):
         self.assertIn("UB_TRACE_ENABLE", result["accepted_keys"])
 
     def test_observability_presets_publish_lifecycle_levels(self):
-        self.assertEqual(observability_preset("minimal")["UB_LIFECYCLE_TRACE_LEVEL"], "SUMMARY")
+        self.assertEqual(observability_preset("minimal")["UB_LIFECYCLE_TRACE_LEVEL"], "OFF")
         self.assertEqual(observability_preset("balanced")["UB_LIFECYCLE_TRACE_LEVEL"], "SUMMARY")
         self.assertEqual(observability_preset("detailed")["UB_LIFECYCLE_TRACE_LEVEL"], "EVENT")
 
