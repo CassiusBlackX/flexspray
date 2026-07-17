@@ -166,7 +166,7 @@ def load_or_build_parameter_catalog() -> tuple[dict, Path]:
 _OBSERVABILITY_PRESETS = {
     "minimal": {
         "UB_TRACE_PRESET": "minimal",
-        "UB_LIFECYCLE_TRACE_LEVEL": "SUMMARY",
+        "UB_LIFECYCLE_TRACE_LEVEL": "OFF",
         "UB_TRACE_ENABLE": "true",
         "UB_TASK_TRACE_ENABLE": "true",
         "UB_PACKET_TRACE_ENABLE": "false",

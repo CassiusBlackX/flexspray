@@ -10,7 +10,7 @@
 
 | Tier | Intent | Post-processing output |
 |------|--------|----------------------|
-| minimal | 只要任务级统计，最快跑完 | `task_statistics.csv`（仅任务起止，无首包/末ACK）+ lifecycle `SUMMARY` |
+| minimal | 只要任务级统计，最快跑完 | `task_statistics.csv`（仅任务起止，无首包/末ACK）；lifecycle `OFF` |
 | balanced | 任务 + 包 + 端口，够用的排查能力 | `task_statistics.csv`（含首包/末ACK）+ `throughput.csv` + lifecycle `SUMMARY` |
 | detailed | 全开，含逐包逐跳路径证据 | 同 balanced + `AllPacketTrace_*.tr` + lifecycle `EVENT` |
 | custom | 用户自选开关组合 | 可显式选择 lifecycle `DETAIL`，其余取决于所选开关 |
@@ -22,7 +22,8 @@ Do not hardcode switch names in experiment specs or agent logic.
 
 - `trace/debug` mode changes observability and logging overhead.
 - `detailed` trace can increase wall-clock runtime, trace volume, and post-processing cost.
-- `minimal` trace reduces observability compared with `balanced` or `detailed`.
+- `minimal` trace reduces observability compared with `balanced` or `detailed` and defaults
+  lifecycle output to `OFF`; lifecycle correctness accounting remains enabled.
 - `trace/debug` mode is an attribute overlay on `network_attribute.txt`, not a separate simulation result.
 - `UB_QUEUE_TRACE_ENABLE` gates queue trace files such as `QueueTrace_*` from queue events and periodic sampling.
 - `UB_PACKET_TRACE_ENABLE` gates packet timing files such as `PacketTrace_node_*.tr`,

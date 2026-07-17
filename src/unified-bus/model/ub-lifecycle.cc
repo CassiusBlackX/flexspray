@@ -731,6 +731,9 @@ UbLifecycleCoordinator::EmitLifecycleSummary()
         return;
     }
 
+    constexpr std::size_t kSummaryRecordsPerResource = 22;
+    std::vector<UbLifecycleTraceRecord> records;
+    records.reserve(m_resources.size() * kSummaryRecordsPerResource);
     for (const auto& [key, state] : m_resources)
     {
         const UbLifecycleResourceIdentity identity{m_ownerNodeId,
@@ -738,18 +741,18 @@ UbLifecycleCoordinator::EmitLifecycleSummary()
                                                    key.localId,
                                                    state.generation};
         const auto emit = [&](UbLifecycleTraceEvent event, uint64_t value) {
-            UbLifecycleTrace::Emit(MakeTraceRecord(identity,
-                                                    ++m_traceSequence,
-                                                    UbLifecycleTraceRecordType::SUMMARY,
-                                                    UbLifecycleTraceSubjectKind::RESOURCE,
-                                                    key.localId,
-                                                    event,
-                                                    UbLifecycleTrace::NOT_APPLICABLE,
-                                                    UbLifecycleTrace::NOT_APPLICABLE,
-                                                    static_cast<int64_t>(value),
-                                                    UbLifecycleTraceOutcome::NONE,
-                                                    UbLifecycleTraceReason::NONE,
-                                                    UbLifecycleTraceSite::COORDINATOR_SUMMARY));
+            records.push_back(MakeTraceRecord(identity,
+                                              ++m_traceSequence,
+                                              UbLifecycleTraceRecordType::SUMMARY,
+                                              UbLifecycleTraceSubjectKind::RESOURCE,
+                                              key.localId,
+                                              event,
+                                              UbLifecycleTrace::NOT_APPLICABLE,
+                                              UbLifecycleTrace::NOT_APPLICABLE,
+                                              static_cast<int64_t>(value),
+                                              UbLifecycleTraceOutcome::NONE,
+                                              UbLifecycleTraceReason::NONE,
+                                              UbLifecycleTraceSite::COORDINATOR_SUMMARY));
         };
         emit(UbLifecycleTraceEvent::SUMMARY_IN_FLIGHT_PACKETS, state.snapshot.inFlightPackets);
         emit(UbLifecycleTraceEvent::SUMMARY_REGISTERED_PACKETS, state.snapshot.registeredPackets);
@@ -788,6 +791,7 @@ UbLifecycleCoordinator::EmitLifecycleSummary()
         emit(UbLifecycleTraceEvent::SUMMARY_FLUSHED_TERMINALS, state.snapshot.flushedTerminals);
         emit(UbLifecycleTraceEvent::SUMMARY_RETIRED, state.snapshot.retired ? 1 : 0);
     }
+    UbLifecycleTrace::EmitBatch(records);
 }
 
 UbLifecycleResourceSnapshot

@@ -8,6 +8,7 @@
 #include <functional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace ns3
 {
@@ -163,6 +164,7 @@ class UbLifecycleTrace
     static void PrepareOwner(uint32_t ownerNode);
     static void EmitMetadata();
     static void Emit(const UbLifecycleTraceRecord& record);
+    static void EmitBatch(const std::vector<UbLifecycleTraceRecord>& records);
     static std::string BuildMetadataJson(uint32_t rank);
     static std::string EncodeRecord(const UbLifecycleTraceRecord& record);
     static const char* GetRecordHeader();
