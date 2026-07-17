@@ -7330,6 +7330,34 @@ class UbLifecyclePacketAccountingTest : public TestCase
                               snapshot.lastTerminalSequence,
                               "Terminal application must be causally after packet birth");
 
+        Ptr<Packet> firstOutOfOrderPacket = Create<Packet>(64);
+        Ptr<Packet> middleOutOfOrderPacket = Create<Packet>(64);
+        Ptr<Packet> lastOutOfOrderPacket = Create<Packet>(64);
+        coordinator->RegisterPacketAttempt(firstOwner, firstOutOfOrderPacket);
+        coordinator->RegisterPacketAttempt(firstOwner, middleOutOfOrderPacket);
+        coordinator->RegisterPacketAttempt(firstOwner, lastOutOfOrderPacket);
+        UbLifecycleCoordinator::TerminatePacket(middleOutOfOrderPacket,
+                                                UbPacketTerminal::ENDPOINT_CONSUMED);
+        UbLifecycleCoordinator::ObservePacketTransfer(firstOutOfOrderPacket,
+                                                      UbPacketTransfer::LOCAL_LINK);
+        UbLifecycleCoordinator::ObservePacketTransfer(lastOutOfOrderPacket,
+                                                      UbPacketTransfer::LOCAL_LINK);
+        snapshot = coordinator->GetSnapshot(firstOwner);
+        NS_TEST_ASSERT_MSG_EQ(snapshot.inFlightPackets,
+                              2u,
+                              "Out-of-order terminal should preserve both other exact attempts");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.transferObservations,
+                              2u,
+                              "Remaining exact attempts should still accept transfer observations");
+        UbLifecycleCoordinator::TerminatePacket(lastOutOfOrderPacket,
+                                                UbPacketTerminal::ENDPOINT_CONSUMED);
+        UbLifecycleCoordinator::TerminatePacket(firstOutOfOrderPacket,
+                                                UbPacketTerminal::ENDPOINT_CONSUMED);
+        snapshot = coordinator->GetSnapshot(firstOwner);
+        NS_TEST_ASSERT_MSG_EQ(snapshot.inFlightPackets,
+                              0u,
+                              "Out-of-order exact membership should fully drain");
+
         coordinator->RetirePacketOwner(firstOwner);
         const UbLifecycleResourceIdentity secondOwner =
             coordinator->OpenPacketOwner(UbLifecycleResourceKind::RTP_ENDPOINT, 101);
