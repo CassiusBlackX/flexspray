@@ -1,6 +1,6 @@
 # T28 Task Brief: Final Lifecycle Performance Acceptance
 
-Status: implementation complete; closeout pending
+Status: complete with measured performance blocker
 
 ## Scope
 
@@ -213,3 +213,6 @@ boundary, or a production change would be required.
 - 2026-07-17: independent runner review tightened TaskTrace approval to require equal full-line
   multisets and identical per-position timestamp sequences. All 80 exercised controlled comparisons
   pass the stronger check. Final semantic status PASS; final performance status FAIL.
+- 2026-07-17: implementation commit `bf19622` records the runner, frozen manifest, compact summary,
+  Chinese report, and task ledger. Task 28 closes with the p01 main performance failure visible;
+  ticket completion does not mean the branch passed its 10 percent performance acceptance gate.

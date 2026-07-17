@@ -837,14 +837,31 @@ exception, and inconclusive results visible.
 packet lifecycle bookkeeping; T25 Compact retired lifecycle resource storage; T26 Reuse validated
 RTP transport resolution; T27 Avoid redundant selective-retransmission window scans.
 
-- [ ] Frozen binaries, revisions, compatible build configurations, compiler/runtime facts, hashes,
+- [x] Frozen binaries, revisions, compatible build configurations, compiler/runtime facts, hashes,
       inputs, and commands are recorded and reused serially.
-- [ ] p01 and p02 each use one warm-up and five counterbalanced measured pairs and report wall, user
+- [x] p01 and p02 each use one warm-up and five counterbalanced measured pairs and report wall, user
       CPU, system CPU, peak RSS, page faults, file I/O, event/resource counts, and trace volume.
-- [ ] Complex CTP and RTP control scenarios preserve the accepted completion, window, retransmission,
+- [x] Complex CTP and RTP control scenarios preserve the accepted completion, window, retransmission,
       selection, queue, and lifecycle-balance behavior.
-- [ ] Shared byte-stable semantic artifacts are exact; every accepted difference is narrow,
+- [x] Shared byte-stable semantic artifacts are exact; every accepted difference is narrow,
       explained, revision/runtime/case/path/hash-bound, and user-approved where required.
-- [ ] Unexplained differences and performance regressions above the 10 percent investigation threshold
+- [x] Unexplained differences and performance regressions above the 10 percent investigation threshold
       remain failures or inconclusive results rather than being hidden by aggregation.
-- [ ] Automatic TP cleanup remains excluded from the measured benefit and from the implementation.
+- [x] Automatic TP cleanup remains excluded from the measured benefit and from the implementation.
+
+Closeout:
+
+- Froze and reused main `ccf41b58`, current `85c61e8`, and next `cf8ee683` release binaries and
+  Unified Bus libraries. The portable manifest binds revisions, executable/library/input hashes,
+  build/runtime facts, commands, archived complex-tree digests, and raw-summary digests.
+- p01/p02 used one warm-up and five strictly serial counterbalanced three-role rounds. p01 current
+  versus main fails at `+16.64%` paired wall and `+14.86%` paired RSS; current versus next passes at
+  `+7.25%` and `+8.42%`. p02 passes against main (`+5.46%`, `+7.83%`) and next (`+2.04%`, `+5.85%`).
+- Explicit p02 SUMMARY adds 68,816 records for 3,128 resource generations and costs `+27.11%` wall
+  and `+1.86%` RSS versus OFF. Shared task, throughput, and trace semantics remain exact.
+- Complex CTP windows 1/4/128 exactly reproduce next and visibly exercise Jetty backpressure. RTP
+  shared-window, GBN double-loss, and TPG pinning reproduce the exact archived T05/T06/T14 path and
+  hash boundaries; production lifecycle parser validation passes with no new difference.
+- Final semantic status is PASS. Final performance status is FAIL because the packet-heavy main gate
+  remains above 10%; T24-to-final wall is effectively flat (`+16.65% -> +16.64%`). The failure is
+  retained rather than averaged with passing p02/next results. Automatic TP cleanup remains excluded.
