@@ -800,15 +800,32 @@ state.
 
 **Blocked by:** None — can start immediately.
 
-- [ ] A large-window selective-retransmission characterization proves the current repeated scan and
+- [x] A large-window selective-retransmission characterization proves the current repeated scan and
       records calls, scanned entries, timer state, and host time.
-- [ ] The timer-running fast path does not scan retained PSN state and does not schedule, cancel, or
+- [x] The timer-running fast path does not scan retained PSN state and does not schedule, cancel, or
       reset an event.
-- [ ] GBN behavior is unchanged.
-- [ ] SELECTIVE ACK, SACK, timeout, fast retry, descriptor retirement, retry set, and completion retain
+- [x] GBN behavior is unchanged.
+- [x] SELECTIVE ACK, SACK, timeout, fast retry, descriptor retirement, retry set, and completion retain
       existing ordering and outputs.
-- [ ] Focused retransmission tests and a bounded fault scenario pass without changing packet builders,
+- [x] Focused retransmission tests and a bounded fault scenario pass without changing packet builders,
       parsers, ACK/RTO policy, or queue scheduling.
+
+Closeout:
+
+- Restored the `main@ccf41b58` timer-first guard while retaining the descriptor-era empty-state
+  check. Running timers bypass outstanding state; expired timers still require live GBN/SELECTIVE
+  descriptors before the unchanged scheduler runs.
+- A 4,096-descriptor, 1,000,000-check fixture reduces SELECTIVE queries and visited entries from
+  1,000,001 to 1. Schedule remains 1 and cancel/restart remain 0; the GBN empty/start/running control
+  passes.
+- Five counterbalanced focused loops improve median time from 5,262 us to 4,305 us (`-18.19%`). The
+  old live-map invariant usually visited one entry per query, so no full-window-per-packet claim is
+  made.
+- Targeted build, focused timer scan, complete transport retransmission, lifecycle, and the existing
+  selective-loss MarkPSN scenario pass serially. The scenario's complete pre/post trees are
+  byte-identical; its one-shot host timing is noisy and no scenario-level gain is claimed.
+- Independent review found no ACK/TPSACK/RTO, retry, descriptor retirement, builder/parser,
+  queue/scheduler, congestion, callback/trace, lifecycle tracked-event, or completion change.
 
 ## Task 28: Accept current lifecycle performance against main and next
 

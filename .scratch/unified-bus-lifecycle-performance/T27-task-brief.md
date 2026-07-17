@@ -1,6 +1,6 @@
 # T27 Task Brief: Avoid Redundant Selective Retransmission Scans
 
-Status: in progress
+Status: complete
 
 Branch: `codex/unified-bus-lifecycle-implementation`
 
@@ -159,3 +159,4 @@ parser, queue, scheduler, routing, or congestion-control diff.
   retirement, retry order, builder/parser, queue/scheduler, congestion, trace, and completion blocks
   are unchanged. An accidental whole-file format diff found during review was fully removed before
   final rebuild and validation.
+- Implementation commit: `be9aa76f`.
