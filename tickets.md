@@ -865,3 +865,21 @@ Closeout:
 - Final semantic status is PASS. Final performance status is FAIL because the packet-heavy main gate
   remains above 10%; T24-to-final wall is effectively flat (`+16.65% -> +16.64%`). The failure is
   retained rather than averaged with passing p02/next results. Automatic TP cleanup remains excluded.
+
+## Task 29: Amortize allocator event reclamation
+
+**What to build:** Preserve exact switch-allocator event ownership, VOQ destroy gating, pending-event
+queries, forced-stop residue, and cancellation while removing repeated full-vector pruning from the
+packet-heavy allocator callback path.
+
+**Blocked by:** T28 Accept current lifecycle performance against main and next.
+
+- [ ] A current profile and serial p01 scale loop identify resolved-event pruning as a measured hot
+      path before implementation.
+- [ ] Every allocation, retrigger, port-notification, and deadlock event remains tracked while
+      pending and cancelable during allocator disposal.
+- [ ] Resolved records are reclaimed in bounded batches or at exact query/dispose boundaries without
+      changing event timestamps, callback targets, RR/DWRR selection, queue order, or flow control.
+- [ ] Existing VOQ destroy-gate, forced-stop residue, allocator-ordering, and lifecycle suites pass.
+- [ ] One warm-up and five counterbalanced pre-T29/T29 p01 pairs report wall, CPU, RSS, and exact task
+      completion; a gain below 5 percent remains visible and does not authorize scheduler redesign.
