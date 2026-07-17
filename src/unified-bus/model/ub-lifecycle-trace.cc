@@ -350,11 +350,11 @@ UbLifecycleTrace::SelectPacket(const UbPacketAttemptIdentity& identity)
 void
 UbLifecycleTrace::PrepareOwner(uint32_t ownerNode)
 {
-    std::lock_guard<std::mutex> guard(g_mutex);
     if (g_level == UbLifecycleTraceLevel::OFF)
     {
         return;
     }
+    std::lock_guard<std::mutex> guard(g_mutex);
     const std::string filename = GetRecordFilename(ownerNode);
     if (g_recordSinks.find(filename) == g_recordSinks.end())
     {

@@ -894,6 +894,10 @@ UbLifecycleCoordinator::ObservePacketTransfer(Ptr<Packet> packet,
                                               UbPacketTransfer transfer,
                                               uint32_t sourceNodeId)
 {
+    if (UbLifecycleTrace::GetLevel() == UbLifecycleTraceLevel::OFF)
+    {
+        return;
+    }
     UbPacketAttemptIdentity identity;
     if (!TryReadIdentity(packet, identity))
     {

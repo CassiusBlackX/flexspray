@@ -7413,6 +7413,14 @@ class UbLifecyclePacketAccountingTest : public TestCase
 
     void DoRun() override
     {
+        UbLifecycleTrace::Configure(
+            "/tmp",
+            UbLifecycleTraceLevel::SUMMARY,
+            1,
+            0,
+            0,
+            false,
+            [](const std::string&) { return [](const std::string&) {}; });
         Ptr<Node> ownerNode = CreateObject<Node>();
         Ptr<UbLifecycleCoordinator> coordinator =
             UbLifecycleCoordinator::GetOrCreate(ownerNode);
@@ -7495,6 +7503,56 @@ class UbLifecyclePacketAccountingTest : public TestCase
                               "Reopening an owner-local resource should allocate a new generation");
 
         Simulator::Destroy();
+        UbLifecycleTrace::Reset();
+    }
+};
+
+class UbLifecycleOffSkipsPacketTransferEvidenceTest : public TestCase
+{
+  public:
+    UbLifecycleOffSkipsPacketTransferEvidenceTest()
+        : TestCase("UnifiedBus - lifecycle OFF skips packet transfer evidence")
+    {
+    }
+
+    void DoRun() override
+    {
+        UbLifecycleTrace::Configure("/tmp",
+                                    UbLifecycleTraceLevel::OFF,
+                                    1,
+                                    0,
+                                    0,
+                                    false,
+                                    [](const std::string&) { return [](const std::string&) {}; });
+        Ptr<Node> ownerNode = CreateObject<Node>();
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(ownerNode);
+        const auto owner =
+            coordinator->OpenPacketOwner(UbLifecycleResourceKind::RTP_ENDPOINT, 102);
+        Ptr<Packet> packet = Create<Packet>(64);
+        coordinator->RegisterPacketAttempt(owner, packet);
+
+        UbLifecycleCoordinator::ObservePacketTransfer(packet, UbPacketTransfer::LOCAL_LINK);
+        UbLifecycleResourceSnapshot snapshot = coordinator->GetSnapshot(owner);
+        NS_TEST_ASSERT_MSG_EQ(snapshot.inFlightPackets,
+                              1u,
+                              "OFF transfer observation must not change packet balance");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.transferObservations,
+                              0u,
+                              "OFF must not collect packet transfer evidence");
+
+        UbLifecycleCoordinator::TerminatePacket(packet, UbPacketTerminal::ENDPOINT_CONSUMED);
+        snapshot = coordinator->GetSnapshot(owner);
+        NS_TEST_ASSERT_MSG_EQ(snapshot.inFlightPackets,
+                              0u,
+                              "OFF must retain packet terminal balance");
+        coordinator->RetirePacketOwner(owner);
+        NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(owner).retired,
+                              true,
+                              "OFF must retain balanced retirement");
+
+        Simulator::Destroy();
+        UbLifecycleTrace::Reset();
     }
 };
 
@@ -26066,6 +26124,7 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
     : TestSuite("unified-bus-lifecycle", Type::UNIT)
 {
     AddTestCase(new UbLifecyclePacketAccountingTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleOffSkipsPacketTransferEvidenceTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbParallelLifecyclePacketOrderingTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleEgressQueueFullDropTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleAtomicWqeSubmissionTest(), TestCase::Duration::QUICK);
