@@ -925,3 +925,23 @@ Closeout:
   RSS was `+0.33%`. The variant failed its predefined 1 percent/four-pair retention gate.
 - Reverted the one-line variant. T30 closes with no source change and narrows the next optimization
   to eliminating duplicated execution-owner/node resolution as one measured semantic batch.
+
+## Task 31: Fuse packet execution-owner and coordinator resolution
+
+**What to build:** Preserve exact packet lifecycle owner routing while reusing the node resolved by
+the execution-owner check for local coordinator mutation, avoiding a second range check and node
+lookup on every transfer and terminal.
+
+**Blocked by:** T30 Skip hot coordinator RTTI lookup.
+
+- [ ] Extract the existing execution-owner and coordinator-resolution bodies into private/internal
+      helpers, migrate their old callers first, and prove existing behavior before packet routing uses
+      them.
+- [ ] Local transfer/terminal paths perform one node-range check and one `NodeList::GetNode`; remote
+      MPI/MTP paths retain their existing owner classification, source context, and control routing.
+- [ ] Unknown-node, missing-coordinator, inactive-attempt, stale-generation, and remote-owner behavior
+      retain their existing errors and ordering.
+- [ ] Targeted build, lifecycle, and VOQ focused suites pass serially.
+- [ ] One warm-up and five counterbalanced pre-T31/T31 p01 pairs preserve exact semantic artifacts;
+      retain the change only if paired-median wall improves by at least 1.5 percent, at least four
+      pairs do not regress, and paired-median CPU/RSS do not regress by more than 1 percent.
