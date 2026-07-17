@@ -101,3 +101,17 @@ Re-approval triggers:
 - GitCode `next` defaults to `MultipathSelector::HASH64`; strict RR exists only when
   `MultipathSelector::ROUND_ROBIN` is selected and advances a cursor keyed by candidate set.
 - Therefore the two implementations are not generally byte-equivalent before calibration.
+
+## Closeout
+
+- Implementation merge commit: `5abb058`.
+- Targeted `-j2` build passed for `unified-bus`, `unified-bus-test`, `test-runner`, and
+  `ub-quick-example`.
+- `unified-bus-routing-modes`, `unified-bus-routing`, `unified-bus-ctp-lifecycle`,
+  `unified-bus-transport-retrans`, and `unified-bus-lifecycle` passed serially.
+- GitCode `next@cf8ee68` and `5abb058` ran byte-identical copies of `t-ctp-packet-rr` serially.
+  Every shared file was byte-identical. The lifecycle branch emitted only its expected schema and
+  seven node traces, and the production parser validated 6072 lifecycle records.
+- Review retained `UbRoutingTable` as the route-storage owner and preserved descriptor PSN,
+  packet-attempt registration, CTP transaction retirement, ACK/RTO/GBN, queues, schedulers,
+  congestion accounting, callback order, and lifecycle cleanup.
