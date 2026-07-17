@@ -731,18 +731,33 @@ final evidence, and the distinction between host storage reclamation and modeled
 
 **Blocked by:** T24 Reduce steady-state packet lifecycle bookkeeping.
 
-- [ ] A representative sequential task-churn case measures resource count, retained state, peak RSS,
+- [x] A representative sequential task-churn case measures resource count, retained state, peak RSS,
       and growth before choosing the compact layout.
-- [ ] Retired generations release active attempt, lease, callback, and other active-only storage only
+- [x] Retired generations release active attempt, lease, callback, and other active-only storage only
       after balance and terminal invariants pass.
-- [ ] Local-ID reuse increments generation, rejects late stale mutation, and cannot alias an active
+- [x] Local-ID reuse increments generation, rejects late stale mutation, and cannot alias an active
       replacement generation.
-- [ ] Explicit SUMMARY retains the same final values and bytes; OFF does not retain evidence-only
+- [x] Explicit SUMMARY retains the same final values and bytes; OFF does not retain evidence-only
       state.
-- [ ] Forced stop and unresolved work remain visible and cannot be compacted into successful
+- [x] Forced stop and unresolved work remain visible and cannot be compacted into successful
       completion.
-- [ ] The sequential-churn and p02 trace-OFF RSS results are bounded and reported with absolute and
+- [x] The sequential-churn and p02 trace-OFF RSS results are bounded and reported with absolute and
       percentage values without introducing automatic TP teardown.
+
+Closeout:
+
+- Retired resource generations now release one active allocation containing the snapshot, exact
+  attempt membership, leases, callback, counters, and sequence. Compact generation and terminal
+  outcome history remains in the canonical resource slot.
+- With lifecycle output OFF, 100,000 sequential retired resources retain zero active states and zero
+  final summaries. Focused peak RSS falls from `59,441,152 B` to `28,491,776 B` (`-52.07%`).
+- Non-OFF levels retain a final snapshot. The frozen pre/post explicit-SUMMARY output and runlog
+  trees are completely byte-identical.
+- Local-ID reuse increments generation and reuses the same canonical slot; stale and retired
+  mutations remain fail-fast. Failed, canceled, flushed, forced-stop, and unresolved-work tests pass.
+- p02 OFF is effectively flat: paired-median wall `-1.87%`, median RSS `63,356,928 B ->
+  63,324,160 B` (`-0.05%`). The large benefit is specific to long distinct-resource churn; no
+  automatic TP cleanup was introduced or claimed.
 
 ## Task 26: Reuse validated RTP transport resolution
 
