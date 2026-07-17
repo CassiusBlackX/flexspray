@@ -895,3 +895,22 @@ Closeout:
 - Rejected both variants and restored allocator source and tests exactly to pre-T29. The final branch
   therefore preserves all existing event ownership and allocator behavior without carrying added
   token/wrapper complexity. The next performance ticket must target a different measured hot path.
+
+## Task 30: Skip hot coordinator RTTI lookup
+
+**What to build:** Preserve packet identity, execution-owner routing, coordinator validation,
+transfer/terminal ordering, and cross-process behavior while using the existing TypeId-based ns-3
+aggregate lookup in the packet lifecycle coordinator hot path.
+
+**Blocked by:** T29 Amortize allocator event reclamation.
+
+- [ ] The current p01 profile identifies coordinator resolution and RTTI lookup inside the packet
+      transfer chain before implementation.
+- [ ] `UbLifecycleCoordinator::Resolve` retains the same node-range and missing-coordinator aborts
+      and resolves the same node-scoped object without adding a registry or cache.
+- [ ] Existing packet lifecycle, cross-owner routing, queue transfer, and terminal behavior remain
+      unchanged under focused lifecycle tests.
+- [ ] One targeted build and the ticket-defined focused suites pass serially.
+- [ ] One warm-up and five counterbalanced pre-T30/T30 p01 pairs preserve exact semantic artifacts;
+      retain the one-line change only if paired-median wall improves by at least 1 percent, at least
+      four pairs do not regress, and paired-median CPU/RSS do not regress by more than 1 percent.
