@@ -1579,22 +1579,29 @@ void UbUtils::CreateTraceDir()
     queue_sampler_events.clear();
 
     BooleanValue traceEnabled;
-    StringValue preset;
-    StringValue lifecycleLevel;
-    UintegerValue detailStride;
-    UintegerValue detailOffset;
     g_trace_enable.GetValue(traceEnabled);
-    g_trace_preset.GetValue(preset);
-    g_lifecycle_trace_level.GetValue(lifecycleLevel);
-    g_lifecycle_detail_sample_stride.GetValue(detailStride);
-    g_lifecycle_detail_sample_offset.GetValue(detailOffset);
 
     UbLifecycleTraceLevel resolvedLevel = UbLifecycleTraceLevel::OFF;
     if (traceEnabled.Get())
     {
+        StringValue preset;
+        StringValue lifecycleLevel;
+        g_trace_preset.GetValue(preset);
+        g_lifecycle_trace_level.GetValue(lifecycleLevel);
         resolvedLevel = UbLifecycleTrace::ResolveLevel(preset.Get(), lifecycleLevel.Get());
     }
 
+    if (resolvedLevel == UbLifecycleTraceLevel::OFF)
+    {
+        UbLifecycleTrace::Configure(trace_path, resolvedLevel, 1, 0, 0, false, {});
+        PrintTimestamp("[setup] Prepare runlog directory: " + trace_path + "runlog");
+        return;
+    }
+
+    UintegerValue detailStride;
+    UintegerValue detailOffset;
+    g_lifecycle_detail_sample_stride.GetValue(detailStride);
+    g_lifecycle_detail_sample_offset.GetValue(detailOffset);
     uint32_t rank = 0;
     bool rankScoped = false;
 #ifdef NS3_MPI
