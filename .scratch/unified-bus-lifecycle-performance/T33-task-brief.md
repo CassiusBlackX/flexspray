@@ -1,6 +1,6 @@
 # T33 Task Brief: Skip unused lifecycle trace setup when output is off
 
-Status: implementation reviewed; awaiting implementation commit
+Status: complete
 
 ## Batch Reuse Map
 

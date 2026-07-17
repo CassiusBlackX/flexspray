@@ -1010,10 +1010,22 @@ lifecycle trace level is OFF.
 
 **Blocked by:** T32 Remove packet transfer evidence work when lifecycle trace is off.
 
-- [ ] OFF configures canonical empty lifecycle trace state without reading unused detail sampling
+- [x] OFF configures canonical empty lifecycle trace state without reading unused detail sampling
       values, resolving rank scope, constructing a sink resolver, or entering metadata emission.
-- [ ] SUMMARY, EVENT, and DETAIL preserve current level resolution, detail validation, rank-scoped
+- [x] SUMMARY, EVENT, and DETAIL preserve current level resolution, detail validation, rank-scoped
       filenames, sink behavior, metadata, and record bytes.
-- [ ] Targeted Unified Bus build and lifecycle focused validation pass serially.
-- [ ] One bounded OFF p01 run preserves the managed artifact set and an explicit SUMMARY run remains
+- [x] Targeted Unified Bus build and lifecycle focused validation pass serially.
+- [x] One bounded OFF p01 run preserves the managed artifact set and an explicit SUMMARY run remains
       byte-identical to T32.
+
+Closeout:
+
+- OFF now resets lifecycle trace state with canonical empty configuration, then returns before
+  unused detail sampling reads, MPI rank resolution, sink construction, and metadata emission.
+- Trace directory preparation, runtime-drop reset, queue-sampler reset, and setup timestamp retain
+  their old ordering. SUMMARY, EVENT, and DETAIL retain the previous setup block.
+- Targeted Unified Bus build and `unified-bus-lifecycle` pass. Bounded p01 OFF and explicit SUMMARY
+  managed artifact trees are both byte-identical to T32 with no missing, added, or changed files.
+- This is deterministic once-per-simulation cleanup, so no repeated host-performance gain is
+  claimed. Packet lifecycle state, public snapshots, parallel control, and protocol paths are
+  untouched.
