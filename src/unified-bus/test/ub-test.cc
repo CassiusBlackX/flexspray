@@ -4769,6 +4769,135 @@ public:
     }
 };
 
+class UbSelectiveRunningTimerSkipsOutstandingScanTest : public TestCase
+{
+  public:
+    UbSelectiveRunningTimerSkipsOutstandingScanTest()
+        : TestCase("UnifiedBus - running selective timer skips redundant outstanding scans")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        Ptr<UbTransportChannel> transport = CreateObject<UbTransportChannel>();
+        UbRetransController retrans(*transport);
+        retrans.SetRetransEnable(true);
+        retrans.SetRetransmissionMode(UbRetransmissionMode::SELECTIVE);
+
+        constexpr uint64_t kRetainedDescriptors = 4096;
+        constexpr uint64_t kRunningTimerChecks = 1000000;
+        for (uint64_t psn = 0; psn < kRetainedDescriptors; ++psn)
+        {
+            UbGbnPacketDescriptor descriptor;
+            descriptor.logicalPsn = psn;
+            descriptor.payloadBytes = 64;
+            descriptor.serializedSizeBytes = 128;
+            retrans.OnNewDataPacketSent(descriptor);
+        }
+
+        retrans.ResetTimerStatsForTest();
+        retrans.StartTimerIfNeeded();
+        const auto start = std::chrono::steady_clock::now();
+        for (uint64_t check = 0; check < kRunningTimerChecks; ++check)
+        {
+            retrans.StartTimerIfNeeded();
+        }
+        const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+                                 std::chrono::steady_clock::now() - start)
+                                 .count();
+        const UbRetransTimerTestStats stats = retrans.GetTimerStatsForTest();
+
+        std::cout << "T27_TIMER mode=SELECTIVE retained=" << kRetainedDescriptors
+                  << " repeated_checks=" << kRunningTimerChecks
+                  << " elapsed_us=" << elapsed
+                  << " start_calls=" << stats.startCalls
+                  << " scan_calls=" << stats.selectiveOutstandingScanCalls
+                  << " scanned_entries=" << stats.selectiveOutstandingEntriesVisited
+                  << " schedules=" << stats.scheduleCalls
+                  << " cancels=" << stats.cancelCalls
+                  << " restarts=" << stats.restartCalls << std::endl;
+
+        NS_TEST_ASSERT_MSG_EQ(retrans.HasTimerRunning(),
+                              true,
+                              "first outstanding SELECTIVE descriptor should start the timer");
+        NS_TEST_ASSERT_MSG_EQ(stats.startCalls,
+                              kRunningTimerChecks + 1,
+                              "fixture should exercise every timer entry");
+        NS_TEST_ASSERT_MSG_EQ(stats.selectiveOutstandingScanCalls,
+                              1u,
+                              "running timer should bypass every later outstanding-state query");
+        NS_TEST_ASSERT_MSG_EQ(stats.selectiveOutstandingEntriesVisited,
+                              1u,
+                              "only the first timer start should inspect retained SELECTIVE state");
+        NS_TEST_ASSERT_MSG_EQ(stats.scheduleCalls,
+                              1u,
+                              "running-timer checks must not schedule another timeout");
+        NS_TEST_ASSERT_MSG_EQ(stats.cancelCalls,
+                              0u,
+                              "running-timer checks must not cancel the timeout");
+        NS_TEST_ASSERT_MSG_EQ(stats.restartCalls,
+                              0u,
+                              "running-timer checks must not enter ACK restart behavior");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbGbnRunningTimerKeepsTimerStateTest : public TestCase
+{
+  public:
+    UbGbnRunningTimerKeepsTimerStateTest()
+        : TestCase("UnifiedBus - GBN timer start and running fast path keep existing behavior")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        Ptr<UbTransportChannel> transport = CreateObject<UbTransportChannel>();
+        UbRetransController retrans(*transport);
+        retrans.SetRetransEnable(true);
+        retrans.SetRetransmissionMode(UbRetransmissionMode::GBN);
+        retrans.ResetTimerStatsForTest();
+
+        retrans.StartTimerIfNeeded();
+        NS_TEST_ASSERT_MSG_EQ(retrans.HasTimerRunning(),
+                              false,
+                              "empty GBN state must not start a retransmission timer");
+
+        UbGbnPacketDescriptor descriptor;
+        descriptor.logicalPsn = 0;
+        retrans.RetainGbnDescriptorForTest(descriptor);
+        retrans.StartTimerIfNeeded();
+        retrans.StartTimerIfNeeded();
+        const UbRetransTimerTestStats stats = retrans.GetTimerStatsForTest();
+
+        NS_TEST_ASSERT_MSG_EQ(retrans.HasTimerRunning(),
+                              true,
+                              "outstanding GBN state should start one timer");
+        NS_TEST_ASSERT_MSG_EQ(stats.startCalls,
+                              3u,
+                              "fixture should exercise empty, start, and running states");
+        NS_TEST_ASSERT_MSG_EQ(stats.selectiveOutstandingScanCalls,
+                              0u,
+                              "GBN must not query SELECTIVE retained state");
+        NS_TEST_ASSERT_MSG_EQ(stats.scheduleCalls,
+                              1u,
+                              "GBN running-timer check must not schedule another timeout");
+        NS_TEST_ASSERT_MSG_EQ(stats.cancelCalls,
+                              0u,
+                              "GBN running-timer check must not cancel the timeout");
+        NS_TEST_ASSERT_MSG_EQ(stats.restartCalls,
+                              0u,
+                              "GBN running-timer check must not enter ACK restart behavior");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
 class UbSelectiveRetransmissionAccountsDcqcnSendStateTest : public TestCase
 {
 public:
@@ -26308,6 +26437,20 @@ UbTransportRetransTestSuite::UbTransportRetransTestSuite()
 }
 
 static UbTransportRetransTestSuite g_ubTransportRetransTestSuite;
+
+class UbRetransTimerScanTestSuite : public TestSuite
+{
+  public:
+    UbRetransTimerScanTestSuite()
+        : TestSuite("unified-bus-retrans-timer-scan", Type::UNIT)
+    {
+        AddTestCase(new UbSelectiveRunningTimerSkipsOutstandingScanTest(),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbGbnRunningTimerKeepsTimerStateTest(), TestCase::Duration::QUICK);
+    }
+};
+
+static UbRetransTimerScanTestSuite g_ubRetransTimerScanTestSuite;
 
 UbTransportPipelineTestSuite::UbTransportPipelineTestSuite()
     : TestSuite("unified-bus-transport-pipeline", Type::UNIT)

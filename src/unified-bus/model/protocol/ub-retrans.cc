@@ -498,6 +498,22 @@ UbSelectiveRetransStrategy::GetRetainedPayloadBytes(uint64_t psn) const
 bool
 UbSelectiveRetransStrategy::HasOutstandingPackets() const
 {
+    if (m_controller.IsCollectingTimerStatsForTest())
+    {
+        uint64_t entriesVisited = 0;
+        for (const auto& [psn, state] : m_sentPsnState)
+        {
+            (void)psn;
+            ++entriesVisited;
+            if (!state.acknowledged)
+            {
+                m_controller.RecordSelectiveOutstandingScanForTest(entriesVisited);
+                return true;
+            }
+        }
+        m_controller.RecordSelectiveOutstandingScanForTest(entriesVisited);
+        return false;
+    }
     return std::any_of(m_sentPsnState.begin(),
                        m_sentPsnState.end(),
                        [](const auto& entry) { return !entry.second.acknowledged; });
@@ -1065,6 +1081,10 @@ UbRetransController::GetRetransEnable() const
 void
 UbRetransController::ScheduleTimeout()
 {
+    if (m_collectTimerTestStats)
+    {
+        ++m_timerTestStats.scheduleCalls;
+    }
     const UbLifecycleResourceIdentity& owner = m_transport.GetLifecycleOwner();
     if (owner.generation == 0)
     {
@@ -1099,12 +1119,16 @@ UbRetransController::HandleTrackedTimeout(uint64_t token)
 void
 UbRetransController::StartTimerIfNeeded()
 {
-    if (!m_enableRetrans || !HasOutstandingRetransmissionState())
+    if (m_collectTimerTestStats)
+    {
+        ++m_timerTestStats.startCalls;
+    }
+    if (!m_enableRetrans || !m_retransEvent.IsExpired())
     {
         return;
     }
 
-    if (!m_retransEvent.IsExpired())
+    if (!HasOutstandingRetransmissionState())
     {
         return;
     }
@@ -1116,6 +1140,10 @@ UbRetransController::StartTimerIfNeeded()
 void
 UbRetransController::RestartTimerAfterAckProgress()
 {
+    if (m_collectTimerTestStats)
+    {
+        ++m_timerTestStats.restartCalls;
+    }
     if (!m_enableRetrans)
     {
         return;
@@ -1132,6 +1160,10 @@ UbRetransController::RestartTimerAfterAckProgress()
 void
 UbRetransController::CancelTimer()
 {
+    if (m_collectTimerTestStats)
+    {
+        ++m_timerTestStats.cancelCalls;
+    }
     m_retransEvent.Cancel();
     if (m_trackedEventsInitialized)
     {
@@ -1470,6 +1502,32 @@ void
 UbRetransController::RetainGbnDescriptorForTest(const UbGbnPacketDescriptor& descriptor)
 {
     m_gbn->RetainDescriptor(descriptor);
+}
+
+void
+UbRetransController::ResetTimerStatsForTest()
+{
+    m_collectTimerTestStats = true;
+    m_timerTestStats = {};
+}
+
+UbRetransTimerTestStats
+UbRetransController::GetTimerStatsForTest() const
+{
+    return m_timerTestStats;
+}
+
+bool
+UbRetransController::IsCollectingTimerStatsForTest() const
+{
+    return m_collectTimerTestStats;
+}
+
+void
+UbRetransController::RecordSelectiveOutstandingScanForTest(uint64_t entriesVisited) const
+{
+    ++m_timerTestStats.selectiveOutstandingScanCalls;
+    m_timerTestStats.selectiveOutstandingEntriesVisited += entriesVisited;
 }
 
 void
