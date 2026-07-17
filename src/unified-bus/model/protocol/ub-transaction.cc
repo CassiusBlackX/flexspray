@@ -108,6 +108,7 @@ void UbTransaction::TpDeinit(uint32_t tpn)
         RetireRtpAdmissionDomain(transport->second->GetLifecycleOwner());
     }
     m_tpnMap.erase(tpn);
+    m_jettyTpgMaterializations.clear();
     m_tpRRIndex.erase(tpn);
     m_tpRelatedRemoteRequests.erase(tpn);
 }
@@ -203,12 +204,14 @@ bool UbTransaction::JettyBindTp(uint32_t src, uint32_t dest, uint32_t jettyNum,
     GetFunction()->RegisterJettyRtpBinding(
         jettyNum,
         m_jettyRtpReferences.at(jettyNum).GetIdentity());
+    m_jettyTpgMaterializations.erase(jettyNum);
     return true;
 }
 
 void UbTransaction::DestroyJettyTpMap(uint32_t jettyNum)
 {
     m_jettyRtpReferences.erase(jettyNum);
+    m_jettyTpgMaterializations.erase(jettyNum);
     m_jettyTpNextIndex.erase(jettyNum);
 }
 
@@ -264,19 +267,50 @@ const std::vector<Ptr<UbTransportChannel>> UbTransaction::GetJettyRelatedTpVec(u
     {
         return {};
     }
-    std::vector<Ptr<UbTransportChannel>> transports;
-    transports.reserve(group->GetMemberCount());
+    return MaterializeRtpTpGroup(jettyNum, reference->second, group).liveTransports;
+}
+
+const UbTransaction::RtpTpgMaterialization&
+UbTransaction::MaterializeRtpTpGroup(uint32_t jettyNum,
+                                     const UbRtpTransportReference& reference,
+                                     Ptr<UbTransportGroup> group)
+{
+    NS_ABORT_MSG_IF(group == nullptr || reference.IsDirectTp() ||
+                        group->GetLifecycleIdentity() != reference.GetIdentity(),
+                    "TPG materialization requires the exact resolved group generation");
+    const uint64_t membershipVersion = group->GetMembershipVersion();
+    const auto existing = m_jettyTpgMaterializations.find(jettyNum);
+    if (existing != m_jettyTpgMaterializations.end() &&
+        existing->second.groupIdentity == reference.GetIdentity() &&
+        existing->second.membershipVersion == membershipVersion)
+    {
+        return existing->second;
+    }
+
+    RtpTpgMaterialization materialization;
+    materialization.groupIdentity = reference.GetIdentity();
+    materialization.membershipVersion = membershipVersion;
+    materialization.indexedTransports.resize(group->GetMemberCount());
+    materialization.liveTransports.reserve(group->GetMemberCount());
     for (uint32_t index = 0; index < group->GetMemberCount(); ++index)
     {
         const UbTransportGroupMember& member = group->GetMember(index);
         const auto transport = m_tpnMap.find(member.tpn);
-        if (transport != m_tpnMap.end() && transport->second != nullptr &&
-            transport->second->GetLifecycleOwner() == member.tpIdentity)
+        if (transport == m_tpnMap.end() || transport->second == nullptr ||
+            transport->second->GetLifecycleOwner() != member.tpIdentity)
         {
-            transports.push_back(transport->second);
+            continue;
         }
+        materialization.indexedTransports[index] = transport->second;
+        materialization.liveTransports.push_back(transport->second);
     }
-    return transports;
+    if (m_collectRtpResolutionCountersForTest)
+    {
+        ++m_rtpTpgMaterializationCount;
+    }
+    return m_jettyTpgMaterializations.insert_or_assign(jettyNum,
+                                                       std::move(materialization))
+        .first->second;
 }
 
 std::vector<Ptr<UbJetty>> UbTransaction::GetTpRelatedJettyVec(uint32_t tpn)
@@ -646,6 +680,8 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
     else
     {
         selectedGroup = resolution.group;
+        const RtpTpgMaterialization& materialization =
+            MaterializeRtpTpGroup(jettyNum, reference, selectedGroup);
         bool hasLiveMember = false;
         for (uint32_t offset = 0; offset < selectedGroup->GetMemberCount(); ++offset)
         {
@@ -655,18 +691,18 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
                 continue;
             }
             const UbTransportGroupMember& member = selectedGroup->GetMember(candidateIndex);
-            const auto transport = m_tpnMap.find(member.tpn);
-            if (transport == m_tpnMap.end() || transport->second == nullptr ||
-                transport->second->GetLifecycleOwner() != member.tpIdentity ||
+            Ptr<UbTransportChannel> transport =
+                materialization.indexedTransports[candidateIndex];
+            if (transport == nullptr || transport->GetLifecycleOwner() != member.tpIdentity ||
                 !m_coordinator->IsResourceActive(member.tpIdentity))
             {
                 continue;
             }
             hasLiveMember = true;
-            if (transport->second->CanAdmitWqeSegment(segment))
+            if (transport->CanAdmitWqeSegment(segment))
             {
                 selectedGroupIndex = candidateIndex;
-                admittedTp = transport->second;
+                admittedTp = transport;
                 break;
             }
         }
@@ -1591,7 +1627,14 @@ UbTransaction::ResolveRtpTransportReference(
     const UbRtpTransportReference& reference,
     RtpTransportResolution& resolution) const
 {
+    if (m_collectRtpResolutionCountersForTest)
+    {
+        ++m_rtpResolutionCount;
+    }
     resolution = {};
+    resolution.kind = reference.GetKind();
+    resolution.identity = reference.GetIdentity();
+    resolution.directTpn = reference.IsDirectTp() ? reference.GetDirectTpn() : UINT32_MAX;
     if (m_coordinator == nullptr ||
         !m_coordinator->IsResourceActive(reference.GetIdentity()))
     {
@@ -1615,6 +1658,26 @@ UbTransaction::ResolveRtpTransportReference(
     return resolution.group != nullptr;
 }
 
+void
+UbTransaction::ResetRtpResolutionCountersForTest()
+{
+    m_collectRtpResolutionCountersForTest = true;
+    m_rtpResolutionCount = 0;
+    m_rtpTpgMaterializationCount = 0;
+}
+
+uint64_t
+UbTransaction::GetRtpResolutionCountForTest() const
+{
+    return m_rtpResolutionCount;
+}
+
+uint64_t
+UbTransaction::GetRtpTpgMaterializationCountForTest() const
+{
+    return m_rtpTpgMaterializationCount;
+}
+
 bool
 UbTransaction::IsRtpTransportReferenceCurrent(
     const UbRtpTransportReference& reference) const
@@ -1627,6 +1690,13 @@ UbRtpOperationPreflightResult
 UbTransaction::PreflightRtpOperation(const UbRtpTransportReference& reference) const
 {
     RtpTransportResolution resolution;
+    return PreflightRtpOperation(reference, resolution);
+}
+
+UbRtpOperationPreflightResult
+UbTransaction::PreflightRtpOperation(const UbRtpTransportReference& reference,
+                                     RtpTransportResolution& resolution) const
+{
     if (!ResolveRtpTransportReference(reference, resolution))
     {
         return UbRtpOperationPreflightResult::STALE_REFERENCE;
@@ -1647,13 +1717,23 @@ UbTransaction::PreflightRtpOperation(const UbRtpTransportReference& reference) c
 bool
 UbTransaction::TryAdmitRtpWqe(uint32_t jettyNum,
                               Ptr<UbWqe> wqe,
-                              const UbLifecycleResourceIdentity& wqeIdentity)
+                              const UbLifecycleResourceIdentity& wqeIdentity,
+                              const RtpTransportResolution& resolution)
 {
     const UbRtpTransportReference* reference = FindRtpTransportReference(jettyNum);
-    RtpTransportResolution resolution;
-    if (wqe == nullptr || reference == nullptr ||
-        !ResolveRtpTransportReference(*reference, resolution) ||
-        PreflightRtpOperation(*reference) != UbRtpOperationPreflightResult::ACCEPTING)
+    const bool referenceMatches =
+        reference != nullptr && reference->GetKind() == resolution.kind &&
+        reference->GetIdentity() == resolution.identity &&
+        (!reference->IsDirectTp() || reference->GetDirectTpn() == resolution.directTpn);
+    const bool resolutionAccepting =
+        referenceMatches &&
+        (reference->IsDirectTp()
+             ? resolution.directTp != nullptr &&
+                   resolution.directTp->GetLifecycleOwner() == resolution.identity
+             : resolution.group != nullptr && resolution.group->IsAcceptingNewOperations() &&
+                   resolution.group->GetLifecycleIdentity() == resolution.identity &&
+                   resolution.group->GetMemberCount() != 0);
+    if (wqe == nullptr || !resolutionAccepting)
     {
         return false;
     }
@@ -2149,6 +2229,7 @@ void UbTransaction::DoDispose()
     m_tpnMap.clear();
     m_jettyOrderedWqe.clear();
     m_jettyRtpReferences.clear();
+    m_jettyTpgMaterializations.clear();
     for (auto &it : m_tpRelatedRemoteRequests) {
         for (auto &remoteMap : it.second) {
             for (auto segment : remoteMap.second.segments) {

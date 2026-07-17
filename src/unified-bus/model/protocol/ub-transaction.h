@@ -91,6 +91,15 @@ namespace ns3 {
     class UbTransaction : public Object {
     public:
 
+        struct RtpTransportResolution
+        {
+            UbRtpTransportReferenceKind kind{UbRtpTransportReferenceKind::DIRECT_TP};
+            UbLifecycleResourceIdentity identity;
+            uint32_t directTpn{UINT32_MAX};
+            Ptr<UbTransportChannel> directTp;
+            Ptr<UbTransportGroup> group;
+        };
+
         static TypeId GetTypeId(void);
 
         UbTransaction();
@@ -165,9 +174,13 @@ namespace ns3 {
             const UbRtpTransportReference& reference) const;
         UbRtpOperationPreflightResult PreflightRtpOperation(
             const UbRtpTransportReference& reference) const;
+        UbRtpOperationPreflightResult PreflightRtpOperation(
+            const UbRtpTransportReference& reference,
+            RtpTransportResolution& resolution) const;
         bool TryAdmitRtpWqe(uint32_t jettyNum,
                             Ptr<UbWqe> wqe,
-                            const UbLifecycleResourceIdentity& wqeIdentity);
+                            const UbLifecycleResourceIdentity& wqeIdentity,
+                            const RtpTransportResolution& resolution);
         bool TryAdmitCtpWqe(uint32_t jettyNum,
                             Ptr<UbWqe> wqe,
                             const UbLifecycleResourceIdentity& wqeIdentity,
@@ -182,6 +195,9 @@ namespace ns3 {
         uint64_t GetAdmissionDomainCapacityWakeCountForTest(
             const UbLifecycleResourceIdentity& identity) const;
         uint32_t GetAdmissionDomainCountForTest() const;
+        void ResetRtpResolutionCountersForTest();
+        uint64_t GetRtpResolutionCountForTest() const;
+        uint64_t GetRtpTpgMaterializationCountForTest() const;
         void NotifyRtpTpGroupMemberAvailable(
             const UbLifecycleResourceIdentity& groupIdentity);
         void TerminateRtpTpGroupOperations(
@@ -334,15 +350,21 @@ namespace ns3 {
                                   uint32_t wqeId,
                                   uint32_t taSsn,
                                   Ptr<UbWqeSegment> completion);
-        struct RtpTransportResolution
+        struct RtpTpgMaterialization
         {
-            Ptr<UbTransportChannel> directTp;
-            Ptr<UbTransportGroup> group;
+            UbLifecycleResourceIdentity groupIdentity;
+            uint64_t membershipVersion{0};
+            std::vector<Ptr<UbTransportChannel>> indexedTransports;
+            std::vector<Ptr<UbTransportChannel>> liveTransports;
         };
         Ptr<UbController> GetOwnerController() const;
         bool ResolveRtpTransportReference(
             const UbRtpTransportReference& reference,
             RtpTransportResolution& resolution) const;
+        const RtpTpgMaterialization& MaterializeRtpTpGroup(
+            uint32_t jettyNum,
+            const UbRtpTransportReference& reference,
+            Ptr<UbTransportGroup> group);
 
         bool IsUrmaReadWriteRequest(const Ptr<UbWqeSegment>& segment);
 
@@ -363,6 +385,7 @@ namespace ns3 {
         // Tpn和Tp的对应map
         std::map<uint32_t, Ptr<UbTransportChannel>> m_tpnMap;
         std::map<uint32_t, UbRtpTransportReference> m_jettyRtpReferences;
+        std::map<uint32_t, RtpTpgMaterialization> m_jettyTpgMaterializations;
         // 每个 Jetty 下次从哪个 TP 开始调度，避免短 WQE 总被第一个 TP 抢占。
         std::map<uint32_t, uint32_t> m_jettyTpNextIndex;
         // 新 Jetty 的初始 TP 轮转位置；一任务一 Jetty 的短流也能展开到多 TP。
@@ -410,6 +433,9 @@ namespace ns3 {
         std::map<UbCtpEntityKey, uint32_t> m_ctpNextTaSsn;
         std::map<AdmissionDomainKey, AdmissionDomainState> m_admissionDomains;
         std::vector<UbLifecycleResourceIdentity> m_suppressedTpgOwnerProgress;
+        bool m_collectRtpResolutionCountersForTest{false};
+        mutable uint64_t m_rtpResolutionCount{0};
+        uint64_t m_rtpTpgMaterializationCount{0};
     };
 
 } // namespace ns3
