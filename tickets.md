@@ -767,15 +767,30 @@ without changing which TP admits, schedules, sends, retransmits, or drains the s
 
 **Blocked by:** None — can start immediately.
 
-- [ ] Direct TP and TPG preflight consume an already validated generation-aware resolution instead of
+- [x] Direct TP and TPG preflight consume an already validated generation-aware resolution instead of
       repeating the same lookup.
-- [ ] TPG member materialization is reused only while generation and membership version match, and is
+- [x] TPG member materialization is reused only while generation and membership version match, and is
       invalidated by bind, member add/remove, drain, and destroy changes.
-- [ ] No eligible member, draining member, shared direct-plus-TPG use, and member-selection ordering
+- [x] No eligible member, draining member, shared direct-plus-TPG use, and member-selection ordering
       preserve existing outcomes and side-effect order.
-- [ ] First send, TPNAK, and RTO retransmission remain pinned to the admitted resolved TP generation.
-- [ ] Focused counters show fewer resolution/materialization operations on the exercised RTP path,
+- [x] First send, TPNAK, and RTO retransmission remain pinned to the admitted resolved TP generation.
+- [x] Focused counters show fewer resolution/materialization operations on the exercised RTP path,
       and a bounded current/next scenario reports the host-time result without requiring a gain.
+
+Closeout:
+
+- Direct and TPG WQE submission now pass one generation-aware resolution from preflight into commit,
+  reducing the focused count from four resolver calls to one without changing rejection mapping or
+  commit order.
+- Binding-owned TPG materialization restores the pre-refactor retained-vector shape. Exact group
+  identity plus membership version guard reuse; add/remove, freeze/resume, destroy, bind, and TP
+  deinit invalidate it. Segment admission retains exact generation/active checks and group indices.
+- The focused counter suite passes direct, TPG, unchanged membership, mutation, drain, and destroy
+  cases. Lifecycle and transport retransmission suites pass; resolved generation pinning remains the
+  first-send, TPNAK, and RTO source of truth.
+- Three serial `m04` pairs are flat at `0.07 s` median wall and `16,678,912 B` median RSS for both
+  T26 and next. All shared semantics are byte-identical except the inherited, row-multiset-identical
+  T05 same-timestamp TaskTrace ordering difference; no gain is claimed and no difference is hidden.
 
 ## Task 27: Avoid redundant selective-retransmission window scans
 
