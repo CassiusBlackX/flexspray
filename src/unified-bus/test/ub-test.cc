@@ -137,8 +137,7 @@ BuildCtpCnpPacket(uint32_t srcNodeId, const UbCtpEntityKey& key)
                                 false,
                                 key.vl,
                                 key.vl,
-                                false,
-                                true,
+                                RoutingType::PER_FLOW_SHORTEST_PATHS,
                                 UbDatalinkHeaderConfig::PACKET_CNA16);
     return packet;
 }
@@ -460,7 +459,8 @@ BuildReceiverDataPacketWithSequences(const LocalTpTopology& topo,
                                      uint16_t iniTaSsn,
                                      uint32_t payloadBytes = 16,
                                      uint32_t resLenBytes = 16,
-                                     uint32_t taskId = kUrmaWriteRegressionTaskId)
+                                     uint32_t taskId = kUrmaWriteRegressionTaskId,
+                                     RoutingType routingType = RoutingType::PER_FLOW_SHORTEST_PATHS)
 {
     Ptr<Packet> data = Create<Packet>(payloadBytes);
     UbFlowTag flowTag(taskId, resLenBytes);
@@ -496,8 +496,7 @@ BuildReceiverDataPacketWithSequences(const LocalTpTopology& topo,
                                 false,
                                 kUrmaWriteRegressionPriority,
                                 kUrmaWriteRegressionPriority,
-                                false,
-                                true,
+                                routingType,
                                 UbDatalinkHeaderConfig::PACKET_IPV4);
     return data;
 }
@@ -548,8 +547,7 @@ BuildInboundTpPacket(const LocalTpTopology& topo,
                                 false,
                                 priority,
                                 priority,
-                                false,
-                                true,
+                                RoutingType::PER_FLOW_SHORTEST_PATHS,
                                 UbDatalinkHeaderConfig::PACKET_IPV4);
     return packet;
 }
@@ -1237,11 +1235,11 @@ class UbAppCtpAdmissionBackpressurePreservesJettyTest : public TestCase
     }
 };
 
-class UbAppCtpForwardsRoutingFlagsToServiceTest : public TestCase
+class UbAppCtpForwardsRoutingTypeToServiceTest : public TestCase
 {
   public:
-    UbAppCtpForwardsRoutingFlagsToServiceTest()
-        : TestCase("UnifiedBus - app CTP path forwards routing flags to CTP service")
+    UbAppCtpForwardsRoutingTypeToServiceTest()
+        : TestCase("UnifiedBus - app CTP path forwards routing type to CTP service")
     {
     }
 
@@ -1254,8 +1252,8 @@ class UbAppCtpForwardsRoutingFlagsToServiceTest : public TestCase
         Ptr<UbApp> app = CreateObject<UbApp>();
         node->AddApplication(app);
         app->SetTransportMode(TransportMode::CTP);
-        app->SetAttribute("UseShortestPaths", BooleanValue(true));
-        app->SetAttribute("UsePacketSpray", BooleanValue(true));
+        app->SetAttribute("RoutingType",
+                          EnumValue(RoutingType::PER_PACKET_SHORTEST_PATHS));
 
         Ptr<UbRoutingProcess> routing = node->GetObject<UbSwitch>()->GetRoutingProcess();
         routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(4).Get(), {0, 1});
@@ -1281,17 +1279,14 @@ class UbAppCtpForwardsRoutingFlagsToServiceTest : public TestCase
                            .dstEntityId = 0,
                            .vl = 5};
 
-        const uint32_t queuedOnPort0 = service->GetQueuedPacketCountForTest(key, 0, key.vl);
-        const uint32_t queuedOnPort1 = service->GetQueuedPacketCountForTest(key, 1, key.vl);
-        NS_TEST_ASSERT_MSG_NE(queuedOnPort0,
-                              0u,
-                              "packet-spray CTP app path should use port 0");
-        NS_TEST_ASSERT_MSG_NE(queuedOnPort1,
-                              0u,
-                              "packet-spray CTP app path should use port 1");
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(
+                service->GetOrCreateEntityState(key).Tx().routing.routingType),
+            static_cast<uint32_t>(RoutingType::PER_PACKET_SHORTEST_PATHS),
+            "CTP entity policy must preserve the app routing type");
         NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(key),
                               task.dataSize / UB_MTU_BYTE,
-                              "packet-spray CTP app path should queue one MTU packet per CTP TA unit");
+                              "per-packet CTP app path should queue one MTU packet per CTP TA unit");
 
         Simulator::Destroy();
     }
@@ -2282,8 +2277,7 @@ public:
         UbDatalinkPacketHeader dl;
         dl.SetConfig(static_cast<uint8_t>(UbDatalinkHeaderConfig::PACKET_IPV4));
         dl.SetPacketVL(3);
-        dl.SetLoadBalanceMode(true);
-        dl.SetRoutingPolicy(true);
+        dl.SetRoutingType(RoutingType::PER_PACKET_SHORTEST_PATHS);
         packet->AddHeader(dl);
 
         const uint32_t originalSize = packet->GetSize();
@@ -2308,12 +2302,9 @@ public:
                               static_cast<uint8_t>(UbDatalinkHeaderConfig::PACKET_IPV4),
                               "DCQCN no-mark path should preserve datalink config");
         NS_TEST_ASSERT_MSG_EQ(dl.GetPacketVL(), 3u, "DCQCN no-mark path should preserve packet VL");
-        NS_TEST_ASSERT_MSG_EQ(dl.GetLoadBalanceMode(),
-                              true,
-                              "DCQCN no-mark path should preserve load-balance mode");
-        NS_TEST_ASSERT_MSG_EQ(dl.GetRoutingPolicy(),
-                              true,
-                              "DCQCN no-mark path should preserve routing policy");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint8_t>(dl.GetRoutingType()),
+                              static_cast<uint8_t>(RoutingType::PER_PACKET_SHORTEST_PATHS),
+                              "DCQCN no-mark path should preserve routing type");
         NS_TEST_ASSERT_MSG_EQ(nth.GetMode(), 0u, "DCQCN no-mark path should preserve NTH mode");
         NS_TEST_ASSERT_MSG_EQ(nth.GetLocation(),
                               true,
@@ -3020,8 +3011,7 @@ public:
                                     false,
                                     kUrmaWriteRegressionPriority,
                                     kUrmaWriteRegressionPriority,
-                                    false,
-                                    true,
+                                    RoutingType::PER_FLOW_SHORTEST_PATHS,
                                     UbDatalinkHeaderConfig::PACKET_IPV4);
 
         rxTp->RecvDataPacket(data);
@@ -3509,8 +3499,7 @@ public:
                                     true,
                                     kUrmaWriteRegressionPriority,
                                     kUrmaWriteRegressionPriority,
-                                    false,
-                                    true,
+                                    RoutingType::PER_FLOW_SHORTEST_PATHS,
                                     UbDatalinkHeaderConfig::PACKET_IPV4);
 
         Ptr<UbLifecycleCoordinator> coordinator =
@@ -16927,8 +16916,7 @@ class UbLifecycleFaultParserViewPreservesPacketTest : public TestCase
                                     false,
                                     UB_PRIORITY_DEFAULT,
                                     UB_PRIORITY_DEFAULT,
-                                    false,
-                                    true,
+                                    RoutingType::PER_FLOW_SHORTEST_PATHS,
                                     UbDatalinkHeaderConfig::PACKET_IPV4);
 
         const UbPacketAttemptIdentity attempt =
@@ -17841,8 +17829,7 @@ class UbDataPacketHeaderRejectsPriorityZeroTest : public TestCase
                                         false,
                                         0,
                                         0,
-                                        false,
-                                        false,
+                                        RoutingType::PER_FLOW_ALL_PATHS,
                                         UbDatalinkHeaderConfig::PACKET_IPV4);
         });
 
@@ -17882,8 +17869,7 @@ class UbSendControlFrameRejectsDataPacketTest : public TestCase
                                         false,
                                         1,
                                         1,
-                                        false,
-                                        false,
+                                        RoutingType::PER_FLOW_ALL_PATHS,
                                         UbDatalinkHeaderConfig::PACKET_IPV4);
             fixture.sw->SendControlFrame(dataPacket, 0);
         });
@@ -18879,8 +18865,7 @@ class UbCbfcPiggybackTargetVlCanDifferFromPacketVlTest : public TestCase
                                     false,
                                     /*crdVl*/ 1,
                                     /*pktVl*/ 2,
-                                    false,
-                                    false,
+                                    RoutingType::PER_FLOW_ALL_PATHS,
                                     UbDatalinkHeaderConfig::PACKET_IPV4);
         Ptr<UbPacketQueue> ingressQueue = CreateObject<UbPacketQueue>();
         ingressQueue->SetIngressPriority(2);
@@ -18947,8 +18932,7 @@ class UbCbfcPiggybackRestoreClearsLocalCreditBitTest : public TestCase
                                     false,
                                     /*crdVl*/ 6,
                                     /*pktVl*/ 3,
-                                    false,
-                                    false,
+                                    RoutingType::PER_FLOW_ALL_PATHS,
                                     UbDatalinkHeaderConfig::PACKET_IPV4);
 
         probe->OnDataPacketReceived(packet);
@@ -19249,8 +19233,7 @@ class UbCbfcForwardedReleaseUsesIngressPortThresholdStateTest : public TestCase
                                     false,
                                     /*crdVl*/ 1,
                                     /*pktVl*/ 5,
-                                    false,
-                                    false,
+                                    RoutingType::PER_FLOW_ALL_PATHS,
                                     UbDatalinkHeaderConfig::PACKET_IPV4);
         Ptr<UbPacketQueue> ingressQueue = CreateObject<UbPacketQueue>();
         ingressQueue->SetIngressPriority(5);
@@ -19324,8 +19307,7 @@ class UbCbfcForwardedIngressEnqueueDoesNotAccumulateReturnCreditTest : public Te
                                     false,
                                     /*crdVl*/ kPriority,
                                     /*pktVl*/ kPriority,
-                                    false,
-                                    false,
+                                    RoutingType::PER_FLOW_ALL_PATHS,
                                     UbDatalinkHeaderConfig::PACKET_IPV4);
 
         fixture.sw->SendPacket(packet, kIngressPort, kEgressPort, kPriority);
@@ -21421,225 +21403,697 @@ class UbBusyPortArrivalPrefetchesNextPacketTest : public TestCase
     }
 };
 
-class UbPacketSprayUsesEvenRoundRobinAcrossEqualPortsTest : public TestCase
+class UbRoutingTypeWireEncodingTest : public TestCase
 {
   public:
-    UbPacketSprayUsesEvenRoundRobinAcrossEqualPortsTest()
-        : TestCase("UnifiedBus - packet spray evenly round-robins across equal-cost ports")
+    UbRoutingTypeWireEncodingTest()
+        : TestCase("UnifiedBus - routing type uses the UB specification bit encoding")
     {
     }
 
     void DoRun() override
     {
-        Ptr<UbRoutingProcess> routing = CreateObject<UbRoutingProcess>();
-        routing->SetNodeId(0);
-        const std::vector<uint16_t> equalPorts = {10, 11, 12};
-        routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(42).Get(), equalPorts);
+        const std::array<std::pair<RoutingType, uint8_t>, 4> cases = {
+            std::pair{RoutingType::PER_FLOW_ALL_PATHS, uint8_t{0b00}},
+            std::pair{RoutingType::PER_PACKET_ALL_PATHS, uint8_t{0b01}},
+            std::pair{RoutingType::PER_FLOW_SHORTEST_PATHS, uint8_t{0b10}},
+            std::pair{RoutingType::PER_PACKET_SHORTEST_PATHS, uint8_t{0b11}},
+        };
 
-        RoutingKey rtKey{};
-        rtKey.sip = NodeIdToIp(1).Get();
-        rtKey.dip = NodeIdToIp(42).Get();
-        rtKey.dport = 7;
-        rtKey.priority = 2;
-        rtKey.useShortestPath = true;
-        rtKey.usePacketSpray = true;
-
-        std::map<uint16_t, uint32_t> counts;
-        for (uint16_t port : equalPorts)
+        for (const auto& [routingType, expectedBits] : cases)
         {
-            counts[port] = 0;
+            UbDatalinkPacketHeader header;
+            header.SetRoutingType(routingType);
+
+            Ptr<Packet> packet = Create<Packet>();
+            packet->AddHeader(header);
+            std::array<uint8_t, 4> bytes{};
+            packet->CopyData(bytes.data(), bytes.size());
+
+            const uint8_t actualBits = bytes[2] >> 6;
+            NS_TEST_ASSERT_MSG_EQ(actualBits,
+                                  expectedBits,
+                                  "RT must encode shortest-path selection in RT[1] and "
+                                  "per-packet selection in RT[0]");
+
+            UbDatalinkPacketHeader decoded;
+            packet->RemoveHeader(decoded);
+            NS_TEST_ASSERT_MSG_EQ(static_cast<uint8_t>(decoded.GetRoutingType()),
+                                  expectedBits,
+                                  "deserialized routing type must preserve the wire RT value");
         }
-
-        for (uint32_t spraySalt = 0; spraySalt < 977; ++spraySalt)
-        {
-            rtKey.sport = static_cast<uint16_t>(spraySalt);
-            bool selectedShortestPath = false;
-            const int outPort = routing->GetOutPort(rtKey, selectedShortestPath);
-
-            NS_TEST_ASSERT_MSG_EQ(selectedShortestPath,
-                                  true,
-                                  "Packet spray should stay within the equal shortest-path set");
-            NS_TEST_ASSERT_MSG_EQ((counts.count(static_cast<uint16_t>(outPort)) == 1),
-                                  true,
-                                  "Packet spray must select one of the configured equal-cost ports");
-            NS_TEST_ASSERT_MSG_EQ(outPort,
-                                  equalPorts[spraySalt % equalPorts.size()],
-                                  "Packet spray must advance in strict candidate order");
-            counts[static_cast<uint16_t>(outPort)]++;
-        }
-
-        rtKey.sport = 17;
-        bool originalFlowShortest = false;
-        const int originalFlowPort = routing->GetOutPort(rtKey, originalFlowShortest);
-        rtKey.sip = NodeIdToIp(9).Get();
-        rtKey.dport = 31;
-        rtKey.priority = 6;
-        bool changedFlowShortest = false;
-        const int changedFlowPort = routing->GetOutPort(rtKey, changedFlowShortest);
-        NS_TEST_ASSERT_MSG_EQ(changedFlowPort,
-                              originalFlowPort,
-                              "Strict RR must not randomize its start from flow fields");
-        NS_TEST_ASSERT_MSG_EQ(changedFlowShortest,
-                              originalFlowShortest,
-                              "Flow fields must not change strict-RR path classification");
-
-        uint32_t minCount = std::numeric_limits<uint32_t>::max();
-        uint32_t maxCount = 0;
-        for (uint16_t port : equalPorts)
-        {
-            minCount = std::min(minCount, counts[port]);
-            maxCount = std::max(maxCount, counts[port]);
-        }
-
-        NS_TEST_ASSERT_MSG_EQ(((maxCount - minCount) <= 1),
-                              true,
-                              "Packet spray should differ by at most one packet across equal-cost ports");
     }
 };
 
-class UbRoutingPolicyPreservesCandidateSemanticsTest : public TestCase
+class UbRtpResponseInheritsRoutingTypeTest : public TestCase
 {
   public:
-    UbRoutingPolicyPreservesCandidateSemanticsTest()
-        : TestCase("UnifiedBus - routing policy preserves candidate order and ingress filtering")
-    {
-    }
-
-    void DoRun() override
-    {
-        Ptr<UbRoutingProcess> routing = CreateObject<UbRoutingProcess>();
-        routing->SetNodeId(0);
-        routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(42).Get(), {2, 3});
-        routing->GetRoutingTable().AddOtherRoute(NodeIdToIp(42).Get(), {4, 5});
-
-        RoutingKey key{};
-        key.sip = NodeIdToIp(1).Get();
-        key.dip = NodeIdToIp(42).Get();
-        key.sport = 9;
-        key.dport = 7;
-        key.priority = 2;
-        key.useShortestPath = false;
-        key.usePacketSpray = false;
-
-        bool firstIsShortest = false;
-        const int first = routing->GetOutPort(key, firstIsShortest);
-        bool repeatedIsShortest = false;
-        const int repeated = routing->GetOutPort(key, repeatedIsShortest);
-        NS_TEST_ASSERT_MSG_EQ(repeated, first, "Per-flow hash selection must be deterministic");
-        NS_TEST_ASSERT_MSG_EQ(repeatedIsShortest,
-                              firstIsShortest,
-                              "Per-flow hash path classification must be deterministic");
-
-        key.useShortestPath = true;
-        bool shortestOnly = false;
-        const int shortestPort = routing->GetOutPort(key, shortestOnly);
-        NS_TEST_ASSERT_MSG_EQ(shortestOnly, true, "Shortest-only lookup must classify its result");
-        NS_TEST_ASSERT_MSG_EQ((shortestPort == 2 || shortestPort == 3),
-                              true,
-                              "Shortest-only lookup must exclude non-shortest ports");
-
-        routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(43).Get(), {7, 8});
-        key.dip = NodeIdToIp(43).Get();
-        bool filteredIsShortest = false;
-        const int filteredPort = routing->GetOutPort(key, filteredIsShortest, 7);
-        NS_TEST_ASSERT_MSG_EQ(filteredPort, 8, "Ingress filtering must retain the other route");
-        NS_TEST_ASSERT_MSG_EQ(filteredIsShortest,
-                              true,
-                              "Ingress filtering must preserve route classification");
-
-        key.dip = NodeIdToIp(99).Get();
-        bool missingIsShortest = false;
-        NS_TEST_ASSERT_MSG_EQ(routing->GetOutPort(key, missingIsShortest),
-                              -1,
-                              "Missing route must return the inherited failure result");
-        NS_TEST_ASSERT_MSG_EQ(routing->GetHotPathLookupCountForTest(),
-                              5u,
-                              "Every facade lookup should be counted");
-        NS_TEST_ASSERT_MSG_EQ(routing->GetHotPathTemporaryContainerAllocationCountForTest(),
-                              0u,
-                              "Facade lookup must not allocate candidate or best-port containers");
-    }
-};
-
-class UbRoutingAdaptiveFirstMinimumTest : public TestCase
-{
-  public:
-    UbRoutingAdaptiveFirstMinimumTest()
-        : TestCase("UnifiedBus - adaptive routing keeps first-minimum tie break")
+    UbRtpResponseInheritsRoutingTypeTest()
+        : TestCase("UnifiedBus - RTP response inherits request routing type")
     {
     }
 
     void DoRun() override
     {
         Config::Reset();
-        Ptr<Node> node = CreateObject<Node>(0);
-        InitNode(node, UB_SWITCH, 3);
-        Ptr<UbRoutingProcess> routing = node->GetObject<UbSwitch>()->GetRoutingProcess();
-        routing->SetAttribute("RoutingAlgorithm", StringValue("ADAPTIVE"));
-        routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(42).Get(), {0, 1});
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(false));
 
-        RoutingKey key{};
-        key.sip = NodeIdToIp(1).Get();
-        key.dip = NodeIdToIp(42).Get();
-        key.priority = 2;
-        key.useShortestPath = true;
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbTransportChannel> receiver =
+            topo.receiver->GetObject<UbController>()->GetTransportChannelManager()->GetTp(
+                kUrmaWriteRegressionReceiverTpn);
+        const std::array<RoutingType, 4> routingTypes = {
+            RoutingType::PER_FLOW_ALL_PATHS,
+            RoutingType::PER_PACKET_ALL_PATHS,
+            RoutingType::PER_FLOW_SHORTEST_PATHS,
+            RoutingType::PER_PACKET_SHORTEST_PATHS,
+        };
 
-        bool selectedShortest = false;
-        NS_TEST_ASSERT_MSG_EQ(routing->GetOutPort(key, selectedShortest),
-                              0,
-                              "Equal-load adaptive routing should keep the first candidate");
-        NS_TEST_ASSERT_MSG_EQ(selectedShortest,
-                              true,
-                              "Adaptive shortest candidate must retain classification");
-        NS_TEST_ASSERT_MSG_EQ(routing->GetOutPort(key, selectedShortest, 0),
-                              1,
-                              "Adaptive routing must filter the ingress before tie-breaking");
+        for (uint32_t index = 0; index < routingTypes.size(); ++index)
+        {
+            receiver->RecvDataPacket(BuildReceiverDataPacketWithSequences(
+                topo,
+                index,
+                true,
+                index,
+                static_cast<uint16_t>(index),
+                16,
+                16,
+                kUrmaWriteRegressionTaskId + index,
+                routingTypes[index]));
+            Ptr<Packet> response = receiver->PopAckForTest();
+            NS_TEST_ASSERT_MSG_NE(response, nullptr, "RTP request must produce a response");
+
+            UbDatalinkPacketHeader header;
+            response->RemoveHeader(header);
+            NS_TEST_ASSERT_MSG_EQ(static_cast<uint8_t>(header.GetRoutingType()),
+                                  static_cast<uint8_t>(routingTypes[index]),
+                                  "RTP response must preserve the request RT bits");
+        }
 
         Simulator::Destroy();
         Config::Reset();
     }
 };
 
-class UbRoutingHotPathContainerBalanceTest : public TestCase
+class UbMultipathHashSelectorsUseCompleteRoutingKeyTest : public TestCase
 {
   public:
-    UbRoutingHotPathContainerBalanceTest()
-        : TestCase("UnifiedBus - routing hot path avoids temporary candidate containers")
+    UbMultipathHashSelectorsUseCompleteRoutingKeyTest()
+        : TestCase("UnifiedBus - hash multipath selectors use the complete routing key")
+    {
+    }
+
+    void DoRun() override
+    {
+        const std::array<MultipathSelector, 3> selectors = {
+            MultipathSelector::HASH64,
+            MultipathSelector::CRC32,
+            MultipathSelector::TOEPLITZ,
+        };
+        const std::vector<uint16_t> candidatePorts = {8, 9, 10, 11};
+
+        for (MultipathSelector selector : selectors)
+        {
+            Ptr<UbRoutingProcess> routing = CreateObject<UbRoutingProcess>();
+            routing->SetNodeId(1024);
+            routing->SetAttribute("MultipathSelector", EnumValue(selector));
+
+            RoutingKey rtKey{};
+            rtKey.sip = NodeIdToIp(1).Get();
+            rtKey.dip = NodeIdToIp(42).Get();
+            rtKey.dport = 4792;
+            rtKey.priority = 2;
+            rtKey.routingType = RoutingType::PER_PACKET_SHORTEST_PATHS;
+
+            std::set<uint16_t> selectedPorts;
+            for (uint16_t loadBalance = 0; loadBalance < 256; ++loadBalance)
+            {
+                rtKey.sport = loadBalance;
+                bool selectedShortestPath = false;
+                const int first =
+                    routing->SelectOutPort(rtKey, candidatePorts, {}, selectedShortestPath);
+                const int second =
+                    routing->SelectOutPort(rtKey, candidatePorts, {}, selectedShortestPath);
+
+                NS_TEST_ASSERT_MSG_EQ(first,
+                                      second,
+                                      "a stateless hash selector must be stable for the same routing key");
+                selectedPorts.insert(static_cast<uint16_t>(first));
+            }
+
+            NS_TEST_ASSERT_MSG_GT(selectedPorts.size(),
+                                  1u,
+                                  "changing the existing sport/Lb field must influence hash selection");
+        }
+        Config::Reset();
+    }
+};
+
+class UbRoundRobinMultipathSelectorCyclesCandidateSetTest : public TestCase
+{
+  public:
+    UbRoundRobinMultipathSelectorCyclesCandidateSetTest()
+        : TestCase("UnifiedBus - round robin multipath selector cycles the candidate set")
     {
     }
 
     void DoRun() override
     {
         Ptr<UbRoutingProcess> routing = CreateObject<UbRoutingProcess>();
-        routing->SetNodeId(0);
-        routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(42).Get(), {2, 3, 4, 5});
+        routing->SetAttribute("MultipathSelector", EnumValue(MultipathSelector::ROUND_ROBIN));
 
-        RoutingKey key{};
-        key.sip = NodeIdToIp(1).Get();
-        key.dip = NodeIdToIp(42).Get();
-        key.dport = 7;
-        key.priority = 2;
-        key.useShortestPath = true;
-        key.usePacketSpray = true;
+        RoutingKey rtKey{};
+        rtKey.routingType = RoutingType::PER_PACKET_ALL_PATHS;
+        const std::vector<uint16_t> shortestPorts = {8, 9};
+        const std::vector<uint16_t> nonShortestPorts = {10, 11};
+        const std::array<uint16_t, 6> expectedPorts = {8, 9, 10, 11, 8, 9};
 
-        constexpr uint32_t lookups = 100000;
-        for (uint32_t i = 0; i < lookups; ++i)
+        for (std::size_t index = 0; index < expectedPorts.size(); ++index)
         {
-            key.sport = static_cast<uint16_t>(i);
-            bool selectedShortest = false;
-            NS_TEST_ASSERT_MSG_NE(routing->GetOutPort(key, selectedShortest),
-                                  -1,
-                                  "Hot-path characterization requires a route");
+            bool selectedShortestPath = false;
+            const int actual = routing->SelectOutPort(rtKey,
+                                                       shortestPorts,
+                                                       nonShortestPorts,
+                                                       selectedShortestPath);
+            NS_TEST_ASSERT_MSG_EQ(actual,
+                                  expectedPorts[index],
+                                  "round robin must advance once per selection");
+            NS_TEST_ASSERT_MSG_EQ(selectedShortestPath,
+                                  ((index % 4) < shortestPorts.size()),
+                                  "shortest-path result must match the selected candidate index");
         }
-
-        NS_TEST_ASSERT_MSG_EQ(routing->GetHotPathLookupCountForTest(),
-                              lookups,
-                              "Hot-path counter must cover every measured lookup");
-        NS_TEST_ASSERT_MSG_EQ(routing->GetHotPathTemporaryContainerAllocationCountForTest(),
-                              0u,
-                              "Measured lookups must not allocate route-selection containers");
+        Config::Reset();
     }
 };
+
+class UbIngressPortStripeMapsIngressToCandidateIndexTest : public TestCase
+{
+  public:
+    UbIngressPortStripeMapsIngressToCandidateIndexTest()
+        : TestCase("UnifiedBus - ingress port stripe maps ingress to candidate index")
+    {
+    }
+
+    void DoRun() override
+    {
+        Ptr<UbRoutingProcess> routing = CreateObject<UbRoutingProcess>();
+        routing->SetAttribute("MultipathSelector",
+                              EnumValue(MultipathSelector::INGRESS_PORT_STRIPE));
+
+        RoutingKey rtKey{};
+        const std::vector<uint16_t> shortestPorts = {8, 9};
+        const std::vector<uint16_t> nonShortestPorts = {10, 11};
+        for (uint16_t inPort = 0; inPort < 12; ++inPort)
+        {
+            bool selectedShortestPath = false;
+            const int actual = routing->SelectOutPort(rtKey,
+                                                       shortestPorts,
+                                                       nonShortestPorts,
+                                                       selectedShortestPath,
+                                                       inPort);
+            const uint16_t expected = static_cast<uint16_t>(8 + inPort % 4);
+            NS_TEST_ASSERT_MSG_EQ(actual,
+                                  expected,
+                                  "ingress stripe must use ingress port modulo candidate count");
+            NS_TEST_ASSERT_MSG_EQ(selectedShortestPath,
+                                  ((inPort % 4) < shortestPorts.size()),
+                                  "shortest-path result must match the selected candidate index");
+        }
+        Config::Reset();
+    }
+};
+
+class UbIngressPortStripeUsesHash64ForLocalInjectionTest : public TestCase
+{
+  public:
+    UbIngressPortStripeUsesHash64ForLocalInjectionTest()
+        : TestCase("UnifiedBus - ingress port stripe uses HASH64 for local injection")
+    {
+    }
+
+    void DoRun() override
+    {
+        Ptr<UbRoutingProcess> hashRouting = CreateObject<UbRoutingProcess>();
+        hashRouting->SetNodeId(1024);
+        hashRouting->SetAttribute("MultipathSelector", EnumValue(MultipathSelector::HASH64));
+
+        Ptr<UbRoutingProcess> stripeRouting = CreateObject<UbRoutingProcess>();
+        stripeRouting->SetNodeId(1024);
+        stripeRouting->SetAttribute("MultipathSelector",
+                                    EnumValue(MultipathSelector::INGRESS_PORT_STRIPE));
+
+        RoutingKey rtKey{};
+        rtKey.sip = NodeIdToIp(1).Get();
+        rtKey.dip = NodeIdToIp(42).Get();
+        rtKey.sport = 73;
+        rtKey.dport = 4792;
+        rtKey.priority = 2;
+        const std::vector<uint16_t> shortestPorts = {8, 9};
+        const std::vector<uint16_t> nonShortestPorts = {10, 11};
+
+        bool hashSelectedShortestPath = false;
+        bool stripeSelectedShortestPath = false;
+        const int expected = hashRouting->SelectOutPort(rtKey,
+                                                        shortestPorts,
+                                                        nonShortestPorts,
+                                                        hashSelectedShortestPath);
+        const int actual = stripeRouting->SelectOutPort(rtKey,
+                                                        shortestPorts,
+                                                        nonShortestPorts,
+                                                        stripeSelectedShortestPath);
+
+        NS_TEST_ASSERT_MSG_EQ(actual,
+                              expected,
+                              "local injection must fall back to HASH64 over the full routing key");
+        NS_TEST_ASSERT_MSG_EQ(stripeSelectedShortestPath,
+                              hashSelectedShortestPath,
+                              "local HASH64 fallback must preserve the selected route class");
+        Config::Reset();
+    }
+};
+
+class UbMultipathSelectorRoutingTypeMatrixTest : public TestCase
+{
+  public:
+    UbMultipathSelectorRoutingTypeMatrixTest()
+        : TestCase("UnifiedBus - multipath selector follows the routing type validity matrix")
+    {
+    }
+
+    void DoRun() override
+    {
+        const std::array<RoutingType, 4> routingTypes = {
+            RoutingType::PER_FLOW_ALL_PATHS,
+            RoutingType::PER_PACKET_ALL_PATHS,
+            RoutingType::PER_FLOW_SHORTEST_PATHS,
+            RoutingType::PER_PACKET_SHORTEST_PATHS,
+        };
+        const std::array<MultipathSelector, 6> selectors = {
+            MultipathSelector::HASH64,
+            MultipathSelector::CRC32,
+            MultipathSelector::TOEPLITZ,
+            MultipathSelector::ROUND_ROBIN,
+            MultipathSelector::ADAPTIVE,
+            MultipathSelector::INGRESS_PORT_STRIPE,
+        };
+
+        for (RoutingType routingType : routingTypes)
+        {
+            for (MultipathSelector selector : selectors)
+            {
+                const bool isHash = selector == MultipathSelector::HASH64 ||
+                                    selector == MultipathSelector::CRC32 ||
+                                    selector == MultipathSelector::TOEPLITZ;
+                const bool expected =
+                    isHash ||
+                    (RoutingTypeIsPerPacket(routingType)
+                         ? selector == MultipathSelector::ROUND_ROBIN ||
+                               selector == MultipathSelector::ADAPTIVE
+                         : selector == MultipathSelector::INGRESS_PORT_STRIPE);
+                NS_TEST_ASSERT_MSG_EQ(MultipathSelectorIsValidForRoutingType(selector, routingType),
+                                      expected,
+                                      "selector validity must match the frozen routing matrix");
+            }
+        }
+    }
+};
+
+class UbAdaptiveMultipathSelectorUsesExistingLoadSelectionTest : public TestCase
+{
+  public:
+    UbAdaptiveMultipathSelectorUsesExistingLoadSelectionTest()
+        : TestCase("UnifiedBus - adaptive multipath selector uses queue load selection")
+    {
+    }
+
+    void DoRun() override
+    {
+        Ptr<Node> node = CreateObject<Node>();
+        InitNode(node, UB_SWITCH, 4);
+        Ptr<UbRoutingProcess> routing = node->GetObject<UbSwitch>()->GetRoutingProcess();
+        routing->SetAttribute("MultipathSelector", EnumValue(MultipathSelector::ADAPTIVE));
+
+        RoutingKey rtKey{};
+        rtKey.routingType = RoutingType::PER_PACKET_ALL_PATHS;
+        rtKey.priority = 2;
+        bool selectedShortestPath = false;
+        const int actual = routing->SelectOutPort(rtKey, {0, 1}, {2, 3}, selectedShortestPath);
+
+        NS_TEST_ASSERT_MSG_EQ(actual,
+                              0,
+                              "equal-load adaptive selection must preserve the existing first-port tie break");
+        NS_TEST_ASSERT_MSG_EQ(selectedShortestPath,
+                              true,
+                              "the first equal-load candidate belongs to shortest paths");
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbRoutingKeyUsesRoutingTypeForCandidateScopeTest : public TestCase
+{
+  public:
+    UbRoutingKeyUsesRoutingTypeForCandidateScopeTest()
+        : TestCase("UnifiedBus - routing key uses routing type for candidate scope")
+    {
+    }
+
+    void DoRun() override
+    {
+        Ptr<UbRoutingProcess> routing = CreateObject<UbRoutingProcess>();
+        routing->SetNodeId(1024);
+        routing->SetAttribute("MultipathSelector",
+                              EnumValue(MultipathSelector::INGRESS_PORT_STRIPE));
+        const uint32_t destination = NodeIdToIp(42).Get();
+        routing->GetRoutingTable().AddShortestRoute(destination, {8});
+        routing->GetRoutingTable().AddOtherRoute(destination, {9});
+
+        RoutingKey rtKey{};
+        rtKey.dip = destination;
+        rtKey.routingType = RoutingType::PER_FLOW_SHORTEST_PATHS;
+        bool selectedShortestPath = false;
+        NS_TEST_ASSERT_MSG_EQ(routing->GetOutPort(rtKey, selectedShortestPath, 1),
+                              8,
+                              "shortest-path routing type must exclude non-shortest candidates");
+
+        rtKey.routingType = RoutingType::PER_FLOW_ALL_PATHS;
+        NS_TEST_ASSERT_MSG_EQ(routing->GetOutPort(rtKey, selectedShortestPath, 1),
+                              9,
+                              "all-path routing type must include non-shortest candidates");
+        Config::Reset();
+    }
+};
+
+#ifndef _WIN32
+class UbLegacyRoutingConfigurationIsAdaptedAtFileBoundaryTest : public TestCase
+{
+  public:
+    UbLegacyRoutingConfigurationIsAdaptedAtFileBoundaryTest()
+        : TestCase("UnifiedBus - legacy routing configuration is adapted at the file boundary")
+    {
+    }
+
+    void DoRun() override
+    {
+        const std::filesystem::path configPath =
+            CreateTempDirFilename("ub-legacy-routing-attributes.txt");
+        std::ofstream config(configPath);
+        config << "default ns3::UbApp::UsePacketSpray \"false\"\n"
+               << "default ns3::UbApp::UsePacketSpray \"true\"\n"
+               << "default ns3::UbApp::UseShortestPaths \"true\"\n"
+               << "default ns3::UbApp::UseShortestPaths \"false\"\n"
+               << "default ns3::UbTransportChannel::UsePacketSpray \"false\"\n"
+               << "default ns3::UbTransportChannel::UseShortestPaths \"true\"\n"
+               << "default ns3::UbLdstApi::UsePacketSpray \"true\"\n"
+               << "default ns3::UbLdstApi::UseShortestPaths \"true\"\n"
+               << "default ns3::UbRoutingProcess::RoutingAlgorithm \"ADAPTIVE\"\n"
+               << "default ns3::UbRoutingProcess::RoutingAlgorithm \"HASH\"\n";
+        config.close();
+
+        const int status = RunInChildProcess([configPath]() {
+            std::ostringstream warning;
+            std::streambuf* originalBuffer = std::cerr.rdbuf(warning.rdbuf());
+            UbUtils::Get()->SetComponentsAttribute(configPath.string());
+            std::cerr.rdbuf(originalBuffer);
+
+            Ptr<UbApp> app = CreateObject<UbApp>();
+            Ptr<UbTransportChannel> transport = CreateObject<UbTransportChannel>();
+            Ptr<UbLdstApi> ldst = CreateObject<UbLdstApi>();
+            Ptr<UbRoutingProcess> routing = CreateObject<UbRoutingProcess>();
+            EnumValue<RoutingType> routingType;
+            EnumValue<MultipathSelector> selector;
+
+            app->GetAttribute("RoutingType", routingType);
+            NS_ABORT_MSG_IF(routingType.Get() != RoutingType::PER_PACKET_ALL_PATHS,
+                            "legacy UbApp routing attributes were not adapted");
+            transport->GetAttribute("RoutingType", routingType);
+            NS_ABORT_MSG_IF(routingType.Get() != RoutingType::PER_FLOW_SHORTEST_PATHS,
+                            "legacy transport routing attributes were not adapted");
+            ldst->GetAttribute("RoutingType", routingType);
+            NS_ABORT_MSG_IF(routingType.Get() != RoutingType::PER_PACKET_SHORTEST_PATHS,
+                            "legacy LDST routing attributes were not adapted");
+            routing->GetAttribute("MultipathSelector", selector);
+            NS_ABORT_MSG_IF(selector.Get() != MultipathSelector::HASH64,
+                            "legacy routing algorithm was not adapted");
+
+            const std::string text = warning.str();
+            const auto firstWarning = text.find("WARNING");
+            NS_ABORT_MSG_IF(firstWarning == std::string::npos ||
+                                text.find("WARNING", firstWarning + 1) != std::string::npos,
+                            "legacy routing adapter must emit one aggregated warning");
+            NS_ABORT_MSG_IF(text.find(configPath.string() + ":1,2,3,4") == std::string::npos,
+                            "legacy warning must include source file and line numbers");
+            NS_ABORT_MSG_IF(
+                text.find("default ns3::UbApp::RoutingType \"PER_PACKET_ALL_PATHS\"") ==
+                    std::string::npos,
+                "legacy warning must include the complete canonical replacement line");
+            NS_ABORT_MSG_IF(
+                text.find("default ns3::UbTransportChannel::RoutingType "
+                          "\"PER_FLOW_SHORTEST_PATHS\"") == std::string::npos ||
+                    text.find("default ns3::UbLdstApi::RoutingType "
+                              "\"PER_PACKET_SHORTEST_PATHS\"") == std::string::npos ||
+                    text.find("default ns3::UbRoutingProcess::MultipathSelector \"HASH64\"") ==
+                        std::string::npos,
+                "legacy warning must include every complete canonical replacement line");
+            NS_ABORT_MSG_IF(text.find("may stop working in a future release") ==
+                                std::string::npos,
+                            "legacy warning must explain that compatibility may expire");
+        });
+
+        std::error_code ec;
+        std::filesystem::remove(configPath, ec);
+        NS_TEST_ASSERT_MSG_EQ(WIFEXITED(status),
+                              1,
+                              "legacy routing attributes should be adapted before ConfigStore");
+        NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(status),
+                              0,
+                              "legacy routing adapter should preserve supported configurations");
+        Config::Reset();
+    }
+};
+
+class UbLegacyRoutingConfigurationRejectsAmbiguousOrInvalidInputTest : public TestCase
+{
+  public:
+    UbLegacyRoutingConfigurationRejectsAmbiguousOrInvalidInputTest()
+        : TestCase("UnifiedBus - legacy routing adapter rejects ambiguous or invalid input")
+    {
+    }
+
+    void DoRun() override
+    {
+        auto expectAbort = [this](const std::string& filename,
+                                  const std::string& contents,
+                                  const std::string& description) {
+            const std::filesystem::path configPath = CreateTempDirFilename(filename);
+            std::ofstream config(configPath);
+            config << contents;
+            config.close();
+
+            const int status = RunInChildProcess(
+                [configPath]() { UbUtils::Get()->SetComponentsAttribute(configPath.string()); });
+
+            std::error_code ec;
+            std::filesystem::remove(configPath, ec);
+            NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, description << " must abort");
+            NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status),
+                                  SIGABRT,
+                                  description << " must fail before ConfigStore completes");
+        };
+
+        expectAbort("ub-conflicting-routing-type.txt",
+                    "default ns3::UbApp::UsePacketSpray \"false\"\n"
+                    "default ns3::UbApp::RoutingType \"PER_FLOW_SHORTEST_PATHS\"\n",
+                    "legacy and canonical routing type conflict");
+        expectAbort(
+            "ub-conflicting-selector.txt",
+            "default ns3::UbRoutingProcess::RoutingAlgorithm \"HASH\"\n"
+            "default ns3::UbRoutingProcess::MultipathSelector \"HASH64\"\n",
+            "legacy and canonical selector conflict");
+        expectAbort(
+            "ub-invalid-legacy-adaptive.txt",
+            "default ns3::UbApp::UsePacketSpray \"false\"\n"
+            "default ns3::UbApp::UseShortestPaths \"true\"\n"
+            "default ns3::UbTransportChannel::UsePacketSpray \"false\"\n"
+            "default ns3::UbTransportChannel::UseShortestPaths \"true\"\n"
+            "default ns3::UbLdstApi::UsePacketSpray \"false\"\n"
+            "default ns3::UbLdstApi::UseShortestPaths \"true\"\n"
+            "default ns3::UbRoutingProcess::RoutingAlgorithm \"ADAPTIVE\"\n",
+            "legacy ADAPTIVE with per-flow routing");
+        Config::Reset();
+    }
+};
+
+class UbInvalidRoutingMatrixIsRejectedDuringConfigLoadTest : public TestCase
+{
+  public:
+    UbInvalidRoutingMatrixIsRejectedDuringConfigLoadTest()
+        : TestCase("UnifiedBus - invalid routing matrix is rejected during config load")
+    {
+    }
+
+    void DoRun() override
+    {
+        const std::filesystem::path configPath =
+            CreateTempDirFilename("ub-invalid-routing-matrix.txt");
+        std::ofstream config(configPath);
+        config << "default ns3::UbApp::RoutingType \"PER_FLOW_SHORTEST_PATHS\"\n"
+               << "default ns3::UbTransportChannel::RoutingType "
+                  "\"PER_FLOW_SHORTEST_PATHS\"\n"
+               << "default ns3::UbLdstApi::RoutingType \"PER_FLOW_SHORTEST_PATHS\"\n"
+               << "default ns3::UbRoutingProcess::MultipathSelector \"ADAPTIVE\"\n";
+        config.close();
+
+        const int status = RunInChildProcess(
+            [configPath]() { UbUtils::Get()->SetComponentsAttribute(configPath.string()); });
+
+        std::error_code ec;
+        std::filesystem::remove(configPath, ec);
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status),
+                              1,
+                              "invalid routing matrix must fail before objects process packets");
+        NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status),
+                              SIGABRT,
+                              "invalid routing matrix must fail with an explicit configuration abort");
+        Config::Reset();
+    }
+};
+
+class UbInvalidProgrammaticRoutingMatrixIsRejectedAtObjectBoundariesTest : public TestCase
+{
+  public:
+    UbInvalidProgrammaticRoutingMatrixIsRejectedAtObjectBoundariesTest()
+        : TestCase("UnifiedBus - invalid programmatic routing matrix is rejected at object boundaries")
+    {
+    }
+
+    void DoRun() override
+    {
+        auto expectAbort = [this](const std::function<void()>& configure,
+                                  const std::string& description) {
+            const int status = RunInChildProcess(configure);
+            NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, description << " must abort");
+            NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status),
+                                  SIGABRT,
+                                  description << " must fail before packet processing");
+        };
+
+        expectAbort(
+            []() {
+                Ptr<Node> node = CreateObject<Node>();
+                InitNode(node, UB_DEVICE, 1);
+                node->GetObject<UbSwitch>()->GetRoutingProcess()->SetAttribute(
+                    "MultipathSelector",
+                    EnumValue(MultipathSelector::ADAPTIVE));
+
+                Ptr<UbTransportChannel> transport = CreateObject<UbTransportChannel>();
+                transport->SetAttribute(
+                    "RoutingType",
+                    EnumValue(RoutingType::PER_FLOW_SHORTEST_PATHS));
+                Ptr<UbCongestionControl> congestionCtrl =
+                    UbCongestionControl::Create(UB_DEVICE);
+                transport->SetUbTransport(node->GetId(),
+                                          node->GetId(),
+                                          node->GetId() + 1,
+                                          1,
+                                          2,
+                                          0,
+                                          1,
+                                          0,
+                                          0,
+                                          NodeIdToIp(node->GetId()),
+                                          NodeIdToIp(node->GetId() + 1),
+                                          congestionCtrl);
+            },
+            "RTP transport configuration");
+
+        const int deferredCtpPolicyStatus = RunInChildProcess([]() {
+            Ptr<Node> node = CreateObject<Node>();
+            InitNode(node, UB_DEVICE, 1);
+            node->GetObject<UbSwitch>()->GetRoutingProcess()->SetAttribute(
+                "MultipathSelector",
+                EnumValue(MultipathSelector::ADAPTIVE));
+            Ptr<UbCtpTransportService> service =
+                node->GetObject<UbController>()->GetCtpTransportService();
+            service->SetRoutingType(RoutingType::PER_PACKET_SHORTEST_PATHS);
+        });
+        NS_TEST_ASSERT_MSG_EQ(
+            WIFEXITED(deferredCtpPolicyStatus),
+            1,
+            "CTP service creation must defer validation until the app assigns its routing policy");
+        NS_TEST_ASSERT_MSG_EQ(
+            WEXITSTATUS(deferredCtpPolicyStatus),
+            0,
+            "a valid app-provided CTP routing policy must replace the unbound service default");
+
+        expectAbort(
+            []() {
+                Ptr<Node> node = CreateObject<Node>();
+                InitNode(node, UB_DEVICE, 1);
+                Ptr<UbCtpTransportService> service =
+                    node->GetObject<UbController>()->GetCtpTransportService();
+                node->GetObject<UbSwitch>()->GetRoutingProcess()->SetAttribute(
+                    "MultipathSelector",
+                    EnumValue(MultipathSelector::ADAPTIVE));
+                service->ConfigureRoutingPolicy(UbCtpEntityKey{},
+                                                RoutingType::PER_FLOW_SHORTEST_PATHS);
+            },
+            "CTP entity routing policy configuration");
+
+        expectAbort(
+            []() {
+                Ptr<Node> node = CreateObject<Node>();
+                InitNode(node, UB_DEVICE, 1);
+                node->GetObject<UbSwitch>()->GetRoutingProcess()->SetAttribute(
+                    "MultipathSelector",
+                    EnumValue(MultipathSelector::ADAPTIVE));
+                node->GetObject<UbController>()->GetUbFunction()->GetUbLdstApi()->SetRoutingType(
+                    RoutingType::PER_FLOW_SHORTEST_PATHS);
+            },
+            "LDST routing policy configuration");
+
+        Config::Reset();
+    }
+};
+#endif
+
+class UbRoutingModesTestSuite : public TestSuite
+{
+  public:
+    UbRoutingModesTestSuite()
+        : TestSuite("unified-bus-routing-modes", Type::UNIT)
+    {
+        AddTestCase(new UbRoutingTypeWireEncodingTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbRtpResponseInheritsRoutingTypeTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbMultipathHashSelectorsUseCompleteRoutingKeyTest(),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbRoundRobinMultipathSelectorCyclesCandidateSetTest(),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbIngressPortStripeMapsIngressToCandidateIndexTest(),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbIngressPortStripeUsesHash64ForLocalInjectionTest(),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbMultipathSelectorRoutingTypeMatrixTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbAdaptiveMultipathSelectorUsesExistingLoadSelectionTest(),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbRoutingKeyUsesRoutingTypeForCandidateScopeTest(),
+                    TestCase::Duration::QUICK);
+#ifndef _WIN32
+        AddTestCase(new UbLegacyRoutingConfigurationIsAdaptedAtFileBoundaryTest(),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbLegacyRoutingConfigurationRejectsAmbiguousOrInvalidInputTest(),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbInvalidRoutingMatrixIsRejectedDuringConfigLoadTest(),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbInvalidProgrammaticRoutingMatrixIsRejectedAtObjectBoundariesTest(),
+                    TestCase::Duration::QUICK);
+#endif
+    }
+};
+
+static UbRoutingModesTestSuite g_ubRoutingModesTestSuite;
 
 class UbRoundRobinAllocatorSeedsDifferentInitialPhasesPerOutPortTest : public TestCase
 {
@@ -22423,8 +22877,7 @@ class UbCtpPortHintsDoNotCreateEntityStateTest : public TestCase
                            .dstEntityId = 11,
                            .vl = 7};
 
-        service->SetUseShortestPaths(true);
-        service->SetUsePacketSpray(false);
+        service->SetRoutingType(RoutingType::PER_FLOW_SHORTEST_PATHS);
         service->SetSourcePortHint(key, 0);
         service->SetDestinationPortHint(key, 3);
 
@@ -22693,7 +23146,7 @@ class UbCtpTaAckInheritsPacketSprayRoutingPolicyTest : public TestCase
 
         Ptr<UbCtpTransportService> packetBuilder = CreateObject<UbCtpTransportService>();
         packetBuilder->SetNode(sender);
-        packetBuilder->SetUsePacketSpray(true);
+        packetBuilder->SetRoutingType(RoutingType::PER_PACKET_SHORTEST_PATHS);
 
         UbCtpEntityKey requestKey{.srcEntityId = 0,
                                   .dstNodeId = 1,
@@ -24043,8 +24496,7 @@ class UbSwitchLdstRoutingKeyKeepsLegacySourcePortTest : public TestCase
                                     false,
                                     priority,
                                     priority,
-                                    true,
-                                    true,
+                                    RoutingType::PER_PACKET_SHORTEST_PATHS,
                                     UbDatalinkHeaderConfig::PACKET_UB_MEM);
 
         Ptr<UbSwitch> sw = CreateObject<UbSwitch>();
@@ -24102,8 +24554,7 @@ class UbSwitchClassifiesCtpCnaPacketTest : public TestCase
                                     false,
                                     key.vl,
                                     key.vl,
-                                    false,
-                                    true,
+                                    RoutingType::PER_FLOW_SHORTEST_PATHS,
                                     UbDatalinkHeaderConfig::PACKET_CNA24);
         NS_TEST_ASSERT_MSG_EQ(sw->GetPacketTypeForTest(ctp24Packet),
                               UB_CTP_DATA_PACKET,
@@ -24736,7 +25187,7 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbAppCtpRuntimeTaskEntityFallbackTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbAppCtpAdmissionBackpressurePreservesJettyTest(),
                 TestCase::Duration::QUICK);
-    AddTestCase(new UbAppCtpForwardsRoutingFlagsToServiceTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbAppCtpForwardsRoutingTypeToServiceTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTrafficGenPhaseDependencyMemoryTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTrafficGenSparseTaskIdFallbackTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTrafficGenReserveHintTest(), TestCase::Duration::QUICK);
@@ -25059,12 +25510,6 @@ UbRoutingTestSuite::UbRoutingTestSuite()
     : TestSuite("unified-bus-routing", Type::UNIT)
 {
     AddTestCase(new UbRoutingProcessRangeRouteTest(), TestCase::Duration::QUICK);
-    AddTestCase(new UbPacketSprayUsesEvenRoundRobinAcrossEqualPortsTest(),
-                TestCase::Duration::QUICK);
-    AddTestCase(new UbRoutingPolicyPreservesCandidateSemanticsTest(),
-                TestCase::Duration::QUICK);
-    AddTestCase(new UbRoutingAdaptiveFirstMinimumTest(), TestCase::Duration::QUICK);
-    AddTestCase(new UbRoutingHotPathContainerBalanceTest(), TestCase::Duration::QUICK);
 }
 
 static UbRoutingTestSuite g_ubRoutingTestSuite;

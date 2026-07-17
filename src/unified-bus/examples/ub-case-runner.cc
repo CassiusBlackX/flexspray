@@ -585,7 +585,8 @@ uint32_t ActivateTrafficFromConfig(const std::string& configPath,
     std::vector<Ptr<UbApp>> sourceApps;
     Ptr<UbApp> appDefaults = CreateObject<UbApp>();
     const bool reserveRtpConnections = appDefaults->GetTransportMode() == TransportMode::RTP;
-    const bool useShortestPaths = appDefaults->GetUseShortestPaths();
+    const bool useShortestPaths =
+        RoutingTypeUsesShortestPaths(appDefaults->GetRoutingType());
     UbUtils::Get()->PrintTimestamp("[traffic] Activate clients and enqueue tasks.");
     UbUtils::Get()->ForEachTrafficRecordView(trafficPath, [&](const TrafficRecordView& record) {
         Ptr<Node> sourceNode = NodeList::GetNode(record.sourceNode);

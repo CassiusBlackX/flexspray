@@ -254,6 +254,13 @@ Do not write these older keys into `network_attribute.txt`; current `UbUtils::Se
 | `ns3::UbSwitch::EnablePFC` | `ns3::UbSwitch::FlowControl "PFC_FIXED"` or `"PFC_DYNAMIC"` |
 | `ns3::UbApiThread::*` | `ns3::UbLdstThread::*` |
 
+Routing has a separate temporary read-compatibility window at
+`UbUtils::SetComponentsAttribute()`. Old `UsePacketSpray` / `UseShortestPaths` pairs and
+`UbRoutingProcess::RoutingAlgorithm` are translated before ConfigStore, with one warning that
+contains complete canonical replacement lines and states that compatibility may stop working in a
+future release. New cases must write only `RoutingType` and `MultipathSelector`; model APIs do not
+expose the legacy fields.
+
 When the discussion turns from "which knob exists" to "what these congestion/PFC knobs mean in queue dynamics", consult:
 
 - `congestion-control-and-pfc-lessons.md`
@@ -264,7 +271,7 @@ For values not discoverable from the catalog, check the C++ source:
 
 | What to verify | Source of truth in C++ | How to find |
 |----------------|----------------------|-------------|
-| Enum attribute values (FlowControl, RoutingAlgorithm, VlScheduler, ...) | `MakeEnumChecker(...)` calls in the corresponding `GetTypeId()` | Grep for `MakeEnumChecker` in `src/unified-bus/model/` |
+| Enum attribute values (FlowControl, RoutingType, MultipathSelector, VlScheduler, ...) | `MakeEnumChecker(...)` calls in the corresponding `GetTypeId()` | Grep for `MakeEnumChecker` in `src/unified-bus/model/` |
 | GlobalValue enum values (UB_CC_ALGO, ...) | `MakeEnumChecker(...)` in `GlobalValue(...)` definitions | Grep for `GlobalValue.*UB_` in `src/unified-bus/` |
 | Boolean attributes | `MakeBooleanChecker()` in `GetTypeId()` | Values are always `true` / `false` |
 | Integer attributes with range | `MakeUintegerChecker<T>()` or `MakeIntegerChecker<T>(min, max)` | Grep for the attribute name in `src/unified-bus/` |
@@ -276,8 +283,20 @@ If the user requests a value for an enum parameter, verify it against the C++ so
 
 ## Routing Intent Slot → Route Generation
 
-- `routing_algorithm` maps to `default ns3::UbRoutingProcess::RoutingAlgorithm "..."`
-- `use_shortest_paths` maps to the corresponding shortest-path toggles in the case attributes
+Use `routing-strategy-selection.md` to choose a scenario-appropriate profile. This section owns the
+mechanical mapping from the confirmed profile to case attributes and route generation.
+
+- `routing_type` maps to the `RoutingType` attribute on `UbApp`, `UbTransportChannel`, and `UbLdstApi` as applicable:
+  - `PER_FLOW_ALL_PATHS` = RT bits `00`
+  - `PER_PACKET_ALL_PATHS` = RT bits `01`
+  - `PER_FLOW_SHORTEST_PATHS` = RT bits `10`
+  - `PER_PACKET_SHORTEST_PATHS` = RT bits `11`
+- `multipath_selector` maps to `default ns3::UbRoutingProcess::MultipathSelector "..."`.
+- Valid per-flow selectors: `HASH64`, `CRC32`, `TOEPLITZ`, `INGRESS_PORT_STRIPE`.
+- Valid per-packet selectors: `HASH64`, `CRC32`, `TOEPLITZ`, `ROUND_ROBIN`, `ADAPTIVE`.
+- Hash selectors consume the complete 17-byte routing key once: `sip`, `dip`, `sport/Lb`, `dport`, `priority`, and node salt. Do not add a separate entropy or packet-ordinal field.
+- `INGRESS_PORT_STRIPE` maps ingress port modulo candidate count; local injection falls back to full-key `HASH64`.
+- Invalid routing-type/selector combinations are rejected during `network_attribute.txt` loading.
 - `path_source = auto-path-finder` means the topology script should call `graph.gen_compressed_route_table(...)` by default for new cases.
 - `graph.gen_route_table(...)` is only for cases that explicitly need exact per-destination rows plus precomputed transport channels.
 - `graph.gen_2layer_clos_compressed_route_table(host_num, leaf_sw_num)` is an explicit two-layer Clos optimization, not the default new-case path.
@@ -355,6 +374,6 @@ Use toolchain-native parameter names in `experiment-spec.md`:
 - `leaf_sw_num` (not `leaf_count`)
 - `comm_domain_size` (not `comm_size`)
 - `data_size` with unit (e.g. `1GB`)
-- `routing_algorithm`, `use_shortest_paths`, `path_source`, `transport_channel_mode`
+- `routing_type`, `multipath_selector`, `path_source`, `transport_channel_mode`
 
 This avoids translation ambiguity at the plan→run boundary.

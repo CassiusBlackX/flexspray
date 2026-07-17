@@ -31,16 +31,18 @@ TypeId UbApp::GetTypeId(void)
                           BooleanValue(false),
                           MakeBooleanAccessor(&UbApp::m_multiPathEnable),
                           MakeBooleanChecker())
-            .AddAttribute("UseShortestPaths",
-                          "If true, only create TPs on source ports that belong to shortest paths.",
-                          BooleanValue(true),
-                          MakeBooleanAccessor(&UbApp::m_useShortestPaths),
-                          MakeBooleanChecker())
-            .AddAttribute("UsePacketSpray",
-                          "If true, packet-spray routing uses a per-packet salt instead of per-flow routing.",
-                          BooleanValue(false),
-                          MakeBooleanAccessor(&UbApp::m_usePacketSpray),
-                          MakeBooleanChecker())
+            .AddAttribute("RoutingType",
+                          "UB routing type used by application-created transport channels.",
+                          EnumValue(RoutingType::PER_FLOW_SHORTEST_PATHS),
+                          MakeEnumAccessor<RoutingType>(&UbApp::m_routingType),
+                          MakeEnumChecker(RoutingType::PER_FLOW_ALL_PATHS,
+                                          "PER_FLOW_ALL_PATHS",
+                                          RoutingType::PER_PACKET_ALL_PATHS,
+                                          "PER_PACKET_ALL_PATHS",
+                                          RoutingType::PER_FLOW_SHORTEST_PATHS,
+                                          "PER_FLOW_SHORTEST_PATHS",
+                                          RoutingType::PER_PACKET_SHORTEST_PATHS,
+                                          "PER_PACKET_SHORTEST_PATHS"))
             .AddAttribute("TransportMode",
                           "Transport mode used for URMA traffic.",
                           EnumValue(TransportMode::RTP),
@@ -199,6 +201,7 @@ UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
                     "CTP transport mode requires UbTransaction");
 
     Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
+    service->SetRoutingType(m_routingType);
 
     const uint32_t srcEntityId = task.hasSrcEntityId ? task.srcEntityId : m_localEntityId;
     const uint32_t dstEntityId = task.hasDstEntityId ? task.dstEntityId : m_peerEntityId;
@@ -224,8 +227,7 @@ UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
                                                                   << " is draining");
         return;
     }
-    service->SetUseShortestPaths(m_useShortestPaths);
-    service->SetUsePacketSpray(m_usePacketSpray);
+    service->SetRoutingType(m_routingType);
     service->PrepareJetty(jetty);
 
     NS_LOG_INFO("CTP WQE Starts, jettyNum: " << jettyNum << " taskId: " << task.taskId);
@@ -364,7 +366,7 @@ void UbApp::SendTraffic(UbTrafficGen::RuntimeTask task)
         }
         ubFunc->CreateJetty(task.sourceNode, task.destNode, m_jettyNum);
         vector<uint32_t> tpns = GetNode()->GetObject<UbController>()->GetTpConnManager()->GetTpns(
-            m_getTpnRule, m_useShortestPaths, m_multiPathEnable, task.sourceNode,
+            m_getTpnRule, RoutingTypeUsesShortestPaths(m_routingType), m_multiPathEnable, task.sourceNode,
             task.destNode, UINT32_MAX, UINT32_MAX, task.priority);
         bool bindRst = ubTa->JettyBindTp(task.sourceNode, task.destNode, m_jettyNum, m_multiPathEnable, tpns);
         if (bindRst) {
