@@ -60,8 +60,7 @@ struct UbCtpCongestionKey
 
 struct UbCtpRoutingPolicy
 {
-    bool useShortestPaths{true};
-    bool usePacketSpray{false};
+    RoutingType routingType{RoutingType::PER_FLOW_SHORTEST_PATHS};
     uint32_t nextSprayIndex{0};
 };
 
@@ -188,8 +187,7 @@ class UbCtpTransportService : public Object
 
     void SetNode(Ptr<Node> node);
     Ptr<Node> GetNode() const;
-    void SetUseShortestPaths(bool useShortestPaths);
-    void SetUsePacketSpray(bool usePacketSpray);
+    void SetRoutingType(RoutingType routingType);
     void SetBoundOutPortCountForTest(uint32_t boundOutPortCount);
     void SetExperimentTaAckPacketBytesForTest(uint32_t packetBytes);
     void SetSourcePortHint(const UbCtpEntityKey& key, uint32_t port);
@@ -199,9 +197,7 @@ class UbCtpTransportService : public Object
     UbCtpTransportConstraints GetTransactionConstraints() const;
 
     UbCtpEntityState& GetOrCreateEntityState(const UbCtpEntityKey& key);
-    void ConfigureRoutingPolicy(const UbCtpEntityKey& key,
-                                bool useShortestPaths,
-                                bool usePacketSpray);
+    void ConfigureRoutingPolicy(const UbCtpEntityKey& key, RoutingType routingType);
     uint32_t GetEntityStateCount() const;
     Ptr<UbCtpTransactionContext> GetOrCreateTransactionContext(const UbCtpEntityKey& key);
     bool HasTransactionContextForTesting(const UbCtpEntityKey& key) const;
@@ -245,6 +241,7 @@ class UbCtpTransportService : public Object
 
     Ptr<UbTransaction> GetTransactionOwner() const;
     UbCtpTransactionState& GetTransactionState(const UbCtpEntityKey& key) const;
+    void ValidateRoutingType(RoutingType routingType, const std::string& owner) const;
 
     Ptr<Packet> BuildDataPacketWithTaSsn(Ptr<UbWqeSegment> segment,
                                          UbCtpEntityState& state,
@@ -307,8 +304,7 @@ class UbCtpTransportService : public Object
                               const UbCtpEntityKey& key,
                               CtpOpcode opcode,
                               uint8_t loadBalanceSalt,
-                              bool useShortestPaths,
-                              bool usePacketSpray);
+                              RoutingType routingType);
     void FirstPacketSendsNotify(uint32_t taskId,
                                 const UbCtpEntityKey& key,
                                 uint32_t taSsn,

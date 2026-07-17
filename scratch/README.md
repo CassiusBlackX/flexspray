@@ -127,16 +127,18 @@ Common UB attributes you’ll see (all names below come from `GetTypeId().AddAtt
   - `ns3::UbQueueManager::DynamicPfcResumeGapBytes`
   - `ns3::UbQueueManager::PaperDynamicPfcBeta`
 - Transport behavior (`ns3::UbTransportChannel`):
-  - `UsePacketSpray` (bool)
-  - `UseShortestPaths` (bool)
+  - `RoutingType` (`PER_FLOW_ALL_PATHS`, `PER_PACKET_ALL_PATHS`, `PER_FLOW_SHORTEST_PATHS`, `PER_PACKET_SHORTEST_PATHS`)
   - `EnableRetrans`, `BaseRTO`, `MaxRetransAttempts`, `RetransExponentFactor`, `DefaultMaxWqeSegNum`, `DefaultMaxInflightPacketSize`
   - `RetransmissionMode`, `TpOooThreshold`, `SelectiveAckBitmapBits`, `EnableFastRetrans`, `EnableSelectiveMarkPsn`
+- Routing selector (`ns3::UbRoutingProcess`):
+  - `MultipathSelector` (`HASH64`, `CRC32`, `TOEPLITZ`, `ROUND_ROBIN`, `ADAPTIVE`, `INGRESS_PORT_STRIPE`)
 - Allocator:
   - `ns3::UbSwitchAllocator::AllocationTime` (Time)
 - App & API LD/ST knobs:
-  - `ns3::UbApp::EnableMultiPath` (bool)
+  - `ns3::UbApp::EnableMultiPath` (bool), `ns3::UbApp::RoutingType`
+  - `ns3::UbLdstApi::RoutingType`
   - `ns3::UbApiLdst::*` (ThreadNum, LoadResponseSize, StoreRequestSize, QueuePriority)
-  - `ns3::UbApiLdstThread::*` (StoreOutstanding, LoadOutstanding, LoadRequestSize, QueuePriority, UsePacketSpray, UseShortestPaths)
+  - `ns3::UbApiLdstThread::*` (StoreOutstanding, LoadOutstanding, LoadRequestSize, QueuePriority)
 
 ### Upgrading copied cases
 
@@ -148,12 +150,20 @@ If you copied an older `scratch/` case into your own workspace, check `network_a
 | `default ns3::UbSwitch::EnableCBFC "true"` | `default ns3::UbSwitch::FlowControl "CBFC"` |
 | `default ns3::UbSwitch::EnablePFC "true"` | Choose `default ns3::UbSwitch::FlowControl "PFC_FIXED"` or `"PFC_DYNAMIC"` |
 | `default ns3::UbApiThread::*` | `default ns3::UbLdstThread::*` |
+| `UsePacketSpray` + `UseShortestPaths` on `UbApp`, `UbTransportChannel`, or `UbLdstApi` | One `RoutingType` line on the same TypeId |
+| `default ns3::UbRoutingProcess::RoutingAlgorithm "HASH"` | `default ns3::UbRoutingProcess::MultipathSelector "HASH64"` |
+| `default ns3::UbRoutingProcess::RoutingAlgorithm "ADAPTIVE"` | `default ns3::UbRoutingProcess::MultipathSelector "ADAPTIVE"` with a `PER_PACKET_*` routing type |
 | `default ns3::UbTransportChannel::InitialRTO "..."` | `default ns3::UbTransportChannel::BaseRTO "..."` |
 | `default ns3::UbTransportChannel::EnableFastSelectiveRetrans "..."` | `default ns3::UbTransportChannel::EnableFastRetrans "..."` |
 | Depend on old `CbfcRetCellGrainControlPacket` default | Set `default ns3::UbPort::CbfcRetCellGrainControlPacket "1"` explicitly to reproduce older behavior; current repo default is `32` |
 | Need `QueueTrace_*` files | Set `global UB_QUEUE_TRACE_ENABLE "true"` |
 | Need `PfcTrace_*` or `CbfcTrace_*` files | Set `global UB_FLOW_CONTROL_TRACE_ENABLE "true"` |
 | Need `Dcqcn*` or `Caqm*` algorithm traces | Set `global UB_CONGESTION_CONTROL_TRACE_ENABLE "true"` |
+
+Legacy routing fields are accepted only while loading `network_attribute.txt`. The loader emits one
+warning containing complete replacement lines, and this compatibility window may be removed in a
+future release. Model objects and programmatic APIs expose only `RoutingType` and
+`MultipathSelector`.
 
 Runs with `default ns3::UbTransportChannel::EnableRetrans "false"` now stop early when a packet is dropped. Fix the route/buffer/flow-control cause, or enable retransmission if the experiment intentionally allows loss recovery.
 
@@ -291,7 +301,7 @@ Compressed range rows:
 - Overlapping range rows are accepted only when they describe the same outport/metric set. Conflicting overlaps fail during `routing_table.csv` loading.
 - For large generated cases, combine compressed routing rows with automatic TP generation when possible. A fully materialized `transport_channel.csv` can still dominate startup memory and time.
 
-UB stores outports per destination grouped by metric. The group with the smallest metric is installed as “shortest”; other groups are installed as “other”. If `UseShortestPaths` is `true` (see below), selection is made from the shortest group; otherwise selection may consider all outports defined for that destination.
+UB stores outports per destination grouped by metric. The group with the smallest metric is installed as “shortest”; other groups are installed as “other”. A `PER_*_SHORTEST_PATHS` routing type selects only from the shortest group; a `PER_*_ALL_PATHS` routing type may consider all outports defined for that destination.
 
 Note — destination-port aware lookup with fallback:
 - The switch `ns3::UbRoutingProcess::GetOutPort(...)` first tries to route by the exact pair `(dstNodeId, dstPortId)` encoded in the packet headers.
@@ -332,7 +342,7 @@ If `transport_channel.csv` is missing or has no matching channel for a traffic r
 
 - **Mechanism**:
   1. It queries the routing table (`UbRoutingProcess`) to find all reachable paths from source to destination.
-  2. It respects the `UseShortestPaths` attribute (default `true`) to filter for shortest paths or allow non-shortest ones.
+  2. It respects the `UbApp::RoutingType` path scope (default `PER_FLOW_SHORTEST_PATHS`) to filter for shortest paths or allow non-shortest ones.
   3. It assigns TPN pairs and stores the same connection records on both endpoint views without creating either TP object.
   4. When the source task starts, `EnableMultiPath=true` materializes all selected sender endpoints; otherwise the source randomly selects and materializes one sender endpoint.
   5. The receiver validates the incoming channel key against its reservation and materializes only its local endpoint on the first valid packet.
@@ -426,7 +436,7 @@ Only required if `UB_FAULT_ENABLE` is `true` in `network_attribute.txt`. The exa
 - Node/port/link creation flows via `UbUtils::CreateNode` and `UbUtils::CreateTopo`, assembling `UbLink` between `UbPort`s. `topology.csv` bandwidth maps to `UbPort::UbDataRate`, delay to `UbLink::Delay`.
 - Routing installs per-node forwarding tables from `routing_table.csv`.
 - Transport channels (`transport_channel.csv`) build TPN mappings used by `UbApp` through `TpConnectionManager`.
-- Tasks (`traffic.csv`) are scheduled by `UbTrafficGen`, and `UbApp` sends over the selected TPs, honoring `UsePacketSpray` vs. `EnableMultiPath`.
+- Tasks (`traffic.csv`) are scheduled by `UbTrafficGen`, and `UbApp` sends over the selected TPs, honoring `RoutingType` and `EnableMultiPath`.
 
 For advanced users, search in `src/unified-bus/model/`:
 - `GetTypeId\(` and `AddAttribute\(` — discover attribute names/types and defaults.
@@ -500,7 +510,8 @@ The shipped case `scratch/2nodes_single-tp` keeps `UB_QUEUE_TRACE_ENABLE`, `UB_F
 - Link rate and packet size determine transmission time; `ns3::UbLink::Delay` adds propagation delay; `forwardDelay` maps to `ns3::UbSwitch::InPortProcessingDelay`, while `allocationDelay` drives `ns3::UbSwitchAllocator::AllocationTime`.
 - IFG: `ns3::UbPort::UbInterframeGap` (set to `0ns` to disable spacing).
 - Queue/buffer: `ns3::UbQueueManager::BufferSize` bounds ingress/egress accounting used by the switch.
-- Path choice: `UseShortestPaths` influences which outport sets are considered; `UsePacketSpray` toggles per-packet load-balance usage in headers and routing.
+- Path choice: `RoutingType` independently encodes per-flow/per-packet selection and shortest/all-path scope in the UB RT bits. `MultipathSelector` chooses the algorithm within that scope.
+- Hash selectors process one complete 17-byte key: source address, destination address, source port or `Lb`, destination port, priority, and node salt. Per-packet modes vary the existing source-port/`Lb` field; no extra entropy field is added.
 - Congestion control: `UB_CC_ALGO` and `UB_CC_ENABLED` pick and enable the algorithm. `CAQM` and RTP-only `DCQCN` are implemented.
 
 ---
@@ -515,16 +526,15 @@ Place these in `network_attribute.txt` as needed (values shown are examples take
   - `default ns3::UbPort::UbInterframeGap "0ns"`
 - Switch allocator
   - `default ns3::UbSwitchAllocator::AllocationTime "10ns"`
-- Transport toggles
-  - `default ns3::UbTransportChannel::UsePacketSpray "false"`
-  - `default ns3::UbTransportChannel::UseShortestPaths "true"`
+- Routing
+  - `default ns3::UbTransportChannel::RoutingType "PER_FLOW_SHORTEST_PATHS"`
+  - `default ns3::UbRoutingProcess::MultipathSelector "HASH64"`
   - Retransmission knobs (if used): `EnableRetrans`, `BaseRTO`, `MaxRetransAttempts`, ...
 - Application multipath
   - `default ns3::UbApp::EnableMultiPath "false"`
 - LD/ST API threads
   - `default ns3::UbApiLdst::ThreadNum "10"`
-  - `default ns3::UbApiLdstThread::UsePacketSpray "true"`
-  - `default ns3::UbApiLdstThread::UseShortestPaths "true"`
+  - `default ns3::UbLdstApi::RoutingType "PER_PACKET_SHORTEST_PATHS"`
 - Flow control and buffers (as needed)
   - `default ns3::UbSwitch::FlowControl "PFC_FIXED"`
   - `default ns3::UbPort::PfcUpThld "1677721"`

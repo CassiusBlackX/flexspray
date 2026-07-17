@@ -5,6 +5,7 @@
 #include "ns3/ipv4-address.h"
 #include "ns3/log.h"
 #include "ns3/ub-routing-policy.h"
+#include "ns3/ub-network-address.h"
 
 #include <algorithm>
 
@@ -21,18 +22,47 @@ UbRoutingProcess::GetTypeId()
             .SetParent<Object>()
             .SetGroupName("UnifiedBus")
             .AddConstructor<UbRoutingProcess>()
-            .AddAttribute("RoutingAlgorithm",
-                          "Routing algorithm applied by UbRoutingProcess.",
-                          EnumValue(UbRoutingAlgorithm::HASH),
-                          MakeEnumAccessor<UbRoutingAlgorithm>(&UbRoutingProcess::m_routingAlgorithm),
-                          MakeEnumChecker(UbRoutingAlgorithm::HASH,
-                                          "HASH",
-                                          UbRoutingAlgorithm::ADAPTIVE,
-                                          "ADAPTIVE"));
+            .AddAttribute("MultipathSelector",
+                          "Selector used to choose one path from the routing candidate set.",
+                          EnumValue(MultipathSelector::HASH64),
+                          MakeEnumAccessor<MultipathSelector>(
+                              &UbRoutingProcess::m_multipathSelector),
+                          MakeEnumChecker(MultipathSelector::HASH64,
+                                          "HASH64",
+                                          MultipathSelector::CRC32,
+                                          "CRC32",
+                                          MultipathSelector::TOEPLITZ,
+                                          "TOEPLITZ",
+                                          MultipathSelector::ROUND_ROBIN,
+                                          "ROUND_ROBIN",
+                                          MultipathSelector::ADAPTIVE,
+                                          "ADAPTIVE",
+                                          MultipathSelector::INGRESS_PORT_STRIPE,
+                                          "INGRESS_PORT_STRIPE"));
     return tid;
 }
 
 UbRoutingProcess::UbRoutingProcess() = default;
+
+void
+UbRoutingProcess::ValidateRoutingType(RoutingType routingType, const std::string& owner) const
+{
+    if (MultipathSelectorIsValidForRoutingType(m_multipathSelector, routingType))
+    {
+        return;
+    }
+
+    const RoutingType compatibleRoutingType =
+        MakeRoutingType(m_multipathSelector != MultipathSelector::INGRESS_PORT_STRIPE,
+                        RoutingTypeUsesShortestPaths(routingType));
+    NS_ABORT_MSG("Invalid routing configuration for "
+                 << owner << ": RoutingType \"" << RoutingTypeToString(routingType)
+                 << "\" cannot be combined with MultipathSelector \""
+                 << MultipathSelectorToString(m_multipathSelector)
+                 << "\". Use RoutingType \"" << RoutingTypeToString(compatibleRoutingType)
+                 << "\" or MultipathSelector \"HASH64\".");
+}
+
 
 void
 UbRoutingProcess::SetNodeId(uint32_t nodeId)
@@ -82,16 +112,15 @@ UbRoutingProcess::GetOutPort(RoutingKey& key,
                                                         << " dport: " << key.dport
                                                         << " priority: "
                                                         << static_cast<uint16_t>(key.priority)
-                                                        << " useShortestPath: "
-                                                        << key.useShortestPath
-                                                        << " usePacketSpray: "
-                                                        << key.usePacketSpray);
+                                                        << " routingType: "
+                                                        << static_cast<uint32_t>(key.routingType));
 
+    ValidateRoutingType(key.routingType, "packet forwarding");
     ++m_hotPathLookups;
     uint32_t lookupDip = key.dip;
     const auto shortest = LookupCandidatePorts(lookupDip, true);
     UbRoutingTable::PortSetView nonShortest;
-    if (!key.useShortestPath)
+    if (!RoutingTypeUsesShortestPaths(key.routingType))
     {
         nonShortest = LookupCandidatePorts(lookupDip, false);
     }
@@ -103,20 +132,106 @@ UbRoutingProcess::GetOutPort(RoutingKey& key,
         return -1;
     }
 
-    int outPort = -1;
-    switch (m_routingAlgorithm)
+    return SelectCandidate(key, candidates, selectedShortestPath, inPort);
+}
+
+int
+UbRoutingProcess::SelectOutPort(RoutingKey& key,
+                                const std::vector<uint16_t>& shortestPorts,
+                                const std::vector<uint16_t>& nonShortestPorts,
+                                bool& selectedShortestPath,
+                                uint16_t inPort)
+{
+    ValidateRoutingType(key.routingType, "packet forwarding");
+    const UbRoutingCandidateView candidates{shortestPorts, nonShortestPorts, UINT16_MAX};
+    if (UbRoutingPolicy::Count(candidates) == 0)
     {
-    case UbRoutingAlgorithm::HASH:
-        outPort = UbRoutingPolicy::SelectHash(key, candidates, m_nodeId, selectedShortestPath);
-        break;
-    case UbRoutingAlgorithm::ADAPTIVE:
-        outPort = UbRoutingPolicy::SelectAdaptive(key,
-                                                  candidates,
-                                                  m_nodeId,
-                                                  selectedShortestPath);
-        break;
+        return -1;
+    }
+    return SelectCandidate(key, candidates, selectedShortestPath, inPort);
+}
+
+int
+UbRoutingProcess::SelectCandidate(RoutingKey& key,
+                                  const UbRoutingCandidateView& candidates,
+                                  bool& selectedShortestPath,
+                                  uint16_t inPort)
+{
+    if (m_multipathSelector == MultipathSelector::ADAPTIVE)
+    {
+        const int outPort =
+            UbRoutingPolicy::SelectAdaptive(key, candidates, m_nodeId, selectedShortestPath);
+        NS_ASSERT_MSG(outPort != -1, "No available output port found");
+        return outPort;
     }
 
+    const size_t candidateCount = UbRoutingPolicy::Count(candidates);
+    size_t index = 0;
+    if (m_multipathSelector == MultipathSelector::ROUND_ROBIN)
+    {
+        std::vector<uint16_t> candidatePorts;
+        candidatePorts.reserve(candidateCount);
+        for (const auto& ports : {candidates.shortest, candidates.nonShortest})
+        {
+            for (uint16_t port : ports)
+            {
+                if (port != candidates.excludedPort)
+                {
+                    candidatePorts.push_back(port);
+                }
+            }
+        }
+        uint64_t& nextIndex = m_rrNextIndexByCandidates[candidatePorts];
+        index = nextIndex++ % candidateCount;
+    }
+    else if (m_multipathSelector == MultipathSelector::INGRESS_PORT_STRIPE &&
+             inPort != UINT16_MAX)
+    {
+        index = inPort % candidateCount;
+    }
+    else
+    {
+        const auto bytes = BuildHashBytes(key);
+        uint64_t hash = 0;
+        switch (m_multipathSelector)
+        {
+        case MultipathSelector::CRC32:
+            hash = CalcCrc32(bytes);
+            break;
+        case MultipathSelector::TOEPLITZ:
+            hash = CalcToeplitzHash(bytes);
+            break;
+        case MultipathSelector::HASH64:
+        case MultipathSelector::INGRESS_PORT_STRIPE:
+            hash = Hash64(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+            break;
+        default:
+            NS_ABORT_MSG("Unsupported multipath selector");
+        }
+        index = hash % candidateCount;
+    }
+
+    int outPort = -1;
+    for (const auto& ports : {candidates.shortest, candidates.nonShortest})
+    {
+        for (uint16_t port : ports)
+        {
+            if (port == candidates.excludedPort)
+            {
+                continue;
+            }
+            if (index-- == 0)
+            {
+                selectedShortestPath = ports.data() == candidates.shortest.data();
+                outPort = port;
+                break;
+            }
+        }
+        if (outPort != -1)
+        {
+            break;
+        }
+    }
     NS_ASSERT_MSG(outPort != -1, "No available output port found");
     return outPort;
 }
@@ -131,6 +246,83 @@ uint64_t
 UbRoutingProcess::GetHotPathTemporaryContainerAllocationCountForTest() const
 {
     return m_hotPathTemporaryContainerAllocations;
+}
+
+std::array<uint8_t, 17>
+UbRoutingProcess::BuildHashBytes(const RoutingKey& rtKey) const
+{
+    const uint32_t salt = utils::NodeIdToIp(m_nodeId).Get();
+    return {
+        static_cast<uint8_t>((rtKey.sip >> 24) & 0xff),
+        static_cast<uint8_t>((rtKey.sip >> 16) & 0xff),
+        static_cast<uint8_t>((rtKey.sip >> 8) & 0xff),
+        static_cast<uint8_t>(rtKey.sip & 0xff),
+        static_cast<uint8_t>((rtKey.dip >> 24) & 0xff),
+        static_cast<uint8_t>((rtKey.dip >> 16) & 0xff),
+        static_cast<uint8_t>((rtKey.dip >> 8) & 0xff),
+        static_cast<uint8_t>(rtKey.dip & 0xff),
+        static_cast<uint8_t>((rtKey.sport >> 8) & 0xff),
+        static_cast<uint8_t>(rtKey.sport & 0xff),
+        static_cast<uint8_t>((rtKey.dport >> 8) & 0xff),
+        static_cast<uint8_t>(rtKey.dport & 0xff),
+        rtKey.priority,
+        static_cast<uint8_t>((salt >> 24) & 0xff),
+        static_cast<uint8_t>((salt >> 16) & 0xff),
+        static_cast<uint8_t>((salt >> 8) & 0xff),
+        static_cast<uint8_t>(salt & 0xff),
+    };
+}
+
+uint32_t
+UbRoutingProcess::CalcCrc32(const std::array<uint8_t, 17>& bytes) const
+{
+    uint32_t crc = 0xffffffffU;
+    for (uint8_t byte : bytes)
+    {
+        crc ^= byte;
+        for (uint8_t bit = 0; bit < 8; ++bit)
+        {
+            crc = (crc >> 1) ^ ((crc & 1U) ? 0xedb88320U : 0U);
+        }
+    }
+    return ~crc;
+}
+
+uint32_t
+UbRoutingProcess::CalcToeplitzHash(const std::array<uint8_t, 17>& bytes) const
+{
+    static constexpr std::array<uint8_t, 40> key = {
+        0x6d, 0x5a, 0x56, 0xda, 0x25, 0x5b, 0x0e, 0xc2,
+        0x41, 0x67, 0x25, 0x3d, 0x43, 0xa3, 0x8f, 0xb0,
+        0xd0, 0xca, 0x2b, 0xcb, 0xae, 0x7b, 0x30, 0xb4,
+        0x77, 0xcb, 0x2d, 0xa3, 0x80, 0x30, 0xf2, 0x0c,
+        0x6a, 0x42, 0xb7, 0x3b, 0xbe, 0xac, 0x01, 0xfa,
+    };
+
+    auto keyWindow = [](uint32_t bitOffset) {
+        uint32_t value = 0;
+        for (uint32_t bit = 0; bit < 32; ++bit)
+        {
+            const uint32_t position = bitOffset + bit;
+            value = (value << 1) |
+                    ((key[position / 8] >> (7 - (position % 8))) & 1U);
+        }
+        return value;
+    };
+
+    uint32_t hash = 0;
+    uint32_t bitOffset = 0;
+    for (uint8_t byte : bytes)
+    {
+        for (uint8_t bit = 0; bit < 8; ++bit, ++bitOffset)
+        {
+            if (((byte >> (7 - bit)) & 1U) != 0)
+            {
+                hash ^= keyWindow(bitOffset);
+            }
+        }
+    }
+    return hash;
 }
 
 } // namespace ns3

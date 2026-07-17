@@ -11,6 +11,8 @@
 #include "ns3/ub-switch.h"
 #include "ns3/ub-controller.h"
 #include "ns3/ub-lifecycle.h"
+#include "ns3/ub-function.h"
+#include "ns3/ub-ctp.h"
 #include "ns3/ub-utils.h"
 
 namespace ns3 {
@@ -235,6 +237,16 @@ void UbSwitch::InitRoutingProcess(Ptr<Node> node)
     m_routingProcess = CreateObject<UbRoutingProcess>();
     m_routingProcess->SetNodeId(node->GetId());
     m_Ipv4Addr = utils::NodeIdToIp(node->GetId());
+
+    Ptr<UbController> controller = node->GetObject<UbController>();
+    if (controller != nullptr)
+    {
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        if (function != nullptr && function->GetUbLdstApi() != nullptr)
+        {
+            function->GetUbLdstApi()->ValidateRoutingConfiguration();
+        }
+    }
 }
 /**
  * @brief Init UbNode, create algorithm, queueManager, fc and so on
@@ -1039,7 +1051,8 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
 void UbSwitch::ForceShortestPathRouting(Ptr<Packet> packet, const UbDatalinkPacketHeader &parsedHeader)
 {
     UbDatalinkPacketHeader modifiedHeader = parsedHeader;
-    modifiedHeader.SetRoutingPolicy(true);  // Force shortest path
+    modifiedHeader.SetRoutingType(
+        MakeRoutingType(RoutingTypeIsPerPacket(parsedHeader.GetRoutingType()), true));
 
     UbDatalinkPacketHeader tempHeader;
     packet->RemoveHeader(tempHeader);
@@ -1099,8 +1112,7 @@ void UbSwitch::GetURMARoutingKey(const ParsedURMAHeaders &headers, RoutingKey &r
     rtKey.sport = headers.udpHeader.GetSourcePort();
     rtKey.dport = headers.udpHeader.GetDestinationPort();
     rtKey.priority = headers.datalinkPacketHeader.GetPacketVL();
-    rtKey.useShortestPath = headers.datalinkPacketHeader.GetRoutingPolicy();
-    rtKey.usePacketSpray = headers.datalinkPacketHeader.GetLoadBalanceMode();
+    rtKey.routingType = headers.datalinkPacketHeader.GetRoutingType();
 }
 
 void UbSwitch::GetLdstRoutingKey(const ParsedLdstHeaders &headers, RoutingKey &rtKey)
@@ -1117,8 +1129,7 @@ void UbSwitch::GetLdstRoutingKey(const ParsedLdstHeaders &headers, RoutingKey &r
     rtKey.sport = lb;
     rtKey.dport = dport;
     rtKey.priority = headers.datalinkPacketHeader.GetPacketVL();
-    rtKey.useShortestPath = headers.datalinkPacketHeader.GetRoutingPolicy();
-    rtKey.usePacketSpray = headers.datalinkPacketHeader.GetLoadBalanceMode();
+    rtKey.routingType = headers.datalinkPacketHeader.GetRoutingType();
 }
 
 void UbSwitch::GetCtpRoutingKey(const ParsedCtpHeaders &headers, RoutingKey &rtKey)
@@ -1150,8 +1161,7 @@ void UbSwitch::GetCtpRoutingKey(const ParsedCtpHeaders &headers, RoutingKey &rtK
     rtKey.sport = lb;
     rtKey.dport = dport;
     rtKey.priority = headers.datalinkPacketHeader.GetPacketVL();
-    rtKey.useShortestPath = headers.datalinkPacketHeader.GetRoutingPolicy();
-    rtKey.usePacketSpray = headers.datalinkPacketHeader.GetLoadBalanceMode();
+    rtKey.routingType = headers.datalinkPacketHeader.GetRoutingType();
 }
 
 /**

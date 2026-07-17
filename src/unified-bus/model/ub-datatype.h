@@ -109,6 +109,96 @@ enum class UbDatalinkHeaderConfig : uint8_t {
     PACKET_UB_MEM = 0x09    // Config value for UB memory packet header
 };
 
+enum class RoutingType : uint8_t {
+    PER_FLOW_ALL_PATHS = 0b00,
+    PER_PACKET_ALL_PATHS = 0b01,
+    PER_FLOW_SHORTEST_PATHS = 0b10,
+    PER_PACKET_SHORTEST_PATHS = 0b11,
+};
+
+enum class MultipathSelector : uint8_t {
+    HASH64 = 0,
+    CRC32 = 1,
+    TOEPLITZ = 2,
+    ROUND_ROBIN = 3,
+    ADAPTIVE = 4,
+    INGRESS_PORT_STRIPE = 5,
+};
+
+constexpr const char*
+RoutingTypeToString(RoutingType routingType)
+{
+    switch (routingType)
+    {
+    case RoutingType::PER_FLOW_ALL_PATHS:
+        return "PER_FLOW_ALL_PATHS";
+    case RoutingType::PER_PACKET_ALL_PATHS:
+        return "PER_PACKET_ALL_PATHS";
+    case RoutingType::PER_FLOW_SHORTEST_PATHS:
+        return "PER_FLOW_SHORTEST_PATHS";
+    case RoutingType::PER_PACKET_SHORTEST_PATHS:
+        return "PER_PACKET_SHORTEST_PATHS";
+    }
+    return "UNKNOWN";
+}
+
+constexpr const char*
+MultipathSelectorToString(MultipathSelector selector)
+{
+    switch (selector)
+    {
+    case MultipathSelector::HASH64:
+        return "HASH64";
+    case MultipathSelector::CRC32:
+        return "CRC32";
+    case MultipathSelector::TOEPLITZ:
+        return "TOEPLITZ";
+    case MultipathSelector::ROUND_ROBIN:
+        return "ROUND_ROBIN";
+    case MultipathSelector::ADAPTIVE:
+        return "ADAPTIVE";
+    case MultipathSelector::INGRESS_PORT_STRIPE:
+        return "INGRESS_PORT_STRIPE";
+    }
+    return "UNKNOWN";
+}
+
+constexpr bool
+RoutingTypeIsPerPacket(RoutingType routingType)
+{
+    return (static_cast<uint8_t>(routingType) & 0b01) != 0;
+}
+
+constexpr bool
+RoutingTypeUsesShortestPaths(RoutingType routingType)
+{
+    return (static_cast<uint8_t>(routingType) & 0b10) != 0;
+}
+
+constexpr RoutingType
+MakeRoutingType(bool perPacket, bool shortestPaths)
+{
+    return static_cast<RoutingType>((shortestPaths ? 0b10 : 0) | (perPacket ? 0b01 : 0));
+}
+
+constexpr bool
+MultipathSelectorIsValidForRoutingType(MultipathSelector selector, RoutingType routingType)
+{
+    switch (selector)
+    {
+    case MultipathSelector::HASH64:
+    case MultipathSelector::CRC32:
+    case MultipathSelector::TOEPLITZ:
+        return true;
+    case MultipathSelector::ROUND_ROBIN:
+    case MultipathSelector::ADAPTIVE:
+        return RoutingTypeIsPerPacket(routingType);
+    case MultipathSelector::INGRESS_PORT_STRIPE:
+        return !RoutingTypeIsPerPacket(routingType);
+    }
+    return false;
+}
+
 // 定义Order枚举
 enum class OrderType : uint8_t {
     ORDER_NO = 0x00,      // No Order: 与其它报文无保序要求
