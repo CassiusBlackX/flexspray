@@ -71,6 +71,16 @@ struct UbGbnPacketDescriptor
     uint32_t serializedSizeBytes{0};
 };
 
+struct UbRetransTimerTestStats
+{
+    uint64_t startCalls{0};
+    uint64_t selectiveOutstandingScanCalls{0};
+    uint64_t selectiveOutstandingEntriesVisited{0};
+    uint64_t scheduleCalls{0};
+    uint64_t cancelCalls{0};
+    uint64_t restartCalls{0};
+};
+
 class UbRetransStrategy
 {
 public:
@@ -266,14 +276,20 @@ public:
     bool HasGbnDescriptorForTest(uint64_t psn) const;
     uint64_t GetGbnRetransmissionCursorForTest() const;
     void RetainGbnDescriptorForTest(const UbGbnPacketDescriptor& descriptor);
+    void ResetTimerStatsForTest();
+    UbRetransTimerTestStats GetTimerStatsForTest() const;
     void ClearRetainedState();
     void ClearNakSuppressionIfGapClosed(uint64_t recvNext);
     UbTransportChannel& GetTransport();
     const UbTransportChannel& GetTransport() const;
 
 private:
+    friend class UbSelectiveRetransStrategy;
+
     void ScheduleTimeout();
     void HandleTrackedTimeout(uint64_t token);
+    bool IsCollectingTimerStatsForTest() const;
+    void RecordSelectiveOutstandingScanForTest(uint64_t entriesVisited) const;
 
     UbTransportChannel& m_transport;
     std::unique_ptr<UbGbnRetransStrategy> m_gbn;
@@ -292,6 +308,8 @@ private:
     bool m_enableRetrans{false};
     bool m_enableFastRetrans{false};
     bool m_enableSelectiveMarkPsn{false};
+    bool m_collectTimerTestStats{false};
+    mutable UbRetransTimerTestStats m_timerTestStats;
 };
 
 } // namespace ns3
