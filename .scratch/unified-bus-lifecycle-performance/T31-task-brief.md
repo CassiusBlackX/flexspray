@@ -1,6 +1,6 @@
 # T31 Task Brief: Fuse Packet Owner And Coordinator Resolution
 
-Status: ready-for-closeout
+Status: closed
 
 ## Objective
 
@@ -122,3 +122,5 @@ frozen pre-T31 p01 artifacts.
 - 2026-07-17: T31 failed every performance-retention condition and was reverted. Together with T30,
   this is the second equivalent owner-resolution optimization failure; no further variants on this
   chain are authorized without new measurement evidence.
+- 2026-07-17: root closeout review confirmed no source/test diff remains and the rebuilt Unified Bus
+  library exactly matches the frozen pre-T31 SHA-256 `0968fced...32878`.

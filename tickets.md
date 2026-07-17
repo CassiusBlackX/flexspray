@@ -934,14 +934,26 @@ lookup on every transfer and terminal.
 
 **Blocked by:** T30 Skip hot coordinator RTTI lookup.
 
-- [ ] Extract the existing execution-owner and coordinator-resolution bodies into private/internal
+- [x] Extract the existing execution-owner and coordinator-resolution bodies into private/internal
       helpers, migrate their old callers first, and prove existing behavior before packet routing uses
       them.
-- [ ] Local transfer/terminal paths perform one node-range check and one `NodeList::GetNode`; remote
+- [x] Local transfer/terminal paths perform one node-range check and one `NodeList::GetNode`; remote
       MPI/MTP paths retain their existing owner classification, source context, and control routing.
-- [ ] Unknown-node, missing-coordinator, inactive-attempt, stale-generation, and remote-owner behavior
+- [x] Unknown-node, missing-coordinator, inactive-attempt, stale-generation, and remote-owner behavior
       retain their existing errors and ordering.
-- [ ] Targeted build, lifecycle, and VOQ focused suites pass serially.
-- [ ] One warm-up and five counterbalanced pre-T31/T31 p01 pairs preserve exact semantic artifacts;
+- [x] Targeted build, lifecycle, and VOQ focused suites pass serially.
+- [x] One warm-up and five counterbalanced pre-T31/T31 p01 pairs preserve exact semantic artifacts;
       retain the change only if paired-median wall improves by at least 1.5 percent, at least four
       pairs do not regress, and paired-median CPU/RSS do not regress by more than 1 percent.
+
+Closeout:
+
+- Extracted and reused the exact current execution-owner and coordinator-resolution bodies. The old
+  callers passed focused validation before packet transfer/terminal used the helpers.
+- Targeted builds, lifecycle, and VOQ suites passed; all five p01 task/throughput/trace artifact sets
+  were exact.
+- Every T31 wall pair regressed: paired median `+0.50%`; user CPU `+1.54%`; RSS flat. The treatment
+  failed its predefined performance gate.
+- Reverted T31 and rebuilt the baseline dylib, reproducing exact SHA-256 `0968fced...32878`. Together
+  with T30 this is the second failed owner-resolution variant, so that optimization line is stopped
+  pending new evidence from a different hot path.
