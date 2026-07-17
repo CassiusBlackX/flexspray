@@ -632,3 +632,154 @@ Closeout:
   no further lifecycle-review findings remain. The direct-app invalid-priority child-abort test was
   removed at the user's request without changing production validation. The umbrella suite still
   exits 139 elsewhere on macOS and remains excluded from the acceptance claim.
+
+The performance follow-up T23-T28 implements
+`.scratch/unified-bus-lifecycle-performance/PRD.md`. It preserves the completed T00-T22 lifecycle
+semantics while reducing host observability, bookkeeping, and retained-state cost. Work remains
+serial: the current ticket needs implementation and closeout commits before another frontier ticket
+starts.
+
+## Task 23: Make minimal lifecycle observability fast by default
+
+**What to build:** Make the minimal observability preset omit lifecycle trace output while balanced,
+detailed, custom, and explicit lifecycle levels retain their documented evidence. When SUMMARY is
+selected, carry the same records through the existing bounded writer with less lifecycle-layer
+dispatch overhead and no artifact-contract change.
+
+**Blocked by:** None — can start immediately.
+
+- [x] Minimal resolves to lifecycle OFF, balanced to SUMMARY, detailed to EVENT, and every explicit
+      lifecycle-level override remains authoritative.
+- [x] Explicit SUMMARY preserves schema metadata, filenames, fixed fields, record order, parser
+      inputs, and complete output bytes.
+- [x] The existing bounded trace writer, chunk policy, pressure behavior, and descriptor limits are
+      reused without a second buffering or I/O system.
+- [x] OFF and SUMMARY runs preserve task results, throughput, protocol traces, completion, and
+      simulated time.
+- [x] The production observability generator, reference documentation, and documentation tests agree
+      with the revised preset contract.
+- [x] A frozen current/main/next p02 comparison uses one warm-up and five counterbalanced measured
+      pairs, runs serially, and records wall, CPU, RSS, I/O, record count, bytes, and binary hashes.
+- [x] Default p02 wall regression is no more than 10 percent, or the ticket stops with a measured
+      unexplained blocker instead of widening scope.
+
+Closeout:
+
+- Minimal now defaults lifecycle output to OFF while balanced remains SUMMARY, detailed remains
+  EVENT, explicit overrides remain authoritative, and correctness accounting stays always enabled.
+- Explicit SUMMARY reuses the T19 bounded `UbUtils` writer. The former `Emit` sink/header block is
+  extracted once, the old caller still uses it, and coordinator SUMMARY batches acquire the lifecycle
+  mutex and resolve the owner sink once without changing record construction or order.
+- A sequential-versus-batch characterization and a frozen pre/post simple scenario prove complete
+  SUMMARY schema and trace bytes are identical. Default OFF and explicit SUMMARY preserve task,
+  throughput, and non-lifecycle trace bytes; parser validation passes.
+- Serial p02 V5 uses one warm-up and five counterbalanced rounds per frozen main/current/next binary.
+  Current is `+6.02%` paired-median wall and `+8.78%` RSS versus main, and `+1.46%` wall /
+  `+6.61%` RSS versus next,
+  within the 10 percent thresholds. Explicit SUMMARY remains an opt-in `+28.71%` wall cost.
+- Main/current/next p02 outputs are byte-identical. The only protocol-trace differences are the
+  inherited T05 same-timestamp send/complete order in eight TaskTrace files; row multisets,
+  timestamps, values, task completion, and derived output are identical.
+- Focused build, lifecycle trace suite, lifecycle parser, OpenUSim helper/docs tests, simple scenario,
+  SUMMARY byte milestone, performance gate, Standards review, and Spec review pass. T24 has not
+  started.
+
+## Task 24: Reduce steady-state packet lifecycle bookkeeping
+
+**What to build:** Carry packet attempts and leases through the same exact identity, transfer,
+terminal, generation, and drain invariants with lower steady-state host cost, selecting the concrete
+change from a current packet-heavy profile rather than from code inspection alone.
+
+**Blocked by:** T23 Make minimal lifecycle observability fast by default.
+
+- [ ] The current p01 no-spray, lifecycle-OFF case is a reproducible red performance loop with one
+      warm-up and five counterbalanced measured pairs.
+- [ ] A bounded profile or site counters identify the selected packet-attempt, lease-container, owner
+      resolution, or ACTIVE-endpoint notification hotspot before implementation.
+- [ ] Exact packet membership remains available for duplicate birth/terminal, underflow,
+      out-of-order terminal, stale-generation, and drain validation; it is not replaced by a counter.
+- [ ] ACTIVE TP steady state performs no destroy-only callback work; DRAINING installation and the
+      immediate drain check cannot miss a completion edge.
+- [ ] Existing production packet tags, queue/link transfers, endpoint/drop terminals, and lifecycle
+      characterization remain the test oracle.
+- [ ] p01 task, throughput, and protocol artifacts retain their accepted bytes and wall regression is
+      no more than 10 percent, or the measured blocker is reported without speculative redesign.
+
+## Task 25: Compact retired lifecycle resource storage
+
+**What to build:** Release heavy active containers after a resource generation reaches a valid
+terminal retirement while preserving compact generation history, stale-use rejection, optional
+final evidence, and the distinction between host storage reclamation and modeled logical closure.
+
+**Blocked by:** T24 Reduce steady-state packet lifecycle bookkeeping.
+
+- [ ] A representative sequential task-churn case measures resource count, retained state, peak RSS,
+      and growth before choosing the compact layout.
+- [ ] Retired generations release active attempt, lease, callback, and other active-only storage only
+      after balance and terminal invariants pass.
+- [ ] Local-ID reuse increments generation, rejects late stale mutation, and cannot alias an active
+      replacement generation.
+- [ ] Explicit SUMMARY retains the same final values and bytes; OFF does not retain evidence-only
+      state.
+- [ ] Forced stop and unresolved work remain visible and cannot be compacted into successful
+      completion.
+- [ ] The sequential-churn and p02 trace-OFF RSS results are bounded and reported with absolute and
+      percentage values without introducing automatic TP teardown.
+
+## Task 26: Reuse validated RTP transport resolution
+
+**What to build:** Resolve each RTP direct-TP or TPG transport reference once per admission attempt
+and reuse unchanged TPG membership materialization behind generation and membership-version checks,
+without changing which TP admits, schedules, sends, retransmits, or drains the segment.
+
+**Blocked by:** None — can start immediately.
+
+- [ ] Direct TP and TPG preflight consume an already validated generation-aware resolution instead of
+      repeating the same lookup.
+- [ ] TPG member materialization is reused only while generation and membership version match, and is
+      invalidated by bind, member add/remove, drain, and destroy changes.
+- [ ] No eligible member, draining member, shared direct-plus-TPG use, and member-selection ordering
+      preserve existing outcomes and side-effect order.
+- [ ] First send, TPNAK, and RTO retransmission remain pinned to the admitted resolved TP generation.
+- [ ] Focused counters show fewer resolution/materialization operations on the exercised RTP path,
+      and a bounded current/next scenario reports the host-time result without requiring a gain.
+
+## Task 27: Avoid redundant selective-retransmission window scans
+
+**What to build:** Preserve the current selective retransmission state machine while allowing an
+already-running retransmission timer to bypass an outstanding-window scan that cannot change timer
+state.
+
+**Blocked by:** None — can start immediately.
+
+- [ ] A large-window selective-retransmission characterization proves the current repeated scan and
+      records calls, scanned entries, timer state, and host time.
+- [ ] The timer-running fast path does not scan retained PSN state and does not schedule, cancel, or
+      reset an event.
+- [ ] GBN behavior is unchanged.
+- [ ] SELECTIVE ACK, SACK, timeout, fast retry, descriptor retirement, retry set, and completion retain
+      existing ordering and outputs.
+- [ ] Focused retransmission tests and a bounded fault scenario pass without changing packet builders,
+      parsers, ACK/RTO policy, or queue scheduling.
+
+## Task 28: Accept current lifecycle performance against main and next
+
+**What to build:** Produce a portable final semantic and host-performance report for the optimized
+current branch against frozen GitCode main and pinned next binaries, keeping negative, flat,
+exception, and inconclusive results visible.
+
+**Blocked by:** T23 Make minimal lifecycle observability fast by default; T24 Reduce steady-state
+packet lifecycle bookkeeping; T25 Compact retired lifecycle resource storage; T26 Reuse validated
+RTP transport resolution; T27 Avoid redundant selective-retransmission window scans.
+
+- [ ] Frozen binaries, revisions, compatible build configurations, compiler/runtime facts, hashes,
+      inputs, and commands are recorded and reused serially.
+- [ ] p01 and p02 each use one warm-up and five counterbalanced measured pairs and report wall, user
+      CPU, system CPU, peak RSS, page faults, file I/O, event/resource counts, and trace volume.
+- [ ] Complex CTP and RTP control scenarios preserve the accepted completion, window, retransmission,
+      selection, queue, and lifecycle-balance behavior.
+- [ ] Shared byte-stable semantic artifacts are exact; every accepted difference is narrow,
+      explained, revision/runtime/case/path/hash-bound, and user-approved where required.
+- [ ] Unexplained differences and performance regressions above the 10 percent investigation threshold
+      remain failures or inconclusive results rather than being hidden by aggregation.
+- [ ] Automatic TP cleanup remains excluded from the measured benefit and from the implementation.
