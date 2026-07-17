@@ -904,13 +904,24 @@ aggregate lookup in the packet lifecycle coordinator hot path.
 
 **Blocked by:** T29 Amortize allocator event reclamation.
 
-- [ ] The current p01 profile identifies coordinator resolution and RTTI lookup inside the packet
+- [x] The current p01 profile identifies coordinator resolution and RTTI lookup inside the packet
       transfer chain before implementation.
-- [ ] `UbLifecycleCoordinator::Resolve` retains the same node-range and missing-coordinator aborts
+- [x] `UbLifecycleCoordinator::Resolve` retains the same node-range and missing-coordinator aborts
       and resolves the same node-scoped object without adding a registry or cache.
-- [ ] Existing packet lifecycle, cross-owner routing, queue transfer, and terminal behavior remain
+- [x] Existing packet lifecycle, cross-owner routing, queue transfer, and terminal behavior remain
       unchanged under focused lifecycle tests.
-- [ ] One targeted build and the ticket-defined focused suites pass serially.
-- [ ] One warm-up and five counterbalanced pre-T30/T30 p01 pairs preserve exact semantic artifacts;
+- [x] One targeted build and the ticket-defined focused suites pass serially.
+- [x] One warm-up and five counterbalanced pre-T30/T30 p01 pairs preserve exact semantic artifacts;
       retain the one-line change only if paired-median wall improves by at least 1 percent, at least
       four pairs do not regress, and paired-median CPU/RSS do not regress by more than 1 percent.
+
+Closeout:
+
+- Reused the existing TypeId-based ns-3 aggregate lookup to remove the speculative RTTI cast from
+  coordinator resolution; no registry, cache, state, public API, or lifecycle behavior was added.
+- Targeted build, lifecycle, and VOQ suites passed. All five p01 task/throughput/trace artifact sets
+  were exact.
+- Paired-median wall was `-0.82%`, only three of five pairs did not regress, user CPU was flat, and
+  RSS was `+0.33%`. The variant failed its predefined 1 percent/four-pair retention gate.
+- Reverted the one-line variant. T30 closes with no source change and narrows the next optimization
+  to eliminating duplicated execution-owner/node resolution as one measured semantic batch.

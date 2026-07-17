@@ -1,6 +1,6 @@
 # T30 Task Brief: Skip Hot Coordinator RTTI Lookup
 
-Status: ready-for-closeout
+Status: closed
 
 ## Objective
 
@@ -119,3 +119,5 @@ capture, and frozen pre-T30 p01 artifacts.
 - 2026-07-17: the one-line TypeId lookup failed the predefined 1 percent/four-pair retention gate and
   was reverted. Coordinator resolution source is again identical to `9d53f25`; T30 retains only
   diagnostic evidence.
+- 2026-07-17: root closeout review confirmed there is no remaining lifecycle source or test diff;
+  the ticket closes as a rejected isolated optimization.
