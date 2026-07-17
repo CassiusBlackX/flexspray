@@ -417,7 +417,7 @@ UbLifecycleCoordinator::OpenResource(UbLifecycleResourceKind kind, uint64_t loca
     ResourceState& state = m_resources[key];
     m_cachedResourceKey = key;
     m_cachedResourceState = &state;
-    if (state.generation != 0 && !state.snapshot.retired)
+    if (state.generation != 0 && !state.retired)
     {
         return {m_ownerNodeId, kind, localId, state.generation};
     }
@@ -425,13 +425,11 @@ UbLifecycleCoordinator::OpenResource(UbLifecycleResourceKind kind, uint64_t loca
     NS_ABORT_MSG_IF(state.generation == std::numeric_limits<uint64_t>::max(),
                     "Lifecycle generation exhausted");
     ++state.generation;
-    state.nextAttempt = 0;
-    state.nextLease = 0;
-    state.sequence = 0;
-    state.snapshot = {};
-    state.activeAttemptWords.clear();
-    state.activeLeases.clear();
-    state.stateChangedCallback = {};
+    state.retired = false;
+    state.hasTerminalOutcome = false;
+    state.terminalOutcome = UbWorkOutcome::COMPLETED;
+    state.retainedSummary.reset();
+    state.active = std::make_unique<ActiveResourceState>();
     const UbLifecycleResourceIdentity identity{m_ownerNodeId, kind, localId, state.generation};
     if (ShouldTraceResource(identity))
     {
@@ -455,11 +453,38 @@ void
 UbLifecycleCoordinator::RetireResource(const UbLifecycleResourceIdentity& identity)
 {
     ResourceState& state = ValidateMutable(identity);
-    NS_ABORT_MSG_IF(state.snapshot.inFlightPackets != 0,
+    ActiveResourceState& active = *state.active;
+    NS_ABORT_MSG_IF(active.snapshot.inFlightPackets != 0,
                     "Cannot retire lifecycle generation with in-flight packets");
-    NS_ABORT_MSG_IF(!state.activeLeases.empty(),
+    NS_ABORT_MSG_IF(!active.activeLeases.empty(),
                     "Cannot retire lifecycle generation with active leases");
-    state.snapshot.retired = true;
+    active.snapshot.retired = true;
+    if (active.snapshot.completedTerminals != 0)
+    {
+        state.hasTerminalOutcome = true;
+        state.terminalOutcome = UbWorkOutcome::COMPLETED;
+    }
+    else if (active.snapshot.failedTerminals != 0)
+    {
+        state.hasTerminalOutcome = true;
+        state.terminalOutcome = UbWorkOutcome::FAILED;
+    }
+    else if (active.snapshot.canceledTerminals != 0)
+    {
+        state.hasTerminalOutcome = true;
+        state.terminalOutcome = UbWorkOutcome::CANCELED;
+    }
+    else if (active.snapshot.flushedTerminals != 0)
+    {
+        state.hasTerminalOutcome = true;
+        state.terminalOutcome = UbWorkOutcome::FLUSHED;
+    }
+    if (UbLifecycleTrace::GetLevel() != UbLifecycleTraceLevel::OFF)
+    {
+        state.retainedSummary =
+            std::make_unique<UbLifecycleResourceSnapshot>(active.snapshot);
+    }
+    state.retired = true;
     if (ShouldTraceResource(identity))
     {
         m_lifecycleTrace(MakeTraceRecord(identity,
@@ -473,8 +498,9 @@ UbLifecycleCoordinator::RetireResource(const UbLifecycleResourceIdentity& identi
                                                 1,
                                                 UbLifecycleTraceOutcome::NONE,
                                                 UbLifecycleTraceReason::NONE,
-                                                UbLifecycleTraceSite::COORDINATOR_RETIRE));
+                                         UbLifecycleTraceSite::COORDINATOR_RETIRE));
     }
+    state.active.reset();
 }
 
 bool
@@ -487,7 +513,7 @@ UbLifecycleCoordinator::IsResourceActive(const UbLifecycleResourceIdentity& iden
     const auto resource = m_resources.find({identity.kind, identity.localId});
     return resource != m_resources.end() &&
            resource->second.generation == identity.generation &&
-           !resource->second.snapshot.retired;
+           !resource->second.retired;
 }
 
 void
@@ -495,7 +521,7 @@ UbLifecycleCoordinator::SetResourceStateChangedCallback(
     const UbLifecycleResourceIdentity& identity,
     Callback<void, UbLifecycleResourceIdentity> callback)
 {
-    ValidateMutable(identity).stateChangedCallback = callback;
+    ValidateMutable(identity).active->stateChangedCallback = callback;
 }
 
 UbLifecycleLeaseIdentity
@@ -505,32 +531,33 @@ UbLifecycleCoordinator::AcquireLease(const UbLifecycleResourceIdentity& owner,
 {
     ResourceState& state = ValidateMutable(owner);
     const ResourceState& relatedState = Validate(related);
-    NS_ABORT_MSG_IF(relatedState.snapshot.retired,
+    NS_ABORT_MSG_IF(relatedState.retired,
                     "Lifecycle lease cannot reference a retired resource");
-    NS_ABORT_MSG_IF(state.nextLease == std::numeric_limits<uint64_t>::max(),
+    ActiveResourceState& active = *state.active;
+    NS_ABORT_MSG_IF(active.nextLease == std::numeric_limits<uint64_t>::max(),
                     "Lifecycle lease identity exhausted");
-    UbLifecycleLeaseIdentity lease{owner, related, kind, ++state.nextLease};
-    const bool inserted = state.activeLeases.emplace(lease.lease, lease).second;
+    UbLifecycleLeaseIdentity lease{owner, related, kind, ++active.nextLease};
+    const bool inserted = active.activeLeases.emplace(lease.lease, lease).second;
     NS_ABORT_MSG_IF(!inserted, "Duplicate lifecycle lease identity");
     switch (kind)
     {
     case UbLifecycleLeaseKind::WORK:
-        ++state.snapshot.activeWorkLeases;
+        ++active.snapshot.activeWorkLeases;
         break;
     case UbLifecycleLeaseKind::CHILD:
-        ++state.snapshot.activeChildLeases;
+        ++active.snapshot.activeChildLeases;
         break;
     case UbLifecycleLeaseKind::TRANSPORT_USE:
-        ++state.snapshot.activeTransportUseLeases;
+        ++active.snapshot.activeTransportUseLeases;
         break;
     case UbLifecycleLeaseKind::BINDING:
-        ++state.snapshot.activeBindingLeases;
+        ++active.snapshot.activeBindingLeases;
         break;
     case UbLifecycleLeaseKind::TRACKED_EVENT:
-        ++state.snapshot.activeTrackedEventLeases;
+        ++active.snapshot.activeTrackedEventLeases;
         break;
     case UbLifecycleLeaseKind::TRANSPORT_WORK:
-        ++state.snapshot.activeTransportWorkLeases;
+        ++active.snapshot.activeTransportWorkLeases;
         break;
     default:
         NS_ABORT_MSG("Unknown lifecycle lease kind");
@@ -557,46 +584,47 @@ void
 UbLifecycleCoordinator::ReleaseLease(const UbLifecycleLeaseIdentity& lease)
 {
     ResourceState& state = ValidateMutable(lease.owner);
-    const auto it = state.activeLeases.find(lease.lease);
-    NS_ABORT_MSG_IF(it == state.activeLeases.end(),
+    ActiveResourceState& active = *state.active;
+    const auto it = active.activeLeases.find(lease.lease);
+    NS_ABORT_MSG_IF(it == active.activeLeases.end(),
                     "Lifecycle lease release would underflow the active balance");
     NS_ABORT_MSG_IF(it->second != lease, "Lifecycle lease identity mismatch");
     switch (lease.kind)
     {
     case UbLifecycleLeaseKind::WORK:
-        NS_ABORT_MSG_IF(state.snapshot.activeWorkLeases == 0,
+        NS_ABORT_MSG_IF(active.snapshot.activeWorkLeases == 0,
                         "Lifecycle work lease counter underflow");
-        --state.snapshot.activeWorkLeases;
+        --active.snapshot.activeWorkLeases;
         break;
     case UbLifecycleLeaseKind::CHILD:
-        NS_ABORT_MSG_IF(state.snapshot.activeChildLeases == 0,
+        NS_ABORT_MSG_IF(active.snapshot.activeChildLeases == 0,
                         "Lifecycle child lease counter underflow");
-        --state.snapshot.activeChildLeases;
+        --active.snapshot.activeChildLeases;
         break;
     case UbLifecycleLeaseKind::TRANSPORT_USE:
-        NS_ABORT_MSG_IF(state.snapshot.activeTransportUseLeases == 0,
+        NS_ABORT_MSG_IF(active.snapshot.activeTransportUseLeases == 0,
                         "Lifecycle transport-use lease counter underflow");
-        --state.snapshot.activeTransportUseLeases;
+        --active.snapshot.activeTransportUseLeases;
         break;
     case UbLifecycleLeaseKind::BINDING:
-        NS_ABORT_MSG_IF(state.snapshot.activeBindingLeases == 0,
+        NS_ABORT_MSG_IF(active.snapshot.activeBindingLeases == 0,
                         "Lifecycle binding lease counter underflow");
-        --state.snapshot.activeBindingLeases;
+        --active.snapshot.activeBindingLeases;
         break;
     case UbLifecycleLeaseKind::TRACKED_EVENT:
-        NS_ABORT_MSG_IF(state.snapshot.activeTrackedEventLeases == 0,
+        NS_ABORT_MSG_IF(active.snapshot.activeTrackedEventLeases == 0,
                         "Lifecycle tracked-event lease counter underflow");
-        --state.snapshot.activeTrackedEventLeases;
+        --active.snapshot.activeTrackedEventLeases;
         break;
     case UbLifecycleLeaseKind::TRANSPORT_WORK:
-        NS_ABORT_MSG_IF(state.snapshot.activeTransportWorkLeases == 0,
+        NS_ABORT_MSG_IF(active.snapshot.activeTransportWorkLeases == 0,
                         "Lifecycle transport-work lease counter underflow");
-        --state.snapshot.activeTransportWorkLeases;
+        --active.snapshot.activeTransportWorkLeases;
         break;
     default:
         NS_ABORT_MSG("Unknown lifecycle lease kind");
     }
-    state.activeLeases.erase(it);
+    active.activeLeases.erase(it);
     if (UbLifecycleTrace::IsDetailEnabled() && UbLifecycleTrace::SelectResource(lease.owner))
     {
         m_lifecycleTrace(MakeTraceRecord(lease.owner,
@@ -612,7 +640,7 @@ UbLifecycleCoordinator::ReleaseLease(const UbLifecycleLeaseIdentity& lease)
                                                 ToTraceReason(lease.kind),
                                                 UbLifecycleTraceSite::COORDINATOR_RELEASE_LEASE));
     }
-    const auto callback = state.stateChangedCallback;
+    const auto callback = active.stateChangedCallback;
     if (!callback.IsNull())
     {
         callback(lease.owner);
@@ -630,26 +658,27 @@ UbLifecycleCoordinator::RecordWorkTerminal(const UbLifecycleResourceIdentity& id
                                            UbWorkOutcome outcome)
 {
     ResourceState& state = ValidateMutable(identity);
-    const uint64_t terminalCount = state.snapshot.completedTerminals +
-                                   state.snapshot.failedTerminals +
-                                   state.snapshot.canceledTerminals +
-                                   state.snapshot.flushedTerminals;
+    ActiveResourceState& active = *state.active;
+    const uint64_t terminalCount = active.snapshot.completedTerminals +
+                                   active.snapshot.failedTerminals +
+                                   active.snapshot.canceledTerminals +
+                                   active.snapshot.flushedTerminals;
     NS_ABORT_MSG_IF(terminalCount != 0,
                     "Lifecycle resource already has a terminal outcome");
     switch (outcome)
     {
     case UbWorkOutcome::COMPLETED:
-        ++state.snapshot.completedTerminals;
-        ++state.snapshot.successfulTerminals;
+        ++active.snapshot.completedTerminals;
+        ++active.snapshot.successfulTerminals;
         break;
     case UbWorkOutcome::FAILED:
-        ++state.snapshot.failedTerminals;
+        ++active.snapshot.failedTerminals;
         break;
     case UbWorkOutcome::CANCELED:
-        ++state.snapshot.canceledTerminals;
+        ++active.snapshot.canceledTerminals;
         break;
     case UbWorkOutcome::FLUSHED:
-        ++state.snapshot.flushedTerminals;
+        ++active.snapshot.flushedTerminals;
         break;
     default:
         NS_ABORT_MSG("Unknown work terminal outcome");
@@ -693,20 +722,21 @@ UbLifecycleCoordinator::RegisterPacketAttempt(const UbLifecycleResourceIdentity&
                     "Packet attempt already has lifecycle identity");
 
     ResourceState& state = ValidateMutable(owner);
-    NS_ABORT_MSG_IF(state.nextAttempt == std::numeric_limits<uint64_t>::max(),
+    ActiveResourceState& active = *state.active;
+    NS_ABORT_MSG_IF(active.nextAttempt == std::numeric_limits<uint64_t>::max(),
                     "Packet attempt identity exhausted");
-    const uint64_t attempt = ++state.nextAttempt;
+    const uint64_t attempt = ++active.nextAttempt;
     const uint64_t wordIndex = (attempt - 1) / 64;
     const uint64_t attemptBit = uint64_t{1} << ((attempt - 1) % 64);
-    auto [word, newWord] = state.activeAttemptWords.emplace(wordIndex, 0);
+    auto [word, newWord] = active.activeAttemptWords.emplace(wordIndex, 0);
     (void)newWord;
     const bool inserted = (word->second & attemptBit) == 0;
     NS_ABORT_MSG_IF(!inserted, "Duplicate packet attempt identity");
     word->second |= attemptBit;
 
-    ++state.snapshot.inFlightPackets;
-    ++state.snapshot.registeredPackets;
-    state.snapshot.lastBirthSequence = ++state.sequence;
+    ++active.snapshot.inFlightPackets;
+    ++active.snapshot.registeredPackets;
+    active.snapshot.lastBirthSequence = ++active.sequence;
 
     UbPacketAttemptIdentity identity{owner, attempt};
     UbPacketLifecycleTag tag;
@@ -720,9 +750,9 @@ UbLifecycleCoordinator::RegisterPacketAttempt(const UbLifecycleResourceIdentity&
                                                 UbLifecycleTraceSubjectKind::PACKET,
                                                 attempt,
                                                 UbLifecycleTraceEvent::PACKET_BIRTH,
-                                                static_cast<int64_t>(state.snapshot.inFlightPackets - 1),
+                                                static_cast<int64_t>(active.snapshot.inFlightPackets - 1),
                                                 1,
-                                                static_cast<int64_t>(state.snapshot.inFlightPackets),
+                                                static_cast<int64_t>(active.snapshot.inFlightPackets),
                                                 UbLifecycleTraceOutcome::NONE,
                                                 UbLifecycleTraceReason::NONE,
                                                 UbLifecycleTraceSite::COORDINATOR_PACKET_BIRTH));
@@ -743,6 +773,7 @@ UbLifecycleCoordinator::EmitLifecycleSummary()
     records.reserve(m_resources.size() * kSummaryRecordsPerResource);
     for (const auto& [key, state] : m_resources)
     {
+        const UbLifecycleResourceSnapshot snapshot = BuildSnapshot(state);
         const UbLifecycleResourceIdentity identity{m_ownerNodeId,
                                                    key.kind,
                                                    key.localId,
@@ -761,42 +792,42 @@ UbLifecycleCoordinator::EmitLifecycleSummary()
                                               UbLifecycleTraceReason::NONE,
                                               UbLifecycleTraceSite::COORDINATOR_SUMMARY));
         };
-        emit(UbLifecycleTraceEvent::SUMMARY_IN_FLIGHT_PACKETS, state.snapshot.inFlightPackets);
-        emit(UbLifecycleTraceEvent::SUMMARY_REGISTERED_PACKETS, state.snapshot.registeredPackets);
+        emit(UbLifecycleTraceEvent::SUMMARY_IN_FLIGHT_PACKETS, snapshot.inFlightPackets);
+        emit(UbLifecycleTraceEvent::SUMMARY_REGISTERED_PACKETS, snapshot.registeredPackets);
         emit(UbLifecycleTraceEvent::SUMMARY_TRANSFER_OBSERVATIONS,
-             state.snapshot.transferObservations);
-        emit(UbLifecycleTraceEvent::SUMMARY_ENDPOINT_CONSUMED, state.snapshot.endpointConsumed);
+             snapshot.transferObservations);
+        emit(UbLifecycleTraceEvent::SUMMARY_ENDPOINT_CONSUMED, snapshot.endpointConsumed);
         emit(UbLifecycleTraceEvent::SUMMARY_ROUTE_NOT_FOUND_DROPS,
-             state.snapshot.routeNotFoundDrops);
+             snapshot.routeNotFoundDrops);
         emit(UbLifecycleTraceEvent::SUMMARY_EGRESS_QUEUE_FULL_DROPS,
-             state.snapshot.egressQueueFullDrops);
+             snapshot.egressQueueFullDrops);
         emit(UbLifecycleTraceEvent::SUMMARY_INGRESS_QUEUE_FULL_DROPS,
-             state.snapshot.ingressQueueFullDrops);
-        emit(UbLifecycleTraceEvent::SUMMARY_FAULT_DROPS, state.snapshot.faultDrops);
+             snapshot.ingressQueueFullDrops);
+        emit(UbLifecycleTraceEvent::SUMMARY_FAULT_DROPS, snapshot.faultDrops);
         emit(UbLifecycleTraceEvent::SUMMARY_CHANNEL_FAILURE_DROPS,
-             state.snapshot.channelFailureDrops);
+             snapshot.channelFailureDrops);
         emit(UbLifecycleTraceEvent::SUMMARY_MALFORMED_PACKET_DROPS,
-             state.snapshot.malformedPacketDrops);
+             snapshot.malformedPacketDrops);
         emit(UbLifecycleTraceEvent::SUMMARY_ACTIVE_WORK_LEASES,
-             state.snapshot.activeWorkLeases);
+             snapshot.activeWorkLeases);
         emit(UbLifecycleTraceEvent::SUMMARY_ACTIVE_CHILD_LEASES,
-             state.snapshot.activeChildLeases);
+             snapshot.activeChildLeases);
         emit(UbLifecycleTraceEvent::SUMMARY_ACTIVE_TRANSPORT_USE_LEASES,
-             state.snapshot.activeTransportUseLeases);
+             snapshot.activeTransportUseLeases);
         emit(UbLifecycleTraceEvent::SUMMARY_ACTIVE_BINDING_LEASES,
-             state.snapshot.activeBindingLeases);
+             snapshot.activeBindingLeases);
         emit(UbLifecycleTraceEvent::SUMMARY_ACTIVE_TRACKED_EVENT_LEASES,
-             state.snapshot.activeTrackedEventLeases);
+             snapshot.activeTrackedEventLeases);
         emit(UbLifecycleTraceEvent::SUMMARY_ACTIVE_TRANSPORT_WORK_LEASES,
-             state.snapshot.activeTransportWorkLeases);
+             snapshot.activeTransportWorkLeases);
         emit(UbLifecycleTraceEvent::SUMMARY_SUCCESSFUL_TERMINALS,
-             state.snapshot.successfulTerminals);
+             snapshot.successfulTerminals);
         emit(UbLifecycleTraceEvent::SUMMARY_COMPLETED_TERMINALS,
-             state.snapshot.completedTerminals);
-        emit(UbLifecycleTraceEvent::SUMMARY_FAILED_TERMINALS, state.snapshot.failedTerminals);
-        emit(UbLifecycleTraceEvent::SUMMARY_CANCELED_TERMINALS, state.snapshot.canceledTerminals);
-        emit(UbLifecycleTraceEvent::SUMMARY_FLUSHED_TERMINALS, state.snapshot.flushedTerminals);
-        emit(UbLifecycleTraceEvent::SUMMARY_RETIRED, state.snapshot.retired ? 1 : 0);
+             snapshot.completedTerminals);
+        emit(UbLifecycleTraceEvent::SUMMARY_FAILED_TERMINALS, snapshot.failedTerminals);
+        emit(UbLifecycleTraceEvent::SUMMARY_CANCELED_TERMINALS, snapshot.canceledTerminals);
+        emit(UbLifecycleTraceEvent::SUMMARY_FLUSHED_TERMINALS, snapshot.flushedTerminals);
+        emit(UbLifecycleTraceEvent::SUMMARY_RETIRED, snapshot.retired ? 1 : 0);
     }
     UbLifecycleTrace::EmitBatch(records);
 }
@@ -804,7 +835,29 @@ UbLifecycleCoordinator::EmitLifecycleSummary()
 UbLifecycleResourceSnapshot
 UbLifecycleCoordinator::GetSnapshot(const UbLifecycleResourceIdentity& owner) const
 {
-    return Validate(owner).snapshot;
+    return BuildSnapshot(Validate(owner));
+}
+
+UbLifecycleStorageSnapshot
+UbLifecycleCoordinator::GetStorageSnapshotForTest() const
+{
+    UbLifecycleStorageSnapshot storage;
+    storage.resourceCount = m_resources.size();
+    for (const auto& [key, state] : m_resources)
+    {
+        (void)key;
+        if (state.active != nullptr)
+        {
+            ++storage.activeStateCount;
+            storage.activeAttemptWordCount += state.active->activeAttemptWords.size();
+            storage.activeLeaseCount += state.active->activeLeases.size();
+        }
+        if (state.retainedSummary != nullptr)
+        {
+            ++storage.retainedSummaryCount;
+        }
+    }
+    return storage;
 }
 
 bool
@@ -1143,8 +1196,10 @@ UbLifecycleCoordinator::ValidateMutable(const UbLifecycleResourceIdentity& ident
     }
     NS_ABORT_MSG_IF(identity.generation != m_cachedResourceState->generation,
                     "Lifecycle mutation references a stale generation");
-    NS_ABORT_MSG_IF(m_cachedResourceState->snapshot.retired,
+    NS_ABORT_MSG_IF(m_cachedResourceState->retired,
                     "Lifecycle mutation after resource retirement");
+    NS_ABORT_MSG_IF(m_cachedResourceState->active == nullptr,
+                    "Active lifecycle generation has no mutable state");
     return *m_cachedResourceState;
 }
 
@@ -1160,19 +1215,59 @@ UbLifecycleCoordinator::Validate(const UbLifecycleResourceIdentity& identity) co
     return it->second;
 }
 
+UbLifecycleResourceSnapshot
+UbLifecycleCoordinator::BuildSnapshot(const ResourceState& state)
+{
+    if (state.active != nullptr)
+    {
+        return state.active->snapshot;
+    }
+    if (state.retainedSummary != nullptr)
+    {
+        return *state.retainedSummary;
+    }
+
+    UbLifecycleResourceSnapshot snapshot;
+    snapshot.retired = state.retired;
+    if (!state.hasTerminalOutcome)
+    {
+        return snapshot;
+    }
+    switch (state.terminalOutcome)
+    {
+    case UbWorkOutcome::COMPLETED:
+        snapshot.successfulTerminals = 1;
+        snapshot.completedTerminals = 1;
+        break;
+    case UbWorkOutcome::FAILED:
+        snapshot.failedTerminals = 1;
+        break;
+    case UbWorkOutcome::CANCELED:
+        snapshot.canceledTerminals = 1;
+        break;
+    case UbWorkOutcome::FLUSHED:
+        snapshot.flushedTerminals = 1;
+        break;
+    default:
+        NS_ABORT_MSG("Unknown compact lifecycle terminal outcome");
+    }
+    return snapshot;
+}
+
 void
 UbLifecycleCoordinator::ObservePacketTransfer(const UbPacketAttemptIdentity& identity,
                                               UbPacketTransfer transfer)
 {
     ResourceState& state = ValidateMutable(identity.owner);
+    ActiveResourceState& active = *state.active;
     NS_ABORT_MSG_IF(identity.attempt == 0, "Packet transfer has an invalid attempt identity");
     const uint64_t wordIndex = (identity.attempt - 1) / 64;
     const uint64_t attemptBit = uint64_t{1} << ((identity.attempt - 1) % 64);
-    const auto word = state.activeAttemptWords.find(wordIndex);
-    NS_ABORT_MSG_IF(word == state.activeAttemptWords.end() || (word->second & attemptBit) == 0,
+    const auto word = active.activeAttemptWords.find(wordIndex);
+    NS_ABORT_MSG_IF(word == active.activeAttemptWords.end() || (word->second & attemptBit) == 0,
                     "Packet transfer references an inactive attempt");
-    ++state.snapshot.transferObservations;
-    state.snapshot.lastTransferSequence = ++state.sequence;
+    ++active.snapshot.transferObservations;
+    active.snapshot.lastTransferSequence = ++active.sequence;
     if (UbLifecycleTrace::IsDetailEnabled() && UbLifecycleTrace::SelectPacket(identity))
     {
         m_lifecycleTrace(MakeTraceRecord(
@@ -1182,9 +1277,9 @@ UbLifecycleCoordinator::ObservePacketTransfer(const UbPacketAttemptIdentity& ide
             UbLifecycleTraceSubjectKind::PACKET,
             identity.attempt,
             UbLifecycleTraceEvent::PACKET_TRANSFER,
-            static_cast<int64_t>(state.snapshot.transferObservations - 1),
+            static_cast<int64_t>(active.snapshot.transferObservations - 1),
             1,
-            static_cast<int64_t>(state.snapshot.transferObservations),
+            static_cast<int64_t>(active.snapshot.transferObservations),
             UbLifecycleTraceOutcome::NONE,
             ToTraceReason(transfer),
             UbLifecycleTraceSite::COORDINATOR_PACKET_TRANSFER));
@@ -1196,49 +1291,50 @@ UbLifecycleCoordinator::TerminatePacket(const UbPacketAttemptIdentity& identity,
                                         UbPacketTerminal terminal)
 {
     ResourceState& state = ValidateMutable(identity.owner);
+    ActiveResourceState& active = *state.active;
     NS_ABORT_MSG_IF(identity.attempt == 0, "Packet terminal has an invalid attempt identity");
     const uint64_t wordIndex = (identity.attempt - 1) / 64;
     const uint64_t attemptBit = uint64_t{1} << ((identity.attempt - 1) % 64);
-    const auto word = state.activeAttemptWords.find(wordIndex);
-    NS_ABORT_MSG_IF(word == state.activeAttemptWords.end() || (word->second & attemptBit) == 0,
+    const auto word = active.activeAttemptWords.find(wordIndex);
+    NS_ABORT_MSG_IF(word == active.activeAttemptWords.end() || (word->second & attemptBit) == 0,
                     "Packet lifecycle terminal would underflow the active-attempt balance");
-    NS_ABORT_MSG_IF(state.snapshot.inFlightPackets == 0,
+    NS_ABORT_MSG_IF(active.snapshot.inFlightPackets == 0,
                     "Packet lifecycle terminal would underflow the in-flight counter");
 
     word->second &= ~attemptBit;
     if (word->second == 0)
     {
-        state.activeAttemptWords.erase(word);
+        active.activeAttemptWords.erase(word);
     }
-    --state.snapshot.inFlightPackets;
+    --active.snapshot.inFlightPackets;
     switch (terminal)
     {
     case UbPacketTerminal::ENDPOINT_CONSUMED:
-        ++state.snapshot.endpointConsumed;
+        ++active.snapshot.endpointConsumed;
         break;
     case UbPacketTerminal::ROUTE_NOT_FOUND:
-        ++state.snapshot.routeNotFoundDrops;
+        ++active.snapshot.routeNotFoundDrops;
         break;
     case UbPacketTerminal::EGRESS_QUEUE_FULL:
-        ++state.snapshot.egressQueueFullDrops;
+        ++active.snapshot.egressQueueFullDrops;
         break;
     case UbPacketTerminal::INGRESS_QUEUE_FULL:
-        ++state.snapshot.ingressQueueFullDrops;
+        ++active.snapshot.ingressQueueFullDrops;
         break;
     case UbPacketTerminal::FAULT_DROP:
-        ++state.snapshot.faultDrops;
+        ++active.snapshot.faultDrops;
         break;
     case UbPacketTerminal::CHANNEL_FAILURE:
-        ++state.snapshot.channelFailureDrops;
+        ++active.snapshot.channelFailureDrops;
         break;
     case UbPacketTerminal::MALFORMED_PACKET:
-        ++state.snapshot.malformedPacketDrops;
+        ++active.snapshot.malformedPacketDrops;
         break;
     default:
         NS_ABORT_MSG("Unknown packet lifecycle terminal");
     }
-    state.snapshot.lastTerminalSequence = ++state.sequence;
-    const auto callback = state.stateChangedCallback;
+    active.snapshot.lastTerminalSequence = ++active.sequence;
+    const auto callback = active.stateChangedCallback;
     if (!callback.IsNull())
     {
         callback(identity.owner);
@@ -1252,9 +1348,9 @@ UbLifecycleCoordinator::TerminatePacket(const UbPacketAttemptIdentity& identity,
             UbLifecycleTraceSubjectKind::PACKET,
             identity.attempt,
             UbLifecycleTraceEvent::PACKET_TERMINAL,
-            static_cast<int64_t>(state.snapshot.inFlightPackets + 1),
+            static_cast<int64_t>(active.snapshot.inFlightPackets + 1),
             -1,
-            static_cast<int64_t>(state.snapshot.inFlightPackets),
+            static_cast<int64_t>(active.snapshot.inFlightPackets),
             ToTraceOutcome(terminal),
             UbLifecycleTraceReason::NONE,
             UbLifecycleTraceSite::COORDINATOR_PACKET_TERMINAL));

@@ -10,8 +10,10 @@
 #include "ns3/tag.h"
 #include "ns3/traced-callback.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <ostream>
 #include <vector>
 
@@ -236,6 +238,15 @@ struct UbLifecycleResourceSnapshot
     bool retired{false};
 };
 
+struct UbLifecycleStorageSnapshot
+{
+    std::size_t resourceCount{0};
+    std::size_t activeStateCount{0};
+    std::size_t retainedSummaryCount{0};
+    std::size_t activeAttemptWordCount{0};
+    std::size_t activeLeaseCount{0};
+};
+
 class UbLifecycleCoordinator : public Object
 {
   public:
@@ -261,6 +272,7 @@ class UbLifecycleCoordinator : public Object
     UbPacketAttemptIdentity RegisterPacketAttempt(const UbLifecycleResourceIdentity& owner,
                                                   Ptr<Packet> packet);
     UbLifecycleResourceSnapshot GetSnapshot(const UbLifecycleResourceIdentity& owner) const;
+    UbLifecycleStorageSnapshot GetStorageSnapshotForTest() const;
     void EmitLifecycleSummary();
 
     static void ObservePacketTransfer(Ptr<Packet> packet,
@@ -280,9 +292,8 @@ class UbLifecycleCoordinator : public Object
         bool operator<(const ResourceKey& other) const;
     };
 
-    struct ResourceState
+    struct ActiveResourceState
     {
-        uint64_t generation{0};
         uint64_t nextAttempt{0};
         uint64_t nextLease{0};
         uint64_t sequence{0};
@@ -292,11 +303,22 @@ class UbLifecycleCoordinator : public Object
         Callback<void, UbLifecycleResourceIdentity> stateChangedCallback;
     };
 
+    struct ResourceState
+    {
+        uint64_t generation{0};
+        bool retired{false};
+        bool hasTerminalOutcome{false};
+        UbWorkOutcome terminalOutcome{UbWorkOutcome::COMPLETED};
+        std::unique_ptr<ActiveResourceState> active;
+        std::unique_ptr<UbLifecycleResourceSnapshot> retainedSummary;
+    };
+
     static bool TryReadIdentity(Ptr<const Packet> packet, UbPacketAttemptIdentity& identity);
     static Ptr<UbLifecycleCoordinator> Resolve(const UbPacketAttemptIdentity& identity);
 
     ResourceState& ValidateMutable(const UbLifecycleResourceIdentity& identity);
     const ResourceState& Validate(const UbLifecycleResourceIdentity& identity) const;
+    static UbLifecycleResourceSnapshot BuildSnapshot(const ResourceState& state);
     void ObservePacketTransfer(const UbPacketAttemptIdentity& identity, UbPacketTransfer transfer);
     void TerminatePacket(const UbPacketAttemptIdentity& identity, UbPacketTerminal terminal);
 
