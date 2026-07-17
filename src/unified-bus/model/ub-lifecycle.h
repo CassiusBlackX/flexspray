@@ -13,7 +13,6 @@
 #include <cstdint>
 #include <map>
 #include <ostream>
-#include <set>
 #include <vector>
 
 namespace ns3
@@ -288,7 +287,7 @@ class UbLifecycleCoordinator : public Object
         uint64_t nextLease{0};
         uint64_t sequence{0};
         UbLifecycleResourceSnapshot snapshot;
-        std::set<uint64_t> activeAttempts;
+        std::map<uint64_t, uint64_t> activeAttemptWords;
         std::map<uint64_t, UbLifecycleLeaseIdentity> activeLeases;
         Callback<void, UbLifecycleResourceIdentity> stateChangedCallback;
     };
@@ -305,6 +304,8 @@ class UbLifecycleCoordinator : public Object
     uint64_t m_traceSequence{0};
     TracedCallback<const UbLifecycleTraceRecord&> m_lifecycleTrace;
     std::map<ResourceKey, ResourceState> m_resources;
+    ResourceState* m_cachedResourceState{nullptr};
+    ResourceKey m_cachedResourceKey{UbLifecycleResourceKind::RTP_ENDPOINT, 0};
 };
 
 class UbParallelLifecycleAdapter : public Object

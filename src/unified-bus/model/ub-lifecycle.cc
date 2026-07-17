@@ -415,6 +415,8 @@ UbLifecycleCoordinator::OpenResource(UbLifecycleResourceKind kind, uint64_t loca
 {
     const ResourceKey key{kind, localId};
     ResourceState& state = m_resources[key];
+    m_cachedResourceKey = key;
+    m_cachedResourceState = &state;
     if (state.generation != 0 && !state.snapshot.retired)
     {
         return {m_ownerNodeId, kind, localId, state.generation};
@@ -427,7 +429,7 @@ UbLifecycleCoordinator::OpenResource(UbLifecycleResourceKind kind, uint64_t loca
     state.nextLease = 0;
     state.sequence = 0;
     state.snapshot = {};
-    state.activeAttempts.clear();
+    state.activeAttemptWords.clear();
     state.activeLeases.clear();
     state.stateChangedCallback = {};
     const UbLifecycleResourceIdentity identity{m_ownerNodeId, kind, localId, state.generation};
@@ -694,8 +696,13 @@ UbLifecycleCoordinator::RegisterPacketAttempt(const UbLifecycleResourceIdentity&
     NS_ABORT_MSG_IF(state.nextAttempt == std::numeric_limits<uint64_t>::max(),
                     "Packet attempt identity exhausted");
     const uint64_t attempt = ++state.nextAttempt;
-    const bool inserted = state.activeAttempts.insert(attempt).second;
+    const uint64_t wordIndex = (attempt - 1) / 64;
+    const uint64_t attemptBit = uint64_t{1} << ((attempt - 1) % 64);
+    auto [word, newWord] = state.activeAttemptWords.emplace(wordIndex, 0);
+    (void)newWord;
+    const bool inserted = (word->second & attemptBit) == 0;
     NS_ABORT_MSG_IF(!inserted, "Duplicate packet attempt identity");
+    word->second |= attemptBit;
 
     ++state.snapshot.inFlightPackets;
     ++state.snapshot.registeredPackets;
@@ -1125,13 +1132,20 @@ UbLifecycleCoordinator::ValidateMutable(const UbLifecycleResourceIdentity& ident
 {
     NS_ABORT_MSG_IF(identity.ownerNodeId != m_ownerNodeId,
                     "Lifecycle mutation routed to the wrong node coordinator");
-    const auto it = m_resources.find({identity.kind, identity.localId});
-    NS_ABORT_MSG_IF(it == m_resources.end(), "Lifecycle mutation references an unknown resource");
-    NS_ABORT_MSG_IF(identity.generation != it->second.generation,
+    if (m_cachedResourceState == nullptr || m_cachedResourceKey.kind != identity.kind ||
+        m_cachedResourceKey.localId != identity.localId)
+    {
+        const auto it = m_resources.find({identity.kind, identity.localId});
+        NS_ABORT_MSG_IF(it == m_resources.end(),
+                        "Lifecycle mutation references an unknown resource");
+        m_cachedResourceKey = it->first;
+        m_cachedResourceState = &it->second;
+    }
+    NS_ABORT_MSG_IF(identity.generation != m_cachedResourceState->generation,
                     "Lifecycle mutation references a stale generation");
-    NS_ABORT_MSG_IF(it->second.snapshot.retired,
+    NS_ABORT_MSG_IF(m_cachedResourceState->snapshot.retired,
                     "Lifecycle mutation after resource retirement");
-    return it->second;
+    return *m_cachedResourceState;
 }
 
 const UbLifecycleCoordinator::ResourceState&
@@ -1151,7 +1165,11 @@ UbLifecycleCoordinator::ObservePacketTransfer(const UbPacketAttemptIdentity& ide
                                               UbPacketTransfer transfer)
 {
     ResourceState& state = ValidateMutable(identity.owner);
-    NS_ABORT_MSG_IF(state.activeAttempts.find(identity.attempt) == state.activeAttempts.end(),
+    NS_ABORT_MSG_IF(identity.attempt == 0, "Packet transfer has an invalid attempt identity");
+    const uint64_t wordIndex = (identity.attempt - 1) / 64;
+    const uint64_t attemptBit = uint64_t{1} << ((identity.attempt - 1) % 64);
+    const auto word = state.activeAttemptWords.find(wordIndex);
+    NS_ABORT_MSG_IF(word == state.activeAttemptWords.end() || (word->second & attemptBit) == 0,
                     "Packet transfer references an inactive attempt");
     ++state.snapshot.transferObservations;
     state.snapshot.lastTransferSequence = ++state.sequence;
@@ -1178,13 +1196,20 @@ UbLifecycleCoordinator::TerminatePacket(const UbPacketAttemptIdentity& identity,
                                         UbPacketTerminal terminal)
 {
     ResourceState& state = ValidateMutable(identity.owner);
-    const auto attempt = state.activeAttempts.find(identity.attempt);
-    NS_ABORT_MSG_IF(attempt == state.activeAttempts.end(),
+    NS_ABORT_MSG_IF(identity.attempt == 0, "Packet terminal has an invalid attempt identity");
+    const uint64_t wordIndex = (identity.attempt - 1) / 64;
+    const uint64_t attemptBit = uint64_t{1} << ((identity.attempt - 1) % 64);
+    const auto word = state.activeAttemptWords.find(wordIndex);
+    NS_ABORT_MSG_IF(word == state.activeAttemptWords.end() || (word->second & attemptBit) == 0,
                     "Packet lifecycle terminal would underflow the active-attempt balance");
     NS_ABORT_MSG_IF(state.snapshot.inFlightPackets == 0,
                     "Packet lifecycle terminal would underflow the in-flight counter");
 
-    state.activeAttempts.erase(attempt);
+    word->second &= ~attemptBit;
+    if (word->second == 0)
+    {
+        state.activeAttemptWords.erase(word);
+    }
     --state.snapshot.inFlightPackets;
     switch (terminal)
     {

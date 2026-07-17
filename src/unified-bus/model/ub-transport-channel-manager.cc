@@ -91,9 +91,6 @@ UbTransportChannelManager::CreateTp(uint32_t src,
     }
     tp->SetLifecycleStateChangedCallback(
         MakeCallback(&UbTransportChannelManager::NotifyStateChanged, this));
-    UbLifecycleCoordinator::GetOrCreate(currentNode)->SetResourceStateChangedCallback(
-        tp->GetLifecycleOwner(),
-        MakeCallback(&UbTransportChannelManager::NotifyLifecycleStateChanged, this));
     m_controller->GetUbTransaction()->TpInit(tp);
     m_endpoints.emplace(srcTpn, EndpointRecord{tp});
     ++m_transportsCount;
@@ -229,11 +226,19 @@ UbTransportChannelManager::DestroyTp(uint32_t tpn,
         return UbDestroyStatus::NOT_FOUND;
     }
     EndpointRecord& record = it->second;
+    const bool beginDrain = record.state == EndpointState::ACTIVE;
     record.state = EndpointState::DRAINING;
     record.reason = reason;
     if (!callback.IsNull())
     {
         record.callbacks.push_back(callback);
+    }
+    if (beginDrain)
+    {
+        UbLifecycleCoordinator::GetOrCreate(m_controller->GetObject<Node>())
+            ->SetResourceStateChangedCallback(
+                record.channel->GetLifecycleOwner(),
+                MakeCallback(&UbTransportChannelManager::NotifyLifecycleStateChanged, this));
     }
     record.channel->FreezeNewWork();
     it = m_endpoints.find(tpn);
