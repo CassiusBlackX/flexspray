@@ -166,10 +166,9 @@ UbWqeSubmissionResult UbFunction::SubmitWqe(Ptr<UbWqe> wqe, uint32_t jettyNum)
     if (transportReference == nullptr) {
         return {UbWqeSubmissionStatus::NO_DIRECT_TRANSPORT, {}};
     }
-    if (!GetTransaction()->IsRtpTransportReferenceCurrent(*transportReference)) {
-        return {UbWqeSubmissionStatus::STALE_TRANSPORT_REFERENCE, {}};
-    }
-    switch (GetTransaction()->PreflightRtpOperation(*transportReference))
+    UbTransaction::RtpTransportResolution transportResolution;
+    switch (GetTransaction()->PreflightRtpOperation(*transportReference,
+                                                    transportResolution))
     {
     case UbRtpOperationPreflightResult::NOT_ACCEPTING:
         return {UbWqeSubmissionStatus::TPG_NOT_ACCEPTING, {}};
@@ -188,7 +187,10 @@ UbWqeSubmissionResult UbFunction::SubmitWqe(Ptr<UbWqe> wqe, uint32_t jettyNum)
         UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId));
     const UbLifecycleResourceIdentity wqeIdentity =
         coordinator->OpenResource(UbLifecycleResourceKind::WQE, wqe->GetWqeId());
-    NS_ABORT_MSG_IF(!GetTransaction()->TryAdmitRtpWqe(jettyNum, wqe, wqeIdentity),
+    NS_ABORT_MSG_IF(!GetTransaction()->TryAdmitRtpWqe(jettyNum,
+                                                      wqe,
+                                                      wqeIdentity,
+                                                      transportResolution),
                     "Validated RTP WQE admission changed before commit");
 
     ubJetty->SetNodeId(m_nodeId);

@@ -8483,6 +8483,180 @@ class UbLifecycleTwoMemberTpgSubmissionUsesAtomicRtpPathTest : public TestCase
     uint32_t m_completionCount{0};
 };
 
+class UbRtpValidatedResolutionReuseTest : public TestCase
+{
+  public:
+    explicit UbRtpValidatedResolutionReuseTest(bool useTpg)
+        : TestCase(useTpg
+                       ? "UnifiedBus - TPG WQE reuses one validated transport resolution"
+                       : "UnifiedBus - direct WQE reuses one validated transport resolution"),
+          m_useTpg(useTpg)
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        if (m_useTpg)
+        {
+            InstallAdditionalTpPair(topo, 303, 404);
+        }
+
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              kUrmaWriteRegressionJettyNum);
+        const std::vector<uint32_t> tpns = m_useTpg
+                                               ? std::vector<uint32_t>{
+                                                     kUrmaWriteRegressionSenderTpn,
+                                                     303}
+                                               : std::vector<uint32_t>{
+                                                     kUrmaWriteRegressionSenderTpn};
+        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
+                                                       topo.receiver->GetId(),
+                                                       kUrmaWriteRegressionJettyNum,
+                                                       m_useTpg,
+                                                       tpns),
+                              true,
+                              "RTP resolution fixture should bind its transport reference");
+
+        transaction->ResetRtpResolutionCountersForTest();
+        Ptr<UbWqe> wqe = function->CreateWqe(topo.sender->GetId(),
+                                             topo.receiver->GetId(),
+                                             64,
+                                             kUrmaWriteRegressionTaskId,
+                                             TaOpcode::TA_OPCODE_WRITE);
+        const UbWqeSubmissionResult result =
+            function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(result.status),
+                              static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+                              "Counter fixture WQE should be accepted");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetRtpResolutionCountForTest(),
+                              1u,
+                              "One WQE admission attempt should resolve its transport once");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    bool m_useTpg;
+};
+
+class UbRtpTpgMaterializationReuseTest : public TestCase
+{
+  public:
+    UbRtpTpgMaterializationReuseTest()
+        : TestCase("UnifiedBus - unchanged TPG membership reuses one materialization")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        InstallAdditionalTpPair(topo, 303, 404);
+        InstallAdditionalTpPair(topo, 305, 406);
+
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
+                                                       topo.receiver->GetId(),
+                                                       kUrmaWriteRegressionJettyNum,
+                                                       true,
+                                                       {kUrmaWriteRegressionSenderTpn, 303}),
+                              true,
+                              "TPG materialization fixture should bind two members");
+
+        transaction->ResetRtpResolutionCountersForTest();
+        const std::vector<Ptr<UbTransportChannel>> first =
+            transaction->GetJettyRelatedTpVec(kUrmaWriteRegressionJettyNum);
+        const std::vector<Ptr<UbTransportChannel>> second =
+            transaction->GetJettyRelatedTpVec(kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(first.size(), 2u, "First materialization should retain both members");
+        NS_TEST_ASSERT_MSG_EQ(second.size(), first.size(), "Cache hit should preserve member count");
+        NS_TEST_ASSERT_MSG_EQ(second[0], first[0], "Cache hit should preserve first member order");
+        NS_TEST_ASSERT_MSG_EQ(second[1], first[1], "Cache hit should preserve second member order");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetRtpTpgMaterializationCountForTest(),
+                              1u,
+                              "Unchanged TPG membership should materialize once");
+
+        const UbRtpTransportReference* reference =
+            transaction->FindRtpTransportReference(kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_NE(reference, nullptr, "TPG fixture should retain its typed binding");
+        Ptr<UbTransportGroup> group =
+            controller->ResolveRtpTpGroup(reference->GetIdentity());
+        NS_TEST_ASSERT_MSG_NE(group, nullptr, "TPG fixture should resolve its group generation");
+
+        const UbLifecycleResourceIdentity thirdIdentity =
+            controller->GetTransportChannelManager()->GetTp(305)->GetLifecycleOwner();
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(controller->AddRtpTpGroupMember(reference->GetIdentity(),
+                                                                  thirdIdentity)),
+            static_cast<uint32_t>(UbTpgMemberMutationStatus::ADDED),
+            "Adding a live member should update the canonical group");
+        const std::vector<Ptr<UbTransportChannel>> afterAdd =
+            transaction->GetJettyRelatedTpVec(kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(afterAdd.size(), 3u, "Add should rebuild all three members");
+        NS_TEST_ASSERT_MSG_EQ(afterAdd[0], first[0], "Add should preserve first member order");
+        NS_TEST_ASSERT_MSG_EQ(afterAdd[1], first[1], "Add should preserve second member order");
+        NS_TEST_ASSERT_MSG_EQ(afterAdd[2]->GetLifecycleOwner(),
+                              thirdIdentity,
+                              "Add should append the exact new member generation");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetRtpTpgMaterializationCountForTest(),
+                              2u,
+                              "Member add should rebuild the cached materialization once");
+
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(controller->RemoveRtpTpGroupMember(reference->GetIdentity(),
+                                                                     thirdIdentity,
+                                                                     UbDestroyReason::EXPLICIT)),
+            static_cast<uint32_t>(UbTpgMemberMutationStatus::REMOVED),
+            "Removing a non-last member should update the canonical group");
+        const std::vector<Ptr<UbTransportChannel>> afterRemove =
+            transaction->GetJettyRelatedTpVec(kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(afterRemove.size(), 2u, "Remove should rebuild the two survivors");
+        NS_TEST_ASSERT_MSG_EQ(afterRemove[0], first[0], "Remove should preserve first member order");
+        NS_TEST_ASSERT_MSG_EQ(afterRemove[1], first[1], "Remove should preserve second member order");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetRtpTpgMaterializationCountForTest(),
+                              3u,
+                              "Member remove should rebuild the cached materialization once");
+
+        group->FreezeNewOperations();
+        transaction->GetJettyRelatedTpVec(kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetRtpTpgMaterializationCountForTest(),
+                              4u,
+                              "Drain freeze should invalidate the cached materialization");
+        group->ResumeNewOperations();
+        transaction->GetJettyRelatedTpVec(kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetRtpTpgMaterializationCountForTest(),
+                              5u,
+                              "Drain resume should invalidate the cached materialization");
+
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(controller->DestroyRtpTpGroup(reference->GetIdentity(),
+                                                                UbDestroyReason::EXPLICIT)),
+            static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
+            "Idle group destroy should complete synchronously");
+        NS_TEST_ASSERT_MSG_EQ(
+            transaction->GetJettyRelatedTpVec(kUrmaWriteRegressionJettyNum).empty(),
+            true,
+            "Group destroy should erase the binding-owned materialization");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
 class UbLifecycleCurrentTpgMemberBackpressurePreservesAtomicStateTest : public TestCase
 {
   public:
@@ -26000,6 +26174,20 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
 }
 
 static UbLifecycleTestSuite g_ubLifecycleTestSuite;
+
+class UbRtpResolutionFocusedTestSuite : public TestSuite
+{
+  public:
+    UbRtpResolutionFocusedTestSuite()
+        : TestSuite("unified-bus-rtp-resolution", Type::UNIT)
+    {
+        AddTestCase(new UbRtpValidatedResolutionReuseTest(false), TestCase::Duration::QUICK);
+        AddTestCase(new UbRtpValidatedResolutionReuseTest(true), TestCase::Duration::QUICK);
+        AddTestCase(new UbRtpTpgMaterializationReuseTest(), TestCase::Duration::QUICK);
+    }
+};
+
+static UbRtpResolutionFocusedTestSuite g_ubRtpResolutionFocusedTestSuite;
 
 class UbLifecycleTraceFocusedTestSuite : public TestSuite
 {

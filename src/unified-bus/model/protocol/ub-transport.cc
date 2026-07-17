@@ -2520,6 +2520,12 @@ UbTransportGroup::GetLifecycleIdentity() const
     return m_identity;
 }
 
+uint64_t
+UbTransportGroup::GetMembershipVersion() const
+{
+    return m_membershipVersion;
+}
+
 uint32_t
 UbTransportGroup::GetMemberCount() const
 {
@@ -2572,6 +2578,7 @@ UbTransportGroup::AddMember(const UbTransportGroupMember& member)
     NS_ABORT_MSG_IF(FindMemberIndex(member.tpIdentity) >= 0,
                     "Cannot add the same TPG member twice");
     m_members.push_back(member);
+    ++m_membershipVersion;
 }
 
 void
@@ -2579,6 +2586,7 @@ UbTransportGroup::MarkMemberRetiring(uint32_t index)
 {
     NS_ABORT_MSG_IF(index >= m_members.size(), "Cannot retire an unknown TPG member");
     m_members[index].state = UbTransportGroupMemberState::RETIRING;
+    ++m_membershipVersion;
 }
 
 UbTransportGroupMember
@@ -2599,6 +2607,7 @@ UbTransportGroup::RemoveMember(uint32_t index)
     {
         m_selectionCursor = 0;
     }
+    ++m_membershipVersion;
     return removed;
 }
 
@@ -2618,13 +2627,21 @@ UbTransportGroup::IsAcceptingNewOperations() const
 void
 UbTransportGroup::FreezeNewOperations()
 {
-    m_acceptingNewOperations = false;
+    if (m_acceptingNewOperations)
+    {
+        m_acceptingNewOperations = false;
+        ++m_membershipVersion;
+    }
 }
 
 void
 UbTransportGroup::ResumeNewOperations()
 {
-    m_acceptingNewOperations = true;
+    if (!m_acceptingNewOperations)
+    {
+        m_acceptingNewOperations = true;
+        ++m_membershipVersion;
+    }
 }
 
 void
@@ -2659,10 +2676,16 @@ UbTransportGroup::ClearPendingLastMemberRemoval()
 void
 UbTransportGroup::RequestDestroy(UbTpgCleanupMode mode)
 {
+    const bool changed = !m_destroyPending ||
+                         static_cast<uint8_t>(mode) > static_cast<uint8_t>(m_cleanupMode);
     m_destroyPending = true;
     if (static_cast<uint8_t>(mode) > static_cast<uint8_t>(m_cleanupMode))
     {
         m_cleanupMode = mode;
+    }
+    if (changed)
+    {
+        ++m_membershipVersion;
     }
 }
 

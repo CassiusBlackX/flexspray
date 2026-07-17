@@ -654,6 +654,7 @@ public:
               const std::vector<UbTransportGroupMember>& members,
               uint32_t initialSelectionCursor);
     const UbLifecycleResourceIdentity& GetLifecycleIdentity() const;
+    uint64_t GetMembershipVersion() const;
     uint32_t GetMemberCount() const;
     uint32_t GetSelectionCursor() const;
     uint32_t GetMemberIndexAtOffset(uint32_t offset) const;
@@ -686,6 +687,7 @@ private:
     bool m_destroyPending{false};
     UbTpgCleanupMode m_cleanupMode{UbTpgCleanupMode::GRACEFUL};
     bool m_bindingLeasesReleased{false};
+    uint64_t m_membershipVersion{1};
 };
 
 } // namespace ns3
