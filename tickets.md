@@ -1001,3 +1001,19 @@ Closeout:
 - Review found no remaining ungated record construction or packet/resource selection. Startup-only
   configuration work and public active-snapshot counters remain separate candidates because they
   do not share this hot-path semantic boundary.
+
+## Task 33: Skip unused lifecycle trace setup when output is off
+
+**What to build:** Preserve trace-state reset and every enabled trace artifact while avoiding
+detail sampling reads, rank resolution, sink construction, and metadata emission when the resolved
+lifecycle trace level is OFF.
+
+**Blocked by:** T32 Remove packet transfer evidence work when lifecycle trace is off.
+
+- [ ] OFF configures canonical empty lifecycle trace state without reading unused detail sampling
+      values, resolving rank scope, constructing a sink resolver, or entering metadata emission.
+- [ ] SUMMARY, EVENT, and DETAIL preserve current level resolution, detail validation, rank-scoped
+      filenames, sink behavior, metadata, and record bytes.
+- [ ] Targeted Unified Bus build and lifecycle focused validation pass serially.
+- [ ] One bounded OFF p01 run preserves the managed artifact set and an explicit SUMMARY run remains
+      byte-identical to T32.
