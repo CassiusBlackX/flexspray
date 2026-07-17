@@ -1,6 +1,6 @@
 # T29 Task Brief: Amortize Allocator Event Reclamation
 
-Status: ready-for-closeout
+Status: closed
 
 ## Objective
 
@@ -127,3 +127,6 @@ identity.
   slot-reuse test were restored exactly to pre-T29 `db335a0`. The profile's 52 prune samples did not
   translate into reclaimable end-to-end time, so allocator reclamation is no longer the next
   optimization target.
+- 2026-07-17: root closeout review confirmed the final allocator and Unified Bus test files have no
+  diff from `db335a0`; only diagnostic artifacts remain. T29 closes as a rejected optimization
+  hypothesis, not as an implementation change.

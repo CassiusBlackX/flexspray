@@ -874,12 +874,24 @@ packet-heavy allocator callback path.
 
 **Blocked by:** T28 Accept current lifecycle performance against main and next.
 
-- [ ] A current profile and serial p01 scale loop identify resolved-event pruning as a measured hot
+- [x] A current profile and serial p01 scale loop identify resolved-event pruning as a measured hot
       path before implementation.
-- [ ] Every allocation, retrigger, port-notification, and deadlock event remains tracked while
+- [x] Every allocation, retrigger, port-notification, and deadlock event remains tracked while
       pending and cancelable during allocator disposal.
-- [ ] Resolved records are reclaimed in bounded batches or at exact query/dispose boundaries without
+- [x] Resolved records are reclaimed in bounded batches or at exact query/dispose boundaries without
       changing event timestamps, callback targets, RR/DWRR selection, queue order, or flow control.
-- [ ] Existing VOQ destroy-gate, forced-stop residue, allocator-ordering, and lifecycle suites pass.
-- [ ] One warm-up and five counterbalanced pre-T29/T29 p01 pairs report wall, CPU, RSS, and exact task
+- [x] Existing VOQ destroy-gate, forced-stop residue, allocator-ordering, and lifecycle suites pass.
+- [x] One warm-up and five counterbalanced pre-T29/T29 p01 pairs report wall, CPU, RSS, and exact task
       completion; a gain below 5 percent remains visible and does not authorize scheduler redesign.
+
+Closeout:
+
+- Tested two lifecycle-only reclamation variants against the frozen `db335a0` executable and
+  Unified Bus library: 64-event batch pruning and O(1) generation-token slot reuse.
+- Both variants kept all five p01 semantic comparisons exact. The generation-slot variant also
+  passed the targeted build, `unified-bus-switch-voq`, and `unified-bus-lifecycle`.
+- Batch pruning regressed paired-median wall by `+0.77%`; generation slots improved it by only
+  `-0.23%`, with flat user CPU and `+0.08%` RSS. Neither met the 5 percent useful-gain gate.
+- Rejected both variants and restored allocator source and tests exactly to pre-T29. The final branch
+  therefore preserves all existing event ownership and allocator behavior without carrying added
+  token/wrapper complexity. The next performance ticket must target a different measured hot path.
