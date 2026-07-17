@@ -692,18 +692,36 @@ change from a current packet-heavy profile rather than from code inspection alon
 
 **Blocked by:** T23 Make minimal lifecycle observability fast by default.
 
-- [ ] The current p01 no-spray, lifecycle-OFF case is a reproducible red performance loop with one
+- [x] The current p01 no-spray, lifecycle-OFF case is a reproducible red performance loop with one
       warm-up and five counterbalanced measured pairs.
-- [ ] A bounded profile or site counters identify the selected packet-attempt, lease-container, owner
+- [x] A bounded profile or site counters identify the selected packet-attempt, lease-container, owner
       resolution, or ACTIVE-endpoint notification hotspot before implementation.
-- [ ] Exact packet membership remains available for duplicate birth/terminal, underflow,
+- [x] Exact packet membership remains available for duplicate birth/terminal, underflow,
       out-of-order terminal, stale-generation, and drain validation; it is not replaced by a counter.
-- [ ] ACTIVE TP steady state performs no destroy-only callback work; DRAINING installation and the
+- [x] ACTIVE TP steady state performs no destroy-only callback work; DRAINING installation and the
       immediate drain check cannot miss a completion edge.
-- [ ] Existing production packet tags, queue/link transfers, endpoint/drop terminals, and lifecycle
+- [x] Existing production packet tags, queue/link transfers, endpoint/drop terminals, and lifecycle
       characterization remain the test oracle.
-- [ ] p01 task, throughput, and protocol artifacts retain their accepted bytes and wall regression is
+- [x] p01 task, throughput, and protocol artifacts retain their accepted bytes and wall regression is
       no more than 10 percent, or the measured blocker is reported without speculative redesign.
+
+Closeout:
+
+- The p01 red loop used one warm-up and five strictly serial counterbalanced current/main pairs with
+  packet spray disabled and lifecycle output OFF. The pre-change paired-median wall regression was
+  `+20.19%`, with `+15.63%` RSS.
+- A bounded profile selected the packet transfer chain, exact-attempt membership allocation, and
+  owner/resource lookup. Exact attempt membership now packs 64 identities per map node; only the
+  last canonical resource lookup is reused, with owner, generation, and retirement checks retained
+  on every mutation.
+- TP lifecycle notification is installed only on the first ACTIVE-to-DRAINING transition, before
+  freeze and the immediate drain check. Existing TP creation, transaction, allocator, ACK/RTO,
+  queue, routing, congestion, callback, and trace ordering remains unchanged.
+- Targeted build and `unified-bus-lifecycle` pass. All p01 semantic artifacts are byte-identical;
+  there are no unexplained differences.
+- Final paired-median wall regression is `+16.65%` and RSS regression is `+15.29%`. This is an
+  improvement but does not meet the 10 percent investigation threshold. T24 therefore closes with
+  a measured performance blocker under its explicit stop rule instead of widening scope.
 
 ## Task 25: Compact retired lifecycle resource storage
 
