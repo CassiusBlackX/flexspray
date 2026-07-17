@@ -957,3 +957,28 @@ Closeout:
 - Reverted T31 and rebuilt the baseline dylib, reproducing exact SHA-256 `0968fced...32878`. Together
   with T30 this is the second failed owner-resolution variant, so that optimization line is stopped
   pending new evidence from a different hot path.
+
+## Task 32: Remove packet transfer evidence work when lifecycle trace is off
+
+**What to build:** Preserve packet lifecycle correctness while making the default OFF trace level
+skip packet-transfer evidence collection before packet-tag parsing and skip trace-owner preparation
+before its mutex.
+
+**Blocked by:** T31 Fuse packet execution-owner and coordinator resolution.
+
+- [ ] OFF preserves packet birth identity, active-attempt and in-flight balance, typed terminal
+      cleanup, generation and stale-terminal rejection, retirement, leases, callbacks, and all
+      packet/protocol bytes while omitting transfer evidence counters and transfer-order evidence.
+- [ ] SUMMARY, EVENT, and DETAIL preserve the existing packet transfer tag parsing, owner routing,
+      active-attempt validation, counters, causal sequence, selection, and emitted bytes.
+- [ ] Existing queue, link, terminal, lifecycle summary, and packet-accounting characterization
+      passes with explicit trace levels; no packet builder, parser, queue, scheduler, ACK/RTO, CTP,
+      RTP, or parallel terminal-control algorithm changes.
+- [ ] Targeted Unified Bus build and lifecycle/VOQ suites pass serially.
+- [ ] One warm-up and five counterbalanced pre-T32/T32 p01 OFF pairs preserve exact task,
+      throughput, and protocol artifacts and report wall, CPU, and RSS. Retain the change when it
+      does not regress paired-median wall or correctness; the measured gain remains visible even if
+      below earlier speculative-optimization gates.
+- [ ] Explicit SUMMARY output is byte-identical to the frozen pre-T32 SUMMARY output. The OFF-only
+      absence of transfer evidence is the narrow intentional exception and must not alter the
+      normal OFF artifact set.
