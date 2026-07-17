@@ -1,6 +1,6 @@
 # T32 Task Brief: Remove OFF packet-transfer evidence work
 
-Status: implementation reviewed; awaiting implementation commit
+Status: complete
 
 ## Reuse Plan
 

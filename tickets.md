@@ -966,19 +966,38 @@ before its mutex.
 
 **Blocked by:** T31 Fuse packet execution-owner and coordinator resolution.
 
-- [ ] OFF preserves packet birth identity, active-attempt and in-flight balance, typed terminal
+- [x] OFF preserves packet birth identity, active-attempt and in-flight balance, typed terminal
       cleanup, generation and stale-terminal rejection, retirement, leases, callbacks, and all
       packet/protocol bytes while omitting transfer evidence counters and transfer-order evidence.
-- [ ] SUMMARY, EVENT, and DETAIL preserve the existing packet transfer tag parsing, owner routing,
+- [x] SUMMARY, EVENT, and DETAIL preserve the existing packet transfer tag parsing, owner routing,
       active-attempt validation, counters, causal sequence, selection, and emitted bytes.
-- [ ] Existing queue, link, terminal, lifecycle summary, and packet-accounting characterization
+- [x] Existing queue, link, terminal, lifecycle summary, and packet-accounting characterization
       passes with explicit trace levels; no packet builder, parser, queue, scheduler, ACK/RTO, CTP,
       RTP, or parallel terminal-control algorithm changes.
-- [ ] Targeted Unified Bus build and lifecycle/VOQ suites pass serially.
-- [ ] One warm-up and five counterbalanced pre-T32/T32 p01 OFF pairs preserve exact task,
+- [x] Targeted Unified Bus build and lifecycle/VOQ suites pass serially.
+- [x] One warm-up and five counterbalanced pre-T32/T32 p01 OFF pairs preserve exact task,
       throughput, and protocol artifacts and report wall, CPU, and RSS. Retain the change when it
       does not regress paired-median wall or correctness; the measured gain remains visible even if
       below earlier speculative-optimization gates.
-- [ ] Explicit SUMMARY output is byte-identical to the frozen pre-T32 SUMMARY output. The OFF-only
+- [x] Explicit SUMMARY output is byte-identical to the frozen pre-T32 SUMMARY output. The OFF-only
       absence of transfer evidence is the narrow intentional exception and must not alter the
       normal OFF artifact set.
+
+Closeout:
+
+- OFF now returns before packet lifecycle tag parsing, owner routing, active-attempt lookup,
+  transfer evidence mutation, and transfer-only parallel control. Packet birth, terminal balance,
+  generation, leases, cleanup, retirement, and callbacks remain active.
+- Trace-owner setup also returns before its mutex under OFF. Non-OFF transfer observation and sink
+  setup remain the existing implementation.
+- Targeted Unified Bus build, `unified-bus-lifecycle`, and `unified-bus-switch-voq` pass. The
+  intended RED was masked by a stale no-suffix test dylib containing an earlier experimental fast
+  path; final test and production libraries were rebuilt from source before GREEN.
+- Five counterbalanced p01 OFF pairs preserve exact task, throughput, and protocol artifacts.
+  Paired-median wall improves `-0.97%`, user CPU `-1.64%`, and RSS `-0.08%`; three of five
+  individual wall pairs do not regress, so noise remains explicit.
+- Explicit SUMMARY managed artifacts are fully byte-identical, including the schema and 16 node
+  lifecycle trace files. No before-only, after-only, or changed artifact exists.
+- Review found no remaining ungated record construction or packet/resource selection. Startup-only
+  configuration work and public active-snapshot counters remain separate candidates because they
+  do not share this hot-path semantic boundary.
