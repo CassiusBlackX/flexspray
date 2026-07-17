@@ -7437,9 +7437,14 @@ class UbLifecycleTraceLevelAndSummaryTest : public TestCase
         offCoordinator->EmitLifecycleSummary();
         NS_TEST_ASSERT_MSG_EQ(output.empty(), true, "OFF must not emit lifecycle evidence");
         NS_TEST_ASSERT_MSG_EQ(resolutions.empty(), true, "OFF must not resolve lifecycle sinks");
-        NS_TEST_ASSERT_MSG_EQ(offCoordinator->GetSnapshot(offOwner).endpointConsumed,
-                              1u,
-                              "OFF must not disable lifecycle accounting");
+        const UbLifecycleResourceSnapshot offRetired =
+            offCoordinator->GetSnapshot(offOwner);
+        NS_TEST_ASSERT_MSG_EQ(offRetired.retired,
+                              true,
+                              "OFF accounting must validate balance before compact retirement");
+        NS_TEST_ASSERT_MSG_EQ(offRetired.endpointConsumed,
+                              0u,
+                              "OFF must not retain evidence-only retired packet totals");
         Simulator::Destroy();
 
         output.clear();
@@ -17610,6 +17615,83 @@ class UbLifecycleFailFastTest : public TestCase
     }
 };
 #endif
+
+class UbLifecycleRetiredStorageTest : public TestCase
+{
+  public:
+    UbLifecycleRetiredStorageTest()
+        : TestCase("UnifiedBus - retired lifecycle resources expose bounded storage")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        UbLifecycleTrace::Reset();
+        Ptr<Node> node = CreateObject<Node>();
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(node);
+        constexpr uint64_t kResourceCount = 100000;
+        for (uint64_t localId = 0; localId < kResourceCount; ++localId)
+        {
+            const UbLifecycleResourceIdentity identity =
+                coordinator->OpenResource(UbLifecycleResourceKind::WQE, localId);
+            coordinator->RecordWorkTerminal(identity, UbWorkOutcome::COMPLETED);
+            coordinator->RetireResource(identity);
+        }
+
+        const UbLifecycleStorageSnapshot storage = coordinator->GetStorageSnapshotForTest();
+        NS_TEST_ASSERT_MSG_EQ(storage.resourceCount,
+                              kResourceCount,
+                              "Every distinct local ID should retain generation history");
+        NS_TEST_ASSERT_MSG_EQ(storage.activeStateCount,
+                              0u,
+                              "Retired resources should release every active-state allocation");
+        NS_TEST_ASSERT_MSG_EQ(storage.retainedSummaryCount,
+                              0u,
+                              "OFF should retain no final summary snapshots");
+        NS_TEST_ASSERT_MSG_EQ(storage.activeAttemptWordCount,
+                              0u,
+                              "Balanced retired resources should retain no attempt nodes");
+        NS_TEST_ASSERT_MSG_EQ(storage.activeLeaseCount,
+                              0u,
+                              "Balanced retired resources should retain no lease nodes");
+        std::cout << "T25_STORAGE resources=" << storage.resourceCount
+                  << " active_states=" << storage.activeStateCount
+                  << " retained_summaries=" << storage.retainedSummaryCount
+                  << " attempt_words=" << storage.activeAttemptWordCount
+                  << " leases=" << storage.activeLeaseCount << std::endl;
+
+        const UbLifecycleResourceIdentity replacement =
+            coordinator->OpenResource(UbLifecycleResourceKind::WQE, 0);
+        NS_TEST_ASSERT_MSG_EQ(replacement.generation,
+                              2u,
+                              "Local-ID reuse should increment compact generation history");
+        const UbLifecycleStorageSnapshot reopened = coordinator->GetStorageSnapshotForTest();
+        NS_TEST_ASSERT_MSG_EQ(reopened.resourceCount,
+                              kResourceCount,
+                              "Local-ID reuse should not create a second resource slot");
+        NS_TEST_ASSERT_MSG_EQ(reopened.activeStateCount,
+                              1u,
+                              "Only the replacement generation should own active storage");
+
+        Simulator::Destroy();
+        Config::Reset();
+        UbLifecycleTrace::Reset();
+    }
+};
+
+class UbLifecycleStorageFocusedTestSuite : public TestSuite
+{
+  public:
+    UbLifecycleStorageFocusedTestSuite()
+        : TestSuite("unified-bus-lifecycle-storage", Type::UNIT)
+    {
+        AddTestCase(new UbLifecycleRetiredStorageTest(), TestCase::Duration::QUICK);
+    }
+};
+
+static UbLifecycleStorageFocusedTestSuite g_ubLifecycleStorageFocusedTestSuite;
 
 class UbPfcFixedModeCountsHeadroomTest : public TestCase
 {
