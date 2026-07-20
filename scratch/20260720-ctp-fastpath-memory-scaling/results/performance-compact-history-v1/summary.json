@@ -1,0 +1,880 @@
+{
+  "cases": {
+    "scale-2g": {
+      "blocks": [
+        {
+          "block": 1,
+          "order": [
+            "next",
+            "fastpath"
+          ],
+          "results": {
+            "fastpath": {
+              "artifact_hashes": {},
+              "case": "scale-2g",
+              "ended_at": "2026-07-20T08:15:39.026441+00:00",
+              "input_hashes": {
+                "network_attribute.txt": "0b8017710ceba147fe7d75eed1bd36b80e492d1d6df0b18234b6786eba563d96",
+                "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+                "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+                "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+                "traffic.csv": "ece5a2713cebafa9ec0239815cb119bdbf19722c0ad133e41599d551e535ca99",
+                "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+              },
+              "mode": "performance",
+              "peak_rss_bytes": 15335424,
+              "role": "fastpath",
+              "schema_version": 1,
+              "started_at": "2026-07-20T08:15:27.510154+00:00",
+              "system_seconds": 0.07,
+              "tasks": [],
+              "time_wall_seconds": 11.51,
+              "user_seconds": 11.39,
+              "wall_seconds": 11.515606499975547
+            },
+            "next": {
+              "artifact_hashes": {},
+              "case": "scale-2g",
+              "ended_at": "2026-07-20T08:15:27.507494+00:00",
+              "input_hashes": {
+                "network_attribute.txt": "0b8017710ceba147fe7d75eed1bd36b80e492d1d6df0b18234b6786eba563d96",
+                "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+                "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+                "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+                "traffic.csv": "ece5a2713cebafa9ec0239815cb119bdbf19722c0ad133e41599d551e535ca99",
+                "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+              },
+              "mode": "performance",
+              "peak_rss_bytes": 15499264,
+              "role": "next",
+              "schema_version": 1,
+              "started_at": "2026-07-20T08:15:16.569317+00:00",
+              "system_seconds": 0.06,
+              "tasks": [],
+              "time_wall_seconds": 10.93,
+              "user_seconds": 10.82,
+              "wall_seconds": 10.937486750015523
+            }
+          }
+        },
+        {
+          "block": 2,
+          "order": [
+            "fastpath",
+            "next"
+          ],
+          "results": {
+            "fastpath": {
+              "artifact_hashes": {},
+              "case": "scale-2g",
+              "ended_at": "2026-07-20T08:15:50.436067+00:00",
+              "input_hashes": {
+                "network_attribute.txt": "0b8017710ceba147fe7d75eed1bd36b80e492d1d6df0b18234b6786eba563d96",
+                "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+                "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+                "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+                "traffic.csv": "ece5a2713cebafa9ec0239815cb119bdbf19722c0ad133e41599d551e535ca99",
+                "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+              },
+              "mode": "performance",
+              "peak_rss_bytes": 15335424,
+              "role": "fastpath",
+              "schema_version": 1,
+              "started_at": "2026-07-20T08:15:39.029799+00:00",
+              "system_seconds": 0.07,
+              "tasks": [],
+              "time_wall_seconds": 11.4,
+              "user_seconds": 11.26,
+              "wall_seconds": 11.405637166986708
+            },
+            "next": {
+              "artifact_hashes": {},
+              "case": "scale-2g",
+              "ended_at": "2026-07-20T08:16:01.465571+00:00",
+              "input_hashes": {
+                "network_attribute.txt": "0b8017710ceba147fe7d75eed1bd36b80e492d1d6df0b18234b6786eba563d96",
+                "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+                "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+                "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+                "traffic.csv": "ece5a2713cebafa9ec0239815cb119bdbf19722c0ad133e41599d551e535ca99",
+                "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+              },
+              "mode": "performance",
+              "peak_rss_bytes": 15450112,
+              "role": "next",
+              "schema_version": 1,
+              "started_at": "2026-07-20T08:15:50.438277+00:00",
+              "system_seconds": 0.06,
+              "tasks": [],
+              "time_wall_seconds": 11.02,
+              "user_seconds": 10.9,
+              "wall_seconds": 11.026651832973585
+            }
+          }
+        },
+        {
+          "block": 3,
+          "order": [
+            "next",
+            "fastpath"
+          ],
+          "results": {
+            "fastpath": {
+              "artifact_hashes": {},
+              "case": "scale-2g",
+              "ended_at": "2026-07-20T08:16:24.433170+00:00",
+              "input_hashes": {
+                "network_attribute.txt": "0b8017710ceba147fe7d75eed1bd36b80e492d1d6df0b18234b6786eba563d96",
+                "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+                "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+                "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+                "traffic.csv": "ece5a2713cebafa9ec0239815cb119bdbf19722c0ad133e41599d551e535ca99",
+                "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+              },
+              "mode": "performance",
+              "peak_rss_bytes": 15368192,
+              "role": "fastpath",
+              "schema_version": 1,
+              "started_at": "2026-07-20T08:16:12.681827+00:00",
+              "system_seconds": 0.07,
+              "tasks": [],
+              "time_wall_seconds": 11.74,
+              "user_seconds": 11.57,
+              "wall_seconds": 11.750511542020831
+            },
+            "next": {
+              "artifact_hashes": {},
+              "case": "scale-2g",
+              "ended_at": "2026-07-20T08:16:12.678497+00:00",
+              "input_hashes": {
+                "network_attribute.txt": "0b8017710ceba147fe7d75eed1bd36b80e492d1d6df0b18234b6786eba563d96",
+                "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+                "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+                "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+                "traffic.csv": "ece5a2713cebafa9ec0239815cb119bdbf19722c0ad133e41599d551e535ca99",
+                "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+              },
+              "mode": "performance",
+              "peak_rss_bytes": 15450112,
+              "role": "next",
+              "schema_version": 1,
+              "started_at": "2026-07-20T08:16:01.468353+00:00",
+              "system_seconds": 0.07,
+              "tasks": [],
+              "time_wall_seconds": 11.2,
+              "user_seconds": 11.07,
+              "wall_seconds": 11.209430332994089
+            }
+          }
+        },
+        {
+          "block": 4,
+          "order": [
+            "fastpath",
+            "next"
+          ],
+          "results": {
+            "fastpath": {
+              "artifact_hashes": {},
+              "case": "scale-2g",
+              "ended_at": "2026-07-20T08:16:36.179752+00:00",
+              "input_hashes": {
+                "network_attribute.txt": "0b8017710ceba147fe7d75eed1bd36b80e492d1d6df0b18234b6786eba563d96",
+                "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+                "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+                "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+                "traffic.csv": "ece5a2713cebafa9ec0239815cb119bdbf19722c0ad133e41599d551e535ca99",
+                "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+              },
+              "mode": "performance",
+              "peak_rss_bytes": 15302656,
+              "role": "fastpath",
+              "schema_version": 1,
+              "started_at": "2026-07-20T08:16:24.436083+00:00",
+              "system_seconds": 0.07,
+              "tasks": [],
+              "time_wall_seconds": 11.73,
+              "user_seconds": 11.56,
+              "wall_seconds": 11.743033250037115
+            },
+            "next": {
+              "artifact_hashes": {},
+              "case": "scale-2g",
+              "ended_at": "2026-07-20T08:16:47.452720+00:00",
+              "input_hashes": {
+                "network_attribute.txt": "0b8017710ceba147fe7d75eed1bd36b80e492d1d6df0b18234b6786eba563d96",
+                "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+                "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+                "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+                "traffic.csv": "ece5a2713cebafa9ec0239815cb119bdbf19722c0ad133e41599d551e535ca99",
+                "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+              },
+              "mode": "performance",
+              "peak_rss_bytes": 15532032,
+              "role": "next",
+              "schema_version": 1,
+              "started_at": "2026-07-20T08:16:36.182500+00:00",
+              "system_seconds": 0.07,
+              "tasks": [],
+              "time_wall_seconds": 11.26,
+              "user_seconds": 11.11,
+              "wall_seconds": 11.26956395903835
+            }
+          }
+        },
+        {
+          "block": 5,
+          "order": [
+            "next",
+            "fastpath"
+          ],
+          "results": {
+            "fastpath": {
+              "artifact_hashes": {},
+              "case": "scale-2g",
+              "ended_at": "2026-07-20T08:17:10.926666+00:00",
+              "input_hashes": {
+                "network_attribute.txt": "0b8017710ceba147fe7d75eed1bd36b80e492d1d6df0b18234b6786eba563d96",
+                "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+                "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+                "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+                "traffic.csv": "ece5a2713cebafa9ec0239815cb119bdbf19722c0ad133e41599d551e535ca99",
+                "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+              },
+              "mode": "performance",
+              "peak_rss_bytes": 15433728,
+              "role": "fastpath",
+              "schema_version": 1,
+              "started_at": "2026-07-20T08:16:59.291357+00:00",
+              "system_seconds": 0.07,
+              "tasks": [],
+              "time_wall_seconds": 11.63,
+              "user_seconds": 11.48,
+              "wall_seconds": 11.634649832965806
+            },
+            "next": {
+              "artifact_hashes": {},
+              "case": "scale-2g",
+              "ended_at": "2026-07-20T08:16:59.288893+00:00",
+              "input_hashes": {
+                "network_attribute.txt": "0b8017710ceba147fe7d75eed1bd36b80e492d1d6df0b18234b6786eba563d96",
+                "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+                "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+                "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+                "traffic.csv": "ece5a2713cebafa9ec0239815cb119bdbf19722c0ad133e41599d551e535ca99",
+                "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+              },
+              "mode": "performance",
+              "peak_rss_bytes": 15532032,
+              "role": "next",
+              "schema_version": 1,
+              "started_at": "2026-07-20T08:16:47.455408+00:00",
+              "system_seconds": 0.09,
+              "tasks": [],
+              "time_wall_seconds": 11.82,
+              "user_seconds": 11.62,
+              "wall_seconds": 11.832874833024107
+            }
+          }
+        }
+      ],
+      "case": "scale-2g",
+      "fastpath_vs_next": {
+        "median": {
+          "peak_rss_bytes_delta": -114688,
+          "peak_rss_bytes_delta_percent": -0.7423117709437932,
+          "system_seconds_delta": 0.0,
+          "system_seconds_delta_percent": 0.0,
+          "user_seconds_delta": 0.45000000000000107,
+          "user_seconds_delta_percent": 4.050405040504068,
+          "wall_seconds_delta": 0.47346929099876434,
+          "wall_seconds_delta_percent": 4.201309764243666
+        },
+        "pairs": [
+          {
+            "peak_rss_bytes_delta": -163840,
+            "peak_rss_bytes_delta_percent": -1.0570824524312905,
+            "system_seconds_delta": 0.010000000000000009,
+            "system_seconds_delta_percent": 16.666666666666675,
+            "user_seconds_delta": 0.5700000000000003,
+            "user_seconds_delta_percent": 5.268022181146037,
+            "wall_seconds_delta": 0.5781197499600239,
+            "wall_seconds_delta_percent": 5.285672688556198
+          },
+          {
+            "peak_rss_bytes_delta": -114688,
+            "peak_rss_bytes_delta_percent": -0.7423117709437932,
+            "system_seconds_delta": 0.010000000000000009,
+            "system_seconds_delta_percent": 16.666666666666675,
+            "user_seconds_delta": 0.35999999999999943,
+            "user_seconds_delta_percent": 3.3027522935779707,
+            "wall_seconds_delta": 0.37898533401312307,
+            "wall_seconds_delta_percent": 3.4369937470939638
+          },
+          {
+            "peak_rss_bytes_delta": -81920,
+            "peak_rss_bytes_delta_percent": -0.5302226935312793,
+            "system_seconds_delta": 0.0,
+            "system_seconds_delta_percent": 0.0,
+            "user_seconds_delta": 0.5,
+            "user_seconds_delta_percent": 4.516711833785014,
+            "wall_seconds_delta": 0.5410812090267427,
+            "wall_seconds_delta_percent": 4.827017903256969
+          },
+          {
+            "peak_rss_bytes_delta": -229376,
+            "peak_rss_bytes_delta_percent": -1.4767932489451518,
+            "system_seconds_delta": 0.0,
+            "system_seconds_delta_percent": 0.0,
+            "user_seconds_delta": 0.45000000000000107,
+            "user_seconds_delta_percent": 4.050405040504068,
+            "wall_seconds_delta": 0.47346929099876434,
+            "wall_seconds_delta_percent": 4.201309764243666
+          },
+          {
+            "peak_rss_bytes_delta": -98304,
+            "peak_rss_bytes_delta_percent": -0.6329113924050667,
+            "system_seconds_delta": -0.01999999999999999,
+            "system_seconds_delta_percent": -22.22222222222221,
+            "user_seconds_delta": -0.1399999999999988,
+            "user_seconds_delta_percent": -1.2048192771084265,
+            "wall_seconds_delta": -0.1982250000583008,
+            "wall_seconds_delta_percent": -1.6752057539312304
+          }
+        ]
+      },
+      "measured_pairs": 5,
+      "role_medians": {
+        "fastpath": {
+          "median_peak_rss_bytes": 15335424,
+          "median_system_seconds": 0.07,
+          "median_time_wall_seconds": 11.63,
+          "median_user_seconds": 11.48,
+          "median_wall_seconds": 11.634649832965806
+        },
+        "next": {
+          "median_peak_rss_bytes": 15499264,
+          "median_system_seconds": 0.07,
+          "median_time_wall_seconds": 11.2,
+          "median_user_seconds": 11.07,
+          "median_wall_seconds": 11.209430332994089
+        }
+      },
+      "schema_version": 1,
+      "total_payload_bytes": 2147483648,
+      "warmups": {
+        "fastpath": {
+          "artifact_hashes": {},
+          "case": "scale-2g",
+          "ended_at": "2026-07-20T08:15:16.567143+00:00",
+          "input_hashes": {
+            "network_attribute.txt": "0b8017710ceba147fe7d75eed1bd36b80e492d1d6df0b18234b6786eba563d96",
+            "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+            "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+            "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+            "traffic.csv": "ece5a2713cebafa9ec0239815cb119bdbf19722c0ad133e41599d551e535ca99",
+            "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+          },
+          "mode": "performance",
+          "peak_rss_bytes": 15368192,
+          "role": "fastpath",
+          "schema_version": 1,
+          "started_at": "2026-07-20T08:15:04.775319+00:00",
+          "system_seconds": 0.07,
+          "tasks": [],
+          "time_wall_seconds": 11.78,
+          "user_seconds": 11.64,
+          "wall_seconds": 11.791192292002961
+        },
+        "next": {
+          "artifact_hashes": {},
+          "case": "scale-2g",
+          "ended_at": "2026-07-20T08:15:04.772377+00:00",
+          "input_hashes": {
+            "network_attribute.txt": "0b8017710ceba147fe7d75eed1bd36b80e492d1d6df0b18234b6786eba563d96",
+            "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+            "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+            "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+            "traffic.csv": "ece5a2713cebafa9ec0239815cb119bdbf19722c0ad133e41599d551e535ca99",
+            "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+          },
+          "mode": "performance",
+          "peak_rss_bytes": 15482880,
+          "role": "next",
+          "schema_version": 1,
+          "started_at": "2026-07-20T08:14:53.635670+00:00",
+          "system_seconds": 0.06,
+          "tasks": [],
+          "time_wall_seconds": 11.13,
+          "user_seconds": 11.01,
+          "wall_seconds": 11.13528404198587
+        }
+      }
+    },
+    "scale-512m": {
+      "blocks": [
+        {
+          "block": 1,
+          "order": [
+            "next",
+            "fastpath"
+          ],
+          "results": {
+            "fastpath": {
+              "artifact_hashes": {},
+              "case": "scale-512m",
+              "ended_at": "2026-07-20T08:14:34.330705+00:00",
+              "input_hashes": {
+                "network_attribute.txt": "0b8017710ceba147fe7d75eed1bd36b80e492d1d6df0b18234b6786eba563d96",
+                "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+                "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+                "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+                "traffic.csv": "a8642f4843dc5469ef015a393a2a4137d64bd9a8c418912225e6c524861ffe88",
+                "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+              },
+              "mode": "performance",
+              "peak_rss_bytes": 15433728,
+              "role": "fastpath",
+              "schema_version": 1,
+              "started_at": "2026-07-20T08:14:30.851607+00:00",
+              "system_seconds": 0.03,
+              "tasks": [],
+              "time_wall_seconds": 3.47,
+              "user_seconds": 3.41,
+              "wall_seconds": 3.4782487910124473
+            },
+            "next": {
+              "artifact_hashes": {},
+              "case": "scale-512m",
+              "ended_at": "2026-07-20T08:14:30.848661+00:00",
+              "input_hashes": {
+                "network_attribute.txt": "0b8017710ceba147fe7d75eed1bd36b80e492d1d6df0b18234b6786eba563d96",
+                "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+                "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+                "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+                "traffic.csv": "a8642f4843dc5469ef015a393a2a4137d64bd9a8c418912225e6c524861ffe88",
+                "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+              },
+              "mode": "performance",
+              "peak_rss_bytes": 15548416,
+              "role": "next",
+              "schema_version": 1,
+              "started_at": "2026-07-20T08:14:27.346205+00:00",
+              "system_seconds": 0.03,
+              "tasks": [],
+              "time_wall_seconds": 3.49,
+              "user_seconds": 3.43,
+              "wall_seconds": 3.50161683303304
+            }
+          }
+        }
+      ],
+      "case": "scale-512m",
+      "fastpath_vs_next": {
+        "median": {
+          "peak_rss_bytes_delta": -114688,
+          "peak_rss_bytes_delta_percent": -0.737618545837726,
+          "system_seconds_delta": 0.0,
+          "system_seconds_delta_percent": 0.0,
+          "user_seconds_delta": -0.020000000000000018,
+          "user_seconds_delta_percent": -0.5830903790087438,
+          "wall_seconds_delta": -0.02336804202059284,
+          "wall_seconds_delta_percent": -0.6673500595538284
+        },
+        "pairs": [
+          {
+            "peak_rss_bytes_delta": -114688,
+            "peak_rss_bytes_delta_percent": -0.737618545837726,
+            "system_seconds_delta": 0.0,
+            "system_seconds_delta_percent": 0.0,
+            "user_seconds_delta": -0.020000000000000018,
+            "user_seconds_delta_percent": -0.5830903790087438,
+            "wall_seconds_delta": -0.02336804202059284,
+            "wall_seconds_delta_percent": -0.6673500595538284
+          }
+        ]
+      },
+      "measured_pairs": 1,
+      "role_medians": {
+        "fastpath": {
+          "median_peak_rss_bytes": 15433728,
+          "median_system_seconds": 0.03,
+          "median_time_wall_seconds": 3.47,
+          "median_user_seconds": 3.41,
+          "median_wall_seconds": 3.4782487910124473
+        },
+        "next": {
+          "median_peak_rss_bytes": 15548416,
+          "median_system_seconds": 0.03,
+          "median_time_wall_seconds": 3.49,
+          "median_user_seconds": 3.43,
+          "median_wall_seconds": 3.50161683303304
+        }
+      },
+      "schema_version": 1,
+      "total_payload_bytes": 536870912,
+      "warmups": {
+        "fastpath": {
+          "artifact_hashes": {},
+          "case": "scale-512m",
+          "ended_at": "2026-07-20T08:14:27.342632+00:00",
+          "input_hashes": {
+            "network_attribute.txt": "0b8017710ceba147fe7d75eed1bd36b80e492d1d6df0b18234b6786eba563d96",
+            "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+            "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+            "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+            "traffic.csv": "a8642f4843dc5469ef015a393a2a4137d64bd9a8c418912225e6c524861ffe88",
+            "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+          },
+          "mode": "performance",
+          "peak_rss_bytes": 15335424,
+          "role": "fastpath",
+          "schema_version": 1,
+          "started_at": "2026-07-20T08:14:23.922546+00:00",
+          "system_seconds": 0.02,
+          "tasks": [],
+          "time_wall_seconds": 3.41,
+          "user_seconds": 3.33,
+          "wall_seconds": 3.4192065420211293
+        },
+        "next": {
+          "artifact_hashes": {},
+          "case": "scale-512m",
+          "ended_at": "2026-07-20T08:14:23.919577+00:00",
+          "input_hashes": {
+            "network_attribute.txt": "0b8017710ceba147fe7d75eed1bd36b80e492d1d6df0b18234b6786eba563d96",
+            "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+            "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+            "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+            "traffic.csv": "a8642f4843dc5469ef015a393a2a4137d64bd9a8c418912225e6c524861ffe88",
+            "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+          },
+          "mode": "performance",
+          "peak_rss_bytes": 15482880,
+          "role": "next",
+          "schema_version": 1,
+          "started_at": "2026-07-20T08:14:20.331445+00:00",
+          "system_seconds": 0.04,
+          "tasks": [],
+          "time_wall_seconds": 3.58,
+          "user_seconds": 3.49,
+          "wall_seconds": 3.5864538329769857
+        }
+      }
+    },
+    "scale-8g": {
+      "blocks": [
+        {
+          "block": 1,
+          "order": [
+            "next",
+            "fastpath"
+          ],
+          "results": {
+            "fastpath": {
+              "artifact_hashes": {},
+              "case": "scale-8g",
+              "ended_at": "2026-07-20T08:20:26.286785+00:00",
+              "input_hashes": {
+                "network_attribute.txt": "0b8017710ceba147fe7d75eed1bd36b80e492d1d6df0b18234b6786eba563d96",
+                "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+                "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+                "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+                "traffic.csv": "f0938c7278efb4233d9e39bda1431859a47518d87f1dde8be341cda8faf9d3c4",
+                "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+              },
+              "mode": "performance",
+              "peak_rss_bytes": 15433728,
+              "role": "fastpath",
+              "schema_version": 1,
+              "started_at": "2026-07-20T08:19:46.500793+00:00",
+              "system_seconds": 0.16,
+              "tasks": [],
+              "time_wall_seconds": 39.77,
+              "user_seconds": 39.45,
+              "wall_seconds": 39.78476195799885
+            },
+            "next": {
+              "artifact_hashes": {},
+              "case": "scale-8g",
+              "ended_at": "2026-07-20T08:19:46.498215+00:00",
+              "input_hashes": {
+                "network_attribute.txt": "0b8017710ceba147fe7d75eed1bd36b80e492d1d6df0b18234b6786eba563d96",
+                "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+                "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+                "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+                "traffic.csv": "f0938c7278efb4233d9e39bda1431859a47518d87f1dde8be341cda8faf9d3c4",
+                "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+              },
+              "mode": "performance",
+              "peak_rss_bytes": 15384576,
+              "role": "next",
+              "schema_version": 1,
+              "started_at": "2026-07-20T08:19:02.012359+00:00",
+              "system_seconds": 0.25,
+              "tasks": [],
+              "time_wall_seconds": 44.48,
+              "user_seconds": 43.85,
+              "wall_seconds": 44.48564691701904
+            }
+          }
+        },
+        {
+          "block": 2,
+          "order": [
+            "fastpath",
+            "next"
+          ],
+          "results": {
+            "fastpath": {
+              "artifact_hashes": {},
+              "case": "scale-8g",
+              "ended_at": "2026-07-20T08:21:07.775903+00:00",
+              "input_hashes": {
+                "network_attribute.txt": "0b8017710ceba147fe7d75eed1bd36b80e492d1d6df0b18234b6786eba563d96",
+                "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+                "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+                "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+                "traffic.csv": "f0938c7278efb4233d9e39bda1431859a47518d87f1dde8be341cda8faf9d3c4",
+                "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+              },
+              "mode": "performance",
+              "peak_rss_bytes": 15368192,
+              "role": "fastpath",
+              "schema_version": 1,
+              "started_at": "2026-07-20T08:20:26.289451+00:00",
+              "system_seconds": 0.23,
+              "tasks": [],
+              "time_wall_seconds": 41.48,
+              "user_seconds": 40.92,
+              "wall_seconds": 41.486123292008415
+            },
+            "next": {
+              "artifact_hashes": {},
+              "case": "scale-8g",
+              "ended_at": "2026-07-20T08:21:45.520662+00:00",
+              "input_hashes": {
+                "network_attribute.txt": "0b8017710ceba147fe7d75eed1bd36b80e492d1d6df0b18234b6786eba563d96",
+                "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+                "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+                "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+                "traffic.csv": "f0938c7278efb4233d9e39bda1431859a47518d87f1dde8be341cda8faf9d3c4",
+                "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+              },
+              "mode": "performance",
+              "peak_rss_bytes": 15515648,
+              "role": "next",
+              "schema_version": 1,
+              "started_at": "2026-07-20T08:21:07.780156+00:00",
+              "system_seconds": 0.17,
+              "tasks": [],
+              "time_wall_seconds": 37.73,
+              "user_seconds": 37.4,
+              "wall_seconds": 37.73982974997489
+            }
+          }
+        },
+        {
+          "block": 3,
+          "order": [
+            "next",
+            "fastpath"
+          ],
+          "results": {
+            "fastpath": {
+              "artifact_hashes": {},
+              "case": "scale-8g",
+              "ended_at": "2026-07-20T08:23:06.507308+00:00",
+              "input_hashes": {
+                "network_attribute.txt": "0b8017710ceba147fe7d75eed1bd36b80e492d1d6df0b18234b6786eba563d96",
+                "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+                "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+                "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+                "traffic.csv": "f0938c7278efb4233d9e39bda1431859a47518d87f1dde8be341cda8faf9d3c4",
+                "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+              },
+              "mode": "performance",
+              "peak_rss_bytes": 15400960,
+              "role": "fastpath",
+              "schema_version": 1,
+              "started_at": "2026-07-20T08:22:24.445055+00:00",
+              "system_seconds": 0.21,
+              "tasks": [],
+              "time_wall_seconds": 42.05,
+              "user_seconds": 41.66,
+              "wall_seconds": 42.06189470802201
+            },
+            "next": {
+              "artifact_hashes": {},
+              "case": "scale-8g",
+              "ended_at": "2026-07-20T08:22:24.442810+00:00",
+              "input_hashes": {
+                "network_attribute.txt": "0b8017710ceba147fe7d75eed1bd36b80e492d1d6df0b18234b6786eba563d96",
+                "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+                "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+                "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+                "traffic.csv": "f0938c7278efb4233d9e39bda1431859a47518d87f1dde8be341cda8faf9d3c4",
+                "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+              },
+              "mode": "performance",
+              "peak_rss_bytes": 15499264,
+              "role": "next",
+              "schema_version": 1,
+              "started_at": "2026-07-20T08:21:45.523297+00:00",
+              "system_seconds": 0.16,
+              "tasks": [],
+              "time_wall_seconds": 38.91,
+              "user_seconds": 38.6,
+              "wall_seconds": 38.91905399999814
+            }
+          }
+        }
+      ],
+      "case": "scale-8g",
+      "fastpath_vs_next": {
+        "median": {
+          "peak_rss_bytes_delta": -98304,
+          "peak_rss_bytes_delta_percent": -0.6342494714587699,
+          "system_seconds_delta": 0.04999999999999999,
+          "system_seconds_delta_percent": 31.25,
+          "user_seconds_delta": 3.059999999999995,
+          "user_seconds_delta_percent": 7.927461139896352,
+          "wall_seconds_delta": 3.1428407080238685,
+          "wall_seconds_delta_percent": 8.075326568893537
+        },
+        "pairs": [
+          {
+            "peak_rss_bytes_delta": 49152,
+            "peak_rss_bytes_delta_percent": 0.31948881789136685,
+            "system_seconds_delta": -0.09,
+            "system_seconds_delta_percent": -36.0,
+            "user_seconds_delta": -4.399999999999999,
+            "user_seconds_delta_percent": -10.034207525655637,
+            "wall_seconds_delta": -4.700884959020186,
+            "wall_seconds_delta_percent": -10.567194780350043
+          },
+          {
+            "peak_rss_bytes_delta": -147456,
+            "peak_rss_bytes_delta_percent": -0.9503695881731833,
+            "system_seconds_delta": 0.06,
+            "system_seconds_delta_percent": 35.29411764705881,
+            "user_seconds_delta": 3.520000000000003,
+            "user_seconds_delta_percent": 9.411764705882364,
+            "wall_seconds_delta": 3.746293542033527,
+            "wall_seconds_delta_percent": 9.92663074224922
+          },
+          {
+            "peak_rss_bytes_delta": -98304,
+            "peak_rss_bytes_delta_percent": -0.6342494714587699,
+            "system_seconds_delta": 0.04999999999999999,
+            "system_seconds_delta_percent": 31.25,
+            "user_seconds_delta": 3.059999999999995,
+            "user_seconds_delta_percent": 7.927461139896352,
+            "wall_seconds_delta": 3.1428407080238685,
+            "wall_seconds_delta_percent": 8.075326568893537
+          }
+        ]
+      },
+      "measured_pairs": 3,
+      "role_medians": {
+        "fastpath": {
+          "median_peak_rss_bytes": 15400960,
+          "median_system_seconds": 0.21,
+          "median_time_wall_seconds": 41.48,
+          "median_user_seconds": 40.92,
+          "median_wall_seconds": 41.486123292008415
+        },
+        "next": {
+          "median_peak_rss_bytes": 15499264,
+          "median_system_seconds": 0.17,
+          "median_time_wall_seconds": 38.91,
+          "median_user_seconds": 38.6,
+          "median_wall_seconds": 38.91905399999814
+        }
+      },
+      "schema_version": 1,
+      "total_payload_bytes": 8589934592,
+      "warmups": {
+        "fastpath": {
+          "artifact_hashes": {},
+          "case": "scale-8g",
+          "ended_at": "2026-07-20T08:19:02.009533+00:00",
+          "input_hashes": {
+            "network_attribute.txt": "0b8017710ceba147fe7d75eed1bd36b80e492d1d6df0b18234b6786eba563d96",
+            "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+            "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+            "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+            "traffic.csv": "f0938c7278efb4233d9e39bda1431859a47518d87f1dde8be341cda8faf9d3c4",
+            "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+          },
+          "mode": "performance",
+          "peak_rss_bytes": 15335424,
+          "role": "fastpath",
+          "schema_version": 1,
+          "started_at": "2026-07-20T08:18:17.104277+00:00",
+          "system_seconds": 0.24,
+          "tasks": [],
+          "time_wall_seconds": 44.89,
+          "user_seconds": 44.47,
+          "wall_seconds": 44.90485270798672
+        },
+        "next": {
+          "artifact_hashes": {},
+          "case": "scale-8g",
+          "ended_at": "2026-07-20T08:18:17.101250+00:00",
+          "input_hashes": {
+            "network_attribute.txt": "0b8017710ceba147fe7d75eed1bd36b80e492d1d6df0b18234b6786eba563d96",
+            "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+            "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+            "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+            "traffic.csv": "f0938c7278efb4233d9e39bda1431859a47518d87f1dde8be341cda8faf9d3c4",
+            "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+          },
+          "mode": "performance",
+          "peak_rss_bytes": 15581184,
+          "role": "next",
+          "schema_version": 1,
+          "started_at": "2026-07-20T08:17:33.499107+00:00",
+          "system_seconds": 0.23,
+          "tasks": [],
+          "time_wall_seconds": 43.59,
+          "user_seconds": 43.16,
+          "wall_seconds": 43.600816250022035
+        }
+      }
+    }
+  },
+  "roles": {
+    "fastpath": {
+      "binary": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+      "binary_sha256": "7756e587027029b4d551f70d490659bcea4af0f31cc5fbd47ddc47a46bb45a78",
+      "production_diff_sha256": "40a54e5910c20d8391404d4f3debf167c3b39d96aaf92c537ad990cdc191de2e",
+      "production_source_sha256": {
+        "src/unified-bus/model/protocol/ub-ctp.cc": "425542b73718fbb9ebaa96b2ab46b67975c58ce0be2a262e898608d7e743543b",
+        "src/unified-bus/model/ub-lifecycle.cc": "16f6b7e06339d0b76f5bd23f2ea4123c267daddfa319497e947a19c674d40f28",
+        "src/unified-bus/model/ub-lifecycle.h": "8f118137c62fa7fd8399b7349f040a619a46deffba0e63a46e3f9a6ec13a44e7"
+      },
+      "revision": "a95f8bcdbf2eb32e171edde7aae970cfedf85c76",
+      "source_root": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode",
+      "unified_bus_library": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/build/lib/libns3.44-unified-bus.dylib",
+      "unified_bus_library_sha256": "166ff1bc97293511570b878969675731c04dd0fc6230b0eeb5cac014c8cd1022"
+    },
+    "lazy": {
+      "binary": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/.worktrees/t36-lazy-baseline/build/scratch/ns3.44-ub-quick-example",
+      "binary_sha256": "e1142d6dd400dee5fb9148462b66083f6cf190634f8787591f3be38ad9f7c568",
+      "revision": "a95f8bcdbf2eb32e171edde7aae970cfedf85c76",
+      "source_root": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/.worktrees/t36-lazy-baseline",
+      "unified_bus_library": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/.worktrees/t36-lazy-baseline/build/lib/libns3.44-unified-bus.dylib",
+      "unified_bus_library_sha256": "db92b362c57364868578303678a21baff4c808f24ca7843d2e28b1ffe6c72a40"
+    },
+    "next": {
+      "binary": "/Users/ytxing/workspace/ns-3-ub-routing-modes/build/scratch/ns3.44-ub-quick-example",
+      "binary_sha256": "51129796c550755d9099746fd61aece09978970cf4f25e94faab83d59e82c387",
+      "revision": "cf8ee683e00e5b6210661013e93cec7217d662e5",
+      "source_root": "/Users/ytxing/workspace/ns-3-ub-routing-modes",
+      "unified_bus_library": "/Users/ytxing/workspace/ns-3-ub-routing-modes/build/lib/libns3.44-unified-bus.dylib",
+      "unified_bus_library_sha256": "5d090eef16ff7b77791d65a32feaf3d80f59c2e3035d4d3ecd396d847d14cc92"
+    }
+  },
+  "schema_version": 1
+}

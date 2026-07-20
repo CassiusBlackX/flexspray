@@ -276,7 +276,8 @@ Closeout:
 - [x] Sharing and isolation tests cover source Entity, destination node, destination Entity, VL, and reverse-packet normalization.
 - [x] Transmit queues contain complete packets and no raw pointer to cacheable Entity or Transaction state.
 - [x] DATA, ACK, and CNP priority, packet terminal accounting, queue registration, and tracked events balance independently.
-- [x] Empty queue and completed Transaction state can retire while the CTP service and allowed cacheable policy state persist.
+- [x] Completed Transaction state retires independently, while an empty queue shell preserves its
+      allocator identity until service disposal.
 - [x] Loss without lower-layer recovery remains explicitly unresolved rather than being hidden by forced cleanup.
 - [x] At the CTP milestone, the verified frozen baseline byte-matches all applicable CTP task, packet, queue, throughput, and canonical artifacts.
 
@@ -286,8 +287,9 @@ Closeout:
   destination node, destination Entity, and VL. Existing production parsing characterizes
   source-Entity sharing, destination/VL isolation, and reverse normalization.
 - The pre-refactor `BuildCtpPacket` block remains the sole CTP packet builder. `UbCtpTxQueue`
-  stores only complete DATA/ACK/CNP packets, preserves CNP > ACK > DATA priority, and unregisters
-  from the allocator before an empty queue is erased.
+  stores only complete DATA/ACK/CNP packets, preserves CNP > ACK > DATA priority, and retains its
+  stable allocator slot after draining. Service disposal unregisters retained queues before
+  clearing service ownership.
 - The persistent CTP service owns packet accounting without gaining a channel teardown API.
   Complete DATA and ACK packets register before enqueue; local consumption and route failure use
   typed terminals at the existing switch seams.
@@ -600,8 +602,8 @@ only if the existing tracer bullet reproduces the failure.
       owner mismatch, and metadata filename/content rank mismatch.
 - [x] DETAIL evidence records `LEASE_RELEASE` after ledger mutation but before callback-driven
       resource retirement.
-- [x] Direct CTP disposal detaches queue callbacks, unregisters live allocator sources, clears
-      service queue ownership, and preserves explicit unresolved packet residue.
+- [x] Direct CTP disposal unregisters retained allocator sources, clears service queue ownership,
+      and preserves explicit unresolved packet residue.
 - [x] Targeted build and ticket-defined focused suites pass serially with `-j2`; the requested
       supplemental T22 frozen-byte comparison against GitCode main has no unexplained difference.
 
@@ -617,8 +619,8 @@ Closeout:
   mismatch and metadata filename/content rank mismatch while retaining the two-argument direct parse
   interface and C++-owned enum registry.
 - Lease release evidence now follows the ledger mutation and precedes its reentrant callback. Direct
-  CTP disposal reuses normal queue retirement order, detaches callbacks, unregisters a live allocator,
-  clears service ownership, and leaves retained packet work explicitly unresolved.
+  CTP disposal unregisters retained queues from a live allocator before clearing service ownership
+  and leaves retained packet work explicitly unresolved.
 - Target build, 8 parser tests, 3 focused trace tests, lifecycle, CTP lifecycle and parallel lifecycle
   suites passed serially. Both local-MTP tracer modes passed.
 - The requested supplemental frozen comparison used candidate `94de7ef` and the
@@ -1034,16 +1036,43 @@ Closeout:
 
 **What to build:** Keep receiver-only CTP assembly in the finite Transaction owner without
 allocating the send-side ACK bitmap, and instantiate the existing context only when a send or ACK
-window path requires it.
+window path requires it. Preserve pre-refactor CTP allocator identity and compact trace-OFF retired
+generation history where required to meet the accepted correctness and performance gates.
 
 **Blocked by:** T35 Module-level lifecycle hotspot calibration.
 
-- [ ] Creating finite CTP Transaction state does not itself allocate a send-window context.
-- [ ] Direct sends, Jetty drains, wire ACKs, delayed TAACK, forced terminal, TASSN continuity, and
+- [x] Creating finite CTP Transaction state does not itself allocate a send-window context.
+- [x] Direct sends, Jetty drains, wire ACKs, delayed TAACK, forced terminal, TASSN continuity, and
       finite retirement preserve the existing window and lifecycle behavior.
-- [ ] WRITE TAACK and READ response generation do not allocate a send-window context on the target.
-- [ ] Targeted build and the CTP Transaction, CTP lifecycle, and lifecycle suites pass serially.
-- [ ] Frozen CTP window cases are byte-identical to `next@cf8ee683` without an unexplained
+- [x] WRITE TAACK and READ response generation do not allocate a send-window context on the target.
+- [x] Empty CTP queue shells preserve their pre-refactor allocator identity until service disposal;
+      complex multi-Entity and bidirectional scheduling remains byte-identical to `next@cf8ee683`.
+- [x] Trace-OFF retired generation history uses bounded runs without changing stale/retired
+      classification, local-ID reuse, or enabled lifecycle summary bytes.
+- [x] Targeted build and the CTP Transaction, CTP lifecycle, lifecycle storage, lifecycle trace, and
+      lifecycle suites pass serially.
+- [x] Frozen CTP window cases are byte-identical to `next@cf8ee683` without an unexplained
       difference.
-- [ ] Five counterbalanced 2 GiB CTP pairs recover at least eight percentage points of the T35 wall
+- [x] Five counterbalanced 2 GiB CTP pairs recover at least eight percentage points of the T35 wall
       gap, finish within five percent of next, and keep current peak RSS within ten percent of next.
+
+Closeout:
+
+- Receiver-only Transaction state no longer creates the send-side ACK bitmap. A complete inbound
+  CTP unit uses the existing segment construction block with stack-local retention; only a partial
+  unit enters the existing Transaction-owned map. Builders, parsers, Jetty admission, ACK/window,
+  response, callback, timer, trace, and completion algorithms are unchanged.
+- Empty CTP queues retain the pre-refactor service-owned object and allocator slot after draining.
+  This preserves RR/DWRR cursor interpretation across Entity bursts; `DoDispose` still unregisters
+  every retained queue before clearing the maps.
+- With lifecycle trace OFF, adjacent retired IDs with identical generation/outcome history share a
+  compact run. Reopen splits exactly one ID, increments through the old open path, and preserves
+  stale, retired, unknown, and terminal-outcome behavior. Enabled trace levels retain per-resource
+  summaries and bytes.
+- The targeted build and five focused suites passed serially. Frozen `ctp-win1`, `ctp-win4`, and
+  `ctp-win128`, plus complex multi-Entity and mixed-bidirectional CTP canaries, are byte-identical to
+  `next@cf8ee683`; no exception is required.
+- At 2 GiB, five counterbalanced pairs measure current versus next at `+4.20%` wall, `+4.05%` user
+  CPU, and `-0.74%` peak RSS. This recovers 10.84 percentage points of the T35 wall gap and passes
+  both final gates. An independent five-pair 8 GiB run measures `-0.01%` wall, `+0.26%` user CPU,
+  and `-0.42%` peak RSS, with no payload-scaled tombstone growth.

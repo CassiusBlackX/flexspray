@@ -1,0 +1,42 @@
+schema_version: 1
+package_root: scratch/20260720-ctp-fastpath-memory-scaling
+commands:
+  prepare_next_role:
+    - git worktree add --detach .worktrees/t36-next-baseline cf8ee683
+    - cd .worktrees/t36-next-baseline && python3.12 ./ns3 configure --enable-modules=unified-bus --disable-examples --enable-tests --disable-mpi --disable-mtp --disable-werror -d release -G Ninja
+    - cd .worktrees/t36-next-baseline && python3.12 ./ns3 build -j 2 ub-quick-example
+  prepare_lazy_role:
+    - git worktree add --detach .worktrees/t36-lazy-baseline a95f8bc
+    - cd .worktrees/t36-lazy-baseline && python3.12 ./ns3 configure --enable-modules=unified-bus --disable-examples --enable-tests --disable-mpi --disable-mtp --disable-werror -d release -G Ninja
+    - cd .worktrees/t36-lazy-baseline && python3.12 ./ns3 build -j 2 ub-quick-example
+  materialize:
+    - python3.12 scratch/20260720-ctp-fastpath-memory-scaling/scripts/run_experiment.py materialize
+  correctness:
+    - python3.12 scratch/20260720-ctp-fastpath-memory-scaling/scripts/run_experiment.py correctness
+  queue_retirement_ablation:
+    - python3.12 scratch/20260720-ctp-fastpath-memory-scaling/scripts/run_experiment.py queue-retirement-ablation
+  stable_queue_validation:
+    - python3.12 scratch/20260720-ctp-fastpath-memory-scaling/scripts/run_experiment.py stable-queue-validation
+  stable_queue_complex_validation:
+    - python3.12 scratch/20260720-ctp-fastpath-memory-scaling/scripts/run_experiment.py stable-queue-complex-validation
+  stable_queue_performance:
+    - python3.12 scratch/20260720-ctp-fastpath-memory-scaling/scripts/run_experiment.py stable-queue-performance --cases scale-2g
+    - python3.12 scratch/20260720-ctp-fastpath-memory-scaling/scripts/run_experiment.py stable-queue-performance --cases scale-8g --pairs 3
+  compact_history_validation:
+    - python3.12 scratch/20260720-ctp-fastpath-memory-scaling/scripts/run_experiment.py compact-history-validation
+  compact_history_frozen_validation:
+    - python3.12 scratch/20260720-ctp-fastpath-memory-scaling/scripts/run_experiment.py compact-history-frozen-validation
+  compact_history_performance:
+    - python3.12 scratch/20260720-ctp-fastpath-memory-scaling/scripts/run_experiment.py compact-history-performance --cases scale-512m --pairs 1
+    - python3.12 scratch/20260720-ctp-fastpath-memory-scaling/scripts/run_experiment.py compact-history-performance --cases scale-2g
+    - python3.12 scratch/20260720-ctp-fastpath-memory-scaling/scripts/run_experiment.py compact-history-performance --cases scale-8g --pairs 3
+    - python3.12 scratch/20260720-ctp-fastpath-memory-scaling/scripts/run_experiment.py compact-history-performance --cases scale-8g --pairs 5 --result-id performance-compact-history-8g-v2
+  performance:
+    - python3.12 scratch/20260720-ctp-fastpath-memory-scaling/scripts/run_experiment.py performance
+  analyze:
+    - python3.12 scratch/20260720-ctp-fastpath-memory-scaling/scripts/run_experiment.py analyze
+execution:
+  order: strictly serial
+  overwrite_policy: refuse completed run directories; resume exact result.json files
+  timeout_policy: block-specific hard timeout with process-group termination
+  output_root: scratch/20260720-ctp-fastpath-memory-scaling/results

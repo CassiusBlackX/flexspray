@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "ticket": "T36",
+  "status": "passed",
+  "control": {
+    "revision": "cf8ee683e00e5b6210661013e93cec7217d662e5",
+    "label": "next@cf8ee683"
+  },
+  "candidate": {
+    "base_revision": "a95f8bcdbf2eb32e171edde7aae970cfedf85c76",
+    "implementation_revision": "ed298a8c4b585cf6cace4caf60824bd7a0b1ffac",
+    "binary_sha256": "7756e587027029b4d551f70d490659bcea4af0f31cc5fbd47ddc47a46bb45a78",
+    "unified_bus_library_sha256": "166ff1bc97293511570b878969675731c04dd0fc6230b0eeb5cac014c8cd1022",
+    "production_diff_sha256": "40a54e5910c20d8391404d4f3debf167c3b39d96aaf92c537ad990cdc191de2e"
+  },
+  "correctness": {
+    "byte_identical": true,
+    "exception": null,
+    "frozen_cases": [
+      "ctp-win1",
+      "ctp-win4",
+      "ctp-win128"
+    ],
+    "complex_cases": [
+      "multi-entity-2g",
+      "mixed-bidir-2g"
+    ]
+  },
+  "performance": {
+    "scale_512m": {
+      "pairs": 1,
+      "wall_delta_percent": -0.6673500595538284,
+      "user_delta_percent": -0.5830903790087438,
+      "rss_delta_percent": -0.737618545837726
+    },
+    "scale_2g": {
+      "pairs": 5,
+      "wall_delta_percent": 4.201309764243666,
+      "user_delta_percent": 4.050405040504068,
+      "rss_delta_percent": -0.7423117709437932,
+      "current_median_peak_rss_bytes": 15335424,
+      "next_median_peak_rss_bytes": 15499264
+    },
+    "scale_8g": {
+      "pairs": 5,
+      "wall_delta_percent": -0.013001650529986808,
+      "user_delta_percent": 0.25878003696857554,
+      "rss_delta_percent": -0.42417815482502785,
+      "current_median_peak_rss_bytes": 15384576,
+      "next_median_peak_rss_bytes": 15417344
+    }
+  },
+  "acceptance": {
+    "minimum_wall_recovery_points": 8.0,
+    "actual_wall_recovery_points": 10.838983080736119,
+    "maximum_2g_wall_gap_percent": 5.0,
+    "maximum_2g_rss_gap_percent": 10.0,
+    "passed": true
+  },
+  "focused_validation": {
+    "targeted_build": "passed",
+    "suites": {
+      "unified-bus-lifecycle-storage": "passed",
+      "unified-bus-lifecycle": "passed",
+      "unified-bus-lifecycle-trace": "passed",
+      "unified-bus-ctp-transaction": "passed",
+      "unified-bus-ctp-lifecycle": "passed"
+    }
+  }
+}
