@@ -748,7 +748,7 @@ Ptr<UbCtpTransactionContext>
 UbCtpTransportService::GetOrCreateTransactionContext(const UbCtpEntityKey& key)
 {
     GetOrCreateEntityState(key);
-    return GetTransactionState(key).context;
+    return GetTransactionOwner()->GetOrCreateCtpTransactionContext(key);
 }
 
 bool
@@ -760,7 +760,9 @@ UbCtpTransportService::HasTransactionContextForTesting(const UbCtpEntityKey& key
     }
     Ptr<UbController> controller = m_node->GetObject<UbController>();
     Ptr<UbTransaction> transaction = controller == nullptr ? nullptr : controller->GetUbTransaction();
-    return transaction != nullptr && transaction->FindCtpTransactionState(key) != nullptr;
+    const UbCtpTransactionState* state =
+        transaction == nullptr ? nullptr : transaction->FindCtpTransactionState(key);
+    return state != nullptr && state->context != nullptr;
 }
 
 Ptr<UbCtpTxQueue>
@@ -894,7 +896,7 @@ UbCtpTransportService::SendSegment(Ptr<UbWqeSegment> segment, const UbCtpEntityK
     }
 
     UbCtpEntityState& state = GetOrCreateEntityState(key);
-    Ptr<UbCtpTransactionContext> context = GetTransactionState(key).context;
+    Ptr<UbCtpTransactionContext> context = GetOrCreateTransactionContext(key);
     if (!segment->IsSentCompleted())
     {
         const uint32_t progressBytes = static_cast<uint32_t>(segment->GetBytesLeft());
@@ -1068,7 +1070,7 @@ UbCtpTransportService::AdmitSegmentForTest(Ptr<UbWqeSegment> segment,
 {
     GetOrCreateEntityState(key);
     UbCtpTransactionState& transactionState = GetTransactionState(key);
-    Ptr<UbCtpTransactionContext> context = transactionState.context;
+    Ptr<UbCtpTransactionContext> context = GetOrCreateTransactionContext(key);
     if (!context->TryAdmit(taSsn))
     {
         return false;
@@ -1141,7 +1143,7 @@ UbCtpTransportService::DrainJettys(UbCtpEntityState& state)
         }
 
         const UbCtpEntityKey packetKey = MakeTxKeyForSegment(key, segment);
-        Ptr<UbCtpTransactionContext> context = transactionState.context;
+        Ptr<UbCtpTransactionContext> context = GetOrCreateTransactionContext(key);
         const uint32_t taSsn = segment->GetTaSsn();
         if (!context->TryAdmit(taSsn))
         {
@@ -1682,7 +1684,7 @@ UbCtpTransportService::CompleteFromTaAck(const UbCtpEntityKey& key,
     if (ShouldDelayTaAck(key, taSsn))
     {
         GetOrCreateEntityState(key);
-        TraceWindowEvent(key, "taack-delay", taSsn, *GetTransactionState(key).context);
+        TraceWindowEvent(key, "taack-delay", taSsn, *GetOrCreateTransactionContext(key));
         const uint64_t token = m_delayedTaAckEvents.Track(m_packetLifecycleOwner);
         GetTransactionOwner()->RetainCtpCompletionEvent(key);
         EventId event = Simulator::Schedule(m_delayTaAckTime,
@@ -1749,6 +1751,7 @@ UbCtpTransportService::CompleteFromTaAckNow(const UbCtpEntityKey& key,
 {
     UbCtpEntityState* state = &GetOrCreateEntityState(key);
     UbCtpTransactionState* transactionState = &GetTransactionState(key);
+    GetOrCreateTransactionContext(key);
     taSsn = ResolveWireTaSsn(*transactionState, static_cast<uint16_t>(taSsn));
     auto outstandingIt = FindOutstandingSegment(*transactionState, taSsn);
     const UbCtpEntityKey sourceGroupKey = MakeSourceGroupKeyForRequest(key);
@@ -1760,6 +1763,7 @@ UbCtpTransportService::CompleteFromTaAckNow(const UbCtpEntityKey& key,
             GetTransactionOwner()->FindCtpTransactionState(sourceGroupKey);
         if (sourceGroupIt != m_entityStates.end() && sourceGroupState != nullptr)
         {
+            GetOrCreateTransactionContext(sourceGroupKey);
             const uint32_t sourceGroupTaSsn =
                 ResolveWireTaSsn(*sourceGroupState, static_cast<uint16_t>(taSsn));
             auto sourceGroupOutstandingIt =
