@@ -134,6 +134,8 @@ namespace ns3 {
                                                    uint32_t maxSegmentBytes);
         void CommitCtpWqeSegment(Ptr<UbWqeSegment> segment);
         UbCtpTransactionState& GetOrCreateCtpTransactionState(const UbCtpEntityKey& key);
+        Ptr<UbCtpTransactionContext> GetOrCreateCtpTransactionContext(
+            const UbCtpEntityKey& key);
         UbCtpTransactionState* FindCtpTransactionState(const UbCtpEntityKey& key);
         const UbCtpTransactionState* FindCtpTransactionState(const UbCtpEntityKey& key) const;
         void RetainCtpCompletionEvent(const UbCtpEntityKey& key);

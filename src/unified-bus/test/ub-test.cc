@@ -17299,6 +17299,14 @@ class UbLifecyclePacketMetadataTransferTest : public TestCase
 
     void DoRun() override
     {
+        UbLifecycleTrace::Configure(
+            "/tmp",
+            UbLifecycleTraceLevel::SUMMARY,
+            1,
+            0,
+            0,
+            false,
+            [](const std::string&) { return [](const std::string&) {}; });
         Ptr<Node> ownerNode = CreateObject<Node>();
         Ptr<UbLifecycleCoordinator> coordinator =
             UbLifecycleCoordinator::GetOrCreate(ownerNode);
@@ -17369,6 +17377,7 @@ class UbLifecyclePacketMetadataTransferTest : public TestCase
         UbLifecycleCoordinator::TerminatePacket(dequeued,
                                                 UbPacketTerminal::ENDPOINT_CONSUMED);
         Simulator::Destroy();
+        UbLifecycleTrace::Reset();
     }
 };
 
@@ -17721,6 +17730,14 @@ class UbLifecycleRtpEndpointConsumeIntegrationTest : public TestCase
     void DoRun() override
     {
         Config::Reset();
+        UbLifecycleTrace::Configure(
+            "/tmp",
+            UbLifecycleTraceLevel::SUMMARY,
+            1,
+            0,
+            0,
+            false,
+            [](const std::string&) { return [](const std::string&) {}; });
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<Packet> packet = BuildLifecycleTracerPacket(topo);
@@ -17733,6 +17750,7 @@ class UbLifecycleRtpEndpointConsumeIntegrationTest : public TestCase
         if (!hasIdentity)
         {
             Simulator::Destroy();
+            UbLifecycleTrace::Reset();
             Config::Reset();
             return;
         }
@@ -17777,6 +17795,7 @@ class UbLifecycleRtpEndpointConsumeIntegrationTest : public TestCase
                               "Transfer should causally precede endpoint consumption");
 
         Simulator::Destroy();
+        UbLifecycleTrace::Reset();
         Config::Reset();
     }
 };
@@ -24068,6 +24087,65 @@ class UbCtpCnpDoesNotAckTransactionTest : public TestCase
     }
 };
 
+class UbCtpTransactionStateCreatesSendContextLazilyTest : public TestCase
+{
+  public:
+    UbCtpTransactionStateCreatesSendContextLazilyTest()
+        : TestCase("UnifiedBus - CTP Transaction state creates send context lazily")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<UbController> controller = node->GetObject<UbController>();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
+        UbCtpEntityKey key{.srcEntityId = 10,
+                           .dstNodeId = 1,
+                           .dstEntityId = 11,
+                           .vl = 7};
+
+        UbCtpTransactionState& state = transaction->GetOrCreateCtpTransactionState(key);
+        NS_TEST_ASSERT_MSG_EQ(state.context,
+                              nullptr,
+                              "Receiver-only Transaction state must not allocate a send window");
+        NS_TEST_ASSERT_MSG_EQ(service->HasTransactionContextForTesting(key),
+                              false,
+                              "State presence must not be reported as send-context presence");
+        NS_TEST_ASSERT_MSG_EQ(transaction->TryRetireCtpTransactionState(key),
+                              true,
+                              "Receiver-only state should retire without a send window");
+        NS_TEST_ASSERT_MSG_EQ(transaction->FindCtpTransactionState(key),
+                              nullptr,
+                              "Receiver-only retirement should erase the finite state");
+
+        Ptr<UbCtpTransactionContext> context = service->GetOrCreateTransactionContext(key);
+        NS_TEST_ASSERT_MSG_NE(context,
+                              nullptr,
+                              "The existing send-window seam should allocate on first use");
+        NS_TEST_ASSERT_MSG_EQ(service->HasTransactionContextForTesting(key),
+                              true,
+                              "The context query should observe the allocated send window");
+        NS_TEST_ASSERT_MSG_EQ(context->TryAdmit(0), true, "Sequence zero should enter the window");
+        context->MarkTaAck(0);
+        NS_TEST_ASSERT_MSG_EQ(transaction->TryRetireCtpTransactionState(key),
+                              true,
+                              "A drained send window should permit finite state retirement");
+
+        UbCtpTransactionState& recreated = transaction->GetOrCreateCtpTransactionState(key);
+        NS_TEST_ASSERT_MSG_EQ(recreated.context,
+                              nullptr,
+                              "Recreated finite state should remain lightweight until send use");
+        NS_TEST_ASSERT_MSG_EQ(service->GetOrCreateTransactionContext(key)->GetSendNext(),
+                              1u,
+                              "Lazy context recreation must preserve the retained TASSN cursor");
+
+        Simulator::Destroy();
+    }
+};
+
 class UbCtpCongestionKeyUsesDestinationAndVlTest : public TestCase
 {
   public:
@@ -26010,6 +26088,8 @@ UbCtpTransactionTestSuite::UbCtpTransactionTestSuite()
     AddTestCase(new UbCtpReportsConstraintsWithoutMutatingJettyTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbCtpTransactionContextAckWindowAdmissionTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpTransactionStateCreatesSendContextLazilyTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbCtpServiceDoesNotCreateRtpTpTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpPortHintsDoNotCreateEntityStateTest(), TestCase::Duration::QUICK);

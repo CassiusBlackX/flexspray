@@ -507,18 +507,24 @@ UbTransaction::CommitCtpWqeSegment(Ptr<UbWqeSegment> segment)
 UbCtpTransactionState&
 UbTransaction::GetOrCreateCtpTransactionState(const UbCtpEntityKey& key)
 {
-    auto [it, inserted] = m_ctpTransactionStates.try_emplace(key);
-    if (inserted)
+    return m_ctpTransactionStates.try_emplace(key).first->second;
+}
+
+Ptr<UbCtpTransactionContext>
+UbTransaction::GetOrCreateCtpTransactionContext(const UbCtpEntityKey& key)
+{
+    UbCtpTransactionState& state = GetOrCreateCtpTransactionState(key);
+    if (state.context == nullptr)
     {
         const auto cursor = m_ctpNextTaSsn.find(key);
         const uint32_t initialSequence =
             cursor == m_ctpNextTaSsn.end() ? 0 : cursor->second;
-        it->second.context = Create<UbCtpTransactionContext>(
+        state.context = Create<UbCtpTransactionContext>(
             key,
             UB_JETTY_TASSN_OOO_THRESHOLD,
             initialSequence);
     }
-    return it->second;
+    return state.context;
 }
 
 const UbCtpTransactionState*
@@ -567,12 +573,15 @@ UbTransaction::TryRetireCtpTransactionState(const UbCtpEntityKey& key)
         !transactionState.outstandingSegments.empty() ||
         !transactionState.segmentOutstandingPackets.empty() ||
         !transactionState.inboundTaUnits.empty() || transactionState.pendingCompletionEvents != 0 ||
-        transactionState.context == nullptr ||
-        transactionState.context->GetOutstandingCount() != 0)
+        (transactionState.context != nullptr &&
+         transactionState.context->GetOutstandingCount() != 0))
     {
         return false;
     }
-    m_ctpNextTaSsn[key] = transactionState.context->GetSendNext();
+    if (transactionState.context != nullptr)
+    {
+        m_ctpNextTaSsn[key] = transactionState.context->GetSendNext();
+    }
     m_ctpTransactionStates.erase(state);
     return true;
 }

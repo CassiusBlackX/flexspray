@@ -1029,3 +1029,21 @@ Closeout:
 - This is deterministic once-per-simulation cleanup, so no repeated host-performance gain is
   claimed. Packet lifecycle state, public snapshots, parallel control, and protocol paths are
   untouched.
+
+## Task 36: Lazily create the CTP send-window context
+
+**What to build:** Keep receiver-only CTP assembly in the finite Transaction owner without
+allocating the send-side ACK bitmap, and instantiate the existing context only when a send or ACK
+window path requires it.
+
+**Blocked by:** T35 Module-level lifecycle hotspot calibration.
+
+- [ ] Creating finite CTP Transaction state does not itself allocate a send-window context.
+- [ ] Direct sends, Jetty drains, wire ACKs, delayed TAACK, forced terminal, TASSN continuity, and
+      finite retirement preserve the existing window and lifecycle behavior.
+- [ ] WRITE TAACK and READ response generation do not allocate a send-window context on the target.
+- [ ] Targeted build and the CTP Transaction, CTP lifecycle, and lifecycle suites pass serially.
+- [ ] Frozen CTP window cases are byte-identical to `next@cf8ee683` without an unexplained
+      difference.
+- [ ] Five counterbalanced 2 GiB CTP pairs recover at least eight percentage points of the T35 wall
+      gap, finish within five percent of next, and keep current peak RSS within ten percent of next.
