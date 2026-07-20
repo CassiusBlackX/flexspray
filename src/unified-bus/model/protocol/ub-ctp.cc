@@ -389,12 +389,6 @@ UbCtpTxQueue::GetNextPacket()
     {
         m_headArrivalTime = Simulator::Now();
     }
-    else if (!m_emptyCallback.IsNull())
-    {
-        Callback<void, Ptr<UbCtpTxQueue>> callback = m_emptyCallback;
-        Ptr<UbCtpTxQueue> self = this;
-        Simulator::ScheduleNow([callback, self]() { callback(self); });
-    }
     return packet;
 }
 
@@ -403,12 +397,6 @@ UbCtpTxQueue::GetNextPacketSize()
 {
     const std::queue<Ptr<Packet>>* queue = GetPriorityQueue();
     return queue == nullptr ? 0 : queue->front()->GetSize();
-}
-
-void
-UbCtpTxQueue::SetEmptyCallback(Callback<void, Ptr<UbCtpTxQueue>> callback)
-{
-    m_emptyCallback = callback;
 }
 
 void
@@ -782,7 +770,6 @@ UbCtpTransportService::GetOrCreateQueue(const UbCtpEntityKey& key,
     queue->SetOutPortId(outPort);
     queue->SetInPortId(outPort);
     queue->SetIngressPriority(priority);
-    queue->SetEmptyCallback(MakeCallback(&UbCtpTransportService::RetireEmptyQueue, this));
     m_queues.emplace(queueKey, queue);
     state.AddOutPort(outPort);
     return queue;
@@ -1387,12 +1374,37 @@ UbCtpTransportService::TrackInboundTaPacket(UbCtpEntityState& state,
                                             uint32_t flowId,
                                             uint32_t flowSize)
 {
-    UbCtpTransactionState& transactionState = GetTransactionState(state.GetKey());
-    auto& unit = transactionState.inboundTaUnits[taHeader.GetIniTaSsn()];
     const bool isReadRequest = taOpcode == TaOpcode::TA_OPCODE_READ;
     const uint32_t logicalBytes =
         static_cast<uint32_t>(64u << static_cast<uint32_t>(maHeader.GetLength()));
     const uint32_t expectedPayloadBytes = isReadRequest ? 0 : payloadBytes;
+    const uint32_t taSsn = taHeader.GetIniTaSsn();
+
+    UbCtpTransactionState* transactionState =
+        GetTransactionOwner()->FindCtpTransactionState(state.GetKey());
+    UbCtpInboundTaUnit transientUnit;
+    UbCtpInboundTaUnit* selectedUnit = nullptr;
+    if (transactionState != nullptr)
+    {
+        const auto retained = transactionState->inboundTaUnits.find(taSsn);
+        if (retained != transactionState->inboundTaUnits.end())
+        {
+            selectedUnit = &retained->second;
+        }
+    }
+    if (selectedUnit == nullptr)
+    {
+        if (payloadBytes >= expectedPayloadBytes)
+        {
+            selectedUnit = &transientUnit;
+        }
+        else
+        {
+            transactionState = &GetTransactionState(state.GetKey());
+            selectedUnit = &transactionState->inboundTaUnits[taSsn];
+        }
+    }
+    UbCtpInboundTaUnit& unit = *selectedUnit;
 
     if (unit.segment == nullptr)
     {
@@ -1428,7 +1440,10 @@ UbCtpTransportService::TrackInboundTaPacket(UbCtpEntityState& state,
     }
 
     Ptr<UbWqeSegment> completed = unit.segment;
-    transactionState.inboundTaUnits.erase(taHeader.GetIniTaSsn());
+    if (&unit != &transientUnit)
+    {
+        transactionState->inboundTaUnits.erase(taSsn);
+    }
     return completed;
 }
 
@@ -1580,33 +1595,6 @@ UbCtpTransportService::RegisterQueueIfNeeded(Ptr<UbCtpTxQueue> queue,
     NS_ABORT_MSG_IF(sw == nullptr, "CTP queue registration requires UbSwitch");
     sw->RegisterTpWithAllocator(queue, outPort, priority);
     m_registeredQueues.insert(queue);
-}
-
-void
-UbCtpTransportService::RetireEmptyQueue(Ptr<UbCtpTxQueue> queue)
-{
-    if (queue == nullptr || !queue->IsEmpty())
-    {
-        return;
-    }
-
-    auto queueIt = std::find_if(m_queues.begin(),
-                                m_queues.end(),
-                                [&queue](const auto& entry) { return entry.second == queue; });
-    if (queueIt == m_queues.end())
-    {
-        return;
-    }
-
-    auto registeredIt = m_registeredQueues.find(queue);
-    if (registeredIt != m_registeredQueues.end())
-    {
-        Ptr<UbSwitch> sw = m_node == nullptr ? nullptr : m_node->GetObject<UbSwitch>();
-        NS_ABORT_MSG_IF(sw == nullptr, "CTP queue retirement requires UbSwitch");
-        sw->RemoveTpFromAllocator(queue);
-        m_registeredQueues.erase(registeredIt);
-    }
-    m_queues.erase(queueIt);
 }
 
 void
@@ -1859,7 +1847,6 @@ UbCtpTransportService::DoDispose()
         {
             continue;
         }
-        queue->SetEmptyCallback({});
         if (m_registeredQueues.find(queue) != m_registeredQueues.end() && sw != nullptr &&
             sw->GetAllocator() != nullptr)
         {

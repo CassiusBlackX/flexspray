@@ -18024,6 +18024,9 @@ class UbLifecycleRetiredStorageTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(storage.resourceCount,
                               kResourceCount,
                               "Every distinct local ID should retain generation history");
+        NS_TEST_ASSERT_MSG_EQ(storage.compactHistoryRunCount,
+                              1u,
+                              "Contiguous equal retired histories should occupy one compact run");
         NS_TEST_ASSERT_MSG_EQ(storage.activeStateCount,
                               0u,
                               "Retired resources should release every active-state allocation");
@@ -18042,8 +18045,9 @@ class UbLifecycleRetiredStorageTest : public TestCase
                   << " attempt_words=" << storage.activeAttemptWordCount
                   << " leases=" << storage.activeLeaseCount << std::endl;
 
+        constexpr uint64_t kReplacementLocalId = kResourceCount / 2;
         const UbLifecycleResourceIdentity replacement =
-            coordinator->OpenResource(UbLifecycleResourceKind::WQE, 0);
+            coordinator->OpenResource(UbLifecycleResourceKind::WQE, kReplacementLocalId);
         NS_TEST_ASSERT_MSG_EQ(replacement.generation,
                               2u,
                               "Local-ID reuse should increment compact generation history");
@@ -18051,9 +18055,37 @@ class UbLifecycleRetiredStorageTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(reopened.resourceCount,
                               kResourceCount,
                               "Local-ID reuse should not create a second resource slot");
+        NS_TEST_ASSERT_MSG_EQ(
+            reopened.compactHistoryRunCount,
+            2u,
+            "Reopening a middle local ID should leave compact runs on both sides");
         NS_TEST_ASSERT_MSG_EQ(reopened.activeStateCount,
                               1u,
                               "Only the replacement generation should own active storage");
+
+        coordinator->RecordWorkTerminal(replacement, UbWorkOutcome::FAILED);
+        coordinator->RetireResource(replacement);
+        const UbLifecycleResourceSnapshot replacementSnapshot =
+            coordinator->GetSnapshot(replacement);
+        NS_TEST_ASSERT_MSG_EQ(replacementSnapshot.retired,
+                              true,
+                              "Reused local ID should remain queryable after compact retirement");
+        NS_TEST_ASSERT_MSG_EQ(replacementSnapshot.failedTerminals,
+                              1u,
+                              "Compact history should preserve the replacement terminal outcome");
+        NS_TEST_ASSERT_MSG_EQ(replacementSnapshot.completedTerminals,
+                              0u,
+                              "Replacement outcome must not alias the adjacent completed run");
+        const UbLifecycleStorageSnapshot split = coordinator->GetStorageSnapshotForTest();
+        NS_TEST_ASSERT_MSG_EQ(split.resourceCount,
+                              kResourceCount,
+                              "Replacement retirement should preserve the distinct resource count");
+        NS_TEST_ASSERT_MSG_EQ(split.compactHistoryRunCount,
+                              3u,
+                              "Different generation and outcome should split only the reused ID");
+        NS_TEST_ASSERT_MSG_EQ(split.activeStateCount,
+                              0u,
+                              "Replacement retirement should release its active state");
 
         Simulator::Destroy();
         Config::Reset();
@@ -24753,6 +24785,7 @@ class UbCtpSendSegmentRegistersAndTriggersPortTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(service->GetRegisteredQueueCountForTest(),
                               1u,
                               "reusing a compact queue must not duplicate allocator registration");
+        Ptr<UbCtpTxQueue> stableQueue = service->GetOrCreateQueue(key, outPort, key.vl);
 
         Simulator::Stop(NanoSeconds(100));
         Simulator::Run();
@@ -24760,11 +24793,14 @@ class UbCtpSendSegmentRegistersAndTriggersPortTest : public TestCase
                               0u,
                               "triggered allocator should move queued CTP packets to the source port");
         NS_TEST_ASSERT_MSG_EQ(service->GetQueueCount(),
-                              0u,
-                              "the empty CTP transmit queue should retire after its final packet");
+                              1u,
+                              "an empty CTP queue shell must retain its stable allocator slot");
         NS_TEST_ASSERT_MSG_EQ(service->GetRegisteredQueueCountForTest(),
-                              0u,
-                              "retired CTP queues must unregister from the allocator");
+                              1u,
+                              "an empty CTP queue must remain registered for stable RR order");
+        NS_TEST_ASSERT_MSG_EQ(service->GetOrCreateQueue(key, outPort, key.vl),
+                              stableQueue,
+                              "later CTP work must reuse the original allocator queue identity");
 
         Simulator::Destroy();
     }

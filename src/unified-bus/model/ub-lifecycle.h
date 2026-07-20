@@ -241,6 +241,7 @@ struct UbLifecycleResourceSnapshot
 struct UbLifecycleStorageSnapshot
 {
     std::size_t resourceCount{0};
+    std::size_t compactHistoryRunCount{0};
     std::size_t activeStateCount{0};
     std::size_t retainedSummaryCount{0};
     std::size_t activeAttemptWordCount{0};
@@ -313,12 +314,42 @@ class UbLifecycleCoordinator : public Object
         std::unique_ptr<UbLifecycleResourceSnapshot> retainedSummary;
     };
 
+    struct CompactResourceHistory
+    {
+        uint64_t generation{0};
+        bool hasTerminalOutcome{false};
+        UbWorkOutcome terminalOutcome{UbWorkOutcome::COMPLETED};
+
+        bool operator==(const CompactResourceHistory&) const = default;
+    };
+
+    struct CompactHistoryRun
+    {
+        uint64_t lastLocalId{0};
+        CompactResourceHistory history;
+    };
+
+    struct ResourceValidation
+    {
+        const ResourceState* state{nullptr};
+        const CompactResourceHistory* compactHistory{nullptr};
+    };
+
     static bool TryReadIdentity(Ptr<const Packet> packet, UbPacketAttemptIdentity& identity);
     static Ptr<UbLifecycleCoordinator> Resolve(const UbPacketAttemptIdentity& identity);
 
     ResourceState& ValidateMutable(const UbLifecycleResourceIdentity& identity);
-    const ResourceState& Validate(const UbLifecycleResourceIdentity& identity) const;
+    ResourceValidation Validate(const UbLifecycleResourceIdentity& identity) const;
+    const CompactResourceHistory* FindCompactHistory(UbLifecycleResourceKind kind,
+                                                     uint64_t localId) const;
+    bool TakeCompactHistory(UbLifecycleResourceKind kind,
+                            uint64_t localId,
+                            CompactResourceHistory& history);
+    void StoreCompactHistory(UbLifecycleResourceKind kind,
+                             uint64_t localId,
+                             const CompactResourceHistory& history);
     static UbLifecycleResourceSnapshot BuildSnapshot(const ResourceState& state);
+    static UbLifecycleResourceSnapshot BuildSnapshot(const ResourceValidation& validation);
     void ObservePacketTransfer(const UbPacketAttemptIdentity& identity, UbPacketTransfer transfer);
     void TerminatePacket(const UbPacketAttemptIdentity& identity, UbPacketTerminal terminal);
 
@@ -326,6 +357,7 @@ class UbLifecycleCoordinator : public Object
     uint64_t m_traceSequence{0};
     TracedCallback<const UbLifecycleTraceRecord&> m_lifecycleTrace;
     std::map<ResourceKey, ResourceState> m_resources;
+    std::map<UbLifecycleResourceKind, std::map<uint64_t, CompactHistoryRun>> m_compactHistories;
     ResourceState* m_cachedResourceState{nullptr};
     ResourceKey m_cachedResourceKey{UbLifecycleResourceKind::RTP_ENDPOINT, 0};
 };

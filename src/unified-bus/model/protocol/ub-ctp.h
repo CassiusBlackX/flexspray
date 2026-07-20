@@ -157,7 +157,6 @@ class UbCtpTxQueue : public UbIngressQueue
     bool IsEmpty() override;
     Ptr<Packet> GetNextPacket() override;
     uint32_t GetNextPacketSize() override;
-    void SetEmptyCallback(Callback<void, Ptr<UbCtpTxQueue>> callback);
     void EnqueueData(Ptr<Packet> packet);
     void EnqueueAck(Ptr<Packet> packet);
     void EnqueueCnp(Ptr<Packet> packet);
@@ -172,7 +171,6 @@ class UbCtpTxQueue : public UbIngressQueue
     std::queue<Ptr<Packet>>* GetPriorityQueue();
     void EnqueueToClass(UbCtpQueueClass queueClass, Ptr<Packet> packet);
 
-    Callback<void, Ptr<UbCtpTxQueue>> m_emptyCallback;
     std::queue<Ptr<Packet>> m_dataQueue;
     std::queue<Ptr<Packet>> m_ackQueue;
     std::queue<Ptr<Packet>> m_cnpQueue;
@@ -275,7 +273,6 @@ class UbCtpTransportService : public Object
     void RegisterQueueIfNeeded(Ptr<UbCtpTxQueue> queue,
                                uint32_t outPort,
                                uint32_t priority);
-    void RetireEmptyQueue(Ptr<UbCtpTxQueue> queue);
     void RegisterPacketBirth(Ptr<Packet> packet);
     void RunTrackedCompleteFromTaAck(UbCtpEntityKey key,
                                      uint32_t taSsn,
