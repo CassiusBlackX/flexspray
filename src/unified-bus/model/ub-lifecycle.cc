@@ -414,13 +414,29 @@ UbLifecycleResourceIdentity
 UbLifecycleCoordinator::OpenResource(UbLifecycleResourceKind kind, uint64_t localId)
 {
     const ResourceKey key{kind, localId};
-    ResourceState& state = m_resources[key];
+    auto resource = m_resources.find(key);
+    if (resource != m_resources.end() && !resource->second.retired)
+    {
+        m_cachedResourceKey = key;
+        m_cachedResourceState = &resource->second;
+        return {m_ownerNodeId, kind, localId, resource->second.generation};
+    }
+
+    CompactResourceHistory compactHistory;
+    const bool reusedCompactHistory =
+        resource == m_resources.end() && TakeCompactHistory(kind, localId, compactHistory);
+    if (resource == m_resources.end())
+    {
+        resource = m_resources.try_emplace(key).first;
+        if (reusedCompactHistory)
+        {
+            resource->second.generation = compactHistory.generation;
+        }
+    }
+
+    ResourceState& state = resource->second;
     m_cachedResourceKey = key;
     m_cachedResourceState = &state;
-    if (state.generation != 0 && !state.retired)
-    {
-        return {m_ownerNodeId, kind, localId, state.generation};
-    }
 
     NS_ABORT_MSG_IF(state.generation == std::numeric_limits<uint64_t>::max(),
                     "Lifecycle generation exhausted");
@@ -501,6 +517,17 @@ UbLifecycleCoordinator::RetireResource(const UbLifecycleResourceIdentity& identi
                                          UbLifecycleTraceSite::COORDINATOR_RETIRE));
     }
     state.active.reset();
+    if (UbLifecycleTrace::GetLevel() == UbLifecycleTraceLevel::OFF)
+    {
+        const CompactResourceHistory history{state.generation,
+                                             state.hasTerminalOutcome,
+                                             state.terminalOutcome};
+        const ResourceKey key{identity.kind, identity.localId};
+        m_cachedResourceState = nullptr;
+        const std::size_t erased = m_resources.erase(key);
+        NS_ABORT_MSG_IF(erased != 1, "Retired lifecycle resource lost its canonical state");
+        StoreCompactHistory(identity.kind, identity.localId, history);
+    }
 }
 
 bool
@@ -530,8 +557,8 @@ UbLifecycleCoordinator::AcquireLease(const UbLifecycleResourceIdentity& owner,
                                      const UbLifecycleResourceIdentity& related)
 {
     ResourceState& state = ValidateMutable(owner);
-    const ResourceState& relatedState = Validate(related);
-    NS_ABORT_MSG_IF(relatedState.retired,
+    const ResourceValidation relatedState = Validate(related);
+    NS_ABORT_MSG_IF(relatedState.compactHistory != nullptr || relatedState.state->retired,
                     "Lifecycle lease cannot reference a retired resource");
     ActiveResourceState& active = *state.active;
     NS_ABORT_MSG_IF(active.nextLease == std::numeric_limits<uint64_t>::max(),
@@ -843,6 +870,16 @@ UbLifecycleCoordinator::GetStorageSnapshotForTest() const
 {
     UbLifecycleStorageSnapshot storage;
     storage.resourceCount = m_resources.size();
+    for (const auto& [kind, runs] : m_compactHistories)
+    {
+        (void)kind;
+        storage.compactHistoryRunCount += runs.size();
+        for (const auto& [firstLocalId, run] : runs)
+        {
+            storage.resourceCount +=
+                static_cast<std::size_t>(run.lastLocalId - firstLocalId) + 1;
+        }
+    }
     for (const auto& [key, state] : m_resources)
     {
         (void)key;
@@ -1193,8 +1230,16 @@ UbLifecycleCoordinator::ValidateMutable(const UbLifecycleResourceIdentity& ident
         m_cachedResourceKey.localId != identity.localId)
     {
         const auto it = m_resources.find({identity.kind, identity.localId});
-        NS_ABORT_MSG_IF(it == m_resources.end(),
-                        "Lifecycle mutation references an unknown resource");
+        if (it == m_resources.end())
+        {
+            const CompactResourceHistory* history =
+                FindCompactHistory(identity.kind, identity.localId);
+            NS_ABORT_MSG_IF(history == nullptr,
+                            "Lifecycle mutation references an unknown resource");
+            NS_ABORT_MSG_IF(identity.generation != history->generation,
+                            "Lifecycle mutation references a stale generation");
+            NS_ABORT_MSG("Lifecycle mutation after resource retirement");
+        }
         m_cachedResourceKey = it->first;
         m_cachedResourceState = &it->second;
     }
@@ -1207,16 +1252,117 @@ UbLifecycleCoordinator::ValidateMutable(const UbLifecycleResourceIdentity& ident
     return *m_cachedResourceState;
 }
 
-const UbLifecycleCoordinator::ResourceState&
+UbLifecycleCoordinator::ResourceValidation
 UbLifecycleCoordinator::Validate(const UbLifecycleResourceIdentity& identity) const
 {
     NS_ABORT_MSG_IF(identity.ownerNodeId != m_ownerNodeId,
                     "Lifecycle query routed to the wrong node coordinator");
     const auto it = m_resources.find({identity.kind, identity.localId});
-    NS_ABORT_MSG_IF(it == m_resources.end(), "Lifecycle query references an unknown resource");
-    NS_ABORT_MSG_IF(identity.generation != it->second.generation,
+    if (it != m_resources.end())
+    {
+        NS_ABORT_MSG_IF(identity.generation != it->second.generation,
+                        "Lifecycle query references a stale generation");
+        return {&it->second, nullptr};
+    }
+
+    const CompactResourceHistory* history =
+        FindCompactHistory(identity.kind, identity.localId);
+    NS_ABORT_MSG_IF(history == nullptr, "Lifecycle query references an unknown resource");
+    NS_ABORT_MSG_IF(identity.generation != history->generation,
                     "Lifecycle query references a stale generation");
-    return it->second;
+    return {nullptr, history};
+}
+
+const UbLifecycleCoordinator::CompactResourceHistory*
+UbLifecycleCoordinator::FindCompactHistory(UbLifecycleResourceKind kind, uint64_t localId) const
+{
+    const auto histories = m_compactHistories.find(kind);
+    if (histories == m_compactHistories.end())
+    {
+        return nullptr;
+    }
+    auto run = histories->second.upper_bound(localId);
+    if (run == histories->second.begin())
+    {
+        return nullptr;
+    }
+    --run;
+    return localId <= run->second.lastLocalId ? &run->second.history : nullptr;
+}
+
+bool
+UbLifecycleCoordinator::TakeCompactHistory(UbLifecycleResourceKind kind,
+                                           uint64_t localId,
+                                           CompactResourceHistory& history)
+{
+    auto histories = m_compactHistories.find(kind);
+    if (histories == m_compactHistories.end())
+    {
+        return false;
+    }
+    auto& runs = histories->second;
+    auto run = runs.upper_bound(localId);
+    if (run == runs.begin())
+    {
+        return false;
+    }
+    --run;
+    if (localId > run->second.lastLocalId)
+    {
+        return false;
+    }
+
+    const uint64_t firstLocalId = run->first;
+    const uint64_t lastLocalId = run->second.lastLocalId;
+    history = run->second.history;
+    runs.erase(run);
+    if (firstLocalId < localId)
+    {
+        runs.emplace(firstLocalId, CompactHistoryRun{localId - 1, history});
+    }
+    if (localId < lastLocalId)
+    {
+        runs.emplace(localId + 1, CompactHistoryRun{lastLocalId, history});
+    }
+    if (runs.empty())
+    {
+        m_compactHistories.erase(histories);
+    }
+    return true;
+}
+
+void
+UbLifecycleCoordinator::StoreCompactHistory(UbLifecycleResourceKind kind,
+                                            uint64_t localId,
+                                            const CompactResourceHistory& history)
+{
+    NS_ABORT_MSG_IF(FindCompactHistory(kind, localId) != nullptr,
+                    "Lifecycle compact history already contains the retired local ID");
+    auto& runs = m_compactHistories[kind];
+    auto [run, inserted] =
+        runs.emplace(localId, CompactHistoryRun{localId, history});
+    NS_ABORT_MSG_IF(!inserted, "Duplicate lifecycle compact history run");
+
+    if (run != runs.begin())
+    {
+        auto previous = std::prev(run);
+        if (previous->second.lastLocalId != std::numeric_limits<uint64_t>::max() &&
+            previous->second.lastLocalId + 1 == run->first &&
+            previous->second.history == run->second.history)
+        {
+            previous->second.lastLocalId = run->second.lastLocalId;
+            runs.erase(run);
+            run = previous;
+        }
+    }
+
+    auto next = std::next(run);
+    if (next != runs.end() && run->second.lastLocalId != std::numeric_limits<uint64_t>::max() &&
+        run->second.lastLocalId + 1 == next->first && run->second.history == next->second.history)
+    {
+        run->second.lastLocalId = next->second.lastLocalId;
+        runs.erase(next);
+    }
 }
 
 UbLifecycleResourceSnapshot
@@ -1256,6 +1402,24 @@ UbLifecycleCoordinator::BuildSnapshot(const ResourceState& state)
         NS_ABORT_MSG("Unknown compact lifecycle terminal outcome");
     }
     return snapshot;
+}
+
+UbLifecycleResourceSnapshot
+UbLifecycleCoordinator::BuildSnapshot(const ResourceValidation& validation)
+{
+    if (validation.state != nullptr)
+    {
+        return BuildSnapshot(*validation.state);
+    }
+
+    NS_ABORT_MSG_IF(validation.compactHistory == nullptr,
+                    "Lifecycle validation has no resource state");
+    ResourceState compactState;
+    compactState.generation = validation.compactHistory->generation;
+    compactState.retired = true;
+    compactState.hasTerminalOutcome = validation.compactHistory->hasTerminalOutcome;
+    compactState.terminalOutcome = validation.compactHistory->terminalOutcome;
+    return BuildSnapshot(compactState);
 }
 
 void
