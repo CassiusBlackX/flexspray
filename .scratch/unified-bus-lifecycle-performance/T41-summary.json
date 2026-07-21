@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "ticket": "T41",
+  "status": "passed",
+  "implementation_revision": "f08aaec",
+  "production_model_changes": false,
+  "umbrella_runner": {
+    "command": "./build/utils/ns3.44-test-runner --test-name=unified-bus",
+    "decision": "passed",
+    "exit_code": 0,
+    "root_cause": "stale CTP fixture continued after a null packet assertion"
+  },
+  "post_t39_runtime_replay": {
+    "serial": true,
+    "explicit_lifecycle_level": "SUMMARY",
+    "modes": {
+      "local-mtp": {
+        "completed_tasks": 1,
+        "lifecycle_records": 198,
+        "finite_packet_attempts": 4,
+        "active_residue": {},
+        "frozen_output_and_runlog": "byte-identical"
+      },
+      "mpi-single": {
+        "completed_tasks": 1,
+        "lifecycle_records": 264,
+        "finite_packet_attempts": 4,
+        "active_residue": {},
+        "frozen_output_and_runlog": "byte-identical"
+      },
+      "hybrid": {
+        "completed_tasks": 1,
+        "lifecycle_records": 264,
+        "finite_packet_attempts": 4,
+        "active_residue": {},
+        "frozen_output_and_runlog": "byte-identical"
+      }
+    }
+  },
+  "remaining_test_infrastructure_debt": "replace lambda-after-fork death tests with spawn or immediate re-exec",
+  "unchanged_residuals": {
+    "automatic_tp_cleanup": "excluded-not-implemented",
+    "ldst_typed_tracked_optimization": "validated-prototype-not-promoted"
+  }
+}
