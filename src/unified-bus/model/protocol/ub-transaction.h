@@ -258,6 +258,13 @@ namespace ns3 {
                                      UbTransactionOperationSnapshot& snapshot) const;
         uint32_t GetTpRoundRobinIndexForTest(uint32_t tpn) const;
 
+        enum class WqeTerminalMode : uint8_t
+        {
+            CONTINUE_ACCEPTED = 0,
+            STOP_ACCEPTED = 1,
+            FORCE_DRAIN = 2,
+        };
+
         // 某个wqe完成，刷新状态
         void WqeFinish(uint32_t jettyNum,
                        Ptr<UbWqe> wqe,
@@ -265,6 +272,10 @@ namespace ns3 {
         void CompleteWqeOperation(uint32_t jettyNum,
                                   uint32_t wqeId,
                                   UbWorkOutcome outcome);
+        void CompleteWqeOperationForDrain(uint32_t jettyNum,
+                                          uint32_t wqeId,
+                                          UbWorkOutcome outcome,
+                                          WqeTerminalMode terminalMode);
         void ForceDrainTerminalPendingOperations(uint32_t jettyNum);
 
         // 判断本地tp是否处于使用状态
@@ -387,6 +398,10 @@ namespace ns3 {
                                     uint32_t jettyNum,
                                     Ptr<UbWqe> originatingWqe);
         void DetachRtpSource(OperationRecord& operation);
+        void FinishWqe(uint32_t jettyNum,
+                       Ptr<UbWqe> wqe,
+                       UbWorkOutcome outcome,
+                       WqeTerminalMode terminalMode);
         void ForceDrainTerminalPendingOperation(uint32_t jettyNum, uint32_t wqeId);
         void DeferRtpSource(uint32_t jettyNum, Ptr<UbWqe> originatingWqe);
         void WakeDeferredRtpSources(Ptr<UbTransportChannel> tp);

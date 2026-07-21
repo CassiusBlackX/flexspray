@@ -2041,7 +2041,19 @@ UbTransaction::GetTpRoundRobinIndexForTest(uint32_t tpn) const
     return it->second;
 }
 
-void UbTransaction::WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe, UbWorkOutcome outcome)
+void
+UbTransaction::WqeFinish(uint32_t jettyNum,
+                         Ptr<UbWqe> wqe,
+                         UbWorkOutcome outcome)
+{
+    FinishWqe(jettyNum, wqe, outcome, WqeTerminalMode::CONTINUE_ACCEPTED);
+}
+
+void
+UbTransaction::FinishWqe(uint32_t jettyNum,
+                         Ptr<UbWqe> wqe,
+                         UbWorkOutcome outcome,
+                         WqeTerminalMode terminalMode)
 {
     NS_ABORT_MSG_IF(wqe == nullptr, "WqeFinish requires a WQE");
     const auto operation = m_operations.find({jettyNum, wqe->GetWqeId()});
@@ -2122,7 +2134,7 @@ void UbTransaction::WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe, UbWorkOutcome o
         DetachRtpSource(operation->second);
         wqeIdentity = operation->second.wqeIdentity;
         Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
-        const bool forceDrain = GetFunction()->ShouldForceDrainAcceptedWqes(jettyNum);
+        const bool forceDrain = terminalMode == WqeTerminalMode::FORCE_DRAIN;
         std::vector<uint32_t> terminalTaSsns;
         terminalTaSsns.reserve(operation->second.segments.size());
         for (const auto& [taSsn, segment] : operation->second.segments)
@@ -2227,7 +2239,7 @@ void UbTransaction::WqeFinish(uint32_t jettyNum, Ptr<UbWqe> wqe, UbWorkOutcome o
         hadLifecycleOperation && !orderedWqes.empty() &&
         orderedWqes.front() == wqe->GetWqeId();
     const bool wakeOrderedSuccessor =
-        terminalizedOrderedFront && GetFunction()->ShouldContinueAcceptedWqes(jettyNum);
+        terminalizedOrderedFront && terminalMode == WqeTerminalMode::CONTINUE_ACCEPTED;
     auto it = std::find(orderedWqes.begin(), orderedWqes.end(), wqe->GetWqeId());
     if (it != orderedWqes.end()) {
         orderedWqes.erase(it);
@@ -2265,13 +2277,26 @@ UbTransaction::CompleteWqeOperation(uint32_t jettyNum,
                                     uint32_t wqeId,
                                     UbWorkOutcome outcome)
 {
+    CompleteWqeOperationForDrain(
+        jettyNum,
+        wqeId,
+        outcome,
+        WqeTerminalMode::CONTINUE_ACCEPTED);
+}
+
+void
+UbTransaction::CompleteWqeOperationForDrain(uint32_t jettyNum,
+                                            uint32_t wqeId,
+                                            UbWorkOutcome outcome,
+                                            WqeTerminalMode terminalMode)
+{
     NS_ABORT_MSG_IF(outcome == UbWorkOutcome::COMPLETED,
                     "Successful WQE completion must come from Transaction response processing");
     const auto operation = m_operations.find({jettyNum, wqeId});
     NS_ABORT_MSG_IF(operation == m_operations.end(),
                     "Transaction outcome references an unknown, duplicate, or stale operation");
     Ptr<UbWqe> wqe = operation->second.wqe;
-    WqeFinish(jettyNum, wqe, outcome);
+    FinishWqe(jettyNum, wqe, outcome, terminalMode);
 }
 
 void
