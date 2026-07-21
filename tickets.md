@@ -1135,3 +1135,28 @@ Closeout:
 - The portable frozen aggregate resolves next from `--next-root` or `T36_NEXT_ROOT`, rejects any
   revision other than exact `cf8ee683`, records source/binary/library hashes, and exits zero for all
   three frozen CTP cases without an exception.
+
+## Task 37: Restore DCQCN idle reset semantics
+
+**What to build:** Restore the pre-refactor DCQCN sender reset when a transport becomes idle while
+retaining lifecycle-tracked cancellation for rate, alpha, and pacing events.
+
+**Blocked by:** T36 Lazily create the CTP send-window context.
+
+- [x] Reuse the continuous reset block from `main@ccf41b58` and `next@cf8ee683` without changing
+      CNP, recovery-increase, pacing-debt, marking, packet, or TP cleanup algorithms.
+- [x] Preserve release-active-flow, tracked-event cancellation, scalar reset, and pacing-time order.
+- [x] Characterize immediate current/target-rate reset and prove canceled recovery timers cannot
+      mutate the idle state.
+- [x] Pass targeted build plus congestion-control, DCQCN marking, and lifecycle suites serially.
+- [x] Run one bounded 16 MiB PFC/DCQCN differential against `next@cf8ee683` through real Task,
+      Port, PFC, and congestion trace seams.
+
+Closeout:
+
+- Idle now resets alpha, current/target rate, time/byte recovery counters, and byte-progress state
+  exactly as main and next did. Current typed tracked-event cancellation remains unchanged.
+- Fifteen shared PFC, Port, congestion, and task artifacts are byte-identical and parsed task rows
+  match. `TaskTrace_node_2.tr` has the same 2,048-record multiset and exact timestamps/TASSNs but an
+  existing same-timestamp Send/Complete write order; this trace-only narrow exception is outside the
+  idle path and does not affect protocol bytes or completion.
