@@ -6,6 +6,8 @@ Production source head: `61abfaf` (T39 closeout; production implementation `cbc0
 
 Final frozen evidence: `dc42ac9` (T40 promotion artifacts)
 
+Post-promotion validation: `f08aaec` (T41 fixture implementation; no production model change)
+
 Behavior baseline: `main@ccf41b58`
 
 Protocol calibration baseline: `next@cf8ee683`
@@ -19,8 +21,9 @@ its previously reviewed archived tree.
 
 This is not a claim that every workload is performance-neutral. The packet-heavy LDST/p01 path has
 an explicit residual described below; a validated typed-tracked prototype was not promoted because
-LDST is uncommon and pending redesign. The macOS umbrella test runner is also not classified PASS.
-Neither exception weakens the focused semantic suites or the frozen artifact results.
+LDST is uncommon and pending redesign. T41 subsequently repaired stale CTP fixtures and the macOS
+umbrella test runner now passes. The focused semantic suites and frozen artifact results remain
+unchanged.
 
 Automatic TP close/destroy remains disabled and is not credited as a memory or runtime improvement.
 Idle TP endpoints and ordinary empty VOQs remain retained by default; only explicit lifecycle
@@ -71,35 +74,37 @@ The focused suites were built and run serially. Expected `NS_FATAL` output came 
 negative fixtures. The lifecycle baseline harness passed 38 tests, including rejection of stale,
 forged, incomplete, broad, and unclassified exception evidence.
 
-An additional non-ticket umbrella run, `--test-name=unified-bus`, is not classified PASS because the
-runner exits with status 139 on this macOS host. Removing the
-`UbAppCtpTrafficRecordRejectsInvalidPriorityTest` child-abort fixture did not remove the crash, so
-that fixture is not the root cause and the actual crash point remains unlocalized. Production
-invalid-priority validation is unchanged, and the passing ticket-defined lifecycle/CTP focused
-suites remain the accepted macOS validation path.
+T41 localized the umbrella status 139 to a stale CTP fixture, not the expected child-abort tests.
+The fixture built a sender request through the receiver service with stale endpoint IDs, so no TAACK
+was queued. Its nonfatal null assertion then continued into `RemoveHeader` and caused `SIGSEGV`.
+After migrating the affected fixtures to the current sender and Transaction-owned active paths, the
+full `--test-name=unified-bus` runner reports PASS and exits zero. Expected death-test `NS_FATAL`
+stderr remains visible and is collected normally by the parent runner. The remaining lambda-after-
+`fork()` helper has a separate POSIX/macOS portability risk and should eventually become a fresh
+spawn/re-exec test process; it is not the root cause of this resolved 139.
 
 ## Runtime Matrix
 
-The parallel matrix below was frozen at T20 source `a782858`. Later production changes restore
-routing, performance, CTP/DCQCN semantics, move unchanged CTP state types to their owner, and narrow
-the WQE terminal-policy seam. T38/T39 passed their local focused suites, but the full parallel matrix
-was not rerun after those ownership-only changes. No build, test, or simulation process overlapped
-another.
+The original parallel matrix was frozen at T20 source `a782858`. T41 additionally rebuilt the
+post-T39 production source in the existing local-MTP and parallel-all configurations and replayed
+the frozen m18 cross-owner input under local-MTP, MPI-single, and hybrid. All build, test, and
+simulation processes ran serially.
 
 | Runtime | Medium cross-owner result | Lifecycle records | Managed-tree relationship |
 |---|---:|---:|---|
 | local-single | 1/1 task | 198 | identical to T20 current candidate |
-| local-MTP, 2 threads | 1/1 task | previously validated at T20 | exact T20 candidate |
-| MPI-single, 2 ranks | 1/1 task | 264 | identical to T17 accepted candidate |
-| hybrid, 2 ranks x 2 threads | 1/1 task | 264 | identical to T17 accepted candidate |
+| local-MTP, 2 threads | 1/1 task | 198 | byte-identical to accepted m18 lifecycle role |
+| MPI-single, 2 ranks | 1/1 task | 264 | byte-identical to accepted m18 lifecycle role |
+| hybrid, 2 ranks x 2 threads | 1/1 task | 264 | byte-identical to accepted m18 lifecycle role |
 
 MPI causal ordering, hybrid causal ordering, dependency visibility, MPI and hybrid lifecycle
 control, remote TP, and MPI/hybrid quick-example suites all pass. Current MPI-single and hybrid
 managed trees are byte-identical to the accepted T17 trees, proving that T20's contract cleanup did
 not change their runtime artifacts.
 
-These rows therefore remain evidence for the lifecycle parallel-control architecture, not a claim
-that binaries built from `61abfaf` were rerun under every runtime.
+These three rows now include binaries built from the post-T39 production source. T40 changed the
+`minimal` trace preset to lifecycle `OFF`, so T41 selected `SUMMARY` explicitly in temporary input
+copies to restore the accepted lifecycle evidence seam without changing modeled behavior.
 
 Owner-local lifecycle sequences parse monotonically, and each rank's schema registry is complete and
 consistent. A separate check over the production parser's decoded SUMMARY records finds zero
@@ -149,8 +154,9 @@ across `OFF`, `SUMMARY`, `EVENT`, and `DETAIL`.
 | DETAIL | 5.487 ms | 55.847 ms | 28,147,712 B | 246 | 19,770 B | 13/13 | 23,293 B |
 
 These are single bounded runs for regression-scale cost, not statistically powered performance
-claims. They prove output independence, bounded bytes/descriptors and parser validity. They do not
-justify changing the current minimal/SUMMARY default.
+claims. They prove output independence, bounded bytes/descriptors and parser validity. The current
+`minimal` preset remains lifecycle `OFF`; `SUMMARY` is selected explicitly when balance evidence is
+required.
 
 Correctness accounting is mandatory and has no valid runtime-off mode; disabling it would invalidate
 the lifecycle semantics being accepted. Its absolute behavior is covered by coordinator-focused
@@ -230,14 +236,15 @@ to be redesigned; it must not be described as solved or generalized to CTP/RTP/D
 ## Final Policies
 
 - Keep correctness accounting always enabled and trace-independent.
-- Keep lifecycle trace default at the existing minimal/SUMMARY behavior; use EVENT or DETAIL only
-  when their causal evidence is needed.
+- Keep the `minimal` preset at lifecycle `OFF`; select SUMMARY, EVENT, or DETAIL explicitly when
+  their balance or causal evidence is needed.
 - Keep 64 KiB chunks, 1 MiB/512 KiB owner pressure bounds and the 1024 configured FD maximum.
 - Keep ordinary empty VOQs and idle TP endpoints retained; use only explicit proven drain gates.
 - Keep automatic TP close/destroy and legacy task-driven removal disabled.
 - Keep the LDST typed-tracked optimization as separate follow-up work; do not imply it is present in
   this branch.
-- Keep the macOS umbrella runner residual visible until its parent-runner SIGSEGV is localized; use
-  the passing ticket-defined focused suites as the current validation boundary.
+- Keep the umbrella suite in the macOS validation boundary. Track the remaining lambda-after-`fork()`
+  death-test portability debt separately and prefer a spawn/re-exec selector if that harness is
+  redesigned.
 - Do not introduce a storage reclamation default until a representative long-workload experiment
   measures object counts, RSS and semantic continuity under an explicit candidate policy.
