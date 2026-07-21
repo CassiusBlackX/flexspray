@@ -1,0 +1,43 @@
+{
+  "cases": {
+    "ctp-normal": {
+      "bytes_per_task": 1073741824,
+      "description": "four same-Jetty CTP WRITEs with inflight window four",
+      "source": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260717-next-lifecycle-ctp-rtp-complex-differential/cases/ctp-win4/lifecycle/case-input"
+    },
+    "dcqcn": {
+      "bytes_per_task": 268435456,
+      "description": "two converging RTP flows with PFC_DYNAMIC and DCQCN",
+      "source": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260716-gitcode-main-lifecycle-differential/cases/m15-lifecycle/case-input"
+    },
+    "rtp-gbn-rto": {
+      "bytes_per_task": 536870912,
+      "description": "RTP GBN workload with deterministic PSN 1 and 3 drops",
+      "source": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260717-next-lifecycle-ctp-rtp-complex-differential/cases/rtp-gbn-double-drop/lifecycle/case-input"
+    },
+    "rtp-normal": {
+      "bytes_per_task": 33554432,
+      "description": "32-host eight-flow RTP Clos workload without loss",
+      "source": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260716-gitcode-main-lifecycle-differential/cases/p02-lifecycle/case-input"
+    }
+  },
+  "execution": "strictly serial",
+  "observability": "all legacy trace output and lifecycle output OFF",
+  "roles": {
+    "current": {
+      "binary": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+      "binary_sha256": "7756e587027029b4d551f70d490659bcea4af0f31cc5fbd47ddc47a46bb45a78",
+      "library_dir": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/build/lib",
+      "revision": "51c60c5e10ed3d5fd0c69771fae1755e717ddf72",
+      "unified_bus_library_sha256": "53ee3918672071addef0a236ec8b6aa94aee37d10261ac1ef430e2e0f9b54353"
+    },
+    "next": {
+      "binary": "/Users/ytxing/workspace/ns-3-ub-routing-modes/build/scratch/ns3.44-ub-quick-example",
+      "binary_sha256": "51129796c550755d9099746fd61aece09978970cf4f25e94faab83d59e82c387",
+      "library_dir": "/Users/ytxing/workspace/ns-3-ub-routing-modes/build/lib",
+      "revision": "cf8ee683e00e5b6210661013e93cec7217d662e5",
+      "unified_bus_library_sha256": "5d090eef16ff7b77791d65a32feaf3d80f59c2e3035d4d3ecd396d847d14cc92"
+    }
+  },
+  "schema_version": 1
+}

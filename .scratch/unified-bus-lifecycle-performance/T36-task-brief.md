@@ -58,12 +58,13 @@ Code blocks copied/extracted:
   `UB_JETTY_TASSN_OOO_THRESHOLD`, out of unconditional state creation into one lazy Transaction-owner
   context seam.
 - Reuse every existing send/ACK caller and replace only its context source with that seam.
-- Keep the current Transaction-owned `inboundTaUnits` block unchanged.
+- Reuse the complete pre-refactor segment-construction block and remove only its unreachable
+  cross-packet retention after the UB Base Specification 2.0 section 6.7.2 audit.
 
 Required lifecycle adaptations:
 
-- A Transaction-owned CTP state may exist with a null context while it contains receiver-only
-  assembly or an admitted operation that has not yet reached send-window admission.
+- A Transaction-owned CTP state may exist with a null context while an admitted operation has not
+  yet reached send-window admission; receive-only packets create no Transaction state.
 - Finite retirement accepts a null context and records `sendNext` only when a context exists.
 - The existing testing query reports actual context presence instead of using state presence as a
   proxy.
@@ -120,37 +121,37 @@ Re-approval triggers: a context-free caller needs ACK/window behavior; any build
 Jetty, queue, routing, callback, trace, or timer ordering must change; byte output differs; the
 performance gate is missed for an unclear reason; or the same failure occurs twice.
 
-## Batch Reuse Map: complete inbound unit fast path
+## Batch Reuse Map: complete inbound operation fast path
 
 Pre-refactor commit: `main@ccf41b58`
 
-Semantic batch: CTP complete inbound Transaction unit storage.
+Semantic batch: direct CTP inbound transaction-operation materialization.
 
 Old active symbols and call paths:
 
-- `UbCtpTransportService::HandleReceivedPacket` parses the production packet and calls
-  `TrackInboundTaPacket` before the unchanged Transaction request processor and response path.
-- `UbCtpTransportService::TrackInboundTaPacket` creates one `UbCtpInboundTaUnit`, copies the wire
-  fields into `UbWqeSegment`, updates received payload, and returns the completed request.
+- `UbCtpTransportService::HandleReceivedPacket` parses the production packet and calls the original
+  inbound segment-construction block before the unchanged Transaction request processor and response
+  path.
+- The old `TrackInboundTaPacket` creates one `UbCtpInboundTaUnit`, copies the wire fields into
+  `UbWqeSegment`, updates received payload, and always returns the completed request.
 - The pre-refactor unit lived in `UbCtpEntityState::Rx().inboundTaUnits`; the lifecycle branch moved
   the same block into `UbCtpTransactionState::inboundTaUnits` without changing its protocol logic.
 
-Continuous code blocks reused: retain the complete pre-refactor/current unit initialization,
-segment field assignment, payload accounting, completion check, and completed-segment return block
-without rewriting fields or changing their order.
+Continuous code blocks reused: retain the complete pre-refactor segment initialization, field
+assignment, payload update, and return block without changing field order.
 
-Reuse mode: copy-and-adjust the old storage selection only. A complete first packet uses a stack
-`UbCtpInboundTaUnit`; an already retained unit or a future incomplete first packet continues through
-the existing Transaction-owned `inboundTaUnits` map and unchanged assembly block.
+Reuse mode: copy-and-adjust the old block into `BuildInboundTaOperation`. UB Base Specification 2.0
+sections 6.7.2 and 7.3.1.1 require each CTP transaction segment to occupy one TP Packet with its own
+TASSN, so no receiver-side cross-packet assembly state is retained.
 
 Preserved ordering and observable behavior: production datalink/CNA/CTP/TA parsing, receive trace,
 all `UbWqeSegment` field assignments, payload update, Transaction request processing, remote-memory
 effect, response construction, routing hint, response enqueue, and finite retirement remain in
 their current order. Duplicate complete TASSNs remain independently processable as before.
 
-Required lifecycle-only adaptations: do not allocate a canonical Transaction state or an inbound
-map node when the current packet completes a previously unseen CTP Transaction segment. Retained
-partial state, if encountered, remains canonical and retirement-aware.
+Required lifecycle-only adaptations: do not allocate canonical Transaction state for an inbound CTP
+TP Packet. Higher-level transaction segmentation remains unchanged and produces independently
+executable segments, each with its own TASSN and packet.
 
 Existing characterization: `UbCtpLocalDataPacketGeneratesTaAckTest`, the CTP Transaction and
 lifecycle suites, the frozen `ctp-win1`/`ctp-win4`/`ctp-win128` byte comparison, and the archived
@@ -158,8 +159,8 @@ lifecycle suites, the frozen `ctp-win1`/`ctp-win4`/`ctp-win128` byte comparison,
 are the RED performance gate for this batch.
 
 Explicit behavior changes: none at packet, timing, response, callback, trace, queue, ACK-window, or
-lifecycle outcome boundaries. Allocation lifetime for a complete first inbound unit is intentionally
-shortened from two transient tree nodes to one stack object.
+lifecycle outcome boundaries. The unreachable partial-assembly representation is removed and one
+complete inbound operation is materialized directly.
 
 Excluded paths: packet builders/parsers, request execution, response builders, CTP send/ACK window,
 Jetty admission/inflight semantics, queue/allocator behavior, routing, delayed events, trace setup,
@@ -168,10 +169,9 @@ RTP, LDST, retransmission, DCQCN, and automatic TP cleanup.
 Focused validation: the existing ticket-defined build and focused suites, followed by the frozen
 three-case byte comparison and 2 GiB five-pair performance gate against `next@cf8ee683`.
 
-Re-approval triggers: the complete-first-packet condition no longer follows the declared CTP
-one-packet-per-segment constraint; retained partial assembly needs new semantics; any segment field,
-parser/builder, request/response, callback/trace/timer, ACK/window, Jetty, queue, or routing order must
-change; bytes differ; or the same failure occurs twice.
+Re-approval triggers: CTP adds transport-side packetization of one transaction segment; any segment
+field, parser/builder, request/response, callback/trace/timer, ACK/window, Jetty, queue, or routing
+order must change; bytes differ; or the same failure occurs twice.
 
 ## Diagnostic Ablation Reuse Map: stable CTP queue registration
 
@@ -364,10 +364,14 @@ bytes differ; memory remains linear in retired segment count; or the same failur
   constructor hotspot but left per-segment Transaction state and `inboundTaUnits` tree allocation
   in `HandleReceivedPacket`; this failed result is the RED gate for the complete-unit fast path.
 - 2026-07-20: the complete-unit candidate keeps the pre-refactor segment construction and payload
-  block intact, selects a stack `UbCtpInboundTaUnit` for a complete first packet, and retains the
-  Transaction-owned map path for an existing or future incomplete unit. The targeted build and
+  block intact and avoids Transaction-owned storage for the spec-defined complete operation. The
+  targeted build and
   `unified-bus-ctp-transaction`, `unified-bus-ctp-lifecycle`, and `unified-bus-lifecycle` suites
   passed serially with the no-suffix runner.
+- 2026-07-20: post-review verification against UB Base Specification 2.0 sections 6.7.2, 7.3.1.1,
+  and 7.4.2.1 confirmed that each CTP transaction segment corresponds to one TP Packet and one TASSN.
+  The unreachable partial-assembly map was removed; transaction-layer Write/Read segmentation and
+  RTP multi-packet assembly remain out of scope and unchanged.
 - 2026-07-20: the frozen `ctp-win1`, `ctp-win4`, and `ctp-win128` current/next replay passed under
   `.scratch/unified-bus-lifecycle-performance/evidence/t36-ctp-fastpath-correctness-v1`. Every
   shared artifact and task row is byte-identical, all completion timestamps match, and the three
@@ -427,3 +431,16 @@ bytes differ; memory remains linear in retired segment count; or the same failur
   classification error, active/history overlap, or enabled-trace change. One low-risk pre-existing
   TP TPN-reuse cross-generation test gap remains outside T36; no current production failure was
   found on that path.
+- 2026-07-20: a post-review audit of UB Base Specification 2.0 sections 6.7.2, 7.3.1.1, and 7.4.2.1
+  fixed the CTP receive invariant: each transaction segment has one TASSN and occupies one TP Packet.
+  The old field-assignment block remains in `BuildInboundTaOperation`, while the unreachable
+  `UbCtpInboundTaUnit` and Transaction-owned partial map were removed. Transaction-layer Write/Read
+  segmentation and RTP multi-packet assembly remain unchanged. Targeted build and the CTP
+  Transaction, CTP lifecycle, and lifecycle suites passed serially. Fresh `ctp-win1`, `ctp-win4`,
+  and `ctp-win128` current/next runs remained byte- and task-identical.
+- 2026-07-21: the aggregate runner now accepts `--next-root` or `T36_NEXT_ROOT`, verifies exact
+  `next@cf8ee683` plus built artifacts at startup, and records canonical source roots and binary,
+  library, production-source, and diff hashes. Against the existing verified next checkout it exited
+  zero for `ctp-win1`, `ctp-win4`, and `ctp-win128`; every artifact and task comparison passed with no
+  exception. The five focused suites passed serially with the current no-suffix test runner before
+  implementation commit `d8f344f`.

@@ -8,9 +8,9 @@ that previously reached about 57.6 MB at 2 GiB and about 184.5 MB at 8 GiB.
 
 The accepted implementation consists of three narrow changes discovered through the T36 matrix:
 
-1. Receiver-only CTP Transaction state no longer creates the send-side ACK bitmap.
-2. Complete inbound CTP units use the existing segment construction block with stack-local
-   retention; partial units retain the existing Transaction-owned map path.
+1. Receiver-only CTP packets no longer create Transaction state or a send-side ACK bitmap.
+2. Each CTP TP Packet uses the existing segment construction block and is submitted directly as one
+   complete transaction operation, as required by UB Base Specification 2.0 section 6.7.2.
 3. Empty CTP queues keep their pre-refactor allocator identity, and trace-OFF retired generation
    history stores adjacent equal records in compact runs.
 
@@ -18,6 +18,8 @@ The accepted implementation consists of three narrow changes discovered through 
 
 - The pre-refactor CTP builder, parser, header/tag construction, Jetty admission, send/ACK window,
   TAACK, response, queue priority, callback, timer, trace, and completion algorithms remain active.
+- Higher-level Write/Read segmentation remains active, but every resulting transaction segment has
+  its own TASSN and CTP TP Packet; the receiver keeps no cross-packet segment assembly state.
 - Queue shells remain registered after draining because their allocator slot affects RR/DWRR order.
   Service disposal still unregisters all retained queues before clearing ownership.
 - Compact history stores the exact generation and terminal outcome. Reopening removes only one ID,
@@ -63,6 +65,14 @@ consistent across both blocks. No large-scale performance exception is needed.
 - `unified-bus-lifecycle-storage`, `unified-bus-lifecycle`,
   `unified-bus-lifecycle-trace`, `unified-bus-ctp-transaction`, and
   `unified-bus-ctp-lifecycle` passed serially.
+- A post-review UB Base Specification 2.0 audit removed the unreachable CTP partial-assembly state.
+  The targeted build and affected focused suites passed again. Fresh `ctp-win1`, `ctp-win4`, and
+  `ctp-win128` runs against `next@cf8ee683` kept every shared artifact and task row byte-identical.
+  The portable aggregate then resolved an explicit next checkout, verified exact revision
+  `cf8ee683`, recorded both roles' source/binary/library hashes, and exited zero.
+- Final implementation revision `d8f344f` has binary SHA-256 `7756e587...78` and Unified Bus library
+  SHA-256 `c975a74c...03`; the aggregate records the T36 production scope as clean. The exact next
+  binary and library hashes are `51129796...87` and `5d090eef...92`.
 - Review against `main@ccf41b58`, T25 storage behavior, and `next@cf8ee683` found no omitted old CTP
   branch, reordered protocol state, duplicate builder/parser/state machine, active/history overlap,
   generation classification error, or enabled-trace change.
@@ -72,6 +82,7 @@ consistent across both blocks. No large-scale performance exception is needed.
 ## Evidence
 
 - `scratch/20260720-ctp-fastpath-memory-scaling/results/frozen-ctp-compact-history-v1/summary.json`
+- `scratch/20260720-ctp-fastpath-memory-scaling/results/frozen-ctp-compact-history-v1/ctp-win4/summary.json`
 - `scratch/20260720-ctp-fastpath-memory-scaling/results/diagnostics/compact-history-production-v1-multi-entity-2g/summary.json`
 - `scratch/20260720-ctp-fastpath-memory-scaling/results/diagnostics/compact-history-production-v1-mixed-bidir-2g/summary.json`
 - `scratch/20260720-ctp-fastpath-memory-scaling/results/performance-compact-history-v1/summary.json`

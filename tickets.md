@@ -1032,12 +1032,65 @@ Closeout:
   claimed. Packet lifecycle state, public snapshots, parallel control, and protocol paths are
   untouched.
 
+## Task 34: Calibrate lifecycle OFF performance root causes
+
+**What to build:** Establish a corrected, counterbalanced host-performance baseline against
+`next@cf8ee683`, attribute the LDST regression without weakening lifecycle correctness, and retain
+only reproducible summaries and runners.
+
+**Blocked by:** T33 Skip unused lifecycle trace setup when output is off.
+
+- [x] Correct role-specific dynamic-library loading through macOS `/usr/bin/time` and exclude
+      invalid earlier comparisons.
+- [x] Locate the first large LDST regression and separate generic callback wrapping, tracked-event
+      bookkeeping, and packet birth/terminal accounting.
+- [x] Validate a typed tracked scheduling prototype that preserves forced-stop cancellation and
+      exact semantic artifacts.
+- [x] Publish the accepted report, aggregate summary, authoritative comparison summaries, and
+      reproducible final runners without raw profile or run directories.
+
+Closeout:
+
+- Corrected counterbalanced comparisons identify T13 LDST callback wrapping and lifecycle tracking
+  as the first large regression. The typed tracked prototype reduces its current in-block wall gap
+  versus next from `18.12%` to `4.75%` while preserving exact artifacts and forced-stop behavior.
+- Packet identity accounting remains a smaller shared cost. Transfer observation already returns
+  before packet-tag reads when lifecycle output is OFF.
+- LDST is not generalized to other Unified Bus modules; module-specific calibration is delegated to
+  T35 because LDST is an uncommon path with a pending redesign.
+
+## Task 35: Calibrate module-level lifecycle hotspots
+
+**What to build:** Measure ordinary RTP, CTP, RTP GBN/RTO, and PFC/DCQCN independently against
+`next@cf8ee683`, then select the first common-path optimization from evidence rather than LDST code
+shape.
+
+**Blocked by:** T34 Calibrate lifecycle OFF performance root causes.
+
+- [x] Run all module fixtures serially with one warm-up and counterbalanced pairs.
+- [x] Preserve exact task and protocol artifacts with legacy and lifecycle trace output disabled.
+- [x] Measure CTP payload scaling through 4 GiB and attribute the stable wall/RSS growth to
+      receiver-side send-window context churn.
+- [x] Publish the accepted manifest, timing/profile summaries, aggregate report, and reproducible
+      runner without raw profiles or per-run output trees.
+
+Closeout:
+
+- Ordinary RTP, RTP GBN/RTO, and PFC/DCQCN remain within `+2.51%` paired-median wall of next in this
+  matrix; ordinary CTP is the only stable common-path regression at `+14.73%` for 512 MiB.
+- CTP remains about `+15%` slower from 512 MiB through 4 GiB while RSS grows from 25.9 MB to
+  99.9 MB. Profiles identify repeated receiver-side creation and retirement of the send ACK-window
+  context as the primary mechanism.
+- T36 therefore owns the lazy CTP context, receiver complete-operation path, queue identity, and
+  lifecycle retired-history corrections under byte and performance gates.
+
 ## Task 36: Lazily create the CTP send-window context
 
-**What to build:** Keep receiver-only CTP assembly in the finite Transaction owner without
-allocating the send-side ACK bitmap, and instantiate the existing context only when a send or ACK
-window path requires it. Preserve pre-refactor CTP allocator identity and compact trace-OFF retired
-generation history where required to meet the accepted correctness and performance gates.
+**What to build:** Process each CTP TP Packet as one complete transaction operation without
+receiver-side partial assembly or a send-side ACK bitmap, and instantiate the existing context only
+when a send or ACK window path requires it. Preserve pre-refactor CTP allocator identity and compact
+trace-OFF retired generation history where required to meet the accepted correctness and performance
+gates.
 
 **Blocked by:** T35 Module-level lifecycle hotspot calibration.
 
@@ -1045,6 +1098,8 @@ generation history where required to meet the accepted correctness and performan
 - [x] Direct sends, Jetty drains, wire ACKs, delayed TAACK, forced terminal, TASSN continuity, and
       finite retirement preserve the existing window and lifecycle behavior.
 - [x] WRITE TAACK and READ response generation do not allocate a send-window context on the target.
+- [x] Each received CTP TP Packet is submitted directly as one complete transaction operation and
+      leaves no partial-assembly Transaction state.
 - [x] Empty CTP queue shells preserve their pre-refactor allocator identity until service disposal;
       complex multi-Entity and bidirectional scheduling remains byte-identical to `next@cf8ee683`.
 - [x] Trace-OFF retired generation history uses bounded runs without changing stale/retired
@@ -1058,10 +1113,11 @@ generation history where required to meet the accepted correctness and performan
 
 Closeout:
 
-- Receiver-only Transaction state no longer creates the send-side ACK bitmap. A complete inbound
-  CTP unit uses the existing segment construction block with stack-local retention; only a partial
-  unit enters the existing Transaction-owned map. Builders, parsers, Jetty admission, ACK/window,
-  response, callback, timer, trace, and completion algorithms are unchanged.
+- UB Base Specification 2.0 section 6.7.2 defines each CTP TP Packet as one complete transaction
+  operation. The receiver reuses the existing segment construction block directly and retains no
+  cross-packet assembly state. Higher-level Write/Read segmentation remains unchanged: each segment
+  has its own TASSN and CTP TP Packet. Builders, parsers, Jetty admission, ACK/window, response,
+  callback, timer, trace, and completion algorithms are unchanged.
 - Empty CTP queues retain the pre-refactor service-owned object and allocator slot after draining.
   This preserves RR/DWRR cursor interpretation across Entity bursts; `DoDispose` still unregisters
   every retained queue before clearing the maps.
@@ -1076,3 +1132,6 @@ Closeout:
   CPU, and `-0.74%` peak RSS. This recovers 10.84 percentage points of the T35 wall gap and passes
   both final gates. An independent five-pair 8 GiB run measures `-0.01%` wall, `+0.26%` user CPU,
   and `-0.42%` peak RSS, with no payload-scaled tombstone growth.
+- The portable frozen aggregate resolves next from `--next-root` or `T36_NEXT_ROOT`, rejects any
+  revision other than exact `cf8ee683`, records source/binary/library hashes, and exits zero for all
+  three frozen CTP cases without an exception.
