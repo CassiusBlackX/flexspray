@@ -685,7 +685,15 @@ UbJettyManager::DestroyJetty(uint32_t jettyNum,
         while (!it->second.wqes.empty())
         {
             const uint32_t wqeId = it->second.wqes.begin()->first;
-            GetTransaction()->CompleteWqeOperation(jettyNum, wqeId, outcome);
+            const UbTransaction::WqeTerminalMode terminalMode =
+                it->second.cleanupMode == CleanupMode::FORCE
+                    ? UbTransaction::WqeTerminalMode::FORCE_DRAIN
+                    : UbTransaction::WqeTerminalMode::STOP_ACCEPTED;
+            GetTransaction()->CompleteWqeOperationForDrain(
+                jettyNum,
+                wqeId,
+                outcome,
+                terminalMode);
             it = findOriginalRecord();
             if (it == m_records.end())
             {
