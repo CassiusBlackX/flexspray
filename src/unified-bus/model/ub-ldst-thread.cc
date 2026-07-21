@@ -113,11 +113,11 @@ void UbLdstThread::PushTaskSegment(Ptr<UbLdstTaskSegment> taskSegment)
     if (taskSegment->GetType() == UbMemOperationType::LOAD) {
         m_loadQueue.push(taskSegment);
         auto ldstInstance = NodeList::GetNode(m_nodeId)->GetObject<UbLdstInstance>();
-        ldstInstance->ScheduleNow(MakeCallback(&UbLdstThread::HandleLoadTask, this));
+        ldstInstance->ScheduleNow(&UbLdstThread::HandleLoadTask, this);
     } else if (taskSegment->GetType() == UbMemOperationType::STORE) {
         m_storeQueue.push(taskSegment);
         auto ldstInstance = NodeList::GetNode(m_nodeId)->GetObject<UbLdstInstance>();
-        ldstInstance->ScheduleNow(MakeCallback(&UbLdstThread::HandleStoreTask, this));
+        ldstInstance->ScheduleNow(&UbLdstThread::HandleStoreTask, this);
     }
 }
 
@@ -208,10 +208,10 @@ bool UbLdstThread::UpdateTaskRecord(Ptr<UbLdstTaskSegment> taskSegment)
     auto ldstInstance = NodeList::GetNode(m_nodeId)->GetObject<UbLdstInstance>();
     if (taskSegment->GetType() == UbMemOperationType::LOAD) {
         m_loadOutstanding++;
-        ldstInstance->ScheduleNow(MakeCallback(&UbLdstThread::HandleLoadTask, this));
+        ldstInstance->ScheduleNow(&UbLdstThread::HandleLoadTask, this);
     } else if (taskSegment->GetType() == UbMemOperationType::STORE) {
         m_storeOutstanding++;
-        ldstInstance->ScheduleNow(MakeCallback(&UbLdstThread::HandleStoreTask, this));
+        ldstInstance->ScheduleNow(&UbLdstThread::HandleStoreTask, this);
     }
     return true;
 }

@@ -114,7 +114,7 @@ void UbLdstApi::SendPacket(Ptr<UbLdstTaskSegment> taskSegment, Ptr<Packet> packe
     sw->PushPacketToVoq(packet, destPort, taskSegment->GetPriority(), destPort);
     Ptr<UbPort> port = DynamicCast<UbPort>(node->GetDevice(destPort));
     auto ldstInstance = node->GetObject<UbLdstInstance>();
-    ldstInstance->ScheduleNow(MakeCallback(&UbPort::TriggerTransmit, port));
+    ldstInstance->ScheduleNow(&UbPort::TriggerTransmit, port);
 }
 
 Ptr<Packet> UbLdstApi::GenDataPacket(Ptr<UbLdstTaskSegment> taskSegment)
@@ -280,7 +280,7 @@ void UbLdstApi::RecvResponse(Ptr<Packet> packet)
     }
     uint32_t taskSegmentId = caTaHeader.GetIniTaSsn();
     auto ldstInst = NodeList::GetNode(m_nodeId)->GetObject<UbLdstInstance>();
-    ldstInst->ScheduleNow(MakeCallback(&UbLdstInstance::OnRecvAck, ldstInst).Bind(taskSegmentId));
+    ldstInst->ScheduleNow(&UbLdstInstance::OnRecvAck, ldstInst, taskSegmentId);
 }
 
 void UbLdstApi::SetRoutingType(RoutingType routingType)

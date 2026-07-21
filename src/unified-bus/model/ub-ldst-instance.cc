@@ -167,7 +167,7 @@ void UbLdstInstance::HandleLdstTask(uint32_t src, uint32_t dest, uint32_t length
         NS_ABORT_MSG_IF(!m_taskSegmentsMap.emplace(m_currentTaskId, record).second,
                         "Duplicate LDST active segment record");
         m_currentTaskId++;
-        ScheduleNow(MakeCallback(&UbLdstThread::PushTaskSegment, ldstThread).Bind(taskSegment));
+        ScheduleNow(&UbLdstThread::PushTaskSegment, ldstThread, taskSegment);
     }
 }
 
@@ -191,7 +191,7 @@ bool UbLdstInstance::ResolveAck(uint32_t taskSegmentId)
     Ptr<UbLdstTaskSegment> taskSegment = segment->second.segment;
     uint32_t threadId = taskSegment->GetThreadId();
     auto ldstThread = GetLdstThread(threadId);
-    ScheduleNow(MakeCallback(&UbLdstThread::UpdateTask, ldstThread).Bind(taskSegment));
+    ScheduleNow(&UbLdstThread::UpdateTask, ldstThread, taskSegment);
     return true;
 }
 
@@ -245,6 +245,12 @@ void UbLdstInstance::RunTrackedAction(uint64_t token, Callback<void> action)
         return;
     }
     action();
+    ResolveTrackedAction(token);
+}
+
+void
+UbLdstInstance::ResolveTrackedAction(uint64_t token)
+{
     m_trackedActions.Resolve(m_lifecycleOwner, token);
     if (m_disposed && m_trackedActions.IsEmpty()) {
         m_trackedActions.Clear();
