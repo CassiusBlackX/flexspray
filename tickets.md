@@ -1160,3 +1160,31 @@ Closeout:
   match. `TaskTrace_node_2.tr` has the same 2,048-record multiset and exact timestamps/TASSNs but an
   existing same-timestamp Send/Complete write order; this trace-only narrow exception is outside the
   idle path and does not affect protocol bytes or completion.
+
+## Task 38: Move CTP transaction state to its canonical owner
+
+**What to build:** Move the CTP transaction identity, ACK-window context, and finite state types from
+the CTP service header to the Transaction owner without changing runtime behavior.
+
+**Blocked by:** T37 Restore DCQCN idle reset semantics.
+
+- [x] Move `UbCtpEntityKey`, `UbCtpTransactionContext`, and `UbCtpTransactionState` into
+      `ub-transaction.h` without changing fields, defaults, or public methods.
+- [x] Move the key comparison and ACK-window method implementations byte-for-byte into
+      `ub-transaction.cc`.
+- [x] Remove the `ub-transaction.h -> ub-ctp.h` reverse header dependency while keeping the CTP
+      service dependent on its Transaction-owned state.
+- [x] Preserve lazy context creation, ACK bitmap behavior, pending/outstanding containers,
+      completion-event accounting, retirement, packet, queue, routing, and callback order.
+- [x] Pass the targeted build and the CTP transaction, CTP lifecycle, and lifecycle suites serially.
+- [x] Complete a separate review against the pre-move implementation and pass `git diff --check`.
+
+Closeout:
+
+- This is a pure owner contraction. The complete comparator and ACK-window method blocks are exact
+  moves; no branch, state mutation, error, timer, trace, packet, queue, or protocol algorithm changed.
+- `ub-transaction.h` no longer includes `ub-ctp.h`; `ub-ctp.h` now consumes the
+  Transaction-owned definitions. The implementation-level include remains where Transaction calls
+  CTP service methods.
+- The targeted build and all three focused suites passed. T38 is not a frozen-byte milestone, so no
+  large baseline comparison was rerun.
