@@ -8,6 +8,9 @@ Final frozen evidence: `dc42ac9` (T40 promotion artifacts)
 
 Post-promotion validation: `f08aaec` (T41 fixture implementation; no production model change)
 
+Promotion role: strict descendant of `origin/next@cf8ee683`, accepted as the next-generation
+`next` candidate on branch `codex/unified-bus-lifecycle-implementation`
+
 Behavior baseline: `main@ccf41b58`
 
 Protocol calibration baseline: `next@cf8ee683`
@@ -32,6 +35,10 @@ watermarks, and 1024 configured descriptor maximum remain unchanged.
 
 No final acceptance result requires another protocol algorithm, packet format, callback/timer order,
 ownership model, or storage-default change.
+
+The branch is therefore closed for feature development. Further changes should be release
+integration, review fixes, or separately scoped follow-up work; automatic TP cleanup and the LDST
+typed-tracked prototype are not silently included in this promotion.
 
 ## Final Next Differential
 
