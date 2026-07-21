@@ -13,8 +13,8 @@
 #include "ns3/ub-datatype.h"
 #include "ns3/ub-lifecycle.h"
 #include "ns3/ub-queue-manager.h"
-#include "ns3/ub-sliding-bitmap-window.h"
 #include "ns3/ub-tag.h"
+#include "ns3/ub-transaction.h"
 
 #include <cstdint>
 #include <deque>
@@ -38,17 +38,6 @@ class UbTransaction;
 class UbWqeSegment;
 struct RoutingKey;
 
-struct UbCtpEntityKey
-{
-    uint32_t srcEntityId{0};
-    uint32_t dstNodeId{0};
-    uint32_t dstEntityId{0};
-    uint8_t vl{0};
-
-    bool operator<(const UbCtpEntityKey& other) const;
-    bool operator==(const UbCtpEntityKey& other) const;
-};
-
 struct UbCtpCongestionKey
 {
     uint32_t dstNodeId{0};
@@ -70,28 +59,6 @@ struct UbCtpTransportConstraints
     bool onePacketPerSegment{true};
 };
 
-class UbCtpTransactionContext : public SimpleRefCount<UbCtpTransactionContext>
-{
-  public:
-    explicit UbCtpTransactionContext(UbCtpEntityKey key = {},
-                                     uint32_t ackWindowCapacity = UB_JETTY_TASSN_OOO_THRESHOLD,
-                                     uint32_t initialSequence = 0);
-    bool CanAdmit(uint32_t sequence) const;
-    bool TryAdmit(uint32_t sequence);
-    void MarkTaAck(uint32_t sequence);
-    std::optional<uint32_t> MarkTaAckWire(uint16_t wireSequence);
-    uint32_t GetCompleteUna() const;
-    uint32_t GetSendNext() const;
-    uint32_t GetOutstandingCount() const;
-    void SetWindowForTest(uint32_t completeUna, uint32_t sendNext);
-
-  private:
-    UbCtpEntityKey m_key;
-    uint32_t m_sendNext{0};
-    uint32_t m_completeUna{0};
-    UbSlidingBitmapWindow m_ackWindow{UB_JETTY_TASSN_OOO_THRESHOLD};
-};
-
 struct UbCtpTxState
 {
     std::vector<uint32_t> outPorts;
@@ -102,15 +69,6 @@ struct UbCtpRxState
 {
     uint32_t receivedPackets{0};
     uint32_t generatedResponses{0};
-};
-
-struct UbCtpTransactionState
-{
-    Ptr<UbCtpTransactionContext> context;
-    std::deque<Ptr<UbWqeSegment>> pendingSegments;
-    std::map<uint32_t, Ptr<UbWqeSegment>> outstandingSegments;
-    std::map<Ptr<UbWqeSegment>, uint32_t> segmentOutstandingPackets;
-    uint32_t pendingCompletionEvents{0};
 };
 
 class UbCtpEntityState
