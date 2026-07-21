@@ -4,6 +4,13 @@
   "status": "passed",
   "implementation_revision": "f08aaec",
   "production_model_changes": false,
+  "promotion": {
+    "branch": "codex/unified-bus-lifecycle-implementation",
+    "base_revision": "cf8ee683e00e5b6210661013e93cec7217d662e5",
+    "base_ref": "origin/next",
+    "relationship": "strict-descendant-no-divergence",
+    "role": "next-successor-candidate"
+  },
   "umbrella_runner": {
     "command": "./build/utils/ns3.44-test-runner --test-name=unified-bus",
     "decision": "passed",

@@ -6,6 +6,10 @@ T41 closes both T40 validation residuals. The macOS umbrella `unified-bus` runne
 zero, and post-T39 local-MTP, MPI, and hybrid runs complete with finite lifecycle balance and exact
 frozen m18 treatment artifacts. No production Unified Bus model file changes.
 
+The final branch is a strict descendant of `origin/next@cf8ee683` with no missing or divergent
+remote-next commit. It is closed as the next-generation `next` candidate; later work should use a
+new scoped branch unless it is an integration or review fix for this promotion.
+
 ## Exit 139 root cause
 
 The runner was not crashing while collecting an expected child `SIGABRT`. A stale CTP fixture built
