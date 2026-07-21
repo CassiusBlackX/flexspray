@@ -2,12 +2,15 @@
 #ifndef UB_LDST_INSTANCE_H
 #define UB_LDST_INSTANCE_H
 
+#include "ns3/node-list.h"
+#include "ns3/node.h"
+#include "ns3/simulator.h"
 #include "ns3/ub-datatype.h"
 #include "ns3/ub-lifecycle.h"
 #include "ns3/ub-network-address.h"
-#include "ns3/node-list.h"
-#include "ns3/node.h"
 
+#include <functional>
+#include <type_traits>
 #include <unordered_set>
 
 namespace ns3 {
@@ -40,6 +43,27 @@ public:
     void OnRecvAck(uint32_t taskSegmentId);
     bool OnRecvAckForTest(uint32_t taskSegmentId);
     void OnTaskSegmentCompleted(Ptr<UbLdstTaskSegment> taskSegment);
+
+    template <typename MemPtr, typename... Args>
+        requires std::is_member_function_pointer_v<MemPtr>
+    void ScheduleNow(MemPtr memPtr, Args... args)
+    {
+        NS_ABORT_MSG_IF(memPtr == nullptr, "LDST tracked action cannot be null");
+        if (m_disposed)
+        {
+            return;
+        }
+        NS_ABORT_MSG_IF(m_lifecycleOwner.generation == 0,
+                        "LDST tracked action requires an initialized owner");
+        const uint64_t token = m_trackedActions.Track(m_lifecycleOwner);
+        EventId event =
+            Simulator::ScheduleNow(&UbLdstInstance::RunTypedTrackedAction<MemPtr, Args...>,
+                                   this,
+                                   token,
+                                   memPtr,
+                                   args...);
+        m_trackedActions.Attach(m_lifecycleOwner, token, event, Callback<void>());
+    }
     void ScheduleNow(Callback<void> action);
     void RegisterPacketBirth(Ptr<Packet> packet);
 
@@ -56,7 +80,20 @@ private:
         UbLifecycleResourceIdentity lifecycle;
     };
 
+    template <typename MemPtr, typename... Args>
+        requires std::is_member_function_pointer_v<MemPtr>
+    void RunTypedTrackedAction(uint64_t token, MemPtr memPtr, Args... args)
+    {
+        if (!m_trackedActions.Begin(m_lifecycleOwner, token))
+        {
+            return;
+        }
+        std::invoke(memPtr, args...);
+        ResolveTrackedAction(token);
+    }
+
     void RunTrackedAction(uint64_t token, Callback<void> action);
+    void ResolveTrackedAction(uint64_t token);
     bool ResolveAck(uint32_t taskSegmentId);
     void MemTaskStartsNotify(uint32_t nodeId, uint32_t memTaskId);
     void LastPacketACKsNotify(uint32_t nodeId, uint32_t taskId);
