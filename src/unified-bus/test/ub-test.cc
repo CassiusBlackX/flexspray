@@ -26910,6 +26910,52 @@ RunNs3RunCommand(const std::string& testFile,
 } // namespace
 
 #ifdef NS3_MTP
+class UbLifecycleLocalMtpCausalControlSystemTest : public TestCase
+{
+  public:
+    UbLifecycleLocalMtpCausalControlSystemTest()
+        : TestCase("UnifiedBus - local MTP lifecycle control respects target lookahead")
+    {
+    }
+
+    void DoRun() override
+    {
+        auto [status, output] = RunNs3RunCommand(
+            CreateTempDirFilename("ub-lifecycle-local-mtp-control.log"),
+            "src/unified-bus/examples/ub-lifecycle-local-mtp-control --test");
+
+        NS_TEST_ASSERT_MSG_EQ(status, 0, "local MTP lifecycle control must run: " << output);
+        NS_TEST_ASSERT_MSG_NE(
+            output.find("TEST : 0 : PASSED reached-5ns=1 hidden-10ns=1 visible-12ns=1 "
+                        "terminal=1 source-sent=1 owner-received=1 owner-applied=1 wrong-lp=0"),
+            std::string::npos,
+            "lifecycle control must become visible after the target LP's causal horizon: "
+                << output);
+    }
+};
+
+class UbLifecycleLocalMtpMissingLookaheadSystemTest : public TestCase
+{
+  public:
+    UbLifecycleLocalMtpMissingLookaheadSystemTest()
+        : TestCase("UnifiedBus - local MTP lifecycle control requires finite lookahead")
+    {
+    }
+
+    void DoRun() override
+    {
+        auto [status, output] = RunNs3RunCommand(
+            CreateTempDirFilename("ub-lifecycle-local-mtp-missing-lookahead.log"),
+            "src/unified-bus/examples/ub-lifecycle-local-mtp-control --bind-lookahead=0");
+
+        NS_TEST_ASSERT_MSG_NE(status, 0, "missing lifecycle lookahead must fail: " << output);
+        NS_TEST_ASSERT_MSG_NE(
+            output.find("MTP causal delivery requires a finite positive lookahead"),
+            std::string::npos,
+            "failure must identify the missing causal lookahead: " << output);
+    }
+};
+
 class UbQuickExampleLocalMtpSystemTest : public TestCase
 {
   public:
@@ -28931,6 +28977,10 @@ class UbQuickExampleSystemTestSuite : public TestSuite
         AddTestCase(new UbQuickExampleMtpDependencyVisibilityDelaySystemTest(),
                     TestCase::Duration::QUICK);
 #ifdef NS3_MTP
+        AddTestCase(new UbLifecycleLocalMtpCausalControlSystemTest(),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbLifecycleLocalMtpMissingLookaheadSystemTest(),
+                    TestCase::Duration::QUICK);
         AddTestCase(new UbQuickExampleMtpZeroDependencyVisibilityDelaySystemTest(),
                     TestCase::Duration::QUICK);
         AddTestCase(new UbQuickExampleLocalMtpSystemTest(), TestCase::Duration::QUICK);

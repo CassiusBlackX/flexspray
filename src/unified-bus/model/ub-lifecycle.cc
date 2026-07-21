@@ -1104,9 +1104,11 @@ UbParallelLifecycleAdapter::Send(UbLifecycleControlRecord record)
 #ifdef NS3_MTP
     if (MtpInterface::isEnabled())
     {
-        record.visibleTs = Simulator::Now().GetInteger();
+        const Time visibilityDelay =
+            MtpInterface::GetCausalDeliveryDelay(record.targetNodeId);
+        record.visibleTs = (Simulator::Now() + visibilityDelay).GetInteger();
         Simulator::ScheduleWithContext(record.targetNodeId,
-                                       TimeStep(0),
+                                       visibilityDelay,
                                        &UbParallelLifecycleAdapter::ReceiveAtTarget,
                                        record);
         return;
