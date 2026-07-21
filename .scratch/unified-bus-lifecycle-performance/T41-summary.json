@@ -4,6 +4,7 @@
   "status": "passed",
   "implementation_revision": "f08aaec",
   "production_model_changes": false,
+  "final_performance_report": "FINAL-PERFORMANCE-REPORT.md",
   "promotion": {
     "branch": "codex/unified-bus-lifecycle-implementation",
     "base_revision": "cf8ee683e00e5b6210661013e93cec7217d662e5",

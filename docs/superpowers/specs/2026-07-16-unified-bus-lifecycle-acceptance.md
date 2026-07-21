@@ -11,6 +11,9 @@ Post-promotion validation: `f08aaec` (T41 fixture implementation; no production 
 Promotion role: strict descendant of `origin/next@cf8ee683`, accepted as the next-generation
 `next` candidate on branch `codex/unified-bus-lifecycle-implementation`
 
+Consolidated performance evidence:
+`.scratch/unified-bus-lifecycle-performance/FINAL-PERFORMANCE-REPORT.md`
+
 Behavior baseline: `main@ccf41b58`
 
 Protocol calibration baseline: `next@cf8ee683`
