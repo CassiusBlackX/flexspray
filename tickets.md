@@ -1188,3 +1188,31 @@ Closeout:
   CTP service methods.
 - The targeted build and all three focused suites passed. T38 is not a frozen-byte milestone, so no
   large baseline comparison was rerun.
+
+## Task 39: Narrow the Transaction-to-Function WQE terminal seam
+
+**What to build:** Keep Transaction's existing WQE/segment terminal mechanics while moving the
+continue/stop/force decision to the Function-owned Jetty cleanup caller.
+
+**Blocked by:** T38 Move CTP transaction state to its canonical owner.
+
+- [x] Preserve the complete `WqeFinish` cancellation, lease, lifecycle, erase, ordering, outcome,
+      and callback sequence.
+- [x] Map ACTIVE and graceful drain to `CONTINUE_ACCEPTED`, abort drain to `STOP_ACCEPTED`, and
+      simulation-stop drain to `FORCE_DRAIN` at the Jetty manager call seam.
+- [x] Remove Transaction's reverse calls to Function cleanup policy without removing owner-side
+      characterization queries.
+- [x] Preserve the original three-argument `CompleteWqeOperation` API and scheduled member-function
+      binding; use one manager-specific drain entry for the typed mode.
+- [x] Pass the targeted build plus transaction URMA, transport pipeline, and lifecycle suites.
+- [x] Review every `WqeFinish` and `CompleteWqeOperation` caller and pass `git diff --check`.
+
+Closeout:
+
+- Transaction no longer reaches into Function to decide Jetty cleanup policy. The manager selects a
+  typed terminal mode from its canonical `CleanupMode`, while Transaction reuses the same terminal
+  implementation and still emits exactly one typed outcome to the manager-owned WQE record.
+- Reentrant cleanup escalation remains observable per WQE because `DestroyJetty` re-reads the
+  manager record and derives the mode on every loop iteration.
+- The targeted build and all three focused suites passed. T39 changes ownership plumbing only and is
+  not a frozen-byte milestone.
