@@ -21345,7 +21345,10 @@ class UbCtpPacketTraceConnectsLazyServiceTest : public TestCase
                            .vl = 7};
         service->SetSourcePortHint(key, topo.senderPort->GetIfIndex());
         service->SetDestinationPortHint(key, topo.receiverPort->GetIfIndex());
-        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(CreateCtpWriteSegment(0), key),
+        Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(0);
+        segment->SetSrc(topo.sender->GetId());
+        segment->SetDest(topo.receiver->GetId());
+        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(segment, key),
                               true,
                               "CTP send should emit packet trace");
         service->CompleteFromTaAckForTest(key, 0);
@@ -23684,14 +23687,18 @@ class UbCtpLocalDataPacketGeneratesTaAckTest : public TestCase
     void DoRun() override
     {
         LocalTpTopology topo = BuildLocalTpTopology();
+        Ptr<UbCtpTransportService> senderService =
+            topo.sender->GetObject<UbController>()->GetCtpTransportService();
         Ptr<UbCtpTransportService> receiverService =
             topo.receiver->GetObject<UbController>()->GetCtpTransportService();
         UbCtpEntityKey requestKey{.srcEntityId = 0,
                                   .dstNodeId = topo.receiver->GetId(),
                                   .dstEntityId = 0,
                                   .vl = 7};
-        Ptr<Packet> dataPacket =
-            receiverService->BuildDataPacket(CreateCtpWriteSegment(0), requestKey);
+        Ptr<UbWqeSegment> request = CreateCtpWriteSegment(0);
+        request->SetSrc(topo.sender->GetId());
+        request->SetDest(topo.receiver->GetId());
+        Ptr<Packet> dataPacket = senderService->BuildDataPacket(request, requestKey);
 
         topo.receiver->GetObject<UbSwitch>()->SwitchHandlePacket(topo.receiverPort, dataPacket);
 
@@ -23707,6 +23714,11 @@ class UbCtpLocalDataPacketGeneratesTaAckTest : public TestCase
             receiverService->GetOrCreateQueue(ackKey, topo.receiverPort->GetIfIndex(), ackKey.vl);
         Ptr<Packet> ackPacket = ackQueue->GetNextPacket();
         NS_TEST_ASSERT_MSG_NE(ackPacket, nullptr, "TAACK packet should be queued");
+        if (ackPacket == nullptr)
+        {
+            Simulator::Destroy();
+            return;
+        }
 
         UbDatalinkPacketHeader datalinkHeader;
         ackPacket->RemoveHeader(datalinkHeader);
@@ -23861,17 +23873,20 @@ class UbCtpWireTaAckCompletesJettyTest : public TestCase
                                               this));
         Ptr<UbWqe> wqe =
             function->CreateWqe(0, 1, UB_MTU_BYTE, kTaskId, TaOpcode::TA_OPCODE_WRITE);
-        function->PushWqeToJetty(wqe, kJettyNum);
-        Ptr<UbWqeSegment> segment = jetty->GetNextWqeSegment();
-
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
         UbCtpEntityKey key{.srcEntityId = 0,
                            .dstNodeId = 1,
                            .dstEntityId = 0,
                            .vl = 7};
+        wqe->SetPriority(key.vl);
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(function->SubmitCtpWqe(wqe, kJettyNum, key).status),
+            static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+            "test setup should admit the CTP WQE through the Transaction owner");
         service->SetSourcePortHint(key, 0);
-        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(segment, key),
-                              true,
+        service->StartJetty(jetty, key);
+        NS_TEST_ASSERT_MSG_EQ(service->GetOrCreateTransactionContext(key)->GetOutstandingCount(),
+                              1u,
                               "test setup should make one CTP transaction outstanding");
 
         UbCtpEntityKey ackWireKey{.srcEntityId = 0,
@@ -23934,26 +23949,25 @@ class UbCtpOutOfOrderWireTaAckCompletesContiguousJettyRangeTest : public TestCas
         Ptr<UbWqe> wqe =
             function->CreateWqe(0,
                                 1,
-                                2u * UB_WQE_TA_SEGMENT_BYTE,
+                                2u * UbCtpTransportConstraints{}.maxSegmentBytes,
                                 kTaskId,
                                 TaOpcode::TA_OPCODE_WRITE);
-        function->PushWqeToJetty(wqe, kJettyNum);
-
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
         UbCtpEntityKey key{.srcEntityId = 0,
                            .dstNodeId = 1,
                            .dstEntityId = 0,
                            .vl = 7};
+        wqe->SetPriority(key.vl);
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(function->SubmitCtpWqe(wqe, kJettyNum, key).status),
+            static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+            "test setup should admit the CTP WQE through the Transaction owner");
         service->SetSourcePortHint(key, 0);
 
-        Ptr<UbWqeSegment> firstSegment = jetty->GetNextWqeSegment();
-        Ptr<UbWqeSegment> secondSegment = jetty->GetNextWqeSegment();
-        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(firstSegment, key),
-                              true,
-                              "first CTP transaction should be outstanding");
-        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(secondSegment, key),
-                              true,
-                              "second CTP transaction should be outstanding");
+        service->StartJetty(jetty, key);
+        NS_TEST_ASSERT_MSG_EQ(service->GetOrCreateTransactionContext(key)->GetOutstandingCount(),
+                              2u,
+                              "test setup should make both CTP transactions outstanding");
 
         UbCtpEntityKey ackWireKey{.srcEntityId = 0,
                                   .dstNodeId = 0,
@@ -24023,11 +24037,9 @@ class UbCtpOutOfOrderWireTaAckTracesArrivalTest : public TestCase
         Ptr<UbWqe> wqe =
             function->CreateWqe(0,
                                 1,
-                                2u * UB_WQE_TA_SEGMENT_BYTE,
+                                2u * UbCtpTransportConstraints{}.maxSegmentBytes,
                                 kTaskId,
                                 TaOpcode::TA_OPCODE_WRITE);
-        function->PushWqeToJetty(wqe, kJettyNum);
-
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
         service->TraceConnectWithoutContext(
             "LastPacketACKsNotify",
@@ -24037,16 +24049,17 @@ class UbCtpOutOfOrderWireTaAckTracesArrivalTest : public TestCase
                            .dstNodeId = 1,
                            .dstEntityId = 0,
                            .vl = 7};
+        wqe->SetPriority(key.vl);
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(function->SubmitCtpWqe(wqe, kJettyNum, key).status),
+            static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+            "test setup should admit the CTP WQE through the Transaction owner");
         service->SetSourcePortHint(key, 0);
 
-        Ptr<UbWqeSegment> firstSegment = jetty->GetNextWqeSegment();
-        Ptr<UbWqeSegment> secondSegment = jetty->GetNextWqeSegment();
-        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(firstSegment, key),
-                              true,
-                              "first CTP transaction should be outstanding");
-        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(secondSegment, key),
-                              true,
-                              "second CTP transaction should be outstanding");
+        service->StartJetty(jetty, key);
+        NS_TEST_ASSERT_MSG_EQ(service->GetOrCreateTransactionContext(key)->GetOutstandingCount(),
+                              2u,
+                              "test setup should make both CTP transactions outstanding");
 
         UbCtpEntityKey ackWireKey{.srcEntityId = 0,
                                   .dstNodeId = 0,
@@ -24662,42 +24675,28 @@ class UbCtpRejectedSegmentDoesNotCreateQueueOrRequireRouteTest : public TestCase
   private:
     void DoRun() override
     {
-        int status = RunInChildProcess([]() {
-            Ptr<Node> node = BuildSinglePortCtpNode();
-            Ptr<UbCtpTransportService> service =
-                node->GetObject<UbController>()->GetCtpTransportService();
-            UbCtpEntityKey key{.srcEntityId = 10,
-                               .dstNodeId = 1,
-                               .dstEntityId = 11,
-                               .vl = 7};
+        Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<UbCtpTransportService> service =
+            node->GetObject<UbController>()->GetCtpTransportService();
+        UbCtpEntityKey key{.srcEntityId = 10,
+                           .dstNodeId = 1,
+                           .dstEntityId = 11,
+                           .vl = 7};
 
-            Ptr<UbCtpTransactionContext> context = service->GetOrCreateTransactionContext(key);
-            if (!context->TryAdmit(0))
-            {
-                std::_Exit(10);
-            }
-
-            if (service->SendSegment(CreateCtpWriteSegment(0), key))
-            {
-                std::_Exit(11);
-            }
-            if (service->GetQueuedPacketCountForTest(key) != 0)
-            {
-                std::_Exit(12);
-            }
-            if (service->GetRegisteredQueueCountForTest() != 0)
-            {
-                std::_Exit(13);
-            }
-            Simulator::Destroy();
-        });
-
-        NS_TEST_ASSERT_MSG_EQ(WIFEXITED(status),
-                              1,
-                              "Rejected duplicate CTP segment should return false without aborting");
-        NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(status),
-                              0,
-                              "Rejected duplicate CTP segment subprocess should exit cleanly");
+        Ptr<UbCtpTransactionContext> context = service->GetOrCreateTransactionContext(key);
+        NS_TEST_ASSERT_MSG_EQ(context->TryAdmit(0),
+                              true,
+                              "test setup should reserve the first CTP transaction sequence");
+        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(CreateCtpWriteSegment(0), key),
+                              false,
+                              "rejected duplicate CTP segment should return false without routing");
+        NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(key),
+                              0u,
+                              "rejected duplicate CTP segment must not create a queue entry");
+        NS_TEST_ASSERT_MSG_EQ(service->GetRegisteredQueueCountForTest(),
+                              0u,
+                              "rejected duplicate CTP segment must not register a queue");
+        Simulator::Destroy();
     }
 };
 
@@ -25321,7 +25320,10 @@ class UbSwitchForwardsCtpCnaPacketTest : public TestCase
                            .dstNodeId = topo.receiver->GetId(),
                            .dstEntityId = 11,
                            .vl = 7};
-        Ptr<Packet> packet = service->BuildDataPacket(CreateCtpWriteSegment(0), key);
+        Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(0);
+        segment->SetSrc(topo.sender->GetId());
+        segment->SetDest(topo.receiver->GetId());
+        Ptr<Packet> packet = service->BuildDataPacket(segment, key);
 
         topo.switch0->GetObject<UbSwitch>()->SwitchHandlePacket(topo.switch0DevicePort, packet);
 

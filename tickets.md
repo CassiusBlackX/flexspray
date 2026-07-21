@@ -1250,3 +1250,24 @@ Closeout:
 - Final review finds no new hard standards or spec defect. Automatic TP cleanup remains excluded,
   the LDST typed-tracked prototype remains unpromoted, the macOS umbrella runner remains unresolved,
   and the complete parallel matrix remains bound to T20 evidence.
+
+## Task 41: Close post-promotion validation residuals
+
+**What to build:** Repair stale CTP test fixtures that masked assertion failures as runner exit 139,
+then replay the frozen cross-owner case under local-MTP, MPI, and hybrid runtimes after T38/T39.
+
+**Blocked by:** T40 Curate the promotion tree and publish final acceptance.
+
+- [x] CTP packet fixtures use the real sender service, dynamic topology node IDs, the current
+      Transaction-owned submission path, and the CTP segment ceiling without changing production
+      protocol code.
+- [x] A failed packet setup assertion cannot continue into a null packet dereference.
+- [x] The umbrella `unified-bus` suite exits zero; expected isolated death-test diagnostics remain
+      distinguishable from a parent-runner crash.
+- [x] Frozen m18 local-MTP, MPI, and hybrid cases complete serially under post-T39 binaries with
+      explicit lifecycle SUMMARY output.
+- [x] All three lifecycle summaries have zero finite active residue, and their complete `output/`
+      and `runlog/` trees are byte-identical to the accepted m18 lifecycle role.
+- [x] The final report separates the confirmed fixture root cause from the independent macOS
+      post-`fork()` safety limitation and records the canonical future harness direction.
+- [x] Review confirms no production model change and `git diff --check` passes.
