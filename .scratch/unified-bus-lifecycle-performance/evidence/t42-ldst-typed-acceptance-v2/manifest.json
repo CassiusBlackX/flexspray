@@ -1,0 +1,58 @@
+{
+  "execution": "one warm-up per role and six counterbalanced blocks, strictly serial",
+  "observability": "packet, port, per-hop, and lifecycle output OFF",
+  "orders": [
+    [
+      "next",
+      "pre_t42",
+      "typed"
+    ],
+    [
+      "typed",
+      "next",
+      "pre_t42"
+    ],
+    [
+      "pre_t42",
+      "typed",
+      "next"
+    ],
+    [
+      "next",
+      "typed",
+      "pre_t42"
+    ],
+    [
+      "pre_t42",
+      "next",
+      "typed"
+    ],
+    [
+      "typed",
+      "pre_t42",
+      "next"
+    ]
+  ],
+  "roles": {
+    "next": {
+      "binary_sha256": "51129796c550755d9099746fd61aece09978970cf4f25e94faab83d59e82c387",
+      "revision": "next@cf8ee683",
+      "unified_bus_library_sha256": "5d090eef16ff7b77791d65a32feaf3d80f59c2e3035d4d3ecd396d847d14cc92"
+    },
+    "pre_t42": {
+      "binary_sha256": "e52af998217a1c38973aa0f57d8b0ae5d4383a2464eea5360941a0dd5d0c8ddc",
+      "revision": "pre-T42@d376fff",
+      "unified_bus_library_sha256": "e2e8874eb05cfe514de9c178f225a839b905c643b207b7f60ca2e624ff090edc"
+    },
+    "typed": {
+      "binary_sha256": "7756e587027029b4d551f70d490659bcea4af0f31cc5fbd47ddc47a46bb45a78",
+      "revision": "T42 working tree",
+      "unified_bus_library_sha256": "72485ea57900e5ca801dee646e7871c286a8c98852502b5bf95b141a13677542"
+    }
+  },
+  "schema_version": 1,
+  "sizes": [
+    16384009,
+    16384000
+  ]
+}

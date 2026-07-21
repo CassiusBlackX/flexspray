@@ -1271,3 +1271,33 @@ then replay the frozen cross-owner case under local-MTP, MPI, and hybrid runtime
 - [x] The final report separates the confirmed fixture root cause from the independent macOS
       post-`fork()` safety limitation and records the canonical future harness direction.
 - [x] Review confirms no production model change and `git diff --check` passes.
+
+## Task 42: Restore typed tracked LDST scheduling
+
+**What to build:** Restore the pre-refactor typed member-function scheduling shape at the eight LDST
+hot-path callers while preserving lifecycle token tracking and forced-stop cancellation.
+
+**Blocked by:** T41 Close post-promotion validation residuals.
+
+- [x] Reuse the typed call shapes from `main@ccf41b58` without changing the scheduled member actions
+      or their arguments.
+- [x] Preserve `Track`, `Attach`, `Begin`, action, `Resolve`, disposal, and cancellation ordering.
+- [x] Keep the characterized generic `Callback<void>` scheduling path for non-typed callers and
+      tests.
+- [x] Pass the targeted build plus LDST lifecycle and lifecycle suites serially.
+- [x] Keep p01 shared semantic artifacts byte-identical to `next@cf8ee683`.
+- [x] Demonstrate a material serial counterbalanced wall/CPU improvement over pre-T42 production and
+      keep RSS within the accepted next-relative gate.
+- [x] Review against `main@ccf41b58` and confirm no packet, ACK, queue, routing, state-machine, or
+      lifecycle-storage algorithm changed.
+
+Closeout:
+
+- The eight old typed member-function call shapes are restored inside the existing lifecycle event
+  wrapper. The generic callback path remains for its characterized test seam, and the new overload is
+  constrained to member-function pointers.
+- Targeted build and both focused suites pass. All four artifacts emitted by trace-OFF p01 are exact
+  against next in six accepted blocks and in a final-binary byte-only check.
+- Typed versus exact pre-T42 measures `-6.90%` wall, `-8.44%` user CPU, and `-0.33%` RSS. Typed versus
+  next measures `+4.41%` wall, `+11.80%` user CPU, and `+1.19%` RSS, recovering 10.58 percentage
+  points of wall gap while retaining an explicit CPU residual.

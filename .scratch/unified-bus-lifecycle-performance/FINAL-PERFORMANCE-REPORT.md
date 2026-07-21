@@ -10,8 +10,9 @@ Protocol and performance control: `next@cf8ee683`
 
 ## Scope and method
 
-This report consolidates the accepted performance evidence already present in the branch. No build,
-simulation, or performance measurement was rerun for this report.
+This report consolidates the accepted performance evidence in the branch. T42 adds a final typed
+LDST build, focused tests, corrected three-role performance calibration, and byte-only final-binary
+check; other rows reuse their previously accepted evidence without rerunning it.
 
 The measurements are host-runtime results from local macOS release binaries, not simulated network
 throughput or hardware measurements. Unless a row says otherwise, runs used identical materialized
@@ -29,7 +30,7 @@ checkpoint for each path and keeps historical diagnosis separate from final prod
 |---|---|---|---|
 | p01 frozen packet-heavy gate | main | +16.64% wall, +14.86% RSS | FAIL 10% gate |
 | p01 frozen packet-heavy gate | next | +7.25% wall, +8.42% RSS | PASS 10% gate |
-| corrected LDST-specific calibration | next | +18.12% wall, +19.28% user CPU | residual remains |
+| final typed LDST calibration | next | +4.41% wall, +11.80% user CPU, +1.19% RSS | wall/RSS PASS; CPU residual |
 | p02 resource-heavy, lifecycle OFF | main | +5.46% wall, +7.83% RSS | PASS |
 | p02 resource-heavy, lifecycle OFF | next | +2.04% wall, +5.85% RSS | PASS |
 | ordinary RTP, 256 MiB | next | +1.65% wall | common path acceptable |
@@ -41,7 +42,7 @@ checkpoint for each path and keeps historical diagnosis separate from final prod
 
 The branch is suitable as the next-generation `next` candidate with two explicit boundaries:
 
-- packet-heavy LDST remains slower in the corrected production calibration;
+- packet-heavy LDST is within the wall/RSS gates but retains a next-relative user-CPU residual;
 - automatic TP cleanup is not implemented and contributes no claimed runtime or memory benefit.
 
 ## Frozen promotion gates
@@ -167,7 +168,7 @@ At 2 GiB the wall gap recovered 10.84 percentage points, passing the required ei
 earlier noisy three-pair `+8.08%` wall block. It measured effectively neutral wall and kept RSS at
 next scale instead of growing with payload.
 
-## LDST-specific residual
+## LDST typed scheduling
 
 T34 corrected the macOS dynamic-library harness so each role loaded its frozen dylibs after
 `/usr/bin/time`. The homogeneous build control measured only `+0.32%` wall, confirming the corrected
@@ -181,14 +182,28 @@ In the stronger six-block three-role calibration:
 | typed-tracked prototype vs next | +4.75% | +4.98% | exact 6/6 |
 | typed-tracked prototype vs production | -9.22% | -9.76% | exact 6/6 |
 
-The prototype preserves tracked-event cancellation and exact artifacts but is not in this branch.
-LDST is expected to be redesigned, so the branch retains the measured production residual instead
-of adding prototype-specific scheduling complexity.
+T42 promotes this prototype as a constrained member-function-only production path. It restores the
+eight old typed call shapes while retaining tracked-event cancellation and the complete lifecycle
+order. The generic callback overload remains for its characterized test seam.
+
+The final T42 comparison rebuilt exact pre-T42 `d376fff` and used the final current and exact next
+roles in six strictly serial counterbalanced blocks:
+
+| In-block comparison | Wall | User CPU | RSS | Semantic artifacts |
+|---|---:|---:|---:|---|
+| pre-T42 vs next | +15.00% | +18.35% | +1.70% | exact 6/6 |
+| T42 typed vs next | +4.41% | +11.80% | +1.19% | exact 6/6 |
+| T42 typed vs pre-T42 | -6.90% | -8.44% | -0.33% | exact 6/6 |
+
+T42 recovers 10.58 percentage points of next-relative wall gap and passes the 10% wall/RSS gates.
+The next-relative CPU residual remains explicit. A final byte-only replay binds the post-review dylib
+to the same exact task, throughput, PacketTrace, and TaskTrace hashes; it is not a performance sample.
+An earlier v1 run without the pre-T42 trace-parser submodule is invalid and excluded.
 
 The older five-pair homogeneous block measured production `+29.27%` wall, `+31.48%` user CPU, and
 `+5.26%` RSS versus next. Host performance state changed between blocks; paired medians from separate
-blocks are not algebraically composable. The six-block three-role calibration is the stronger current
-LDST estimate, while T28 remains the immutable promotion gate.
+blocks are not algebraically composable. T34 remains the causal prototype evidence, T42 is the final
+production calibration, and T28 remains the immutable historical promotion gate.
 
 ## Storage and rejected optimizations
 
@@ -204,6 +219,7 @@ LDST estimate, while T28 remains the immutable promotion gate.
 | T31 fused owner resolution | +0.50% wall, +1.54% CPU, 0/5 non-regressing | rejected |
 | T32 OFF transfer fast path | -0.97% wall, -1.64% CPU, -0.08% RSS | retained |
 | T33 OFF startup setup | exact artifacts; no repeated timing claim | retained cleanup |
+| T42 typed LDST scheduling | -6.90% wall, -8.44% CPU vs pre-T42 | retained; exact bytes |
 
 T25 releases heavy active state after valid retirement but preserves compact generation history. It
 does not reclaim idle TP endpoints. T26 reduces repeated RTP resolution and retained TPG vector
@@ -248,6 +264,7 @@ Authoritative human-readable reports:
 - `T35-report.md`: module split, pre-fix CTP scaling, and profiles.
 - `T36-report.md`: final CTP correctness, 2 GiB and 8 GiB performance.
 - `T40-report.md` and `T41-report.md`: promotion and post-T39 closure.
+- `T42-report.md`: final typed LDST correctness, performance, and review.
 
 Authoritative structured summaries:
 
@@ -255,6 +272,7 @@ Authoritative structured summaries:
 - `T34-summary.json`
 - `T35-summary.json`
 - `T36-summary.json`
+- `T42-summary.json`
 - `T25-summary.json`
 - `evidence/t29-allocator/runs-v2/summary.json`
 - `evidence/t30-coordinator-lookup/runs-v1/summary.json`
@@ -267,4 +285,5 @@ Invalid or non-authoritative measurements remain excluded:
   `/usr/bin/time`;
 - early homogeneous v1 attempts before role-specific library loading was corrected;
 - `homogeneous-next-vs-t20-v3`, where lifecycle trace output was accidentally enabled;
+- T42 `t42-ldst-typed-acceptance-v1`, where the pre-T42 worktree lacked the trace-parser submodule;
 - T36's earlier noisy three-pair 8 GiB block, superseded by the independent five-pair replay.
