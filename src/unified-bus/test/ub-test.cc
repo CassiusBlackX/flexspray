@@ -24123,7 +24123,7 @@ class UbCtpTransactionStateCreatesSendContextLazilyTest : public TestCase
 {
   public:
     UbCtpTransactionStateCreatesSendContextLazilyTest()
-        : TestCase("UnifiedBus - CTP Transaction state creates send context lazily")
+        : TestCase("UnifiedBus - finite CTP Transaction state creates send context lazily")
     {
     }
 
@@ -24142,13 +24142,13 @@ class UbCtpTransactionStateCreatesSendContextLazilyTest : public TestCase
         UbCtpTransactionState& state = transaction->GetOrCreateCtpTransactionState(key);
         NS_TEST_ASSERT_MSG_EQ(state.context,
                               nullptr,
-                              "Receiver-only Transaction state must not allocate a send window");
+                              "Pre-send Transaction state must not allocate a send window");
         NS_TEST_ASSERT_MSG_EQ(service->HasTransactionContextForTesting(key),
                               false,
                               "State presence must not be reported as send-context presence");
         NS_TEST_ASSERT_MSG_EQ(transaction->TryRetireCtpTransactionState(key),
                               true,
-                              "Receiver-only state should retire without a send window");
+                              "Context-free state should retire without a send window");
         NS_TEST_ASSERT_MSG_EQ(transaction->FindCtpTransactionState(key),
                               nullptr,
                               "Receiver-only retirement should erase the finite state");
@@ -24960,7 +24960,7 @@ class UbCtpDataAckLifecycleAndTransactionCleanupTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(
             receiverController->GetUbTransaction()->FindCtpTransactionState(reverseKey),
             nullptr,
-            "Completed target Transaction state should retire after response generation");
+            "One complete CTP TP Packet must leave no target-side assembly state");
 
         Simulator::Destroy();
     }

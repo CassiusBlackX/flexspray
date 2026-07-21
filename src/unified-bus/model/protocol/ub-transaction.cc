@@ -572,7 +572,7 @@ UbTransaction::TryRetireCtpTransactionState(const UbCtpEntityKey& key)
     if (activeOperation || !transactionState.pendingSegments.empty() ||
         !transactionState.outstandingSegments.empty() ||
         !transactionState.segmentOutstandingPackets.empty() ||
-        !transactionState.inboundTaUnits.empty() || transactionState.pendingCompletionEvents != 0 ||
+        transactionState.pendingCompletionEvents != 0 ||
         (transactionState.context != nullptr &&
          transactionState.context->GetOutstandingCount() != 0))
     {

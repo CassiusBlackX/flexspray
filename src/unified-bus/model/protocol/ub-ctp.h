@@ -98,13 +98,6 @@ struct UbCtpTxState
     UbCtpRoutingPolicy routing;
 };
 
-struct UbCtpInboundTaUnit
-{
-    Ptr<UbWqeSegment> segment;
-    uint32_t bytesReceived{0};
-    uint32_t expectedPayloadBytes{0};
-};
-
 struct UbCtpRxState
 {
     uint32_t receivedPackets{0};
@@ -117,7 +110,6 @@ struct UbCtpTransactionState
     std::deque<Ptr<UbWqeSegment>> pendingSegments;
     std::map<uint32_t, Ptr<UbWqeSegment>> outstandingSegments;
     std::map<Ptr<UbWqeSegment>, uint32_t> segmentOutstandingPackets;
-    std::map<uint32_t, UbCtpInboundTaUnit> inboundTaUnits;
     uint32_t pendingCompletionEvents{0};
 };
 
@@ -254,16 +246,15 @@ class UbCtpTransportService : public Object
                               uint32_t taSsn,
                               uint32_t progressBytes);
     Ptr<UbWqeSegment> ProcessInboundTaRequest(Ptr<UbWqeSegment> request) const;
-    Ptr<UbWqeSegment> TrackInboundTaPacket(UbCtpEntityState& state,
-                                           const UbCompactTransactionHeader& taHeader,
-                                           const UbCompactMAExtTah& maHeader,
-                                           TaOpcode taOpcode,
-                                           uint32_t srcNodeId,
-                                           uint32_t dstNodeId,
-                                           uint32_t priority,
-                                           uint32_t payloadBytes,
-                                           uint32_t flowId,
-                                           uint32_t flowSize);
+    Ptr<UbWqeSegment> BuildInboundTaOperation(const UbCompactTransactionHeader& taHeader,
+                                              const UbCompactMAExtTah& maHeader,
+                                              TaOpcode taOpcode,
+                                              uint32_t srcNodeId,
+                                              uint32_t dstNodeId,
+                                              uint32_t priority,
+                                              uint32_t payloadBytes,
+                                              uint32_t flowId,
+                                              uint32_t flowSize);
     void DrainJettys(UbCtpEntityState& state);
     uint32_t SelectOutPort(UbCtpEntityState& state,
                            const UbCtpEntityKey& routeKey,

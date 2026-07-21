@@ -21,9 +21,8 @@ from pathlib import Path
 
 PACKAGE = Path(__file__).resolve().parents[1]
 REPO = PACKAGE.parents[1]
-NEXT_ROOT = Path(
-    os.environ.get("T36_NEXT_ROOT", REPO / ".worktrees/t36-next-baseline")
-).expanduser()
+NEXT_ROOT_ENV = os.environ.get("T36_NEXT_ROOT")
+NEXT_ROOT = Path(NEXT_ROOT_ENV).expanduser().resolve() if NEXT_ROOT_ENV else None
 LAZY_ROOT = REPO / ".worktrees/t36-lazy-baseline"
 BASE_SOURCE = (
     REPO
@@ -38,19 +37,11 @@ EXPECTED_HEADS = {
     "lazy": "a95f8bcdbf2eb32e171edde7aae970cfedf85c76",
     "fastpath": "ed298a8c4b585cf6cace4caf60824bd7a0b1ffac",
 }
-FASTPATH_PRODUCTION_SOURCE_SHA256 = {
-    "src/unified-bus/model/protocol/ub-ctp.cc":
-        "425542b73718fbb9ebaa96b2ab46b67975c58ce0be2a262e898608d7e743543b",
-    "src/unified-bus/model/ub-lifecycle.cc":
-        "16f6b7e06339d0b76f5bd23f2ea4123c267daddfa319497e947a19c674d40f28",
-    "src/unified-bus/model/ub-lifecycle.h":
-        "8f118137c62fa7fd8399b7349f040a619a46deffba0e63a46e3f9a6ec13a44e7",
-}
 ROLES = {
     "next": {
         "root": NEXT_ROOT,
-        "binary": NEXT_ROOT / "build/scratch/ns3.44-ub-quick-example",
-        "library": NEXT_ROOT / "build/lib/libns3.44-unified-bus.dylib",
+        "binary": None,
+        "library": None,
     },
     "lazy": {
         "root": LAZY_ROOT,
@@ -170,6 +161,27 @@ def git_output(root: Path, *args: str) -> str:
     return subprocess.check_output(["git", *args], cwd=root, text=True).strip()
 
 
+def configure_next_root(next_root: str | None) -> None:
+    if not next_root:
+        raise RuntimeError("set --next-root or T36_NEXT_ROOT to a next@cf8ee683 checkout")
+    root = Path(next_root).expanduser().resolve()
+    if not root.is_dir():
+        raise RuntimeError(f"missing next role root: {root}")
+    head = git_output(root, "rev-parse", "HEAD")
+    if head != EXPECTED_HEADS["next"]:
+        raise RuntimeError(
+            f"next role moved: expected {EXPECTED_HEADS['next']}, found {head}"
+        )
+    role = {
+        "root": root,
+        "binary": root / "build/scratch/ns3.44-ub-quick-example",
+        "library": root / "build/lib/libns3.44-unified-bus.dylib",
+    }
+    if not role["binary"].is_file() or not role["library"].is_file():
+        raise RuntimeError(f"missing built next role artifacts under: {root}")
+    ROLES["next"] = role
+
+
 def role_manifest() -> dict:
     manifest = {}
     for role, config in ROLES.items():
@@ -193,15 +205,17 @@ def role_manifest() -> dict:
             raise RuntimeError(f"missing built role artifacts for {role}")
         entry = {
             "revision": head,
-            "source_root": str(root),
-            "binary": str(binary),
+            "source_root": str(root.resolve()),
+            "binary": str(binary.resolve()),
             "binary_sha256": sha256(binary),
-            "unified_bus_library": str(library),
+            "unified_bus_library": str(library.resolve()),
             "unified_bus_library_sha256": sha256(library),
         }
         if role == "fastpath":
             sources = (
                 REPO / "src/unified-bus/model/protocol/ub-ctp.cc",
+                REPO / "src/unified-bus/model/protocol/ub-ctp.h",
+                REPO / "src/unified-bus/model/protocol/ub-transaction.cc",
                 REPO / "src/unified-bus/model/ub-lifecycle.cc",
                 REPO / "src/unified-bus/model/ub-lifecycle.h",
             )
@@ -221,10 +235,23 @@ def role_manifest() -> dict:
             source_hashes = {
                 str(source.relative_to(REPO)): sha256(source) for source in sources
             }
-            if source_hashes != FASTPATH_PRODUCTION_SOURCE_SHA256:
-                raise RuntimeError("fastpath production sources moved after T36 implementation")
+            working_tree_diff = subprocess.check_output(
+                [
+                    "git",
+                    "diff",
+                    "--binary",
+                    "HEAD",
+                    "--",
+                    *(str(source.relative_to(REPO)) for source in sources),
+                ],
+                cwd=REPO,
+            )
             entry["production_source_sha256"] = source_hashes
             entry["production_diff_sha256"] = hashlib.sha256(diff).hexdigest()
+            entry["working_tree_dirty"] = bool(working_tree_diff)
+            entry["working_tree_diff_sha256"] = hashlib.sha256(
+                working_tree_diff
+            ).hexdigest()
         manifest[role] = entry
     return manifest
 
@@ -1056,6 +1083,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--replace-inputs", action="store_true")
     parser.add_argument(
+        "--next-root",
+        default=NEXT_ROOT_ENV,
+        help="path to the exact next@cf8ee683 checkout (or set T36_NEXT_ROOT)",
+    )
+    parser.add_argument(
         "--cases",
         default=",".join(CASE_CONFIG),
         help="comma-separated performance case IDs",
@@ -1067,6 +1099,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    configure_next_root(args.next_root)
     selected = [item.strip() for item in args.cases.split(",") if item.strip()]
     unknown = sorted(set(selected) - set(CASE_CONFIG))
     if unknown:
