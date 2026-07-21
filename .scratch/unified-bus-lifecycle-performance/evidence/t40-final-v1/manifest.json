@@ -1,0 +1,98 @@
+{
+  "accepted_comparison_sha256": {
+    "ctp-win1": "3a73e236a9a8910d7c5dda3e3bd4cd2ccdd1be16e651cde9ce3639e35543b928",
+    "ctp-win128": "2d613b05ec508e01c379caa7784fac0e2ca03528b301e1d467d46f2f5d5a7ed1",
+    "ctp-win4": "230a03b8307eb7df529a618475b19f6f61f2c49d81930dd49ed9fdd37d0d5a3c",
+    "rtp-gbn-double-drop": "02be64d6615cba00d6d8991a89044d949551c3fb5924c039c02fcfa8a07f1500",
+    "rtp-shared-win1": "ae69f26e8fa471be5a64da144c740aefbd99fecd7bdfabdad19872b263477a67",
+    "rtp-tpg-gbn": "0cc0706b4b40fc5dea839b0752b617d5867c96ec0982c0ebb0541e6b013c629d"
+  },
+  "cases": {
+    "ctp-win1": {
+      "network_attribute.txt": "56781062f91579b22173ef7c17a7dfdf9caa63e2319d6c7a77caf70ba6709a4a",
+      "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+      "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+      "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+      "traffic.csv": "2218488e558c4e83045c82f6a5101833078339595e0529d587a8093cf805af1e",
+      "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+    },
+    "ctp-win128": {
+      "network_attribute.txt": "7d643906f399d90ee4376fc4ba67ed69dafc79159ab9dd32aa9ebc417dc08682",
+      "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+      "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+      "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+      "traffic.csv": "2218488e558c4e83045c82f6a5101833078339595e0529d587a8093cf805af1e",
+      "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+    },
+    "ctp-win4": {
+      "network_attribute.txt": "f41b93574a3c0546de78c3f824b496e4d2fe9d2f5999662c88bfe252851904d3",
+      "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+      "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+      "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+      "traffic.csv": "2218488e558c4e83045c82f6a5101833078339595e0529d587a8093cf805af1e",
+      "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+    },
+    "rtp-gbn-double-drop": {
+      "fault.csv": "e8def2a40dd549b50acf307f307860cd9e97d121a60d580f251b56b9981f7b63",
+      "network_attribute.txt": "6199fe2b52655e65d7339bd84099f24d19065e7d3aaa7026d523cdcb061e44e0",
+      "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+      "retrans_fault.csv": "9f168c1f910539a05c9ed1658dc1f5f34d4dc60bc495506be1616a36efb9b49b",
+      "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+      "topology.csv": "3a6733d6ca53dc7b2e6f4c0303f52715e4fb016c0e7ee72c087d838a812a0d71",
+      "traffic.csv": "a26652f940be2ed897d9c378bf1c717ede259afb9ae31bc2b5639376375f11d3",
+      "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+    },
+    "rtp-shared-win1": {
+      "network_attribute.txt": "2eb6dea784cd9373eabb887dd77c72917a6934f2c938a2dbf2ee36823d4fc08d",
+      "node.csv": "e06b20b821325fcaf22d1bf739adabeedbb4a44fddbe969b446513758954e049",
+      "routing_table.csv": "919351b0b9a9b55f8d277d803be313d0dea088535f80f9515e6cb0f9e3a719ca",
+      "topology.csv": "71c3f7392484a68f8f78b8ec5afeb15468ae1f853c8b7c9230166a50fdfb1ee7",
+      "traffic.csv": "59766a47f6c81db54a6b7d84f0ff86ee4e074a555c96f2ce04765e48c804b7aa",
+      "transport_channel.csv": "eea247e19892911b8aba9a057847099200100ddc6f24118daa6ade3e976d22f2"
+    },
+    "rtp-tpg-gbn": {
+      "fault.csv": "e8def2a40dd549b50acf307f307860cd9e97d121a60d580f251b56b9981f7b63",
+      "network_attribute.txt": "c140e5f12accef4e16b449651a8d741ee83638d3d88cbdf9c3d9f6803cc51c30",
+      "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+      "retrans_fault.csv": "d7b15da5bf19cc83b9208d859453a0a754ac85cdc9dbf0e19923c0a523386709",
+      "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+      "topology.csv": "3a6733d6ca53dc7b2e6f4c0303f52715e4fb016c0e7ee72c087d838a812a0d71",
+      "traffic.csv": "dbff14b2ada8eda6104550d41e4da6aee4cdd5f7a172fe2ee0d89358fcda5b46",
+      "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+    }
+  },
+  "roles": {
+    "current": {
+      "binary": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+      "binary_sha256": "7756e587027029b4d551f70d490659bcea4af0f31cc5fbd47ddc47a46bb45a78",
+      "cmake": {
+        "CMAKE_BUILD_TYPE": "release",
+        "CMAKE_CXX_COMPILER": "/usr/bin/c++",
+        "NS3_EXAMPLES": "OFF",
+        "NS3_MPI": "OFF",
+        "NS3_TESTS": "ON"
+      },
+      "revision": "61abfafe1c69a985a14d42c5bbb616227f5bbf52",
+      "source_root": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode",
+      "unified_bus_library": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/build/lib/libns3.44-unified-bus.dylib",
+      "unified_bus_library_sha256": "dc77c218eaa451666f9243701000630a7c793e09f66fae7f118b9e7869c348fe"
+    },
+    "next": {
+      "binary": "/Users/ytxing/workspace/ns-3-ub-routing-modes/build/scratch/ns3.44-ub-quick-example",
+      "binary_sha256": "51129796c550755d9099746fd61aece09978970cf4f25e94faab83d59e82c387",
+      "cmake": {
+        "CMAKE_BUILD_TYPE": "release",
+        "CMAKE_CXX_COMPILER": "/usr/bin/c++",
+        "NS3_EXAMPLES": "OFF",
+        "NS3_MPI": "OFF",
+        "NS3_TESTS": "ON"
+      },
+      "revision": "cf8ee683e00e5b6210661013e93cec7217d662e5",
+      "source_root": "/Users/ytxing/workspace/ns-3-ub-routing-modes",
+      "unified_bus_library": "/Users/ytxing/workspace/ns-3-ub-routing-modes/build/lib/libns3.44-unified-bus.dylib",
+      "unified_bus_library_sha256": "5d090eef16ff7b77791d65a32feaf3d80f59c2e3035d4d3ecd396d847d14cc92"
+    }
+  },
+  "run_policy": "strictly-serial-local-single-rng-run-1",
+  "schema_version": 1
+}
