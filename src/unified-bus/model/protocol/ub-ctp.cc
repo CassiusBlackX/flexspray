@@ -1312,20 +1312,15 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t receive
         receivePort = utils::Cna16ToPortId(cnaHeader.GetDcna());
     }
 
-    Ptr<UbWqeSegment> request = TrackInboundTaPacket(localState,
-                                                     taHeader,
-                                                     maHeader,
-                                                     taOpcode,
-                                                     wireSrcNodeId,
-                                                     wireDstNodeId,
-                                                     localKey.vl,
-                                                     copy->GetSize(),
-                                                     flowTag.GetFlowId(),
-                                                     flowTag.GetFlowSize());
-    if (request == nullptr)
-    {
-        return true;
-    }
+    Ptr<UbWqeSegment> request = BuildInboundTaOperation(taHeader,
+                                                        maHeader,
+                                                        taOpcode,
+                                                        wireSrcNodeId,
+                                                        wireDstNodeId,
+                                                        localKey.vl,
+                                                        copy->GetSize(),
+                                                        flowTag.GetFlowId(),
+                                                        flowTag.GetFlowSize());
 
     Ptr<UbWqeSegment> response = ProcessInboundTaRequest(request);
     if (response == nullptr)
@@ -1363,88 +1358,43 @@ UbCtpTransportService::ProcessInboundTaRequest(Ptr<UbWqeSegment> request) const
 }
 
 Ptr<UbWqeSegment>
-UbCtpTransportService::TrackInboundTaPacket(UbCtpEntityState& state,
-                                            const UbCompactTransactionHeader& taHeader,
-                                            const UbCompactMAExtTah& maHeader,
-                                            TaOpcode taOpcode,
-                                            uint32_t srcNodeId,
-                                            uint32_t dstNodeId,
-                                            uint32_t priority,
-                                            uint32_t payloadBytes,
-                                            uint32_t flowId,
-                                            uint32_t flowSize)
+UbCtpTransportService::BuildInboundTaOperation(const UbCompactTransactionHeader& taHeader,
+                                               const UbCompactMAExtTah& maHeader,
+                                               TaOpcode taOpcode,
+                                               uint32_t srcNodeId,
+                                               uint32_t dstNodeId,
+                                               uint32_t priority,
+                                               uint32_t payloadBytes,
+                                               uint32_t flowId,
+                                               uint32_t flowSize)
 {
+    // UB Base Specification 2.0, 6.7.2: one CTP TP Packet carries one complete TA operation.
     const bool isReadRequest = taOpcode == TaOpcode::TA_OPCODE_READ;
     const uint32_t logicalBytes =
         static_cast<uint32_t>(64u << static_cast<uint32_t>(maHeader.GetLength()));
-    const uint32_t expectedPayloadBytes = isReadRequest ? 0 : payloadBytes;
-    const uint32_t taSsn = taHeader.GetIniTaSsn();
 
-    UbCtpTransactionState* transactionState =
-        GetTransactionOwner()->FindCtpTransactionState(state.GetKey());
-    UbCtpInboundTaUnit transientUnit;
-    UbCtpInboundTaUnit* selectedUnit = nullptr;
-    if (transactionState != nullptr)
-    {
-        const auto retained = transactionState->inboundTaUnits.find(taSsn);
-        if (retained != transactionState->inboundTaUnits.end())
-        {
-            selectedUnit = &retained->second;
-        }
-    }
-    if (selectedUnit == nullptr)
-    {
-        if (payloadBytes >= expectedPayloadBytes)
-        {
-            selectedUnit = &transientUnit;
-        }
-        else
-        {
-            transactionState = &GetTransactionState(state.GetKey());
-            selectedUnit = &transactionState->inboundTaUnits[taSsn];
-        }
-    }
-    UbCtpInboundTaUnit& unit = *selectedUnit;
-
-    if (unit.segment == nullptr)
-    {
-        unit.segment = CreateObject<UbWqeSegment>();
-        unit.segment->SetSrc(srcNodeId);
-        unit.segment->SetDest(dstNodeId);
-        unit.segment->SetPriority(priority);
-        unit.segment->SetTaskId(flowId);
-        unit.segment->SetWqeSize(flowSize);
-        unit.segment->SetJettyNum(taHeader.GetIniTaSsn());
-        unit.segment->SetTaMsn(0);
-        unit.segment->SetTaSsn(taHeader.GetIniTaSsn());
-        unit.segment->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
-        unit.segment->SetOriginJettyNum(taHeader.GetIniTaSsn());
-        unit.segment->SetRequestTassn(taHeader.GetIniTaSsn());
-        unit.segment->SetType(taOpcode);
-        unit.segment->SetRequestOpcode(taOpcode);
-        unit.segment->SetResponseBytes(isReadRequest ? logicalBytes : 0);
-        unit.segment->SetNeedsTransactionResponse(taOpcode == TaOpcode::TA_OPCODE_WRITE ||
-                                                  isReadRequest);
-        unit.segment->SetSize(isReadRequest ? logicalBytes : payloadBytes);
-        unit.segment->SetLogicalBytes(isReadRequest ? logicalBytes : payloadBytes);
-        unit.segment->SetPayloadBytes(0);
-        unit.segment->SetCarrierBytes(isReadRequest ? 1 : payloadBytes);
-        unit.expectedPayloadBytes = expectedPayloadBytes;
-    }
-
-    unit.bytesReceived += payloadBytes;
-    unit.segment->SetPayloadBytes(unit.bytesReceived);
-    if (unit.bytesReceived < unit.expectedPayloadBytes)
-    {
-        return nullptr;
-    }
-
-    Ptr<UbWqeSegment> completed = unit.segment;
-    if (&unit != &transientUnit)
-    {
-        transactionState->inboundTaUnits.erase(taSsn);
-    }
-    return completed;
+    Ptr<UbWqeSegment> operation = CreateObject<UbWqeSegment>();
+    operation->SetSrc(srcNodeId);
+    operation->SetDest(dstNodeId);
+    operation->SetPriority(priority);
+    operation->SetTaskId(flowId);
+    operation->SetWqeSize(flowSize);
+    operation->SetJettyNum(taHeader.GetIniTaSsn());
+    operation->SetTaMsn(0);
+    operation->SetTaSsn(taHeader.GetIniTaSsn());
+    operation->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
+    operation->SetOriginJettyNum(taHeader.GetIniTaSsn());
+    operation->SetRequestTassn(taHeader.GetIniTaSsn());
+    operation->SetType(taOpcode);
+    operation->SetRequestOpcode(taOpcode);
+    operation->SetResponseBytes(isReadRequest ? logicalBytes : 0);
+    operation->SetNeedsTransactionResponse(taOpcode == TaOpcode::TA_OPCODE_WRITE || isReadRequest);
+    operation->SetSize(isReadRequest ? logicalBytes : payloadBytes);
+    operation->SetLogicalBytes(isReadRequest ? logicalBytes : payloadBytes);
+    operation->SetPayloadBytes(0);
+    operation->SetCarrierBytes(isReadRequest ? 1 : payloadBytes);
+    operation->SetPayloadBytes(payloadBytes);
+    return operation;
 }
 
 void
