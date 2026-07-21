@@ -1,21 +1,54 @@
 # Unified Bus Lifecycle Final Acceptance Report
 
-Date: 2026-07-16
+Date: 2026-07-21
 
-Implementation head: `a782858` (`refactor(unified-bus): contract lifecycle ownership APIs`)
+Production source head: `61abfaf` (T39 closeout; production implementation `cbc0567`)
+
+Final frozen evidence: `dc42ac9` (T40 promotion artifacts)
 
 Behavior baseline: `main@ccf41b58`
 
+Protocol calibration baseline: `next@cf8ee683`
+
 ## Decision
 
-The lifecycle migration passes the ticket-defined semantic, parallel-runtime, artifact, and bounded
-performance acceptance matrix. Automatic TP close/destroy remains disabled. Idle TP endpoints and
-ordinary empty VOQs remain retained by default; only explicit lifecycle operations use their proven
-drain gates. The 64 KiB trace chunk, 1 MiB/512 KiB owner high/low watermarks, and 1024 configured
-descriptor maximum remain unchanged.
+The lifecycle migration passes the ticket-defined architecture, semantic, artifact, and common-path
+performance gates. The final T40 replay adds no new difference path against exact
+`next@cf8ee683`: all three CTP window cases are byte-identical, and each RTP role exactly reproduces
+its previously reviewed archived tree.
 
-No acceptance result requires a protocol algorithm, packet format, callback/timer order, ownership
-model, or storage default change.
+This is not a claim that every workload is performance-neutral. The packet-heavy LDST/p01 path has
+an explicit residual described below; a validated typed-tracked prototype was not promoted because
+LDST is uncommon and pending redesign. The macOS umbrella test runner is also not classified PASS.
+Neither exception weakens the focused semantic suites or the frozen artifact results.
+
+Automatic TP close/destroy remains disabled and is not credited as a memory or runtime improvement.
+Idle TP endpoints and ordinary empty VOQs remain retained by default; only explicit lifecycle
+operations use their proven drain gates. The 64 KiB trace chunk, 1 MiB/512 KiB owner high/low
+watermarks, and 1024 configured descriptor maximum remain unchanged.
+
+No final acceptance result requires another protocol algorithm, packet format, callback/timer order,
+ownership model, or storage-default change.
+
+## Final Next Differential
+
+T40 froze the exact current and next source revisions, executable hashes, Unified Bus library hashes,
+six input trees, and six accepted comparison documents before running. All 12 simulations completed
+serially. Analysis was then rerun from saved results without rerunning simulation.
+
+| Case | Final result | Accepted boundary |
+|---|---|---|
+| CTP Jetty window 1 | byte-identical | none |
+| CTP Jetty window 4 | byte-identical | none |
+| CTP Jetty window 128 | byte-identical | none |
+| RTP shared TP, window 1 | controlled | two existing same-timestamp TaskTrace reorders |
+| RTP GBN double loss | controlled | exact replay of T06 cumulative-ACK descriptor boundary |
+| RTP TPG with loss | controlled | exact replay of T14 generation attribution/pinning boundary |
+
+The CTP completion vectors match next exactly and differ across windows 1, 4, and 128, proving that
+the Jetty inflight/backpressure seam is exercised rather than bypassed. For every RTP case, both the
+current and next shared artifact trees reproduce their archived hashes exactly and task ID sequences
+match. No new path, hash, task, protocol output, or exception was accepted.
 
 ## Semantic Matrix
 
@@ -47,9 +80,11 @@ suites remain the accepted macOS validation path.
 
 ## Runtime Matrix
 
-The exact current source was built for local single-thread and parallel-all. The exact local-MTP
-candidate from T20 is also at implementation head `a782858`. No build, test, or simulation process
-overlapped another.
+The parallel matrix below was frozen at T20 source `a782858`. Later production changes restore
+routing, performance, CTP/DCQCN semantics, move unchanged CTP state types to their owner, and narrow
+the WQE terminal-policy seam. T38/T39 passed their local focused suites, but the full parallel matrix
+was not rerun after those ownership-only changes. No build, test, or simulation process overlapped
+another.
 
 | Runtime | Medium cross-owner result | Lifecycle records | Managed-tree relationship |
 |---|---:|---:|---|
@@ -62,6 +97,9 @@ MPI causal ordering, hybrid causal ordering, dependency visibility, MPI and hybr
 control, remote TP, and MPI/hybrid quick-example suites all pass. Current MPI-single and hybrid
 managed trees are byte-identical to the accepted T17 trees, proving that T20's contract cleanup did
 not change their runtime artifacts.
+
+These rows therefore remain evidence for the lifecycle parallel-control architecture, not a claim
+that binaries built from `61abfaf` were rerun under every runtime.
 
 Owner-local lifecycle sequences parse monotonically, and each rank's schema registry is complete and
 consistent. A separate check over the production parser's decoded SUMMARY records finds zero
@@ -140,8 +178,8 @@ Storage and allocation evidence is intentionally module-specific:
 - 100,000 route hot-path lookups allocate zero temporary candidate/best-port containers.
 - Small packet queues use inline storage for bounded traffic and release overflow capacity after
   drain; descriptor-backed retransmission retains protocol descriptors rather than wire packets.
-- CTP empty transmit queues unregister and retire after their last packet; backpressure retains the
-  packet, queue and allocator registration.
+- CTP empty transmit queue shells retain their pre-refactor allocator identity after the last packet;
+  backpressure retains the packet and service disposal unregisters every retained queue.
 - Ordinary empty VOQs remain retained. Explicit/test destruction uses the same owner-private gate
   and rejects packets, delayed work, allocator work or nonzero accounting before and after unregister.
 - Idle TP endpoints retain reservation, TPN, generation, PSN and congestion continuity. Explicit
@@ -162,6 +200,33 @@ The exact parallel-all binary is not a substitute for local-single or local-MTP.
 reproduced the frozen-contract `UbRemoteLink::TransmitStart` failure when MPI was not initialized;
 that failed probe is excluded from performance conclusions.
 
+## Promotion Performance
+
+Performance results remain module-specific; they are not averaged into one branch-wide number.
+
+| Workload / control | Paired wall | Peak RSS | Interpretation |
+|---|---:|---:|---|
+| p01 packet-heavy vs main, T28 frozen | +16.64% | +14.86% | FAIL against 10% gate |
+| p01 packet-heavy vs next, T28 frozen | +7.25% | +8.42% | PASS in that frozen block |
+| p02 resource-heavy vs main, T28 frozen | +5.46% | +7.83% | PASS |
+| p02 resource-heavy vs next, T28 frozen | +2.04% | +5.85% | PASS |
+| ordinary RTP vs next, T35 | +1.65% | not used as a gate | common-path control |
+| RTP GBN/RTO vs next, T35 | +2.51% | not used as a gate | common-path control |
+| PFC/DCQCN vs next, T35 | +0.60% | not used as a gate | common-path control |
+| CTP 2 GiB vs next, T36 final | +4.20% | -0.74% | PASS |
+| CTP 8 GiB vs next, T36 final | -0.01% | -0.42% | PASS |
+
+The CTP fix is a measured improvement, not a small-case artifact. Before T36, the 2 GiB case was
+`+15.04%` wall with 57.7 MB current RSS versus 15.4 MB next. The final 2 GiB result recovers 10.84
+percentage points and returns RSS to next scale. The independent 8 GiB block remains effectively
+wall-neutral and has no payload-scaled retired-history growth.
+
+LDST remains separate. In the corrected T34 three-role block, formal lifecycle HEAD was `+18.12%`
+wall and `+19.28%` user CPU versus next. The typed-tracked prototype reduced those gaps to `+4.75%`
+and `+4.98%`, with exact artifacts and forced-stop coverage, but that prototype is not in production.
+This residual is accepted as explicit follow-up debt because LDST is not a common path and is expected
+to be redesigned; it must not be described as solved or generalized to CTP/RTP/DCQCN.
+
 ## Final Policies
 
 - Keep correctness accounting always enabled and trace-independent.
@@ -170,5 +235,9 @@ that failed probe is excluded from performance conclusions.
 - Keep 64 KiB chunks, 1 MiB/512 KiB owner pressure bounds and the 1024 configured FD maximum.
 - Keep ordinary empty VOQs and idle TP endpoints retained; use only explicit proven drain gates.
 - Keep automatic TP close/destroy and legacy task-driven removal disabled.
+- Keep the LDST typed-tracked optimization as separate follow-up work; do not imply it is present in
+  this branch.
+- Keep the macOS umbrella runner residual visible until its parent-runner SIGSEGV is localized; use
+  the passing ticket-defined focused suites as the current validation boundary.
 - Do not introduce a storage reclamation default until a representative long-workload experiment
   measures object counts, RSS and semantic continuity under an explicit candidate policy.
