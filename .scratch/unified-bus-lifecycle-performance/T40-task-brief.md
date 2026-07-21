@@ -60,3 +60,6 @@
 - 2026-07-21: all 12 frozen simulations completed serially. The first aggregate incorrectly required
   full RTP task-row equality; analysis was corrected to the existing T28 archived-replay plus task-ID
   gate and rerun from saved results without rerunning any simulation. Final aggregate status: PASS.
+- 2026-07-21: post-promotion analysis permits documentation/evidence-only descendant commits only
+  when the complete `src/unified-bus` tree still matches the frozen revision. Binary, library, input,
+  and accepted-comparison hashes remain exact gates.

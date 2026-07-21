@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "ticket": "T40",
+  "status": "passed",
+  "production_source_revision": "61abfafe1c69a985a14d42c5bbb616227f5bbf52",
+  "promotion_artifact_revision": "dc42ac985afeb0766f997cd4a5334d9e16db1c22",
+  "control_revision": "cf8ee683e00e5b6210661013e93cec7217d662e5",
+  "source_changes": false,
+  "complex_differential": {
+    "simulations": 12,
+    "serial": true,
+    "ctp_byte_identical_cases": 3,
+    "rtp_archived_controlled_cases": 3,
+    "new_difference_paths": 0,
+    "status": "passed"
+  },
+  "explicit_residuals": {
+    "automatic_tp_cleanup": "excluded-not-implemented",
+    "macos_umbrella_runner": "unresolved-exit-139",
+    "ldst_typed_tracked_optimization": "validated-prototype-not-promoted",
+    "post_t39_full_parallel_matrix": "not-rerun"
+  },
+  "review": {
+    "main_fixed_point": "ccf41b58b0ba3b9711efea595732a2908e3e07cf",
+    "next_fixed_point": "cf8ee683e00e5b6210661013e93cec7217d662e5",
+    "new_hard_findings": 0,
+    "diff_check": "passed"
+  }
+}

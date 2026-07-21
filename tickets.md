@@ -1216,3 +1216,37 @@ Closeout:
   manager record and derives the mode on every loop iteration.
 - The targeted build and all three focused suites passed. T39 changes ownership plumbing only and is
   not a frozen-byte milestone.
+
+## Task 40: Curate the promotion tree and publish final acceptance
+
+**What to build:** Freeze the final production and exact next roles, replay the accepted complex
+CTP/RTP matrix, promote only compact reproducible evidence, and publish an honest final acceptance
+report without changing Unified Bus source code.
+
+**Blocked by:** T39 Narrow the Transaction-to-Function WQE terminal seam.
+
+- [x] Inventory tracked and untracked evidence without deleting or bulk-staging user files.
+- [x] Freeze source, binary, Unified Bus library, input, and accepted-comparison hashes.
+- [x] Run CTP windows 1/4/128 and RTP shared-window, GBN double-loss, and TPG pinning serially.
+- [x] Require exact CTP shared artifacts/task rows and non-degenerate next-matched window response.
+- [x] Require each RTP role to reproduce its archived shared tree exactly with matching task IDs.
+- [x] Publish the final performance matrix without averaging p01/p02, LDST, CTP, RTP, GBN, or
+      DCQCN into one number.
+- [x] Preserve the macOS umbrella-runner, automatic TP cleanup, LDST, and parallel-rerun residuals
+      explicitly.
+- [x] Review the final source against `main@ccf41b58` and `next@cf8ee683` and pass `git diff --check`.
+
+Closeout:
+
+- All 12 simulations completed serially. CTP is byte-identical for windows 1, 4, and 128, and the
+  completion vectors exactly match next while remaining distinct across the three windows.
+- The three RTP cases exactly reproduce both archived role trees with matching task IDs. Their
+  differences remain limited to the existing T05/T06/T14 boundaries; no path, hash, task, or
+  exception was added.
+- An initial analysis-only false failure required full RTP task-row equality. The runner now reuses
+  the T28 archived-replay plus task-ID gate and can analyze saved results; no simulation was rerun.
+- The promotion commit stages only five compact T40 artifacts. All 17,880 other untracked files and
+  the user-modified p01 diagnosis runner remain untouched.
+- Final review finds no new hard standards or spec defect. Automatic TP cleanup remains excluded,
+  the LDST typed-tracked prototype remains unpromoted, the macOS umbrella runner remains unresolved,
+  and the complete parallel matrix remains bound to T20 evidence.

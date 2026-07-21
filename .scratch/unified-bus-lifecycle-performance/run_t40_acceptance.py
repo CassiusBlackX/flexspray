@@ -55,6 +55,12 @@ def git_head(root: Path) -> str:
     ).strip()
 
 
+def unified_bus_source_tree(root: Path, revision: str) -> str:
+    return subprocess.check_output(
+        ["git", "rev-parse", f"{revision}:src/unified-bus"], cwd=root, text=True
+    ).strip()
+
+
 def source_input(case: str) -> Path:
     return COMPLEX_PACKAGE / "cases" / case / "lifecycle/case-input"
 
@@ -114,8 +120,13 @@ def verify_frozen() -> dict:
     manifest = json.loads(path.read_text(encoding="utf-8"))
     for role, expected in manifest["roles"].items():
         root = ROLES[role]["source_root"]
-        if git_head(root) != expected["revision"]:
-            raise RuntimeError(f"{role} revision moved after freeze")
+        current_revision = git_head(root)
+        if (
+            current_revision != expected["revision"]
+            and unified_bus_source_tree(root, current_revision)
+            != unified_bus_source_tree(root, expected["revision"])
+        ):
+            raise RuntimeError(f"{role} Unified Bus source tree moved after freeze")
         if T28.sha256(T28.binary_for(role)) != expected["binary_sha256"]:
             raise RuntimeError(f"{role} binary changed after freeze")
         if T28.sha256(T28.library_for(role)) != expected["unified_bus_library_sha256"]:
