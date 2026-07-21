@@ -5681,7 +5681,7 @@ class UbDcqcnIdleFlowCancelsRecoveryStateTest : public TestCase
 {
 public:
     UbDcqcnIdleFlowCancelsRecoveryStateTest()
-        : TestCase("UnifiedBus - idle DCQCN sender cancels recovery timers and stays inactive")
+        : TestCase("UnifiedBus - idle DCQCN sender cancels and resets recovery state")
     {
     }
 
@@ -5713,7 +5713,6 @@ public:
                               "Starting sender should register one active host flow");
 
         cc->ApplySyntheticCnpForTest();
-        const uint64_t reducedRate = cc->GetCurrentRateForTest().GetBitRate();
         const UbLifecycleResourceSnapshot duringRecovery =
             coordinator->GetSnapshot(txTp->GetLifecycleOwner());
         NS_TEST_ASSERT_MSG_EQ(duringRecovery.activeTrackedEventLeases,
@@ -5729,14 +5728,20 @@ public:
         NS_TEST_ASSERT_MSG_EQ(senderCtrl->GetActiveSenderFlowCount(),
                               0u,
                               "Idle sender should release host active-flow slot immediately");
+        NS_TEST_ASSERT_MSG_EQ(cc->GetCurrentRateForTest().GetBitRate(),
+                              DataRate("25Gbps").GetBitRate(),
+                              "Idle sender should reset its current rate to the initial rate");
+        NS_TEST_ASSERT_MSG_EQ(cc->GetTargetRateForTest().GetBitRate(),
+                              DataRate("25Gbps").GetBitRate(),
+                              "Idle sender should reset its target rate to the initial rate");
 
-        Simulator::Schedule(MicroSeconds(120), [this, senderCtrl, cc, reducedRate]() {
+        Simulator::Schedule(MicroSeconds(120), [this, senderCtrl, cc]() {
             NS_TEST_ASSERT_MSG_EQ(senderCtrl->GetActiveSenderFlowCount(),
                                   0u,
                                   "Idle sender must stay inactive after old DCQCN recovery timers would have fired");
             NS_TEST_ASSERT_MSG_EQ(cc->GetCurrentRateForTest().GetBitRate(),
-                                  reducedRate,
-                                  "Idle sender should preserve its DCQCN rate continuity");
+                                  DataRate("25Gbps").GetBitRate(),
+                                  "Canceled recovery timers must not mutate the reset current rate");
         });
 
         Simulator::Stop(MicroSeconds(121));
