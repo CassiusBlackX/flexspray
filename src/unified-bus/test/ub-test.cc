@@ -16050,6 +16050,190 @@ class UbLifecycleIdleJettyDestroyTest : public TestCase
     uint32_t m_callbackCount{0};
 };
 
+class UbLifecycleJettyLifetimeClassificationTest : public TestCase
+{
+  public:
+    UbLifecycleJettyLifetimeClassificationTest()
+        : TestCase("UnifiedBus - Jetty lifetime is explicit and scoped to one generation")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        Ptr<UbFunction> function = topo.sender->GetObject<UbController>()->GetUbFunction();
+        constexpr uint32_t boundJettyNum = 101;
+        constexpr uint32_t unboundJettyNum = 102;
+        constexpr uint32_t taskScopedJettyNum = 103;
+
+        function->CreateJetty(topo.sender->GetId(), topo.receiver->GetId(), boundJettyNum);
+        function->CreateJetty(topo.sender->GetId(), unboundJettyNum);
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              taskScopedJettyNum,
+                              UbJettyLifetime::TASK_SCOPED);
+
+        UbJettyLifetime lifetime = UbJettyLifetime::TASK_SCOPED;
+        NS_TEST_ASSERT_MSG_EQ(function->TryGetJettyLifetime(boundJettyNum, lifetime),
+                              true,
+                              "Bound default creation should expose a lifetime");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(lifetime),
+                              static_cast<uint32_t>(UbJettyLifetime::REUSABLE),
+                              "Bound default creation should remain reusable");
+        lifetime = UbJettyLifetime::TASK_SCOPED;
+        NS_TEST_ASSERT_MSG_EQ(function->TryGetJettyLifetime(unboundJettyNum, lifetime),
+                              true,
+                              "Unbound default creation should expose a lifetime");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(lifetime),
+                              static_cast<uint32_t>(UbJettyLifetime::REUSABLE),
+                              "Unbound default creation should remain reusable");
+        lifetime = UbJettyLifetime::REUSABLE;
+        NS_TEST_ASSERT_MSG_EQ(function->TryGetJettyLifetime(taskScopedJettyNum, lifetime),
+                              true,
+                              "Explicit task-scoped creation should expose a lifetime");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(lifetime),
+                              static_cast<uint32_t>(UbJettyLifetime::TASK_SCOPED),
+                              "Explicit task-scoped creation should retain its classification");
+
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(function->DestroyJetty(taskScopedJettyNum)),
+                              static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
+                              "Idle task-scoped Jetty should destroy synchronously");
+        NS_TEST_ASSERT_MSG_EQ(function->TryGetJettyLifetime(taskScopedJettyNum, lifetime),
+                              false,
+                              "Destroyed Jetty should not expose a stale classification");
+
+        function->CreateJetty(topo.sender->GetId(), topo.receiver->GetId(), taskScopedJettyNum);
+        lifetime = UbJettyLifetime::TASK_SCOPED;
+        NS_TEST_ASSERT_MSG_EQ(function->TryGetJettyLifetime(taskScopedJettyNum, lifetime),
+                              true,
+                              "Replacement generation should expose its own lifetime");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(lifetime),
+                              static_cast<uint32_t>(UbJettyLifetime::REUSABLE),
+                              "Replacement generation must not inherit the retired lifetime");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbLifecycleAppRtpJettyLifetimeTest : public TestCase
+{
+  public:
+    UbLifecycleAppRtpJettyLifetimeTest()
+        : TestCase("UnifiedBus - app RTP Jetty is task-scoped at creation")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbApp> app = CreateObject<UbApp>();
+        topo.sender->AddApplication(app);
+
+        UbTrafficGen::RuntimeTask task;
+        task.taskId = 900001;
+        task.sourceNode = topo.sender->GetId();
+        task.destNode = topo.receiver->GetId();
+        task.dataSize = 64;
+        task.priority = 0;
+        task.op = UbTrafficGen::RuntimeTaskOp::URMA_WRITE;
+        app->SendTraffic(task);
+
+        Ptr<UbFunction> function = topo.sender->GetObject<UbController>()->GetUbFunction();
+        UbJettyLifetime lifetime = UbJettyLifetime::REUSABLE;
+        NS_TEST_ASSERT_MSG_EQ(function->TryGetJettyLifetime(0, lifetime),
+                              true,
+                              "RTP task send should create its one-shot Jetty");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(lifetime),
+                              static_cast<uint32_t>(UbJettyLifetime::TASK_SCOPED),
+                              "RTP task send must classify its Jetty as task-scoped");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbLifecycleTaskCompletionPrecedesJettyRetirementTest : public TestCase
+{
+  public:
+    UbLifecycleTaskCompletionPrecedesJettyRetirementTest()
+        : TestCase("UnifiedBus - task completion is visible before Jetty retirement drains")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbApp> app = CreateObject<UbApp>();
+        topo.sender->AddApplication(app);
+        Ptr<UbFunction> function = topo.sender->GetObject<UbController>()->GetUbFunction();
+        constexpr uint32_t taskId = 900002;
+        constexpr uint32_t jettyNum = 104;
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              jettyNum,
+                              UbJettyLifetime::TASK_SCOPED);
+
+        const uint64_t token = function->TrackJettyEvent(jettyNum);
+        EventId runningEvent = Simulator::Schedule(MilliSeconds(1), []() {});
+        function->AttachJettyEvent(jettyNum, token, runningEvent);
+        NS_TEST_ASSERT_MSG_EQ(function->BeginJettyEvent(jettyNum, token),
+                              true,
+                              "Test setup should hold one running Jetty event");
+
+        TrafficRecord record;
+        record.taskId = taskId;
+        record.sourceNode = topo.sender->GetId();
+        record.destNode = topo.receiver->GetId();
+        record.dataSize = 64;
+        record.opType = "URMA_WRITE";
+        record.priority = 1;
+        record.delay = "0ns";
+        UbTrafficGen* trafficGen = UbTrafficGen::Get();
+        trafficGen->AddTask(record);
+        trafficGen->ScheduleNextTasks();
+        const uint32_t completedBefore = trafficGen->GetCompletedTaskCount();
+
+        app->OnTaskCompleted(taskId, jettyNum);
+
+        UbJettyLifecycleState state = UbJettyLifecycleState::ACTIVE;
+        NS_TEST_ASSERT_MSG_EQ(function->TryGetJettyState(jettyNum, state),
+                              true,
+                              "Pending cleanup should retain the Jetty record");
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(state),
+            static_cast<uint32_t>(UbJettyLifecycleState::DRAINING),
+            "Task-scoped Jetty should begin draining after completion is visible");
+
+        Simulator::Stop(NanoSeconds(0));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(trafficGen->GetCompletedTaskCount(),
+                              completedBefore + 1,
+                              "Scheduled completion visibility must not wait for Jetty cleanup");
+        NS_TEST_ASSERT_MSG_EQ(
+            function->IsJettyExists(jettyNum),
+            true,
+            "The held Jetty should still be draining after completion is visible");
+
+        runningEvent.Cancel();
+        function->ResolveJettyEvent(jettyNum, token);
+        NS_TEST_ASSERT_MSG_EQ(function->IsJettyExists(jettyNum),
+                              false,
+                              "Final drain progress should retire the task-scoped Jetty");
+        NS_TEST_ASSERT_MSG_EQ(trafficGen->GetCompletedTaskCount(),
+                              completedBefore + 1,
+                              "Jetty retirement must not publish task completion again");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
 class UbLifecycleCtpBindingDestroyTest : public TestCase
 {
   public:
@@ -17267,6 +17451,24 @@ class UbLifecycleCtpCachedJettyAdmissionFreezeTest : public TestCase
 
         Ptr<UbJetty> jetty = function->GetJetty(0);
         NS_TEST_ASSERT_MSG_NE(jetty, nullptr, "First CTP send should create the cached Jetty");
+        UbJettyLifetime lifetime = UbJettyLifetime::TASK_SCOPED;
+        NS_TEST_ASSERT_MSG_EQ(function->TryGetJettyLifetime(0, lifetime),
+                              true,
+                              "Cached CTP Jetty should expose its lifetime");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(lifetime),
+                              static_cast<uint32_t>(UbJettyLifetime::REUSABLE),
+                              "Cached CTP Jetty must remain reusable across idle periods");
+        uint32_t reusedJettyNum = std::numeric_limits<uint32_t>::max();
+        Ptr<UbJetty> reusedJetty = app->GetOrCreateCtpBoundJetty(task.sourceNode,
+                                                                 task.destNode,
+                                                                 key.srcEntityId,
+                                                                 key.dstEntityId,
+                                                                 key.vl,
+                                                                 &reusedJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(reusedJetty, jetty, "Repeated CTP key should reuse its cached Jetty");
+        NS_TEST_ASSERT_MSG_EQ(reusedJettyNum,
+                              0u,
+                              "Repeated CTP key should preserve the cached Jetty identifier");
         const uint32_t activeWqesBefore = jetty->GetActiveWqeCount();
         const uint32_t queuedPacketsBefore = service->GetQueuedPacketCountForTest(key);
         const uint32_t taSsnBefore = jetty->GetTaSsnSndNxtForTest();
@@ -26988,6 +27190,10 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleResponseBearingTpAckBeforeTerminalTest(UbWorkOutcome::CANCELED,
                                                                      "canceled"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleJettyLifetimeClassificationTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleAppRtpJettyLifetimeTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleTaskCompletionPrecedesJettyRetirementTest(),
                 TestCase::Duration::QUICK);
 #ifndef _WIN32
     AddTestCase(new UbLifecycleForceRemoveMissingUnackedFailsFastTest(),

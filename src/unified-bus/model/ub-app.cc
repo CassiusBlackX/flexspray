@@ -364,7 +364,10 @@ void UbApp::SendTraffic(UbTrafficGen::RuntimeTask task)
             NS_LOG_ERROR("Jetty already exists");
             return;
         }
-        ubFunc->CreateJetty(task.sourceNode, task.destNode, m_jettyNum);
+        ubFunc->CreateJetty(task.sourceNode,
+                            task.destNode,
+                            m_jettyNum,
+                            UbJettyLifetime::TASK_SCOPED);
         vector<uint32_t> tpns = GetNode()->GetObject<UbController>()->GetTpConnManager()->GetTpns(
             m_getTpnRule, RoutingTypeUsesShortestPaths(m_routingType), m_multiPathEnable, task.sourceNode,
             task.destNode, UINT32_MAX, UINT32_MAX, task.priority);
@@ -396,14 +399,24 @@ void UbApp::OnTaskCompleted(uint32_t taskId, uint32_t jettyNum)
     NS_LOG_INFO("WQE Completes, jettyNum: " << jettyNum << " taskId: " << taskId);
     WqeTaskCompletesNotify(GetNode()->GetId(), jettyNum, taskId);
     NS_LOG_INFO("[APPLICATION INFO] taskId: " << taskId << ",finish time:" << Simulator::Now().GetNanoSeconds() << "ns");
+    UbTrafficGen::Get()->OnTaskCompleted(taskId);
     if (m_transportMode == TransportMode::RTP)
     {
         // 删除无用tp
         auto cleanup = UbTrafficGen::Get()->GetTaskCleanupInfoById(taskId);
         GetNode()->GetObject<UbController>()->GetTpConnManager()->RemoveUselessTps(
             jettyNum, cleanup.sourceNode, cleanup.destNode, cleanup.priority);
+        Ptr<UbFunction> function = GetNode()->GetObject<UbController>()->GetUbFunction();
+        UbJettyLifetime lifetime = UbJettyLifetime::REUSABLE;
+        if (function->TryGetJettyLifetime(jettyNum, lifetime) &&
+            lifetime == UbJettyLifetime::TASK_SCOPED)
+        {
+            const UbDestroyStatus status =
+                function->DestroyJetty(jettyNum, UbDestroyReason::PROTOCOL_COMPLETE);
+            NS_ABORT_MSG_IF(status == UbDestroyStatus::REJECTED,
+                            "Task-scoped Jetty cleanup was rejected for task " << taskId);
+        }
     }
-    UbTrafficGen::Get()->OnTaskCompleted(taskId);
 }
 
 void UbApp::OnTestTaskCompleted(uint32_t taskId, uint32_t jettyNum)
