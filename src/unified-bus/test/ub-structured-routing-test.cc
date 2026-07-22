@@ -12,6 +12,8 @@
 
 #include <csignal>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <sstream>
@@ -66,6 +68,24 @@ CalculateFixtureCrc32(const std::string& bytes)
         }
     }
     return crc ^ 0xffffffffU;
+}
+
+void
+ReplaceUint32(std::string& output, std::size_t offset, uint32_t value)
+{
+    for (uint32_t index = 0; index < 4; ++index)
+    {
+        output[offset + index] = static_cast<char>(value >> (index * 8));
+    }
+}
+
+void
+RewriteFixtureCrc32(std::string& artifact)
+{
+    constexpr std::size_t headerSize = 88;
+    constexpr std::size_t crcOffset = 84;
+    const std::string payload = artifact.substr(headerSize);
+    ReplaceUint32(artifact, crcOffset, CalculateFixtureCrc32(payload));
 }
 
 std::string
@@ -377,6 +397,67 @@ class UbNextHopIndexTest : public TestCase
     }
 };
 
+class UbCsvRoutingMetricAggregationTest : public TestCase
+{
+  public:
+    UbCsvRoutingMetricAggregationTest()
+        : TestCase("CSV routing preserves global node and exact-port metric groups")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        const std::filesystem::path directory =
+            std::filesystem::path(CreateTempDirFilename("ub-routing-metric-aggregation"));
+        std::error_code error;
+        std::filesystem::create_directories(directory, error);
+        NS_TEST_ASSERT_MSG_EQ(error.value(), 0, "temporary directory creation should succeed");
+
+        const auto nodeFile = directory / "node.csv";
+        std::ofstream nodes(nodeFile);
+        nodes << "nodeId,nodeType,portNum,allocationDelay,forwardDelay\n"
+              << "0,DEVICE,4,1ns,0ns\n"
+              << "1,DEVICE,2,1ns,0ns\n";
+        nodes.close();
+        utils::UbUtils::Get()->CreateNode(nodeFile.string());
+
+        const auto routeFile = directory / "routing_table.csv";
+        std::ofstream routes(routeFile);
+        routes << "nodeId,dstNodeId,dstPortId,outPorts,metrics\n"
+               << "0,1,0,0,1\n"
+               << "0,1,0,1,3\n"
+               << "0,1,1,2 3,2 4\n";
+        routes.close();
+        utils::UbUtils::Get()->AddRoutingTable(routeFile.string());
+
+        auto routing = NodeList::GetNode(0)->GetObject<UbSwitch>()->GetRoutingProcess();
+        std::vector<uint16_t> shortestPorts;
+        std::vector<uint16_t> nonShortestPorts;
+        routing->GetShortestOutPorts(utils::NodeIdToIp(1, 0).Get(), shortestPorts);
+        routing->GetOtherOutPorts(utils::NodeIdToIp(1, 0).Get(), nonShortestPorts);
+        NS_TEST_ASSERT_MSG_EQ((shortestPorts == std::vector<uint16_t>({0})),
+                              true,
+                              "duplicate exact rows must share one minimum metric");
+        NS_TEST_ASSERT_MSG_EQ((nonShortestPorts == std::vector<uint16_t>({1})),
+                              true,
+                              "duplicate exact rows must retain higher metrics");
+
+        routing->GetShortestOutPorts(utils::NodeIdToIp(1).Get(), shortestPorts);
+        routing->GetOtherOutPorts(utils::NodeIdToIp(1).Get(), nonShortestPorts);
+        NS_TEST_ASSERT_MSG_EQ((shortestPorts == std::vector<uint16_t>({0})),
+                              true,
+                              "node-primary route must use the global minimum metric");
+        NS_TEST_ASSERT_MSG_EQ((nonShortestPorts == std::vector<uint16_t>({1, 2, 3})),
+                              true,
+                              "node-primary route must combine all higher metric groups");
+
+        Simulator::Destroy();
+        Config::Reset();
+        std::filesystem::remove_all(directory, error);
+    }
+};
+
 class UbCompressedNextHopArtifactTest : public TestCase
 {
   public:
@@ -562,6 +643,70 @@ class UbStructuredTopologyRejectsInvalidInputTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status), SIGABRT, "overlapping groups should use SIGABRT");
 
         status = RunStructuredTestInChild([]() {
+            UbNextHopIndexBuilder builder(2, 1);
+            builder.AddRoute({0, 1, 0, {0}, {1}});
+            builder.AddPrimaryRoute(0, 1, {0}, {0, 1});
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status),
+                              1,
+                              "overlapping node-primary candidate groups should abort");
+        NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status),
+                              SIGABRT,
+                              "overlapping node-primary groups should use SIGABRT");
+
+        status = RunStructuredTestInChild([]() {
+            std::string artifact = BuildCompressedRoutingFixture();
+            constexpr std::size_t headerSize = 88;
+            constexpr std::size_t destinationMapping = headerSize + 44 * sizeof(uint32_t);
+            ReplaceUint32(artifact, destinationMapping + 41 * sizeof(uint32_t), 0);
+            RewriteFixtureCrc32(artifact);
+            std::stringstream input(artifact);
+            (void)UbNextHopIndex::Read(input, BuildFixtureConnectedPorts(), std::string(64, '0'));
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, "duplicate destination mapping should abort");
+        NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status),
+                              SIGABRT,
+                              "duplicate destination should use SIGABRT");
+
+        status = RunStructuredTestInChild([]() {
+            std::string artifact = BuildCompressedRoutingFixture();
+            constexpr std::size_t headerSize = 88;
+            constexpr std::size_t destinationMapping = headerSize + 44 * sizeof(uint32_t);
+            ReplaceUint32(artifact, destinationMapping + 42 * sizeof(uint32_t), UINT32_MAX);
+            RewriteFixtureCrc32(artifact);
+            std::stringstream input(artifact);
+            (void)UbNextHopIndex::Read(input, BuildFixtureConnectedPorts(), std::string(64, '0'));
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, "missing destination mapping should abort");
+        NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status), SIGABRT, "missing destination should use SIGABRT");
+
+        status = RunStructuredTestInChild([]() {
+            std::string artifact = BuildCompressedRoutingFixture();
+            constexpr std::size_t headerSize = 88;
+            constexpr std::size_t endpointMapping = headerSize + 88 * sizeof(uint32_t);
+            ReplaceUint32(artifact, endpointMapping + (42 * 256 + 3) * sizeof(uint32_t), 0);
+            RewriteFixtureCrc32(artifact);
+            std::stringstream input(artifact);
+            (void)UbNextHopIndex::Read(input, BuildFixtureConnectedPorts(), std::string(64, '0'));
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, "duplicate endpoint mapping should abort");
+        NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status), SIGABRT, "duplicate endpoint should use SIGABRT");
+
+        status = RunStructuredTestInChild([]() {
+            std::string artifact = BuildCompressedRoutingFixture();
+            constexpr std::size_t headerSize = 88;
+            constexpr std::size_t endpointMapping = headerSize + 88 * sizeof(uint32_t);
+            ReplaceUint32(artifact,
+                          endpointMapping + (42 * 256 + 2) * sizeof(uint32_t),
+                          UINT32_MAX);
+            RewriteFixtureCrc32(artifact);
+            std::stringstream input(artifact);
+            (void)UbNextHopIndex::Read(input, BuildFixtureConnectedPorts(), std::string(64, '0'));
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, "missing endpoint mapping should abort");
+        NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status), SIGABRT, "missing endpoint should use SIGABRT");
+
+        status = RunStructuredTestInChild([]() {
             std::stringstream payload;
             payload << "NS3_UB_STRUCTURED 4\n"
                     << "NODES 1\n"
@@ -584,6 +729,7 @@ class UbStructuredRoutingTestSuite : public TestSuite
     {
         AddTestCase(new UbRuleRoutingTableTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbNextHopIndexTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbCsvRoutingMetricAggregationTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbCompressedNextHopArtifactTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbStructuredTopologyInstallTest(), TestCase::Duration::QUICK);
 #ifndef _WIN32

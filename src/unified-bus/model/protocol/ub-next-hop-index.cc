@@ -395,20 +395,40 @@ UbNextHopIndex::Read(std::istream& input,
     NS_ABORT_MSG_IF(std::find(mappedRows.begin(), mappedRows.end(), false) != mappedRows.end(),
                     "compressed routing contains an unmapped row");
     index->m_destinationIndexByNodeId.resize(nodeCount);
+    std::vector<bool> mappedDestinations(destinationCount, false);
     for (auto& value : index->m_destinationIndexByNodeId)
     {
         value = ReadLittleUint32(payload, offset);
         NS_ABORT_MSG_IF(value != INVALID_INDEX && value >= destinationCount,
                         "compressed routing destination mapping is out of range");
+        if (value != INVALID_INDEX)
+        {
+            NS_ABORT_MSG_IF(mappedDestinations[value],
+                            "compressed routing maps multiple nodes to one destination");
+            mappedDestinations[value] = true;
+        }
     }
+    NS_ABORT_MSG_IF(std::find(mappedDestinations.begin(), mappedDestinations.end(), false) !=
+                        mappedDestinations.end(),
+                    "compressed routing contains an unmapped destination");
     index->m_endpointByAddress.resize(
         CheckedProduct(nodeCount, PORTS_PER_ADDRESS_BLOCK, "endpoint mapping"));
+    std::vector<bool> mappedEndpoints(endpointCount, false);
     for (auto& value : index->m_endpointByAddress)
     {
         value = ReadLittleUint32(payload, offset);
         NS_ABORT_MSG_IF(value != INVALID_INDEX && value >= endpointCount,
                         "compressed routing endpoint mapping is out of range");
+        if (value != INVALID_INDEX)
+        {
+            NS_ABORT_MSG_IF(mappedEndpoints[value],
+                            "compressed routing maps multiple addresses to one endpoint");
+            mappedEndpoints[value] = true;
+        }
     }
+    NS_ABORT_MSG_IF(std::find(mappedEndpoints.begin(), mappedEndpoints.end(), false) !=
+                        mappedEndpoints.end(),
+                    "compressed routing contains an unmapped endpoint");
 
     index->m_classes.reserve(classCount);
     const std::size_t largestNodePortCount =
@@ -470,10 +490,9 @@ UbNextHopIndex::Read(std::istream& input,
     index->m_portRoutes = PackedIds::Read(payload, offset, portCellCount, portWidth);
     index->m_nodeRoutes = PackedIds::Read(payload, offset, nodeCellCount, nodeWidth);
     NS_ABORT_MSG_IF(offset != payload.size(), "compressed routing payload has unused bytes");
-    std::vector<std::vector<bool>> validatedClasses(rowCount, std::vector<bool>(classCount, false));
     auto validateClassForRow = [&](uint32_t row, uint32_t classId) {
         NS_ABORT_MSG_IF(classId >= classCount, "compressed routing class ID is out of range");
-        if (classId == 0 || validatedClasses[row][classId])
+        if (classId == 0)
         {
             return;
         }
@@ -489,23 +508,26 @@ UbNextHopIndex::Read(std::istream& input,
         };
         validatePorts(candidates.shortestPorts);
         validatePorts(candidates.nonShortestPorts);
-        validatedClasses[row][classId] = true;
     };
     for (uint32_t row = 0; row < rowCount; ++row)
     {
+        std::vector<uint32_t> usedClassIds;
+        usedClassIds.reserve(CheckedAdd(endpointCount, destinationCount, "row class IDs"));
         for (uint32_t endpoint = 0; endpoint < endpointCount; ++endpoint)
         {
-            const uint32_t classId =
-                index->m_portRoutes.Get(static_cast<std::size_t>(row) * endpointCount + endpoint);
-            validateClassForRow(row, classId);
+            usedClassIds.push_back(
+                index->m_portRoutes.Get(static_cast<std::size_t>(row) * endpointCount + endpoint));
         }
-    }
-    for (uint32_t row = 0; row < rowCount; ++row)
-    {
         for (uint32_t destination = 0; destination < destinationCount; ++destination)
         {
-            const uint32_t classId = index->m_nodeRoutes.Get(
-                static_cast<std::size_t>(row) * destinationCount + destination);
+            usedClassIds.push_back(index->m_nodeRoutes.Get(
+                static_cast<std::size_t>(row) * destinationCount + destination));
+        }
+        std::sort(usedClassIds.begin(), usedClassIds.end());
+        usedClassIds.erase(std::unique(usedClassIds.begin(), usedClassIds.end()),
+                           usedClassIds.end());
+        for (uint32_t classId : usedClassIds)
+        {
             validateClassForRow(row, classId);
         }
     }
@@ -517,6 +539,14 @@ UbNextHopIndex::Intern(RouteCandidates candidates)
 {
     NormalizePorts(candidates.shortestPorts);
     NormalizePorts(candidates.nonShortestPorts);
+    std::vector<uint16_t> overlap;
+    std::set_intersection(candidates.shortestPorts.begin(),
+                          candidates.shortestPorts.end(),
+                          candidates.nonShortestPorts.begin(),
+                          candidates.nonShortestPorts.end(),
+                          std::back_inserter(overlap));
+    NS_ABORT_MSG_IF(!overlap.empty(),
+                    "next-hop shortest and non-shortest candidates overlap");
     const auto existing = m_classIds.find(candidates);
     if (existing != m_classIds.end())
     {
@@ -554,6 +584,23 @@ UbNextHopIndexBuilder::AddRoute(const utils::UbStructuredTableRoute& route)
     const uint32_t classId = m_index->Intern({route.shortestPorts, route.nonShortestPorts});
     m_routes.push_back(
         {route.currentNodeId, route.destinationNodeId, route.destinationPortId, classId});
+}
+
+void
+UbNextHopIndexBuilder::AddPrimaryRoute(uint32_t currentNodeId,
+                                       uint32_t destinationNodeId,
+                                       const std::vector<uint16_t>& shortestPorts,
+                                       const std::vector<uint16_t>& nonShortestPorts)
+{
+    NS_ABORT_MSG_IF(m_built, "cannot add a route after building the next-hop index");
+    NS_ABORT_MSG_IF(currentNodeId >= m_nodeCount || destinationNodeId >= m_nodeCount,
+                    "next-hop primary route references an unknown node");
+    NS_ABORT_MSG_IF(shortestPorts.empty() && nonShortestPorts.empty(),
+                    "next-hop primary route must contain at least one output port");
+    m_currentNodeIds.insert(currentNodeId);
+    m_destinationNodeIds.insert(destinationNodeId);
+    const uint32_t classId = m_index->Intern({shortestPorts, nonShortestPorts});
+    m_primaryRoutes.push_back({currentNodeId, destinationNodeId, classId});
 }
 
 std::shared_ptr<const UbNextHopIndex>
@@ -656,8 +703,17 @@ UbNextHopIndexBuilder::Build()
             }
         }
     }
+    for (const auto& route : m_primaryRoutes)
+    {
+        const uint32_t routeRow = index.m_rowByNodeId[route.currentNodeId];
+        const uint32_t destination = index.m_destinationIndexByNodeId[route.destinationNodeId];
+        index.m_nodeRoutes.Set(static_cast<std::size_t>(routeRow) * index.m_destinationNodeCount +
+                                   destination,
+                               route.classId);
+    }
     index.m_classIds.clear();
     std::vector<PendingRoute>().swap(m_routes);
+    std::vector<PendingPrimaryRoute>().swap(m_primaryRoutes);
     return m_index;
 }
 

@@ -33,7 +33,7 @@ def _parse_args(argv):
         "--route-runtime-mode",
         choices=("compressed-table-lookup", "structured-rule-compute"),
         default="compressed-table-lookup",
-        help="How the runtime obtains route candidates (default: compressed-table-lookup)",
+        help="Runtime route lookup method (default: compressed-table-lookup)",
     )
     args = parser.parse_args(launcher_arguments)
     args.simulator_args = simulator_arguments
@@ -63,12 +63,6 @@ def main(argv=None):
                 "structured-rule-compute requires a case prepared with "
                 "--route-generation=structured or mixed"
             )
-        if (
-            args.route_runtime_mode == "compressed-table-lookup"
-            and not compressed_routing_path.is_file()
-        ):
-            raise ValueError(f"missing compressed routing artifact: {compressed_routing_path}")
-
         python = shutil.which("python3.12") or sys.executable
         program = [
             "scratch/ub-quick-example",
@@ -77,7 +71,10 @@ def main(argv=None):
             f"--route-runtime-mode={args.route_runtime_mode}",
             *(
                 [f"--compressed-routing-file={compressed_routing_path}"]
-                if args.route_runtime_mode == "compressed-table-lookup"
+                if (
+                    args.route_runtime_mode == "compressed-table-lookup"
+                    and compressed_routing_path.is_file()
+                )
                 else []
             ),
             *(str(argument) for argument in args.simulator_args),

@@ -16,11 +16,12 @@ SPEC.loader.exec_module(RUNNER)
 
 
 class StructuredCaseRunnerTest(unittest.TestCase):
-    def _case(self, route_generation):
+    def _case(self, route_generation, include_compressed=True):
         temporary = tempfile.TemporaryDirectory()
         case = Path(temporary.name)
         (case / "structured_topology.txt").write_text("prepared\n", encoding="utf-8")
-        (case / "compressed_routing.bin").write_bytes(b"prepared")
+        if include_compressed:
+            (case / "compressed_routing.bin").write_bytes(b"prepared")
         (case / "structured_summary.json").write_text(
             json.dumps({"routeGeneration": route_generation}),
             encoding="utf-8",
@@ -67,6 +68,18 @@ class StructuredCaseRunnerTest(unittest.TestCase):
         self.assertEqual(result, 0)
         command = run.call_args.args[0]
         self.assertIn("--route-runtime-mode=structured-rule-compute", command[-1])
+        self.assertNotIn("--compressed-routing-file=", command[-1])
+
+    @mock.patch.object(RUNNER.subprocess, "run")
+    def test_legacy_prepared_case_without_binary_is_forwarded_to_cpp(self, run):
+        run.return_value.returncode = 0
+        case = self._case(None, include_compressed=False)
+
+        result = RUNNER.main(["--case-path", str(case)])
+
+        self.assertEqual(result, 0)
+        command = run.call_args.args[0]
+        self.assertIn("--route-runtime-mode=compressed-table-lookup", command[-1])
         self.assertNotIn("--compressed-routing-file=", command[-1])
 
     @mock.patch.object(RUNNER.subprocess, "run")
