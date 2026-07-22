@@ -112,6 +112,8 @@ public:
     uint64_t GetForcedVoqPacketResidueForTest() const { return m_forcedVoqPacketResidue; }
     uint64_t GetForcedBufferedByteResidueForTest() const { return m_forcedBufferedByteResidue; }
     void RemoveTpFromAllocator(Ptr<UbIngressQueue> tp);
+    Ptr<UbIngressQueue> ReplaceTpWithDormantPlaceholder(Ptr<UbIngressQueue> tp);
+    bool ReplaceDormantTpBacking(Ptr<UbIngressQueue> expected, Ptr<UbIngressQueue> replacement);
     Ptr<UbSwitchAllocator> GetAllocator();
     Ipv4Address GetNodeIpv4Addr(){return m_Ipv4Addr;}
     Ptr<UbRoutingProcess> GetRoutingProcess() {return m_routingProcess;}

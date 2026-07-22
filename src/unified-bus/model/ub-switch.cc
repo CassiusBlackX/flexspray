@@ -342,6 +342,18 @@ void UbSwitch::RemoveTpFromAllocator(Ptr<UbIngressQueue> tp)
     m_allocator->UnregisterUbIngressQueue(tp, outPort, priority);
 }
 
+Ptr<UbIngressQueue>
+UbSwitch::ReplaceTpWithDormantPlaceholder(Ptr<UbIngressQueue> tp)
+{
+    return m_allocator->ReplaceUbIngressQueueWithEmptyPlaceholder(tp);
+}
+
+bool
+UbSwitch::ReplaceDormantTpBacking(Ptr<UbIngressQueue> expected, Ptr<UbIngressQueue> replacement)
+{
+    return m_allocator->ReplaceUbIngressQueue(expected, replacement);
+}
+
 UbSwitch::UbSwitch()
 {
 }

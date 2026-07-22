@@ -221,6 +221,43 @@ void UbSwitchAllocator::RegisterUbIngressQueue(Ptr<UbIngressQueue> ingressQueue,
     queues.insert(insertAt, ingressQueue);
 }
 
+Ptr<UbIngressQueue>
+UbSwitchAllocator::ReplaceUbIngressQueueWithEmptyPlaceholder(Ptr<UbIngressQueue> ingressQueue)
+{
+    if (ingressQueue == nullptr)
+    {
+        return nullptr;
+    }
+    Ptr<UbIngressQueue> placeholder = CreateObject<UbIngressQueue>();
+    placeholder->SetOutPortId(ingressQueue->GetOutPortId());
+    placeholder->SetInPortId(ingressQueue->GetInPortId());
+    placeholder->SetIngressPriority(ingressQueue->GetIngressPriority());
+    return ReplaceUbIngressQueue(ingressQueue, placeholder) ? placeholder : nullptr;
+}
+
+bool
+UbSwitchAllocator::ReplaceUbIngressQueue(Ptr<UbIngressQueue> expected,
+                                         Ptr<UbIngressQueue> replacement)
+{
+    if (expected == nullptr || replacement == nullptr || m_activeIngressQueue == expected)
+    {
+        return false;
+    }
+    for (auto& byPriority : m_ingressSources)
+    {
+        for (auto& queues : byPriority)
+        {
+            const auto queue = std::find(queues.begin(), queues.end(), expected);
+            if (queue != queues.end())
+            {
+                *queue = replacement;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 uint32_t
 UbSwitchAllocator::GetIngressQueueSlotCount(uint32_t outPort, uint32_t priority) const
 {
