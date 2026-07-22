@@ -1345,17 +1345,35 @@ silently change later traffic.
 
 **Blocked by:** None - can start immediately.
 
-- [ ] Characterize DCQCN using its existing sender-idle reset, tracked-event cancellation, receiver
+- [x] Characterize DCQCN using its existing sender-idle reset, tracked-event cancellation, receiver
       CNP cooldown, pending feedback, rate, alpha, and pacing behavior.
-- [ ] Characterize CAQM sender window, inflight and byte counters, RTT state, PSN send-time state,
+- [x] Characterize CAQM sender window, inflight and byte counters, RTT state, PSN send-time state,
       receiver aggregation maps, accumulated feedback, and congestion-state reset event.
-- [ ] Prove with focused tests which state survives dormancy and which state may use the algorithm's
+- [x] Prove with focused tests which state survives dormancy and which state may use the algorithm's
       existing idle reset without changing the next packet, feedback, or admission decision.
-- [ ] Algorithms without a proven contract report the endpoint ineligible and retain the live
+- [x] Algorithms without a proven contract report the endpoint ineligible and retain the live
       backing object; they never reset partially, abort the simulation, or fall through to a base
       implementation.
-- [ ] Adding a future algorithm requires explicit eligibility and focused continuity tests before
+- [x] Adding a future algorithm requires explicit eligibility and focused continuity tests before
       reclamation can activate.
+
+Closeout:
+
+- `UbCongestionControl` now owns an opaque, algorithm-specific dormancy snapshot contract whose
+  default is fail-closed. The parent-class documentation requires explicit snapshot, restore,
+  idle-reset, timer/event, and continuity semantics before a future algorithm can opt in.
+- Host CAQM preserves sender window/accounting, RTT and PSN send times, receiver aggregation, and
+  accumulated hint state. A pending state-reset event blocks dormancy; eligibility resumes only
+  after that event drains.
+- Host DCQCN uses its existing sender-idle reset as the sender boundary, rejects dormancy while any
+  pending or running tracked event remains, and preserves receiver CNP cooldown history without
+  synthesizing or rescheduling events during restore.
+- Switch congestion control and unknown snapshot types remain ineligible. The focused
+  `unified-bus-congestion-control` suite passes all 27 cases after the targeted module build, and
+  independent standards/spec reviews report no remaining blocker.
+- T44 adds no dormant TP record, manager reclaim/resolve path, reclamation trigger, scale run, or
+  memory-reduction claim. CAQM's current PSN send-time map is retained exactly; compacting it needs a
+  separate proof at a fully drained TP boundary.
 
 ## Task 45: Deduplicate canonical connection indexes
 
