@@ -92,6 +92,10 @@ strategies. Structured-rule compute requires a `structured` or `mixed` case with
 Candidate generation changes, but the existing `GetOutPort()` path and HASH, round-robin, adaptive,
 and packet-spray selectors still choose the final physical output port.
 
+Existing version 1-3 prepared files remain readable and use their embedded table/rules when no
+`compressed_routing.bin` exists. Version 4 cases require the artifact selected by the runtime mode
+and fail explicitly when it is missing.
+
 The preparation process exits before simulation starts. The scratch runner does not import NetworkX or
 compile routes, and the C++ simulation has no Python runtime interaction. The prepared artifacts are
 files, not a stdin stream or cross-language runtime protocol. Optional diagnostic CSV can be requested

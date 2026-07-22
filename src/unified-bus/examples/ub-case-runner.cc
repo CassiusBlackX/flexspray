@@ -481,7 +481,16 @@ BuildScenarioFromConfig(const QuickExampleOptions& options, const RuntimeSelecti
         NS_ABORT_MSG_IF(!structuredInput.is_open(),
                         "cannot open structured topology file: " << options.structuredTopologyFile);
         auto structuredConfig = UbUtils::ReadStructuredTopologyConfig(structuredInput);
-        if (options.routeRuntimeMode == "compressed-table-lookup")
+        const bool usesPortableRoutingArtifacts = !structuredConfig.routingFingerprint.empty();
+        if (!usesPortableRoutingArtifacts)
+        {
+            NS_ABORT_MSG_IF(!options.compressedRoutingFile.empty(),
+                            "compressed routing artifacts require a version 4 prepared topology");
+            NS_ABORT_MSG_IF(options.routeRuntimeMode != "compressed-table-lookup" &&
+                                options.routeRuntimeMode != "structured-rule-compute",
+                            "unknown route runtime mode: " << options.routeRuntimeMode);
+        }
+        else if (options.routeRuntimeMode == "compressed-table-lookup")
         {
             NS_ABORT_MSG_IF(options.compressedRoutingFile.empty(),
                             "compressed-table-lookup requires --compressed-routing-file");
@@ -489,8 +498,6 @@ BuildScenarioFromConfig(const QuickExampleOptions& options, const RuntimeSelecti
             NS_ABORT_MSG_IF(
                 !compressedInput.is_open(),
                 "cannot open compressed routing file: " << options.compressedRoutingFile);
-            NS_ABORT_MSG_IF(structuredConfig.routingFingerprint.empty(),
-                            "compressed-table-lookup requires a version 4 prepared topology");
             std::vector<std::vector<bool>> connectedPorts(structuredConfig.nodes.size());
             for (const auto& node : structuredConfig.nodes)
             {
@@ -806,7 +813,7 @@ QuickExampleOptions ParseOptions(int argc, char* argv[])
                  "Read a prepared compressed next-hop index from this file",
                  options.compressedRoutingFile);
     cmd.AddValue("route-runtime-mode",
-                 "Candidate source: compressed-table-lookup or structured-rule-compute",
+                 "Runtime route lookup: compressed-table-lookup or structured-rule-compute",
                  options.routeRuntimeMode);
     cmd.AddValue("mtp-threads",
                  "Number of MTP threads (0-1 to disable, >=2 to enable)",

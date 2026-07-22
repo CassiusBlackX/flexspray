@@ -27,6 +27,10 @@ JSON/YAML 是同一 NetworkX 编译路径的可选声明式适配层，适合不
 - `RoutingKey` 保留现有含义，不用它命名上述归属单位。
 - 当前 metric 只区分最短候选组和合并后的非最短候选组。第一阶段验证这两个集合，不声称
   保留数值 metric 的完整语义。
+- node-primary 查询会合并同一目的节点的所有目的端口。若同一物理出端口在不同目的端口上
+  分别属于最短和非最短候选，合并后的 `selectedShortestPath` 语义不唯一。准备或加载阶段必须
+  在仿真开始前拒绝这种输入，不能任意消重；用户应调整 metric、path finder 或使用明确的目的
+  UB 端口查询。
 
 ## 输入与内部处理
 
@@ -85,13 +89,19 @@ prepared case 同时包含 `structured_topology.txt`、`compressed_routing.bin` 
 保存覆盖全部查询项的压缩 route-class 索引。`structured` 和 `mixed` 一次准备即可在运行时用
 `--route-runtime-mode=compressed-table-lookup|structured-rule-compute` 切换。默认使用
 `compressed-table-lookup`；`full` 没有可执行的结构规则，只允许该模式。缺少所需工件时必须
-报错，不能静默退化。
+报错，不能静默退化。协议 v1-v3 的既有 prepared case 没有独立二进制工件，继续使用其
+`structured_topology.txt` 内嵌的 TABLE/规则；这个兼容分支不改变旧 case 的路由来源。
 
 `compressed_routing.bin` 使用固定小端字节序和显式字段编码，不直接 dump C++ struct。固定
 header 包含 magic、major/minor 版本、字节序标记、节点/行/目的/端点/候选类数量、class ID
 宽度、内容指纹、payload 字节数和 CRC32。payload 依次保存节点到行映射、节点到目的索引、
 UB 地址到端点索引、去重后的 shortest/non-shortest 端口类、端口级 packed class ID 和节点级
 packed class ID。所有长度和乘法在分配前检查溢出，校验和和输入指纹在安装前验证。
+
+协议 v4 的 `TABLE` 文本只保留 shortest/non-shortest 两组，不保留跨 destination-port 的
+原始数值 metric，因此它不能作为 node-primary 路由的无损运行时重建格式。正式 `full`
+运行也直接读取 `compressed_routing.bin`；文本 TABLE 只用于诊断和历史基准，不作为默认
+运行路径。
 
 拓扑内容、路由生成方式、path finder 内容、NetworkX 版本、compiler 版本和二进制格式版本
 共同参与缓存键。运行时选择不参与拓扑身份。正常准备不生成全量验证基准；显式

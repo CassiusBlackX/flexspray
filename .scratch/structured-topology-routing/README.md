@@ -150,8 +150,8 @@ shortest 和 non-shortest 候选；不同来源的候选集合不会合并。
 
 | 运行时表示 | RSS 中位数 | 相对旧完整表 |
 | --- | ---: | ---: |
-| `main` 逐目的完整表 | 2,479.50 MiB | 基线 |
-| compressed table lookup | 289.77 MiB | -88.31% |
+| `main` 逐目的完整表 | 2,479.59 MiB | 基线 |
+| compressed table lookup | 289.52 MiB | -88.32% |
 | structured rule compute | 220.72 MiB | -91.10% |
 
 对应活堆为 874.02、236.60 和 205.18 MiB。详细统一口径结果见
@@ -160,8 +160,8 @@ shortest 和 non-shortest 候选；不同来源的候选集合不会合并。
 
 ### 冷启动
 
-同一 benchmark 的三进程中位数显示：`main` 拓扑加路由加载为 6.546 s，直接二进制压缩表
-为 0.587 s，结构规则为 0.316 s。把完整结构文本再编译成同一个压缩索引需要 3.746 s，
+同一 benchmark 的三进程中位数显示：`main` 拓扑加路由加载为 6.335 s，直接二进制压缩表
+为 0.646 s，结构规则为 0.316 s。把完整结构文本再编译成同一个压缩索引需要 3.746 s，
 因此正式 prepared case 不再传递数百万条 `TABLE` 文本。
 
 ### 在线查询
@@ -170,13 +170,14 @@ shortest 和 non-shortest 候选；不同来源的候选集合不会合并。
 
 | 运行时表示 | candidate | HASH | ADAPTIVE |
 | --- | ---: | ---: | ---: |
-| `main` 完整表 | 237.75 ns | 386.55 ns | 545.79 ns |
-| compressed table lookup | 184.97 ns | 196.57 ns | 339.36 ns |
-| structured rule compute | 390.19 ns | 359.49 ns | 528.81 ns |
+| `main` 完整表 | 241.55 ns | 380.33 ns | 504.20 ns |
+| compressed table lookup | 181.75 ns | 192.53 ns | 338.91 ns |
+| structured rule compute | 390.38 ns | 358.63 ns | 509.48 ns |
 
-压缩表的三项速度分别为 main 的 1.29x、1.97x 和 1.61x。结构规则产生完整候选集合更慢，
-但 HASH/ADAPTIVE 的完整 `GetOutPort()` 仍略快于 main，并使用最低内存。三条新路径对六种
-selector 和 `selectedShortestPath` 生成的 100,000 查询签名字节一致。该 microbenchmark
+压缩表的三项速度分别为 main 的 1.33x、1.98x 和 1.49x。结构规则产生完整候选集合更慢；
+HASH 比 main 快 1.06x，ADAPTIVE 比 main 慢约 1%，但使用最低内存。压缩表和结构规则对六种
+selector 和 `selectedShortestPath` 生成的 100,000 查询签名字节一致；两者的
+candidate/HASH/ADAPTIVE common signature 也与 main 字节一致。该 microbenchmark
 隔离路由开销，不能直接解释成完整业务仿真的单包延迟。
 
 ## 行为是否改变

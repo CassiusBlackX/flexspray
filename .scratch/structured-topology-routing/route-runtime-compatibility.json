@@ -1,0 +1,4397 @@
+{
+  "1dpod-64npu-original": {
+    "byteIdentical": true,
+    "commonSignatureSha256": "4881f95a3273ecfdfe3427ab21f6442b235f59ee0fbf985d0e8213b52221ea03",
+    "embeddedTextMatchesPortable": false,
+    "main": {
+      "commonSignatureBytes": 1144462,
+      "commonSignatureSha256": "4881f95a3273ecfdfe3427ab21f6442b235f59ee0fbf985d0e8213b52221ea03",
+      "metrics": {
+        "allocatorReleasedBytes": 0,
+        "commit": "0ca0e95",
+        "heapInUseAfterAllocatorReliefBytes": 32237920,
+        "heapInUseAfterInstallBytes": 32237920,
+        "iterations": 100000,
+        "measurements": [
+          {
+            "checksum": 2513354669172532779,
+            "meanNs": 41.32334,
+            "missing": 0,
+            "name": "candidate-set",
+            "p50BatchMeanNs": 41.107178,
+            "p99BatchMeanNs": 43.589111
+          },
+          {
+            "checksum": 6297920981269197076,
+            "meanNs": 77.91041,
+            "missing": 0,
+            "name": "HASH",
+            "p50BatchMeanNs": 77.890869,
+            "p99BatchMeanNs": 79.172852
+          },
+          {
+            "checksum": 5167010062015067996,
+            "meanNs": 146.62291,
+            "missing": 0,
+            "name": "ADAPTIVE",
+            "p50BatchMeanNs": 143.97168,
+            "p99BatchMeanNs": 187.143799
+          }
+        ],
+        "peakRssBytes": 48414720,
+        "queryCount": 36288,
+        "routingLoadSeconds": 0.023129,
+        "rssAfterAllocatorReliefBytes": 48414720,
+        "rssAfterInstallBytes": 48381952,
+        "rssBeforeBytes": 8650752,
+        "topologyInstallSeconds": 0.035382
+      }
+    },
+    "mainMatchesPortable": true,
+    "nodeCount": 176,
+    "queryCount": 36288,
+    "runs": {
+      "full-compressed-table": {
+        "commonSignatureBytes": 1144462,
+        "commonSignatureSha256": "4881f95a3273ecfdfe3427ab21f6442b235f59ee0fbf985d0e8213b52221ea03",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 29346544,
+          "heapInUseAfterInstallBytes": 29346544,
+          "installSeconds": 0.036695,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 2513354669172532779,
+              "meanNs": 81.02875,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 80.974646,
+              "p99BatchMeanNs": 88.704346
+            },
+            {
+              "checksum": 6297920981269197076,
+              "meanNs": 86.01291,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 85.917236,
+              "p99BatchMeanNs": 90.118408
+            },
+            {
+              "checksum": 2625354548239090952,
+              "meanNs": 156.23417,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 153.513672,
+              "p99BatchMeanNs": 172.739746
+            },
+            {
+              "checksum": 16356695118472858568,
+              "meanNs": 441.83,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 442.464355,
+              "p99BatchMeanNs": 469.116211
+            },
+            {
+              "checksum": 8061890522484086971,
+              "meanNs": 139.6375,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 131.256104,
+              "p99BatchMeanNs": 180.836914
+            },
+            {
+              "checksum": 5167010062015067996,
+              "meanNs": 167.2425,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 168.632075,
+              "p99BatchMeanNs": 175.65918
+            },
+            {
+              "checksum": 13983323293609073809,
+              "meanNs": 82.9425,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 78.318359,
+              "p99BatchMeanNs": 110.422852
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.003051,
+          "peakRssBytes": 38748160,
+          "queryCount": 36288,
+          "rssAfterAllocatorReliefBytes": 38748160,
+          "rssAfterInstallBytes": 38715392,
+          "rssBeforeBytes": 8601600
+        },
+        "signatureBytes": 2344462,
+        "signatureSha256": "7d85046a3c0bfffcb0d00deb567ad1e987fbcb60f34ec0bd481db4c3baeababc"
+      },
+      "full-text-table": {
+        "commonSignatureBytes": 800008,
+        "commonSignatureSha256": "8142b4c59cd8d49e1d70f3f69f295e144154d300b0dba89943c9ef3f51b022cd",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 28970304,
+          "heapInUseAfterInstallBytes": 28970304,
+          "installSeconds": 0.035356,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 0,
+              "meanNs": 3.65625,
+              "missing": 100000,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 3.692627,
+              "p99BatchMeanNs": 3.712891
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 90.155,
+              "missing": 100000,
+              "name": "HASH64",
+              "p50BatchMeanNs": 91.969727,
+              "p99BatchMeanNs": 93.258844
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 83.6325,
+              "missing": 100000,
+              "name": "CRC32",
+              "p50BatchMeanNs": 83.638672,
+              "p99BatchMeanNs": 85.446344
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 84.15583,
+              "missing": 100000,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 83.140137,
+              "p99BatchMeanNs": 92.854736
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 78.93,
+              "missing": 100000,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 78.633789,
+              "p99BatchMeanNs": 84.228516
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 79.47792,
+              "missing": 100000,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 79.091553,
+              "p99BatchMeanNs": 81.490566
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 83.07333,
+              "missing": 100000,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 79.630615,
+              "p99BatchMeanNs": 91.623779
+            }
+          ],
+          "mode": "text-table-lookup",
+          "parseSeconds": 0.000295,
+          "peakRssBytes": 38322176,
+          "queryCount": 36288,
+          "rssAfterAllocatorReliefBytes": 38322176,
+          "rssAfterInstallBytes": 38289408,
+          "rssBeforeBytes": 8568832
+        },
+        "signatureBytes": 2000008,
+        "signatureSha256": "6bcf019111fcb7a4e5f3c2d73b15e9ddc01a5f0a02c4d535ca26feb0cd4d8bbf"
+      },
+      "mixed-compressed-table": {
+        "commonSignatureBytes": 1144462,
+        "commonSignatureSha256": "4881f95a3273ecfdfe3427ab21f6442b235f59ee0fbf985d0e8213b52221ea03",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 29346544,
+          "heapInUseAfterInstallBytes": 29346544,
+          "installSeconds": 0.039138,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 2513354669172532779,
+              "meanNs": 85.37042,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 89.213135,
+              "p99BatchMeanNs": 94.797607
+            },
+            {
+              "checksum": 6297920981269197076,
+              "meanNs": 107.14292,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 106.719971,
+              "p99BatchMeanNs": 110.94165
+            },
+            {
+              "checksum": 2625354548239090952,
+              "meanNs": 152.44209,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 150.360107,
+              "p99BatchMeanNs": 174.675708
+            },
+            {
+              "checksum": 16356695118472858568,
+              "meanNs": 450.33458,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 451.131348,
+              "p99BatchMeanNs": 489.339111
+            },
+            {
+              "checksum": 8061890522484086971,
+              "meanNs": 134.6675,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 129.099609,
+              "p99BatchMeanNs": 152.91333
+            },
+            {
+              "checksum": 5167010062015067996,
+              "meanNs": 149.20125,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 149.607422,
+              "p99BatchMeanNs": 164.174316
+            },
+            {
+              "checksum": 13983323293609073809,
+              "meanNs": 78.95125,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 79.193115,
+              "p99BatchMeanNs": 80.627441
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.00324,
+          "peakRssBytes": 38912000,
+          "queryCount": 36288,
+          "rssAfterAllocatorReliefBytes": 38912000,
+          "rssAfterInstallBytes": 38879232,
+          "rssBeforeBytes": 8617984
+        },
+        "signatureBytes": 2344462,
+        "signatureSha256": "7d85046a3c0bfffcb0d00deb567ad1e987fbcb60f34ec0bd481db4c3baeababc"
+      },
+      "mixed-rule-compute": {
+        "commonSignatureBytes": 1144462,
+        "commonSignatureSha256": "4881f95a3273ecfdfe3427ab21f6442b235f59ee0fbf985d0e8213b52221ea03",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 29459216,
+          "heapInUseAfterInstallBytes": 29459216,
+          "installSeconds": 0.037277,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 2513354669172532779,
+              "meanNs": 279.845,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 281.12793,
+              "p99BatchMeanNs": 301.330566
+            },
+            {
+              "checksum": 6297920981269197076,
+              "meanNs": 228.48459,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 228.006836,
+              "p99BatchMeanNs": 243.489976
+            },
+            {
+              "checksum": 2625354548239090952,
+              "meanNs": 289.18125,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 290.120361,
+              "p99BatchMeanNs": 296.051025
+            },
+            {
+              "checksum": 16356695118472858568,
+              "meanNs": 577.33333,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 572.865967,
+              "p99BatchMeanNs": 618.865967
+            },
+            {
+              "checksum": 8061890522484086971,
+              "meanNs": 268.26834,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 268.819092,
+              "p99BatchMeanNs": 279.174805
+            },
+            {
+              "checksum": 5167010062015067996,
+              "meanNs": 293.73625,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 291.778564,
+              "p99BatchMeanNs": 335.245605
+            },
+            {
+              "checksum": 13983323293609073809,
+              "meanNs": 221.40625,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 217.641113,
+              "p99BatchMeanNs": 276.01123
+            }
+          ],
+          "mode": "structured-rule-compute",
+          "parseSeconds": 0.000443,
+          "peakRssBytes": 39026688,
+          "queryCount": 36288,
+          "rssAfterAllocatorReliefBytes": 39026688,
+          "rssAfterInstallBytes": 38993920,
+          "rssBeforeBytes": 8634368
+        },
+        "signatureBytes": 2344462,
+        "signatureSha256": "7d85046a3c0bfffcb0d00deb567ad1e987fbcb60f34ec0bd481db4c3baeababc"
+      },
+      "structured-compressed-table": {
+        "commonSignatureBytes": 1144462,
+        "commonSignatureSha256": "4881f95a3273ecfdfe3427ab21f6442b235f59ee0fbf985d0e8213b52221ea03",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 29346544,
+          "heapInUseAfterInstallBytes": 29346544,
+          "installSeconds": 0.036168,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 2513354669172532779,
+              "meanNs": 81.16916,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 81.166748,
+              "p99BatchMeanNs": 83.80127
+            },
+            {
+              "checksum": 6297920981269197076,
+              "meanNs": 83.85416,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 83.587646,
+              "p99BatchMeanNs": 89.070557
+            },
+            {
+              "checksum": 2625354548239090952,
+              "meanNs": 154.59625,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 154.500488,
+              "p99BatchMeanNs": 156.361816
+            },
+            {
+              "checksum": 16356695118472858568,
+              "meanNs": 444.00583,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 443.217041,
+              "p99BatchMeanNs": 469.136719
+            },
+            {
+              "checksum": 8061890522484086971,
+              "meanNs": 134.20083,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 134.246826,
+              "p99BatchMeanNs": 141.469482
+            },
+            {
+              "checksum": 5167010062015067996,
+              "meanNs": 148.21458,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 148.213623,
+              "p99BatchMeanNs": 156.148193
+            },
+            {
+              "checksum": 13983323293609073809,
+              "meanNs": 78.10334,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 77.992676,
+              "p99BatchMeanNs": 79.182861
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.003236,
+          "peakRssBytes": 38846464,
+          "queryCount": 36288,
+          "rssAfterAllocatorReliefBytes": 38846464,
+          "rssAfterInstallBytes": 38813696,
+          "rssBeforeBytes": 8650752
+        },
+        "signatureBytes": 2344462,
+        "signatureSha256": "7d85046a3c0bfffcb0d00deb567ad1e987fbcb60f34ec0bd481db4c3baeababc"
+      },
+      "structured-rule-compute": {
+        "commonSignatureBytes": 1144462,
+        "commonSignatureSha256": "4881f95a3273ecfdfe3427ab21f6442b235f59ee0fbf985d0e8213b52221ea03",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 29459216,
+          "heapInUseAfterInstallBytes": 29459216,
+          "installSeconds": 0.037699,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 2513354669172532779,
+              "meanNs": 277.51875,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 278.432373,
+              "p99BatchMeanNs": 298.624756
+            },
+            {
+              "checksum": 6297920981269197076,
+              "meanNs": 230.76708,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 230.326416,
+              "p99BatchMeanNs": 239.247559
+            },
+            {
+              "checksum": 2625354548239090952,
+              "meanNs": 286.85625,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 282.368896,
+              "p99BatchMeanNs": 301.391602
+            },
+            {
+              "checksum": 16356695118472858568,
+              "meanNs": 587.21583,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 587.005615,
+              "p99BatchMeanNs": 612.162109
+            },
+            {
+              "checksum": 8061890522484086971,
+              "meanNs": 281.5125,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 280.080078,
+              "p99BatchMeanNs": 293.233398
+            },
+            {
+              "checksum": 5167010062015067996,
+              "meanNs": 295.80084,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 295.074463,
+              "p99BatchMeanNs": 303.985596
+            },
+            {
+              "checksum": 13983323293609073809,
+              "meanNs": 224.45958,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 223.846436,
+              "p99BatchMeanNs": 234.842773
+            }
+          ],
+          "mode": "structured-rule-compute",
+          "parseSeconds": 0.000428,
+          "peakRssBytes": 39010304,
+          "queryCount": 36288,
+          "rssAfterAllocatorReliefBytes": 39010304,
+          "rssAfterInstallBytes": 38977536,
+          "rssBeforeBytes": 8650752
+        },
+        "signatureBytes": 2344462,
+        "signatureSha256": "7d85046a3c0bfffcb0d00deb567ad1e987fbcb60f34ec0bd481db4c3baeababc"
+      }
+    },
+    "signatureSha256": "7d85046a3c0bfffcb0d00deb567ad1e987fbcb60f34ec0bd481db4c3baeababc"
+  },
+  "1dpod-shaped-simplified": {
+    "byteIdentical": true,
+    "commonSignatureSha256": "97ed09e9aa3c13c1f78d66b9492520b0fa25114e107db423922b1950a9c1eb56",
+    "embeddedTextMatchesPortable": false,
+    "main": {
+      "commonSignatureBytes": 1031434,
+      "commonSignatureSha256": "97ed09e9aa3c13c1f78d66b9492520b0fa25114e107db423922b1950a9c1eb56",
+      "metrics": {
+        "allocatorReleasedBytes": 0,
+        "commit": "0ca0e95",
+        "heapInUseAfterAllocatorReliefBytes": 2081888,
+        "heapInUseAfterInstallBytes": 2081888,
+        "iterations": 100000,
+        "measurements": [
+          {
+            "checksum": 7123258061470071110,
+            "meanNs": 27.10333,
+            "missing": 0,
+            "name": "candidate-set",
+            "p50BatchMeanNs": 26.977539,
+            "p99BatchMeanNs": 32.714844
+          },
+          {
+            "checksum": 16918773242588050442,
+            "meanNs": 63.48083,
+            "missing": 0,
+            "name": "HASH",
+            "p50BatchMeanNs": 63.181641,
+            "p99BatchMeanNs": 66.904785
+          },
+          {
+            "checksum": 319009554064371630,
+            "meanNs": 112.75958,
+            "missing": 0,
+            "name": "ADAPTIVE",
+            "p50BatchMeanNs": 112.569092,
+            "p99BatchMeanNs": 119.730713
+          }
+        ],
+        "peakRssBytes": 11223040,
+        "queryCount": 912,
+        "routingLoadSeconds": 0.000659,
+        "rssAfterAllocatorReliefBytes": 11223040,
+        "rssAfterInstallBytes": 11190272,
+        "rssBeforeBytes": 8585216,
+        "topologyInstallSeconds": 0.004687
+      }
+    },
+    "mainMatchesPortable": true,
+    "nodeCount": 34,
+    "queryCount": 912,
+    "runs": {
+      "full-compressed-table": {
+        "commonSignatureBytes": 1031434,
+        "commonSignatureSha256": "97ed09e9aa3c13c1f78d66b9492520b0fa25114e107db423922b1950a9c1eb56",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 2013632,
+          "heapInUseAfterInstallBytes": 2013632,
+          "installSeconds": 0.004693,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 7123258061470071110,
+              "meanNs": 76.30375,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 76.039795,
+              "p99BatchMeanNs": 80.413818
+            },
+            {
+              "checksum": 16918773242588050442,
+              "meanNs": 84.73083,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 84.442139,
+              "p99BatchMeanNs": 89.823242
+            },
+            {
+              "checksum": 1721206311803537260,
+              "meanNs": 155.79667,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 155.660156,
+              "p99BatchMeanNs": 160.095215
+            },
+            {
+              "checksum": 3472860511061953721,
+              "meanNs": 403.0475,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 401.287146,
+              "p99BatchMeanNs": 429.962158
+            },
+            {
+              "checksum": 2508413424122211292,
+              "meanNs": 133.52875,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 133.158447,
+              "p99BatchMeanNs": 136.251769
+            },
+            {
+              "checksum": 319009554064371630,
+              "meanNs": 144.22875,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 136.627197,
+              "p99BatchMeanNs": 161.834717
+            },
+            {
+              "checksum": 319009554064371630,
+              "meanNs": 90.72709,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 84.61499,
+              "p99BatchMeanNs": 104.319336
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.000332,
+          "peakRssBytes": 10797056,
+          "queryCount": 912,
+          "rssAfterAllocatorReliefBytes": 10797056,
+          "rssAfterInstallBytes": 10764288,
+          "rssBeforeBytes": 8601600
+        },
+        "signatureBytes": 2231434,
+        "signatureSha256": "3ee2a276e0e71a908c8ccc0be2d11f8cede5c22326826c464a78f7d717c2dce5"
+      },
+      "full-text-table": {
+        "commonSignatureBytes": 800008,
+        "commonSignatureSha256": "8142b4c59cd8d49e1d70f3f69f295e144154d300b0dba89943c9ef3f51b022cd",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1959072,
+          "heapInUseAfterInstallBytes": 1959072,
+          "installSeconds": 0.00456,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 0,
+              "meanNs": 3.83584,
+              "missing": 100000,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 3.814697,
+              "p99BatchMeanNs": 4.048828
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 88.60667,
+              "missing": 100000,
+              "name": "HASH64",
+              "p50BatchMeanNs": 88.582275,
+              "p99BatchMeanNs": 89.497803
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 81.84292,
+              "missing": 100000,
+              "name": "CRC32",
+              "p50BatchMeanNs": 81.71582,
+              "p99BatchMeanNs": 87.249756
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 85.60542,
+              "missing": 100000,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 85.571289,
+              "p99BatchMeanNs": 86.812256
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 81.94167,
+              "missing": 100000,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 84.248779,
+              "p99BatchMeanNs": 86.141113
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 85.48333,
+              "missing": 100000,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 85.428955,
+              "p99BatchMeanNs": 88.002441
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 83.79584,
+              "missing": 100000,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 85.947754,
+              "p99BatchMeanNs": 88.185791
+            }
+          ],
+          "mode": "text-table-lookup",
+          "parseSeconds": 5.1e-05,
+          "peakRssBytes": 10764288,
+          "queryCount": 912,
+          "rssAfterAllocatorReliefBytes": 10764288,
+          "rssAfterInstallBytes": 10731520,
+          "rssBeforeBytes": 8601600
+        },
+        "signatureBytes": 2000008,
+        "signatureSha256": "6bcf019111fcb7a4e5f3c2d73b15e9ddc01a5f0a02c4d535ca26feb0cd4d8bbf"
+      },
+      "mixed-compressed-table": {
+        "commonSignatureBytes": 1031434,
+        "commonSignatureSha256": "97ed09e9aa3c13c1f78d66b9492520b0fa25114e107db423922b1950a9c1eb56",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 2013632,
+          "heapInUseAfterInstallBytes": 2013632,
+          "installSeconds": 0.004756,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 7123258061470071110,
+              "meanNs": 60.12458,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 60.078857,
+              "p99BatchMeanNs": 61.004639
+            },
+            {
+              "checksum": 16918773242588050442,
+              "meanNs": 84.61083,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 84.798096,
+              "p99BatchMeanNs": 86.62915
+            },
+            {
+              "checksum": 1721206311803537260,
+              "meanNs": 153.90458,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 153.920654,
+              "p99BatchMeanNs": 157.938477
+            },
+            {
+              "checksum": 3472860511061953721,
+              "meanNs": 395.31666,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 392.211914,
+              "p99BatchMeanNs": 417.887451
+            },
+            {
+              "checksum": 2508413424122211292,
+              "meanNs": 121.9675,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 121.937988,
+              "p99BatchMeanNs": 126.56665
+            },
+            {
+              "checksum": 319009554064371630,
+              "meanNs": 130.64458,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 129.91333,
+              "p99BatchMeanNs": 143.849609
+            },
+            {
+              "checksum": 319009554064371630,
+              "meanNs": 77.55458,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 77.677246,
+              "p99BatchMeanNs": 79.040527
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.000356,
+          "peakRssBytes": 10960896,
+          "queryCount": 912,
+          "rssAfterAllocatorReliefBytes": 10960896,
+          "rssAfterInstallBytes": 10928128,
+          "rssBeforeBytes": 8650752
+        },
+        "signatureBytes": 2231434,
+        "signatureSha256": "3ee2a276e0e71a908c8ccc0be2d11f8cede5c22326826c464a78f7d717c2dce5"
+      },
+      "mixed-rule-compute": {
+        "commonSignatureBytes": 1031434,
+        "commonSignatureSha256": "97ed09e9aa3c13c1f78d66b9492520b0fa25114e107db423922b1950a9c1eb56",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 2003632,
+          "heapInUseAfterInstallBytes": 2003632,
+          "installSeconds": 0.004678,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 7123258061470071110,
+              "meanNs": 168.08667,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 168.172363,
+              "p99BatchMeanNs": 170.217041
+            },
+            {
+              "checksum": 16918773242588050442,
+              "meanNs": 144.96833,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 144.500732,
+              "p99BatchMeanNs": 151.672363
+            },
+            {
+              "checksum": 1721206311803537260,
+              "meanNs": 203.62667,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 196.340088,
+              "p99BatchMeanNs": 215.72876
+            },
+            {
+              "checksum": 3472860511061953721,
+              "meanNs": 456.57542,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 453.409668,
+              "p99BatchMeanNs": 477.162598
+            },
+            {
+              "checksum": 2508413424122211292,
+              "meanNs": 181.2525,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 180.592773,
+              "p99BatchMeanNs": 184.407471
+            },
+            {
+              "checksum": 319009554064371630,
+              "meanNs": 185.74292,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 186.238525,
+              "p99BatchMeanNs": 190.205811
+            },
+            {
+              "checksum": 319009554064371630,
+              "meanNs": 136.015,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 136.189697,
+              "p99BatchMeanNs": 138.143868
+            }
+          ],
+          "mode": "structured-rule-compute",
+          "parseSeconds": 6.9e-05,
+          "peakRssBytes": 10928128,
+          "queryCount": 912,
+          "rssAfterAllocatorReliefBytes": 10928128,
+          "rssAfterInstallBytes": 10895360,
+          "rssBeforeBytes": 8634368
+        },
+        "signatureBytes": 2231434,
+        "signatureSha256": "3ee2a276e0e71a908c8ccc0be2d11f8cede5c22326826c464a78f7d717c2dce5"
+      },
+      "structured-compressed-table": {
+        "commonSignatureBytes": 1031434,
+        "commonSignatureSha256": "97ed09e9aa3c13c1f78d66b9492520b0fa25114e107db423922b1950a9c1eb56",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 2013632,
+          "heapInUseAfterInstallBytes": 2013632,
+          "installSeconds": 0.004776,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 7123258061470071110,
+              "meanNs": 74.4325,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 74.147461,
+              "p99BatchMeanNs": 76.934814
+            },
+            {
+              "checksum": 16918773242588050442,
+              "meanNs": 85.57416,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 84.859131,
+              "p99BatchMeanNs": 91.125488
+            },
+            {
+              "checksum": 1721206311803537260,
+              "meanNs": 156.405,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 146.606445,
+              "p99BatchMeanNs": 169.026611
+            },
+            {
+              "checksum": 3472860511061953721,
+              "meanNs": 408.34125,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 409.678223,
+              "p99BatchMeanNs": 439.219238
+            },
+            {
+              "checksum": 2508413424122211292,
+              "meanNs": 123.86459,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 123.850342,
+              "p99BatchMeanNs": 130.239014
+            },
+            {
+              "checksum": 319009554064371630,
+              "meanNs": 127.00708,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 127.095459,
+              "p99BatchMeanNs": 129.348467
+            },
+            {
+              "checksum": 319009554064371630,
+              "meanNs": 79.0425,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 79.182861,
+              "p99BatchMeanNs": 81.135986
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.000354,
+          "peakRssBytes": 10862592,
+          "queryCount": 912,
+          "rssAfterAllocatorReliefBytes": 10862592,
+          "rssAfterInstallBytes": 10829824,
+          "rssBeforeBytes": 8634368
+        },
+        "signatureBytes": 2231434,
+        "signatureSha256": "3ee2a276e0e71a908c8ccc0be2d11f8cede5c22326826c464a78f7d717c2dce5"
+      },
+      "structured-rule-compute": {
+        "commonSignatureBytes": 1031434,
+        "commonSignatureSha256": "97ed09e9aa3c13c1f78d66b9492520b0fa25114e107db423922b1950a9c1eb56",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 2003632,
+          "heapInUseAfterInstallBytes": 2003632,
+          "installSeconds": 0.004645,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 7123258061470071110,
+              "meanNs": 170.95792,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 171.040771,
+              "p99BatchMeanNs": 173.289062
+            },
+            {
+              "checksum": 16918773242588050442,
+              "meanNs": 149.84292,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 148.335938,
+              "p99BatchMeanNs": 168.568848
+            },
+            {
+              "checksum": 1721206311803537260,
+              "meanNs": 216.57584,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 216.227295,
+              "p99BatchMeanNs": 220.835449
+            },
+            {
+              "checksum": 3472860511061953721,
+              "meanNs": 456.36292,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 456.370117,
+              "p99BatchMeanNs": 476.104736
+            },
+            {
+              "checksum": 2508413424122211292,
+              "meanNs": 181.36708,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 181.101562,
+              "p99BatchMeanNs": 188.842773
+            },
+            {
+              "checksum": 319009554064371630,
+              "meanNs": 187.32083,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 188.05957,
+              "p99BatchMeanNs": 195.414307
+            },
+            {
+              "checksum": 319009554064371630,
+              "meanNs": 138.24167,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 137.918945,
+              "p99BatchMeanNs": 143.290283
+            }
+          ],
+          "mode": "structured-rule-compute",
+          "parseSeconds": 7e-05,
+          "peakRssBytes": 10813440,
+          "queryCount": 912,
+          "rssAfterAllocatorReliefBytes": 10813440,
+          "rssAfterInstallBytes": 10780672,
+          "rssBeforeBytes": 8617984
+        },
+        "signatureBytes": 2231434,
+        "signatureSha256": "3ee2a276e0e71a908c8ccc0be2d11f8cede5c22326826c464a78f7d717c2dce5"
+      }
+    },
+    "signatureSha256": "3ee2a276e0e71a908c8ccc0be2d11f8cede5c22326826c464a78f7d717c2dce5"
+  },
+  "classic-dragonfly": {
+    "byteIdentical": true,
+    "commonSignatureSha256": "1d6252555ff3b893084c0b535b31e07ec056590f314331e034ed95ba84ac7a7c",
+    "embeddedTextMatchesPortable": false,
+    "main": {
+      "commonSignatureBytes": 1017114,
+      "commonSignatureSha256": "1d6252555ff3b893084c0b535b31e07ec056590f314331e034ed95ba84ac7a7c",
+      "metrics": {
+        "allocatorReleasedBytes": 0,
+        "commit": "0ca0e95",
+        "heapInUseAfterAllocatorReliefBytes": 1275360,
+        "heapInUseAfterInstallBytes": 1275360,
+        "iterations": 100000,
+        "measurements": [
+          {
+            "checksum": 12556230260702584286,
+            "meanNs": 22.68917,
+            "missing": 0,
+            "name": "candidate-set",
+            "p50BatchMeanNs": 22.786377,
+            "p99BatchMeanNs": 22.949219
+          },
+          {
+            "checksum": 2128964388567359837,
+            "meanNs": 58.16375,
+            "missing": 0,
+            "name": "HASH",
+            "p50BatchMeanNs": 57.973145,
+            "p99BatchMeanNs": 59.682373
+          },
+          {
+            "checksum": 1159817488180654262,
+            "meanNs": 102.04542,
+            "missing": 0,
+            "name": "ADAPTIVE",
+            "p50BatchMeanNs": 101.68457,
+            "p99BatchMeanNs": 106.506348
+          }
+        ],
+        "peakRssBytes": 10125312,
+        "queryCount": 276,
+        "routingLoadSeconds": 0.000254,
+        "rssAfterAllocatorReliefBytes": 10125312,
+        "rssAfterInstallBytes": 10076160,
+        "rssBeforeBytes": 8634368,
+        "topologyInstallSeconds": 0.003758
+      }
+    },
+    "mainMatchesPortable": true,
+    "nodeCount": 24,
+    "queryCount": 276,
+    "runs": {
+      "full-compressed-table": {
+        "commonSignatureBytes": 1017114,
+        "commonSignatureSha256": "1d6252555ff3b893084c0b535b31e07ec056590f314331e034ed95ba84ac7a7c",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1254160,
+          "heapInUseAfterInstallBytes": 1254160,
+          "installSeconds": 0.003794,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 12556230260702584286,
+              "meanNs": 71.39792,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 71.228027,
+              "p99BatchMeanNs": 73.038818
+            },
+            {
+              "checksum": 2128964388567359837,
+              "meanNs": 85.65625,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 86.161377,
+              "p99BatchMeanNs": 89.498047
+            },
+            {
+              "checksum": 3311274803779605624,
+              "meanNs": 151.24333,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 151.113037,
+              "p99BatchMeanNs": 153.299805
+            },
+            {
+              "checksum": 4729412423857983837,
+              "meanNs": 380.35041,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 380.93042,
+              "p99BatchMeanNs": 403.981689
+            },
+            {
+              "checksum": 11042709740883488107,
+              "meanNs": 113.58166,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 113.189697,
+              "p99BatchMeanNs": 116.383789
+            },
+            {
+              "checksum": 1159817488180654262,
+              "meanNs": 125.44,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 125.854492,
+              "p99BatchMeanNs": 127.653302
+            },
+            {
+              "checksum": 1159817488180654262,
+              "meanNs": 76.47542,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 76.331368,
+              "p99BatchMeanNs": 78.389404
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.000214,
+          "peakRssBytes": 10108928,
+          "queryCount": 276,
+          "rssAfterAllocatorReliefBytes": 10108928,
+          "rssAfterInstallBytes": 10076160,
+          "rssBeforeBytes": 8617984
+        },
+        "signatureBytes": 2217114,
+        "signatureSha256": "b2a92fcdf1342ce2d64f96fb139cf68f6b8b22da144358178932cc94dd181d8b"
+      },
+      "full-text-table": {
+        "commonSignatureBytes": 800008,
+        "commonSignatureSha256": "8142b4c59cd8d49e1d70f3f69f295e144154d300b0dba89943c9ef3f51b022cd",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1227968,
+          "heapInUseAfterInstallBytes": 1227968,
+          "installSeconds": 0.003786,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 0,
+              "meanNs": 2.91625,
+              "missing": 100000,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 2.695557,
+              "p99BatchMeanNs": 3.814697
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 83.92792,
+              "missing": 100000,
+              "name": "HASH64",
+              "p50BatchMeanNs": 83.557129,
+              "p99BatchMeanNs": 87.300781
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 86.8575,
+              "missing": 100000,
+              "name": "CRC32",
+              "p50BatchMeanNs": 87.097168,
+              "p99BatchMeanNs": 88.419222
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 83.98375,
+              "missing": 100000,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 83.557129,
+              "p99BatchMeanNs": 88.948486
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 82.17083,
+              "missing": 100000,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 82.580566,
+              "p99BatchMeanNs": 85.988281
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 82.2425,
+              "missing": 100000,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 81.756592,
+              "p99BatchMeanNs": 87.38208
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 87.77291,
+              "missing": 100000,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 87.778809,
+              "p99BatchMeanNs": 89.589355
+            }
+          ],
+          "mode": "text-table-lookup",
+          "parseSeconds": 3.9e-05,
+          "peakRssBytes": 9994240,
+          "queryCount": 276,
+          "rssAfterAllocatorReliefBytes": 9994240,
+          "rssAfterInstallBytes": 9961472,
+          "rssBeforeBytes": 8634368
+        },
+        "signatureBytes": 2000008,
+        "signatureSha256": "6bcf019111fcb7a4e5f3c2d73b15e9ddc01a5f0a02c4d535ca26feb0cd4d8bbf"
+      },
+      "mixed-compressed-table": {
+        "commonSignatureBytes": 1017114,
+        "commonSignatureSha256": "1d6252555ff3b893084c0b535b31e07ec056590f314331e034ed95ba84ac7a7c",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1254160,
+          "heapInUseAfterInstallBytes": 1254160,
+          "installSeconds": 0.003822,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 12556230260702584286,
+              "meanNs": 80.26667,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 80.352783,
+              "p99BatchMeanNs": 82.376953
+            },
+            {
+              "checksum": 2128964388567359837,
+              "meanNs": 113.53916,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 114.868164,
+              "p99BatchMeanNs": 116.485596
+            },
+            {
+              "checksum": 3311274803779605624,
+              "meanNs": 154.435,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 154.622314,
+              "p99BatchMeanNs": 157.094238
+            },
+            {
+              "checksum": 4729412423857983837,
+              "meanNs": 389.73791,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 389.61792,
+              "p99BatchMeanNs": 417.806152
+            },
+            {
+              "checksum": 11042709740883488107,
+              "meanNs": 133.61667,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 133.422852,
+              "p99BatchMeanNs": 135.701416
+            },
+            {
+              "checksum": 1159817488180654262,
+              "meanNs": 135.30958,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 123.550118,
+              "p99BatchMeanNs": 172.983887
+            },
+            {
+              "checksum": 1159817488180654262,
+              "meanNs": 90.18167,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 80.037598,
+              "p99BatchMeanNs": 109.324219
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.000227,
+          "peakRssBytes": 10141696,
+          "queryCount": 276,
+          "rssAfterAllocatorReliefBytes": 10141696,
+          "rssAfterInstallBytes": 10108928,
+          "rssBeforeBytes": 8683520
+        },
+        "signatureBytes": 2217114,
+        "signatureSha256": "b2a92fcdf1342ce2d64f96fb139cf68f6b8b22da144358178932cc94dd181d8b"
+      },
+      "mixed-rule-compute": {
+        "commonSignatureBytes": 1017114,
+        "commonSignatureSha256": "1d6252555ff3b893084c0b535b31e07ec056590f314331e034ed95ba84ac7a7c",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1244144,
+          "heapInUseAfterInstallBytes": 1244144,
+          "installSeconds": 0.003653,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 12556230260702584286,
+              "meanNs": 159.35584,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 158.630371,
+              "p99BatchMeanNs": 182.393555
+            },
+            {
+              "checksum": 2128964388567359837,
+              "meanNs": 140.92917,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 141.479492,
+              "p99BatchMeanNs": 143.290283
+            },
+            {
+              "checksum": 3311274803779605624,
+              "meanNs": 206.40875,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 205.718994,
+              "p99BatchMeanNs": 219.940186
+            },
+            {
+              "checksum": 4729412423857983837,
+              "meanNs": 435.8475,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 434.224365,
+              "p99BatchMeanNs": 470.397949
+            },
+            {
+              "checksum": 11042709740883488107,
+              "meanNs": 176.68791,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 165.964844,
+              "p99BatchMeanNs": 198.954346
+            },
+            {
+              "checksum": 1159817488180654262,
+              "meanNs": 177.16708,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 177.876709,
+              "p99BatchMeanNs": 183.207275
+            },
+            {
+              "checksum": 1159817488180654262,
+              "meanNs": 138.13917,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 141.967773,
+              "p99BatchMeanNs": 147.654297
+            }
+          ],
+          "mode": "structured-rule-compute",
+          "parseSeconds": 4e-05,
+          "peakRssBytes": 9977856,
+          "queryCount": 276,
+          "rssAfterAllocatorReliefBytes": 9977856,
+          "rssAfterInstallBytes": 9945088,
+          "rssBeforeBytes": 8617984
+        },
+        "signatureBytes": 2217114,
+        "signatureSha256": "b2a92fcdf1342ce2d64f96fb139cf68f6b8b22da144358178932cc94dd181d8b"
+      },
+      "structured-compressed-table": {
+        "commonSignatureBytes": 1017114,
+        "commonSignatureSha256": "1d6252555ff3b893084c0b535b31e07ec056590f314331e034ed95ba84ac7a7c",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1254160,
+          "heapInUseAfterInstallBytes": 1254160,
+          "installSeconds": 0.003601,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 12556230260702584286,
+              "meanNs": 74.45417,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 73.883057,
+              "p99BatchMeanNs": 81.095459
+            },
+            {
+              "checksum": 2128964388567359837,
+              "meanNs": 84.59667,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 84.23877,
+              "p99BatchMeanNs": 88.388916
+            },
+            {
+              "checksum": 3311274803779605624,
+              "meanNs": 171.675,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 173.7771,
+              "p99BatchMeanNs": 175.984619
+            },
+            {
+              "checksum": 4729412423857983837,
+              "meanNs": 388.24125,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 387.624268,
+              "p99BatchMeanNs": 414.215088
+            },
+            {
+              "checksum": 11042709740883488107,
+              "meanNs": 143.77959,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 143.758057,
+              "p99BatchMeanNs": 146.789551
+            },
+            {
+              "checksum": 1159817488180654262,
+              "meanNs": 126.53375,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 128.580811,
+              "p99BatchMeanNs": 131.05249
+            },
+            {
+              "checksum": 1159817488180654262,
+              "meanNs": 92.39708,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 93.823703,
+              "p99BatchMeanNs": 96.140625
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.00022,
+          "peakRssBytes": 10092544,
+          "queryCount": 276,
+          "rssAfterAllocatorReliefBytes": 10092544,
+          "rssAfterInstallBytes": 10059776,
+          "rssBeforeBytes": 8617984
+        },
+        "signatureBytes": 2217114,
+        "signatureSha256": "b2a92fcdf1342ce2d64f96fb139cf68f6b8b22da144358178932cc94dd181d8b"
+      },
+      "structured-rule-compute": {
+        "commonSignatureBytes": 1017114,
+        "commonSignatureSha256": "1d6252555ff3b893084c0b535b31e07ec056590f314331e034ed95ba84ac7a7c",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1244144,
+          "heapInUseAfterInstallBytes": 1244144,
+          "installSeconds": 0.003644,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 12556230260702584286,
+              "meanNs": 183.8675,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 184.631348,
+              "p99BatchMeanNs": 189.908019
+            },
+            {
+              "checksum": 2128964388567359837,
+              "meanNs": 147.96083,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 148.203613,
+              "p99BatchMeanNs": 164.764404
+            },
+            {
+              "checksum": 3311274803779605624,
+              "meanNs": 212.94625,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 213.562012,
+              "p99BatchMeanNs": 216.54248
+            },
+            {
+              "checksum": 4729412423857983837,
+              "meanNs": 435.89042,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 436.706543,
+              "p99BatchMeanNs": 451.344727
+            },
+            {
+              "checksum": 11042709740883488107,
+              "meanNs": 164.75458,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 165.06958,
+              "p99BatchMeanNs": 172.76001
+            },
+            {
+              "checksum": 1159817488180654262,
+              "meanNs": 178.79709,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 178.710938,
+              "p99BatchMeanNs": 183.949951
+            },
+            {
+              "checksum": 1159817488180654262,
+              "meanNs": 130.99209,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 131.317139,
+              "p99BatchMeanNs": 133.69751
+            }
+          ],
+          "mode": "structured-rule-compute",
+          "parseSeconds": 3.9e-05,
+          "peakRssBytes": 10092544,
+          "queryCount": 276,
+          "rssAfterAllocatorReliefBytes": 10092544,
+          "rssAfterInstallBytes": 10059776,
+          "rssBeforeBytes": 8634368
+        },
+        "signatureBytes": 2217114,
+        "signatureSha256": "b2a92fcdf1342ce2d64f96fb139cf68f6b8b22da144358178932cc94dd181d8b"
+      }
+    },
+    "signatureSha256": "b2a92fcdf1342ce2d64f96fb139cf68f6b8b22da144358178932cc94dd181d8b"
+  },
+  "port-extension-mixed": {
+    "byteIdentical": true,
+    "commonSignatureSha256": "71aa04957dcd1226950df0eb8db5cfa150651ae6e5d2d6168e1707ee5d7ca691",
+    "embeddedTextMatchesPortable": false,
+    "main": {
+      "commonSignatureBytes": 1049928,
+      "commonSignatureSha256": "71aa04957dcd1226950df0eb8db5cfa150651ae6e5d2d6168e1707ee5d7ca691",
+      "metrics": {
+        "allocatorReleasedBytes": 0,
+        "commit": "0ca0e95",
+        "heapInUseAfterAllocatorReliefBytes": 1043296,
+        "heapInUseAfterInstallBytes": 1043296,
+        "iterations": 100000,
+        "measurements": [
+          {
+            "checksum": 10694965228097119502,
+            "meanNs": 24.23958,
+            "missing": 0,
+            "name": "candidate-set",
+            "p50BatchMeanNs": 24.210449,
+            "p99BatchMeanNs": 25.980713
+          },
+          {
+            "checksum": 12946396246637713825,
+            "meanNs": 60.6175,
+            "missing": 0,
+            "name": "HASH",
+            "p50BatchMeanNs": 59.773926,
+            "p99BatchMeanNs": 67.240479
+          },
+          {
+            "checksum": 4072757590968619146,
+            "meanNs": 108.845,
+            "missing": 0,
+            "name": "ADAPTIVE",
+            "p50BatchMeanNs": 109.161377,
+            "p99BatchMeanNs": 114.97998
+          }
+        ],
+        "peakRssBytes": 9912320,
+        "queryCount": 128,
+        "routingLoadSeconds": 0.000206,
+        "rssAfterAllocatorReliefBytes": 9912320,
+        "rssAfterInstallBytes": 9879552,
+        "rssBeforeBytes": 8585216,
+        "topologyInstallSeconds": 0.003309
+      }
+    },
+    "mainMatchesPortable": true,
+    "nodeCount": 17,
+    "queryCount": 128,
+    "runs": {
+      "full-compressed-table": {
+        "commonSignatureBytes": 1049928,
+        "commonSignatureSha256": "71aa04957dcd1226950df0eb8db5cfa150651ae6e5d2d6168e1707ee5d7ca691",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1044320,
+          "heapInUseAfterInstallBytes": 1044320,
+          "installSeconds": 0.003293,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 10694965228097119502,
+              "meanNs": 79.75667,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 79.711914,
+              "p99BatchMeanNs": 82.061768
+            },
+            {
+              "checksum": 12946396246637713825,
+              "meanNs": 106.25792,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 107.279541,
+              "p99BatchMeanNs": 114.369629
+            },
+            {
+              "checksum": 1682968090638588874,
+              "meanNs": 154.45125,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 154.306885,
+              "p99BatchMeanNs": 159.088135
+            },
+            {
+              "checksum": 17254134973112593887,
+              "meanNs": 381.41166,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 379.79126,
+              "p99BatchMeanNs": 414.499756
+            },
+            {
+              "checksum": 2821164293029120880,
+              "meanNs": 115.36375,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 114.42041,
+              "p99BatchMeanNs": 134.541992
+            },
+            {
+              "checksum": 4072757590968619146,
+              "meanNs": 131.14167,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 131.439209,
+              "p99BatchMeanNs": 134.38916
+            },
+            {
+              "checksum": 4072757590968619146,
+              "meanNs": 80.04458,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 79.88501,
+              "p99BatchMeanNs": 81.90918
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.000176,
+          "peakRssBytes": 10010624,
+          "queryCount": 128,
+          "rssAfterAllocatorReliefBytes": 10010624,
+          "rssAfterInstallBytes": 9977856,
+          "rssBeforeBytes": 8601600
+        },
+        "signatureBytes": 2249928,
+        "signatureSha256": "5fe5eb2af6e6b0223a4d93385e571add42415ebdb820eed5a66555412fcb4321"
+      },
+      "full-text-table": {
+        "commonSignatureBytes": 800008,
+        "commonSignatureSha256": "8142b4c59cd8d49e1d70f3f69f295e144154d300b0dba89943c9ef3f51b022cd",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1022672,
+          "heapInUseAfterInstallBytes": 1022672,
+          "installSeconds": 0.003214,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 0,
+              "meanNs": 4.135,
+              "missing": 100000,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 4.150391,
+              "p99BatchMeanNs": 4.201172
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 115.1475,
+              "missing": 100000,
+              "name": "HASH64",
+              "p50BatchMeanNs": 93.251465,
+              "p99BatchMeanNs": 147.064209
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 88.86167,
+              "missing": 100000,
+              "name": "CRC32",
+              "p50BatchMeanNs": 88.856934,
+              "p99BatchMeanNs": 93.465332
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 111.30125,
+              "missing": 100000,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 131.500244,
+              "p99BatchMeanNs": 144.297363
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 80.22542,
+              "missing": 100000,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 79.874756,
+              "p99BatchMeanNs": 89.233398
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 84.52917,
+              "missing": 100000,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 84.594727,
+              "p99BatchMeanNs": 88.165283
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 84.56167,
+              "missing": 100000,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 83.780762,
+              "p99BatchMeanNs": 108.144043
+            }
+          ],
+          "mode": "text-table-lookup",
+          "parseSeconds": 3.2e-05,
+          "peakRssBytes": 9830400,
+          "queryCount": 128,
+          "rssAfterAllocatorReliefBytes": 9830400,
+          "rssAfterInstallBytes": 9797632,
+          "rssBeforeBytes": 8617984
+        },
+        "signatureBytes": 2000008,
+        "signatureSha256": "6bcf019111fcb7a4e5f3c2d73b15e9ddc01a5f0a02c4d535ca26feb0cd4d8bbf"
+      },
+      "mixed-compressed-table": {
+        "commonSignatureBytes": 1049928,
+        "commonSignatureSha256": "71aa04957dcd1226950df0eb8db5cfa150651ae6e5d2d6168e1707ee5d7ca691",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1044320,
+          "heapInUseAfterInstallBytes": 1044320,
+          "installSeconds": 0.003463,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 10694965228097119502,
+              "meanNs": 76.14583,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 76.243164,
+              "p99BatchMeanNs": 80.00708
+            },
+            {
+              "checksum": 12946396246637713825,
+              "meanNs": 86.26375,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 86.110352,
+              "p99BatchMeanNs": 88.266846
+            },
+            {
+              "checksum": 1682968090638588874,
+              "meanNs": 157.11625,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 150.024414,
+              "p99BatchMeanNs": 178.080078
+            },
+            {
+              "checksum": 17254134973112593887,
+              "meanNs": 386.54625,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 385.192871,
+              "p99BatchMeanNs": 413.238525
+            },
+            {
+              "checksum": 2821164293029120880,
+              "meanNs": 130.08542,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 126.729248,
+              "p99BatchMeanNs": 148.834229
+            },
+            {
+              "checksum": 4072757590968619146,
+              "meanNs": 138.49917,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 137.318848,
+              "p99BatchMeanNs": 145.487305
+            },
+            {
+              "checksum": 4072757590968619146,
+              "meanNs": 77.91667,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 77.56543,
+              "p99BatchMeanNs": 85.093018
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.000212,
+          "peakRssBytes": 9912320,
+          "queryCount": 128,
+          "rssAfterAllocatorReliefBytes": 9912320,
+          "rssAfterInstallBytes": 9863168,
+          "rssBeforeBytes": 8568832
+        },
+        "signatureBytes": 2249928,
+        "signatureSha256": "5fe5eb2af6e6b0223a4d93385e571add42415ebdb820eed5a66555412fcb4321"
+      },
+      "mixed-rule-compute": {
+        "commonSignatureBytes": 1049928,
+        "commonSignatureSha256": "71aa04957dcd1226950df0eb8db5cfa150651ae6e5d2d6168e1707ee5d7ca691",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1049920,
+          "heapInUseAfterInstallBytes": 1049920,
+          "installSeconds": 0.003299,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 10694965228097119502,
+              "meanNs": 101.08167,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 100.931885,
+              "p99BatchMeanNs": 106.465576
+            },
+            {
+              "checksum": 12946396246637713825,
+              "meanNs": 103.79083,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 104.14624,
+              "p99BatchMeanNs": 105.489014
+            },
+            {
+              "checksum": 1682968090638588874,
+              "meanNs": 141.94583,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 141.255615,
+              "p99BatchMeanNs": 152.404785
+            },
+            {
+              "checksum": 17254134973112593887,
+              "meanNs": 395.87959,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 394.083496,
+              "p99BatchMeanNs": 423.532959
+            },
+            {
+              "checksum": 2821164293029120880,
+              "meanNs": 139.1575,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 137.919189,
+              "p99BatchMeanNs": 150.177002
+            },
+            {
+              "checksum": 4072757590968619146,
+              "meanNs": 179.26542,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 180.664062,
+              "p99BatchMeanNs": 185.038086
+            },
+            {
+              "checksum": 4072757590968619146,
+              "meanNs": 89.94958,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 89.630127,
+              "p99BatchMeanNs": 92.041016
+            }
+          ],
+          "mode": "structured-rule-compute",
+          "parseSeconds": 7.9e-05,
+          "peakRssBytes": 9863168,
+          "queryCount": 128,
+          "rssAfterAllocatorReliefBytes": 9863168,
+          "rssAfterInstallBytes": 9830400,
+          "rssBeforeBytes": 8585216
+        },
+        "signatureBytes": 2249928,
+        "signatureSha256": "5fe5eb2af6e6b0223a4d93385e571add42415ebdb820eed5a66555412fcb4321"
+      }
+    },
+    "signatureSha256": "5fe5eb2af6e6b0223a4d93385e571add42415ebdb820eed5a66555412fcb4321"
+  },
+  "ring-inside-dragonfly-mixed": {
+    "byteIdentical": true,
+    "commonSignatureSha256": "c236a9e0a8a013eda76ef15d460c4f1c55a80a46400e8947c7cf05d6e3763117",
+    "embeddedTextMatchesPortable": false,
+    "main": {
+      "commonSignatureBytes": 1033888,
+      "commonSignatureSha256": "c236a9e0a8a013eda76ef15d460c4f1c55a80a46400e8947c7cf05d6e3763117",
+      "metrics": {
+        "allocatorReleasedBytes": 0,
+        "commit": "0ca0e95",
+        "heapInUseAfterAllocatorReliefBytes": 1383904,
+        "heapInUseAfterInstallBytes": 1383904,
+        "iterations": 100000,
+        "measurements": [
+          {
+            "checksum": 15270035215411746503,
+            "meanNs": 25.76208,
+            "missing": 0,
+            "name": "candidate-set",
+            "p50BatchMeanNs": 25.665283,
+            "p99BatchMeanNs": 26.631592
+          },
+          {
+            "checksum": 15463698805475303764,
+            "meanNs": 60.05083,
+            "missing": 0,
+            "name": "HASH",
+            "p50BatchMeanNs": 60.007812,
+            "p99BatchMeanNs": 60.597656
+          },
+          {
+            "checksum": 2202892027510864957,
+            "meanNs": 105.02666,
+            "missing": 0,
+            "name": "ADAPTIVE",
+            "p50BatchMeanNs": 105.000732,
+            "p99BatchMeanNs": 111.979248
+          }
+        ],
+        "peakRssBytes": 10354688,
+        "queryCount": 328,
+        "routingLoadSeconds": 0.000295,
+        "rssAfterAllocatorReliefBytes": 10354688,
+        "rssAfterInstallBytes": 10321920,
+        "rssBeforeBytes": 8650752,
+        "topologyInstallSeconds": 0.003818
+      }
+    },
+    "mainMatchesPortable": true,
+    "nodeCount": 24,
+    "queryCount": 328,
+    "runs": {
+      "full-compressed-table": {
+        "commonSignatureBytes": 1033888,
+        "commonSignatureSha256": "c236a9e0a8a013eda76ef15d460c4f1c55a80a46400e8947c7cf05d6e3763117",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1356320,
+          "heapInUseAfterInstallBytes": 1356320,
+          "installSeconds": 0.003706,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 15270035215411746503,
+              "meanNs": 64.67375,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 64.544678,
+              "p99BatchMeanNs": 66.467285
+            },
+            {
+              "checksum": 15463698805475303764,
+              "meanNs": 83.26375,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 84.747314,
+              "p99BatchMeanNs": 87.229492
+            },
+            {
+              "checksum": 1210095574468021009,
+              "meanNs": 150.0375,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 149.159668,
+              "p99BatchMeanNs": 160.441162
+            },
+            {
+              "checksum": 7345800693498222464,
+              "meanNs": 386.57041,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 385.498047,
+              "p99BatchMeanNs": 410.145996
+            },
+            {
+              "checksum": 13215756992020548525,
+              "meanNs": 119.62,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 119.995117,
+              "p99BatchMeanNs": 123.673349
+            },
+            {
+              "checksum": 2202892027510864957,
+              "meanNs": 147.285,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 151.78418,
+              "p99BatchMeanNs": 156.056885
+            },
+            {
+              "checksum": 4291865635719651919,
+              "meanNs": 76.14875,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 75.612305,
+              "p99BatchMeanNs": 84.16748
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.000237,
+          "peakRssBytes": 10158080,
+          "queryCount": 328,
+          "rssAfterAllocatorReliefBytes": 10158080,
+          "rssAfterInstallBytes": 10125312,
+          "rssBeforeBytes": 8601600
+        },
+        "signatureBytes": 2233888,
+        "signatureSha256": "5c1fa7cd04ec603f8acc893006af74a41fd23525f71c844b5322d4d2303ffedd"
+      },
+      "full-text-table": {
+        "commonSignatureBytes": 800008,
+        "commonSignatureSha256": "8142b4c59cd8d49e1d70f3f69f295e144154d300b0dba89943c9ef3f51b022cd",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1329216,
+          "heapInUseAfterInstallBytes": 1329216,
+          "installSeconds": 0.0038,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 0,
+              "meanNs": 3.81625,
+              "missing": 100000,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 3.807783,
+              "p99BatchMeanNs": 3.824951
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 84.09459,
+              "missing": 100000,
+              "name": "HASH64",
+              "p50BatchMeanNs": 82.539795,
+              "p99BatchMeanNs": 88.572266
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 139.27542,
+              "missing": 100000,
+              "name": "CRC32",
+              "p50BatchMeanNs": 138.844727,
+              "p99BatchMeanNs": 140.821344
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 81.89083,
+              "missing": 100000,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 80.495117,
+              "p99BatchMeanNs": 88.083984
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 82.81875,
+              "missing": 100000,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 82.651855,
+              "p99BatchMeanNs": 86.558105
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 84.22458,
+              "missing": 100000,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 84.025146,
+              "p99BatchMeanNs": 86.364746
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 89.31333,
+              "missing": 100000,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 90.270996,
+              "p99BatchMeanNs": 94.797852
+            }
+          ],
+          "mode": "text-table-lookup",
+          "parseSeconds": 4e-05,
+          "peakRssBytes": 10125312,
+          "queryCount": 328,
+          "rssAfterAllocatorReliefBytes": 10125312,
+          "rssAfterInstallBytes": 10092544,
+          "rssBeforeBytes": 8585216
+        },
+        "signatureBytes": 2000008,
+        "signatureSha256": "6bcf019111fcb7a4e5f3c2d73b15e9ddc01a5f0a02c4d535ca26feb0cd4d8bbf"
+      },
+      "mixed-compressed-table": {
+        "commonSignatureBytes": 1033888,
+        "commonSignatureSha256": "c236a9e0a8a013eda76ef15d460c4f1c55a80a46400e8947c7cf05d6e3763117",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1356320,
+          "heapInUseAfterInstallBytes": 1356320,
+          "installSeconds": 0.003687,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 15270035215411746503,
+              "meanNs": 74.3,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 74.513672,
+              "p99BatchMeanNs": 76.080322
+            },
+            {
+              "checksum": 15463698805475303764,
+              "meanNs": 85.98959,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 85.876465,
+              "p99BatchMeanNs": 88.197524
+            },
+            {
+              "checksum": 1210095574468021009,
+              "meanNs": 159.54958,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 158.884766,
+              "p99BatchMeanNs": 181.284198
+            },
+            {
+              "checksum": 7345800693498222464,
+              "meanNs": 391.27209,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 390.157227,
+              "p99BatchMeanNs": 411.16333
+            },
+            {
+              "checksum": 13215756992020548525,
+              "meanNs": 126.56042,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 126.424072,
+              "p99BatchMeanNs": 129.384277
+            },
+            {
+              "checksum": 2202892027510864957,
+              "meanNs": 142.98833,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 151.631592,
+              "p99BatchMeanNs": 157.684326
+            },
+            {
+              "checksum": 4291865635719651919,
+              "meanNs": 79.35917,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 78.603027,
+              "p99BatchMeanNs": 85.612061
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.000301,
+          "peakRssBytes": 10305536,
+          "queryCount": 328,
+          "rssAfterAllocatorReliefBytes": 10305536,
+          "rssAfterInstallBytes": 10272768,
+          "rssBeforeBytes": 8650752
+        },
+        "signatureBytes": 2233888,
+        "signatureSha256": "5c1fa7cd04ec603f8acc893006af74a41fd23525f71c844b5322d4d2303ffedd"
+      },
+      "mixed-rule-compute": {
+        "commonSignatureBytes": 1033888,
+        "commonSignatureSha256": "c236a9e0a8a013eda76ef15d460c4f1c55a80a46400e8947c7cf05d6e3763117",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1351472,
+          "heapInUseAfterInstallBytes": 1351472,
+          "installSeconds": 0.003893,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 15270035215411746503,
+              "meanNs": 89.77334,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 89.996338,
+              "p99BatchMeanNs": 91.593506
+            },
+            {
+              "checksum": 15463698805475303764,
+              "meanNs": 54.25417,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 53.69043,
+              "p99BatchMeanNs": 60.892578
+            },
+            {
+              "checksum": 1210095574468021009,
+              "meanNs": 128.00958,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 127.522949,
+              "p99BatchMeanNs": 131.256104
+            },
+            {
+              "checksum": 7345800693498222464,
+              "meanNs": 358.17958,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 355.265381,
+              "p99BatchMeanNs": 384.633301
+            },
+            {
+              "checksum": 13215756992020548525,
+              "meanNs": 93.30208,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 92.875,
+              "p99BatchMeanNs": 96.160889
+            },
+            {
+              "checksum": 2202892027510864957,
+              "meanNs": 92.30292,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 91.094971,
+              "p99BatchMeanNs": 102.060791
+            },
+            {
+              "checksum": 4291865635719651919,
+              "meanNs": 48.07625,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 48.00415,
+              "p99BatchMeanNs": 49.174072
+            }
+          ],
+          "mode": "structured-rule-compute",
+          "parseSeconds": 0.000104,
+          "peakRssBytes": 10207232,
+          "queryCount": 328,
+          "rssAfterAllocatorReliefBytes": 10207232,
+          "rssAfterInstallBytes": 10174464,
+          "rssBeforeBytes": 8617984
+        },
+        "signatureBytes": 2233888,
+        "signatureSha256": "5c1fa7cd04ec603f8acc893006af74a41fd23525f71c844b5322d4d2303ffedd"
+      }
+    },
+    "signatureSha256": "5c1fa7cd04ec603f8acc893006af74a41fd23525f71c844b5322d4d2303ffedd"
+  },
+  "torus-4x5-cartesian": {
+    "byteIdentical": true,
+    "commonSignatureSha256": "bd299a8988c0616632017a15d5cb403a7359b1b6ca2da419d71dbb1d6cf50981",
+    "embeddedTextMatchesPortable": false,
+    "main": {
+      "commonSignatureBytes": 1100092,
+      "commonSignatureSha256": "bd299a8988c0616632017a15d5cb403a7359b1b6ca2da419d71dbb1d6cf50981",
+      "metrics": {
+        "allocatorReleasedBytes": 0,
+        "commit": "0ca0e95",
+        "heapInUseAfterAllocatorReliefBytes": 1364960,
+        "heapInUseAfterInstallBytes": 1364960,
+        "iterations": 100000,
+        "measurements": [
+          {
+            "checksum": 5106307440059975989,
+            "meanNs": 29.72,
+            "missing": 0,
+            "name": "candidate-set",
+            "p50BatchMeanNs": 26.385613,
+            "p99BatchMeanNs": 77.453613
+          },
+          {
+            "checksum": 9473850162324316211,
+            "meanNs": 62.20833,
+            "missing": 0,
+            "name": "HASH",
+            "p50BatchMeanNs": 62.204834,
+            "p99BatchMeanNs": 66.965576
+          },
+          {
+            "checksum": 13942582385939386097,
+            "meanNs": 122.71458,
+            "missing": 0,
+            "name": "ADAPTIVE",
+            "p50BatchMeanNs": 122.497559,
+            "p99BatchMeanNs": 131.388184
+          }
+        ],
+        "peakRssBytes": 10403840,
+        "queryCount": 720,
+        "routingLoadSeconds": 0.000568,
+        "rssAfterAllocatorReliefBytes": 10403840,
+        "rssAfterInstallBytes": 10371072,
+        "rssBeforeBytes": 8585216,
+        "topologyInstallSeconds": 0.003672
+      }
+    },
+    "mainMatchesPortable": true,
+    "nodeCount": 20,
+    "queryCount": 720,
+    "runs": {
+      "full-compressed-table": {
+        "commonSignatureBytes": 1100092,
+        "commonSignatureSha256": "bd299a8988c0616632017a15d5cb403a7359b1b6ca2da419d71dbb1d6cf50981",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1284768,
+          "heapInUseAfterInstallBytes": 1284768,
+          "installSeconds": 0.008476,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 5106307440059975989,
+              "meanNs": 76.76708,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 76.711182,
+              "p99BatchMeanNs": 78.358887
+            },
+            {
+              "checksum": 9473850162324316211,
+              "meanNs": 86.61292,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 86.456299,
+              "p99BatchMeanNs": 91.481445
+            },
+            {
+              "checksum": 3157868777543864332,
+              "meanNs": 157.26541,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 160.634521,
+              "p99BatchMeanNs": 162.465332
+            },
+            {
+              "checksum": 11531801683718206172,
+              "meanNs": 393.82292,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 395.09082,
+              "p99BatchMeanNs": 416.677002
+            },
+            {
+              "checksum": 11117752704218580842,
+              "meanNs": 134.59708,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 134.521484,
+              "p99BatchMeanNs": 141.072754
+            },
+            {
+              "checksum": 13942582385939386097,
+              "meanNs": 142.52625,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 141.530518,
+              "p99BatchMeanNs": 151.112793
+            },
+            {
+              "checksum": 15450359018023437034,
+              "meanNs": 84.28459,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 84.157471,
+              "p99BatchMeanNs": 84.991455
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.000215,
+          "peakRssBytes": 10125312,
+          "queryCount": 720,
+          "rssAfterAllocatorReliefBytes": 10125312,
+          "rssAfterInstallBytes": 10092544,
+          "rssBeforeBytes": 8634368
+        },
+        "signatureBytes": 2300092,
+        "signatureSha256": "64933b0fdbc10e24d607c5d4eccf8aca437a398e99b252f6e6b89a61c199ee3a"
+      },
+      "full-text-table": {
+        "commonSignatureBytes": 800008,
+        "commonSignatureSha256": "8142b4c59cd8d49e1d70f3f69f295e144154d300b0dba89943c9ef3f51b022cd",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1260608,
+          "heapInUseAfterInstallBytes": 1260608,
+          "installSeconds": 0.003766,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 0,
+              "meanNs": 3.5325,
+              "missing": 100000,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 3.509521,
+              "p99BatchMeanNs": 3.753662
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 87.93125,
+              "missing": 100000,
+              "name": "HASH64",
+              "p50BatchMeanNs": 87.26001,
+              "p99BatchMeanNs": 93.109131
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 91.35958,
+              "missing": 100000,
+              "name": "CRC32",
+              "p50BatchMeanNs": 91.695068,
+              "p99BatchMeanNs": 92.458252
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 88.31667,
+              "missing": 100000,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 89.121338,
+              "p99BatchMeanNs": 90.637207
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 85.82916,
+              "missing": 100000,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 85.123779,
+              "p99BatchMeanNs": 88.816406
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 85.20041,
+              "missing": 100000,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 85.520264,
+              "p99BatchMeanNs": 86.222168
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 83.46417,
+              "missing": 100000,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 83.353516,
+              "p99BatchMeanNs": 87.483643
+            }
+          ],
+          "mode": "text-table-lookup",
+          "parseSeconds": 5.4e-05,
+          "peakRssBytes": 10190848,
+          "queryCount": 720,
+          "rssAfterAllocatorReliefBytes": 10190848,
+          "rssAfterInstallBytes": 10158080,
+          "rssBeforeBytes": 8683520
+        },
+        "signatureBytes": 2000008,
+        "signatureSha256": "6bcf019111fcb7a4e5f3c2d73b15e9ddc01a5f0a02c4d535ca26feb0cd4d8bbf"
+      },
+      "mixed-compressed-table": {
+        "commonSignatureBytes": 1100092,
+        "commonSignatureSha256": "bd299a8988c0616632017a15d5cb403a7359b1b6ca2da419d71dbb1d6cf50981",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1284768,
+          "heapInUseAfterInstallBytes": 1284768,
+          "installSeconds": 0.003569,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 5106307440059975989,
+              "meanNs": 72.10292,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 71.835495,
+              "p99BatchMeanNs": 77.107666
+            },
+            {
+              "checksum": 9473850162324316211,
+              "meanNs": 93.52125,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 93.546631,
+              "p99BatchMeanNs": 95.611572
+            },
+            {
+              "checksum": 3157868777543864332,
+              "meanNs": 152.5225,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 148.641113,
+              "p99BatchMeanNs": 164.255859
+            },
+            {
+              "checksum": 11531801683718206172,
+              "meanNs": 391.63625,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 394.175293,
+              "p99BatchMeanNs": 410.319092
+            },
+            {
+              "checksum": 11117752704218580842,
+              "meanNs": 131.57708,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 131.276367,
+              "p99BatchMeanNs": 140.797852
+            },
+            {
+              "checksum": 13942582385939386097,
+              "meanNs": 148.30125,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 148.600098,
+              "p99BatchMeanNs": 153.696777
+            },
+            {
+              "checksum": 15450359018023437034,
+              "meanNs": 84.70167,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 85.418701,
+              "p99BatchMeanNs": 87.026123
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.000228,
+          "peakRssBytes": 10305536,
+          "queryCount": 720,
+          "rssAfterAllocatorReliefBytes": 10305536,
+          "rssAfterInstallBytes": 10256384,
+          "rssBeforeBytes": 8699904
+        },
+        "signatureBytes": 2300092,
+        "signatureSha256": "64933b0fdbc10e24d607c5d4eccf8aca437a398e99b252f6e6b89a61c199ee3a"
+      },
+      "mixed-rule-compute": {
+        "commonSignatureBytes": 1100092,
+        "commonSignatureSha256": "bd299a8988c0616632017a15d5cb403a7359b1b6ca2da419d71dbb1d6cf50981",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1277264,
+          "heapInUseAfterInstallBytes": 1277264,
+          "installSeconds": 0.003879,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 5106307440059975989,
+              "meanNs": 127.08833,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 124.888184,
+              "p99BatchMeanNs": 141.245605
+            },
+            {
+              "checksum": 9473850162324316211,
+              "meanNs": 90.06833,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 89.772461,
+              "p99BatchMeanNs": 98.724365
+            },
+            {
+              "checksum": 3157868777543864332,
+              "meanNs": 161.61667,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 162.038086,
+              "p99BatchMeanNs": 172.149658
+            },
+            {
+              "checksum": 11531801683718206172,
+              "meanNs": 387.85542,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 391.072754,
+              "p99BatchMeanNs": 405.009033
+            },
+            {
+              "checksum": 11117752704218580842,
+              "meanNs": 124.97417,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 124.847412,
+              "p99BatchMeanNs": 130.533691
+            },
+            {
+              "checksum": 13942582385939386097,
+              "meanNs": 133.6725,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 134.033203,
+              "p99BatchMeanNs": 138.092041
+            },
+            {
+              "checksum": 15450359018023437034,
+              "meanNs": 78.57541,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 78.69458,
+              "p99BatchMeanNs": 80.291748
+            }
+          ],
+          "mode": "structured-rule-compute",
+          "parseSeconds": 3.8e-05,
+          "peakRssBytes": 10174464,
+          "queryCount": 720,
+          "rssAfterAllocatorReliefBytes": 10174464,
+          "rssAfterInstallBytes": 10141696,
+          "rssBeforeBytes": 8634368
+        },
+        "signatureBytes": 2300092,
+        "signatureSha256": "64933b0fdbc10e24d607c5d4eccf8aca437a398e99b252f6e6b89a61c199ee3a"
+      },
+      "structured-compressed-table": {
+        "commonSignatureBytes": 1100092,
+        "commonSignatureSha256": "bd299a8988c0616632017a15d5cb403a7359b1b6ca2da419d71dbb1d6cf50981",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1284768,
+          "heapInUseAfterInstallBytes": 1284768,
+          "installSeconds": 0.003677,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 5106307440059975989,
+              "meanNs": 92.04041,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 92.000488,
+              "p99BatchMeanNs": 95.175118
+            },
+            {
+              "checksum": 9473850162324316211,
+              "meanNs": 95.14125,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 97.167969,
+              "p99BatchMeanNs": 99.182129
+            },
+            {
+              "checksum": 3157868777543864332,
+              "meanNs": 159.67125,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 159.088135,
+              "p99BatchMeanNs": 161.743164
+            },
+            {
+              "checksum": 11531801683718206172,
+              "meanNs": 395.26583,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 393.310547,
+              "p99BatchMeanNs": 416.025879
+            },
+            {
+              "checksum": 11117752704218580842,
+              "meanNs": 144.37125,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 144.551514,
+              "p99BatchMeanNs": 149.302002
+            },
+            {
+              "checksum": 13942582385939386097,
+              "meanNs": 150.54125,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 151.204346,
+              "p99BatchMeanNs": 156.890869
+            },
+            {
+              "checksum": 15450359018023437034,
+              "meanNs": 87.58792,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 87.585449,
+              "p99BatchMeanNs": 92.976807
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.000236,
+          "peakRssBytes": 10174464,
+          "queryCount": 720,
+          "rssAfterAllocatorReliefBytes": 10174464,
+          "rssAfterInstallBytes": 10141696,
+          "rssBeforeBytes": 8617984
+        },
+        "signatureBytes": 2300092,
+        "signatureSha256": "64933b0fdbc10e24d607c5d4eccf8aca437a398e99b252f6e6b89a61c199ee3a"
+      },
+      "structured-rule-compute": {
+        "commonSignatureBytes": 1100092,
+        "commonSignatureSha256": "bd299a8988c0616632017a15d5cb403a7359b1b6ca2da419d71dbb1d6cf50981",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1277264,
+          "heapInUseAfterInstallBytes": 1277264,
+          "installSeconds": 0.003723,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 5106307440059975989,
+              "meanNs": 136.55459,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 135.162354,
+              "p99BatchMeanNs": 142.903564
+            },
+            {
+              "checksum": 9473850162324316211,
+              "meanNs": 86.39916,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 85.80542,
+              "p99BatchMeanNs": 92.926025
+            },
+            {
+              "checksum": 3157868777543864332,
+              "meanNs": 161.0425,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 160.797119,
+              "p99BatchMeanNs": 164.398193
+            },
+            {
+              "checksum": 11531801683718206172,
+              "meanNs": 391.755,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 390.065674,
+              "p99BatchMeanNs": 417.08374
+            },
+            {
+              "checksum": 11117752704218580842,
+              "meanNs": 137.1,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 137.329102,
+              "p99BatchMeanNs": 138.936279
+            },
+            {
+              "checksum": 13942582385939386097,
+              "meanNs": 141.76542,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 141.835449,
+              "p99BatchMeanNs": 143.269775
+            },
+            {
+              "checksum": 15450359018023437034,
+              "meanNs": 79.76458,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 79.732178,
+              "p99BatchMeanNs": 80.759521
+            }
+          ],
+          "mode": "structured-rule-compute",
+          "parseSeconds": 3.8e-05,
+          "peakRssBytes": 10158080,
+          "queryCount": 720,
+          "rssAfterAllocatorReliefBytes": 10158080,
+          "rssAfterInstallBytes": 10125312,
+          "rssBeforeBytes": 8601600
+        },
+        "signatureBytes": 2300092,
+        "signatureSha256": "64933b0fdbc10e24d607c5d4eccf8aca437a398e99b252f6e6b89a61c199ee3a"
+      }
+    },
+    "signatureSha256": "64933b0fdbc10e24d607c5d4eccf8aca437a398e99b252f6e6b89a61c199ee3a"
+  },
+  "ubmesh-4x4-cartesian": {
+    "byteIdentical": true,
+    "commonSignatureSha256": "c8292e8c3c067e96fbdc527df15e57c3eb3987e9678de91d954d5107a696d7c3",
+    "embeddedTextMatchesPortable": false,
+    "main": {
+      "commonSignatureBytes": 1074622,
+      "commonSignatureSha256": "c8292e8c3c067e96fbdc527df15e57c3eb3987e9678de91d954d5107a696d7c3",
+      "metrics": {
+        "allocatorReleasedBytes": 0,
+        "commit": "0ca0e95",
+        "heapInUseAfterAllocatorReliefBytes": 1104352,
+        "heapInUseAfterInstallBytes": 1104352,
+        "iterations": 100000,
+        "measurements": [
+          {
+            "checksum": 9632730734942308318,
+            "meanNs": 26.95208,
+            "missing": 0,
+            "name": "candidate-set",
+            "p50BatchMeanNs": 26.947021,
+            "p99BatchMeanNs": 27.417453
+          },
+          {
+            "checksum": 15626562411519191647,
+            "meanNs": 81.2325,
+            "missing": 0,
+            "name": "HASH",
+            "p50BatchMeanNs": 82.04126,
+            "p99BatchMeanNs": 84.706543
+          },
+          {
+            "checksum": 11875090631510023105,
+            "meanNs": 108.69292,
+            "missing": 0,
+            "name": "ADAPTIVE",
+            "p50BatchMeanNs": 106.954102,
+            "p99BatchMeanNs": 120.748047
+          }
+        ],
+        "peakRssBytes": 9945088,
+        "queryCount": 384,
+        "routingLoadSeconds": 0.000389,
+        "rssAfterAllocatorReliefBytes": 9945088,
+        "rssAfterInstallBytes": 9912320,
+        "rssBeforeBytes": 8552448,
+        "topologyInstallSeconds": 0.003447
+      }
+    },
+    "mainMatchesPortable": true,
+    "nodeCount": 16,
+    "queryCount": 384,
+    "runs": {
+      "full-compressed-table": {
+        "commonSignatureBytes": 1074622,
+        "commonSignatureSha256": "c8292e8c3c067e96fbdc527df15e57c3eb3987e9678de91d954d5107a696d7c3",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1074160,
+          "heapInUseAfterInstallBytes": 1074160,
+          "installSeconds": 0.003283,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 9632730734942308318,
+              "meanNs": 68.39667,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 68.054199,
+              "p99BatchMeanNs": 74.930908
+            },
+            {
+              "checksum": 15626562411519191647,
+              "meanNs": 88.12916,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 83.811523,
+              "p99BatchMeanNs": 109.395264
+            },
+            {
+              "checksum": 9374307680936373539,
+              "meanNs": 165.14375,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 172.861816,
+              "p99BatchMeanNs": 180.603027
+            },
+            {
+              "checksum": 3598099794772279780,
+              "meanNs": 407.17042,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 407.897949,
+              "p99BatchMeanNs": 427.337646
+            },
+            {
+              "checksum": 11896673852291359739,
+              "meanNs": 123.1025,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 123.504639,
+              "p99BatchMeanNs": 125.933373
+            },
+            {
+              "checksum": 11875090631510023105,
+              "meanNs": 161.5975,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 162.302734,
+              "p99BatchMeanNs": 166.890381
+            },
+            {
+              "checksum": 11875090631510023105,
+              "meanNs": 81.64333,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 81.858154,
+              "p99BatchMeanNs": 85.05249
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.000169,
+          "peakRssBytes": 10059776,
+          "queryCount": 384,
+          "rssAfterAllocatorReliefBytes": 10059776,
+          "rssAfterInstallBytes": 10027008,
+          "rssBeforeBytes": 8699904
+        },
+        "signatureBytes": 2274622,
+        "signatureSha256": "e8e2d4019d13accbe7df3a08735619dd434902bbfa75def4961bbe6f02ad8f02"
+      },
+      "full-text-table": {
+        "commonSignatureBytes": 800008,
+        "commonSignatureSha256": "8142b4c59cd8d49e1d70f3f69f295e144154d300b0dba89943c9ef3f51b022cd",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1055680,
+          "heapInUseAfterInstallBytes": 1055680,
+          "installSeconds": 0.003227,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 0,
+              "meanNs": 4.04625,
+              "missing": 100000,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 4.03833,
+              "p99BatchMeanNs": 4.099609
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 86.30083,
+              "missing": 100000,
+              "name": "HASH64",
+              "p50BatchMeanNs": 89.874268,
+              "p99BatchMeanNs": 90.657471
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 76.75625,
+              "missing": 100000,
+              "name": "CRC32",
+              "p50BatchMeanNs": 76.497314,
+              "p99BatchMeanNs": 78.816895
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 85.45917,
+              "missing": 100000,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 85.5,
+              "p99BatchMeanNs": 90.525146
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 81.40875,
+              "missing": 100000,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 81.634521,
+              "p99BatchMeanNs": 83.922759
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 81.865,
+              "missing": 100000,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 82.000732,
+              "p99BatchMeanNs": 87.07666
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 88.38,
+              "missing": 100000,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 90.71875,
+              "p99BatchMeanNs": 92.498779
+            }
+          ],
+          "mode": "text-table-lookup",
+          "parseSeconds": 3.2e-05,
+          "peakRssBytes": 9863168,
+          "queryCount": 384,
+          "rssAfterAllocatorReliefBytes": 9863168,
+          "rssAfterInstallBytes": 9830400,
+          "rssBeforeBytes": 8634368
+        },
+        "signatureBytes": 2000008,
+        "signatureSha256": "6bcf019111fcb7a4e5f3c2d73b15e9ddc01a5f0a02c4d535ca26feb0cd4d8bbf"
+      },
+      "mixed-compressed-table": {
+        "commonSignatureBytes": 1074622,
+        "commonSignatureSha256": "c8292e8c3c067e96fbdc527df15e57c3eb3987e9678de91d954d5107a696d7c3",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1074160,
+          "heapInUseAfterInstallBytes": 1074160,
+          "installSeconds": 0.003296,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 9632730734942308318,
+              "meanNs": 88.88709,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 89.009521,
+              "p99BatchMeanNs": 89.833496
+            },
+            {
+              "checksum": 15626562411519191647,
+              "meanNs": 92.64375,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 92.62085,
+              "p99BatchMeanNs": 93.251465
+            },
+            {
+              "checksum": 9374307680936373539,
+              "meanNs": 169.22458,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 175.079346,
+              "p99BatchMeanNs": 179.718018
+            },
+            {
+              "checksum": 3598099794772279780,
+              "meanNs": 397.46292,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 398.620605,
+              "p99BatchMeanNs": 417.989258
+            },
+            {
+              "checksum": 11896673852291359739,
+              "meanNs": 126.40375,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 120.442627,
+              "p99BatchMeanNs": 151.45874
+            },
+            {
+              "checksum": 11875090631510023105,
+              "meanNs": 158.305,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 170.257568,
+              "p99BatchMeanNs": 180.969238
+            },
+            {
+              "checksum": 11875090631510023105,
+              "meanNs": 90.09375,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 90.504883,
+              "p99BatchMeanNs": 93.87207
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.000182,
+          "peakRssBytes": 10010624,
+          "queryCount": 384,
+          "rssAfterAllocatorReliefBytes": 10010624,
+          "rssAfterInstallBytes": 9977856,
+          "rssBeforeBytes": 8634368
+        },
+        "signatureBytes": 2274622,
+        "signatureSha256": "e8e2d4019d13accbe7df3a08735619dd434902bbfa75def4961bbe6f02ad8f02"
+      },
+      "mixed-rule-compute": {
+        "commonSignatureBytes": 1074622,
+        "commonSignatureSha256": "c8292e8c3c067e96fbdc527df15e57c3eb3987e9678de91d954d5107a696d7c3",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1067536,
+          "heapInUseAfterInstallBytes": 1067536,
+          "installSeconds": 0.003293,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 9632730734942308318,
+              "meanNs": 115.31708,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 115.325928,
+              "p99BatchMeanNs": 124.44043
+            },
+            {
+              "checksum": 15626562411519191647,
+              "meanNs": 80.46834,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 80.556152,
+              "p99BatchMeanNs": 88.287354
+            },
+            {
+              "checksum": 9374307680936373539,
+              "meanNs": 145.52375,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 145.050049,
+              "p99BatchMeanNs": 151.509521
+            },
+            {
+              "checksum": 3598099794772279780,
+              "meanNs": 377.36709,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 378.306152,
+              "p99BatchMeanNs": 396.586182
+            },
+            {
+              "checksum": 11896673852291359739,
+              "meanNs": 117.37667,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 117.645264,
+              "p99BatchMeanNs": 118.540527
+            },
+            {
+              "checksum": 11875090631510023105,
+              "meanNs": 125.83625,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 125.681641,
+              "p99BatchMeanNs": 131.418701
+            },
+            {
+              "checksum": 11875090631510023105,
+              "meanNs": 69.87958,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 69.905518,
+              "p99BatchMeanNs": 71.380615
+            }
+          ],
+          "mode": "structured-rule-compute",
+          "parseSeconds": 3.4e-05,
+          "peakRssBytes": 9961472,
+          "queryCount": 384,
+          "rssAfterAllocatorReliefBytes": 9961472,
+          "rssAfterInstallBytes": 9928704,
+          "rssBeforeBytes": 8617984
+        },
+        "signatureBytes": 2274622,
+        "signatureSha256": "e8e2d4019d13accbe7df3a08735619dd434902bbfa75def4961bbe6f02ad8f02"
+      },
+      "structured-compressed-table": {
+        "commonSignatureBytes": 1074622,
+        "commonSignatureSha256": "c8292e8c3c067e96fbdc527df15e57c3eb3987e9678de91d954d5107a696d7c3",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1074160,
+          "heapInUseAfterInstallBytes": 1074160,
+          "installSeconds": 0.003342,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 9632730734942308318,
+              "meanNs": 88.68,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 88.745117,
+              "p99BatchMeanNs": 90.677979
+            },
+            {
+              "checksum": 15626562411519191647,
+              "meanNs": 93.05916,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 93.424561,
+              "p99BatchMeanNs": 95.46934
+            },
+            {
+              "checksum": 9374307680936373539,
+              "meanNs": 158.10542,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 156.372642,
+              "p99BatchMeanNs": 194.99707
+            },
+            {
+              "checksum": 3598099794772279780,
+              "meanNs": 384.75875,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 384.887695,
+              "p99BatchMeanNs": 408.813477
+            },
+            {
+              "checksum": 11896673852291359739,
+              "meanNs": 123.43792,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 124.379395,
+              "p99BatchMeanNs": 131.571289
+            },
+            {
+              "checksum": 11875090631510023105,
+              "meanNs": 137.495,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 139.577148,
+              "p99BatchMeanNs": 141.75415
+            },
+            {
+              "checksum": 11875090631510023105,
+              "meanNs": 81.76875,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 81.827881,
+              "p99BatchMeanNs": 82.315918
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.000177,
+          "peakRssBytes": 9994240,
+          "queryCount": 384,
+          "rssAfterAllocatorReliefBytes": 9994240,
+          "rssAfterInstallBytes": 9961472,
+          "rssBeforeBytes": 8617984
+        },
+        "signatureBytes": 2274622,
+        "signatureSha256": "e8e2d4019d13accbe7df3a08735619dd434902bbfa75def4961bbe6f02ad8f02"
+      },
+      "structured-rule-compute": {
+        "commonSignatureBytes": 1074622,
+        "commonSignatureSha256": "c8292e8c3c067e96fbdc527df15e57c3eb3987e9678de91d954d5107a696d7c3",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1067536,
+          "heapInUseAfterInstallBytes": 1067536,
+          "installSeconds": 0.003309,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 9632730734942308318,
+              "meanNs": 110.42334,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 111.26709,
+              "p99BatchMeanNs": 116.780762
+            },
+            {
+              "checksum": 15626562411519191647,
+              "meanNs": 77.78625,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 77.463867,
+              "p99BatchMeanNs": 86.364746
+            },
+            {
+              "checksum": 9374307680936373539,
+              "meanNs": 148.57084,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 140.798096,
+              "p99BatchMeanNs": 238.179443
+            },
+            {
+              "checksum": 3598099794772279780,
+              "meanNs": 378.58375,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 378.560547,
+              "p99BatchMeanNs": 399.200439
+            },
+            {
+              "checksum": 11896673852291359739,
+              "meanNs": 111.4075,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 111.796143,
+              "p99BatchMeanNs": 117.584229
+            },
+            {
+              "checksum": 11875090631510023105,
+              "meanNs": 128.50125,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 128.733398,
+              "p99BatchMeanNs": 134.297607
+            },
+            {
+              "checksum": 11875090631510023105,
+              "meanNs": 70.38875,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 70.159912,
+              "p99BatchMeanNs": 74.625732
+            }
+          ],
+          "mode": "structured-rule-compute",
+          "parseSeconds": 3.5e-05,
+          "peakRssBytes": 9879552,
+          "queryCount": 384,
+          "rssAfterAllocatorReliefBytes": 9879552,
+          "rssAfterInstallBytes": 9846784,
+          "rssBeforeBytes": 8617984
+        },
+        "signatureBytes": 2274622,
+        "signatureSha256": "e8e2d4019d13accbe7df3a08735619dd434902bbfa75def4961bbe6f02ad8f02"
+      }
+    },
+    "signatureSha256": "e8e2d4019d13accbe7df3a08735619dd434902bbfa75def4961bbe6f02ad8f02"
+  },
+  "ubx-16npu-original": {
+    "byteIdentical": true,
+    "commonSignatureSha256": "dc24d0a019e98d32a50b2d75e49c90054e57b094ef10fb51bdeef5574a35a63e",
+    "embeddedTextMatchesPortable": false,
+    "main": {
+      "commonSignatureBytes": 1000008,
+      "commonSignatureSha256": "dc24d0a019e98d32a50b2d75e49c90054e57b094ef10fb51bdeef5574a35a63e",
+      "metrics": {
+        "allocatorReleasedBytes": 0,
+        "commit": "0ca0e95",
+        "heapInUseAfterAllocatorReliefBytes": 1815968,
+        "heapInUseAfterInstallBytes": 1815968,
+        "iterations": 100000,
+        "measurements": [
+          {
+            "checksum": 15624457549600689762,
+            "meanNs": 24.36,
+            "missing": 0,
+            "name": "candidate-set",
+            "p50BatchMeanNs": 24.210693,
+            "p99BatchMeanNs": 25.231132
+          },
+          {
+            "checksum": 5731963071455331666,
+            "meanNs": 61.41,
+            "missing": 0,
+            "name": "HASH",
+            "p50BatchMeanNs": 61.50293,
+            "p99BatchMeanNs": 62.0625
+          },
+          {
+            "checksum": 5731963071455331666,
+            "meanNs": 102.71916,
+            "missing": 0,
+            "name": "ADAPTIVE",
+            "p50BatchMeanNs": 94.411377,
+            "p99BatchMeanNs": 117.950439
+          }
+        ],
+        "peakRssBytes": 10895360,
+        "queryCount": 880,
+        "routingLoadSeconds": 0.00058,
+        "rssAfterAllocatorReliefBytes": 10895360,
+        "rssAfterInstallBytes": 10862592,
+        "rssBeforeBytes": 8617984,
+        "topologyInstallSeconds": 0.004183
+      }
+    },
+    "mainMatchesPortable": true,
+    "nodeCount": 20,
+    "queryCount": 880,
+    "runs": {
+      "full-compressed-table": {
+        "commonSignatureBytes": 1000008,
+        "commonSignatureSha256": "dc24d0a019e98d32a50b2d75e49c90054e57b094ef10fb51bdeef5574a35a63e",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1738256,
+          "heapInUseAfterInstallBytes": 1738256,
+          "installSeconds": 0.00412,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 15624457549600689762,
+              "meanNs": 59.36292,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 59.448242,
+              "p99BatchMeanNs": 63.181396
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 92.79041,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 89.314697,
+              "p99BatchMeanNs": 101.501465
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 152.98375,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 145.98584,
+              "p99BatchMeanNs": 217.122314
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 382.05417,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 383.005615,
+              "p99BatchMeanNs": 399.343018
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 114.4425,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 115.376709,
+              "p99BatchMeanNs": 117.116211
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 118.35042,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 118.560791,
+              "p99BatchMeanNs": 120.21875
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 73.50375,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 73.456958,
+              "p99BatchMeanNs": 74.615479
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.000232,
+          "peakRssBytes": 10633216,
+          "queryCount": 880,
+          "rssAfterAllocatorReliefBytes": 10633216,
+          "rssAfterInstallBytes": 10600448,
+          "rssBeforeBytes": 8667136
+        },
+        "signatureBytes": 2200008,
+        "signatureSha256": "436f300cdef9edb6a9365f5d15869917e0a6fbc5f5c30e134265cb9a9c71244b"
+      },
+      "full-text-table": {
+        "commonSignatureBytes": 800008,
+        "commonSignatureSha256": "8142b4c59cd8d49e1d70f3f69f295e144154d300b0dba89943c9ef3f51b022cd",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1713280,
+          "heapInUseAfterInstallBytes": 1713280,
+          "installSeconds": 0.003996,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 0,
+              "meanNs": 4.04458,
+              "missing": 100000,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 4.029481,
+              "p99BatchMeanNs": 4.058838
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 90.05667,
+              "missing": 100000,
+              "name": "HASH64",
+              "p50BatchMeanNs": 80.078125,
+              "p99BatchMeanNs": 186.666016
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 79.55,
+              "missing": 100000,
+              "name": "CRC32",
+              "p50BatchMeanNs": 79.315186,
+              "p99BatchMeanNs": 92.275943
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 83.45292,
+              "missing": 100000,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 84.899902,
+              "p99BatchMeanNs": 87.158203
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 85.97667,
+              "missing": 100000,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 86.039062,
+              "p99BatchMeanNs": 87.778809
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 78.49083,
+              "missing": 100000,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 77.962402,
+              "p99BatchMeanNs": 82.47876
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 85.82959,
+              "missing": 100000,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 85.581299,
+              "p99BatchMeanNs": 86.751465
+            }
+          ],
+          "mode": "text-table-lookup",
+          "parseSeconds": 4.6e-05,
+          "peakRssBytes": 10502144,
+          "queryCount": 880,
+          "rssAfterAllocatorReliefBytes": 10502144,
+          "rssAfterInstallBytes": 10469376,
+          "rssBeforeBytes": 8601600
+        },
+        "signatureBytes": 2000008,
+        "signatureSha256": "6bcf019111fcb7a4e5f3c2d73b15e9ddc01a5f0a02c4d535ca26feb0cd4d8bbf"
+      },
+      "mixed-compressed-table": {
+        "commonSignatureBytes": 1000008,
+        "commonSignatureSha256": "dc24d0a019e98d32a50b2d75e49c90054e57b094ef10fb51bdeef5574a35a63e",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1738256,
+          "heapInUseAfterInstallBytes": 1738256,
+          "installSeconds": 0.004254,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 15624457549600689762,
+              "meanNs": 74.01792,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 73.974609,
+              "p99BatchMeanNs": 74.980542
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 82.37291,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 82.316162,
+              "p99BatchMeanNs": 83.770752
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 152.92542,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 152.587891,
+              "p99BatchMeanNs": 156.789062
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 391.44875,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 391.784668,
+              "p99BatchMeanNs": 409.9021
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 133.63459,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 132.517334,
+              "p99BatchMeanNs": 140.034912
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 148.7225,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 148.345947,
+              "p99BatchMeanNs": 153.167725
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 79.46041,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 79.396484,
+              "p99BatchMeanNs": 81.186768
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.000236,
+          "peakRssBytes": 10715136,
+          "queryCount": 880,
+          "rssAfterAllocatorReliefBytes": 10715136,
+          "rssAfterInstallBytes": 10682368,
+          "rssBeforeBytes": 8634368
+        },
+        "signatureBytes": 2200008,
+        "signatureSha256": "436f300cdef9edb6a9365f5d15869917e0a6fbc5f5c30e134265cb9a9c71244b"
+      },
+      "mixed-rule-compute": {
+        "commonSignatureBytes": 1000008,
+        "commonSignatureSha256": "dc24d0a019e98d32a50b2d75e49c90054e57b094ef10fb51bdeef5574a35a63e",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1747920,
+          "heapInUseAfterInstallBytes": 1747920,
+          "installSeconds": 0.004151,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 15624457549600689762,
+              "meanNs": 110.12333,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 110.0625,
+              "p99BatchMeanNs": 115.783691
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 81.71917,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 81.807617,
+              "p99BatchMeanNs": 83.740234
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 148.34041,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 147.908447,
+              "p99BatchMeanNs": 157.37915
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 387.7475,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 386.627197,
+              "p99BatchMeanNs": 409.627441
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 120.2575,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 119.822266,
+              "p99BatchMeanNs": 125.722412
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 120.29916,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 120.127441,
+              "p99BatchMeanNs": 131.830189
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 73.78834,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 73.812012,
+              "p99BatchMeanNs": 74.951172
+            }
+          ],
+          "mode": "structured-rule-compute",
+          "parseSeconds": 4.9e-05,
+          "peakRssBytes": 10682368,
+          "queryCount": 880,
+          "rssAfterAllocatorReliefBytes": 10682368,
+          "rssAfterInstallBytes": 10649600,
+          "rssBeforeBytes": 8634368
+        },
+        "signatureBytes": 2200008,
+        "signatureSha256": "436f300cdef9edb6a9365f5d15869917e0a6fbc5f5c30e134265cb9a9c71244b"
+      },
+      "structured-compressed-table": {
+        "commonSignatureBytes": 1000008,
+        "commonSignatureSha256": "dc24d0a019e98d32a50b2d75e49c90054e57b094ef10fb51bdeef5574a35a63e",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1738256,
+          "heapInUseAfterInstallBytes": 1738256,
+          "installSeconds": 0.004153,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 15624457549600689762,
+              "meanNs": 67.53375,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 69.051025,
+              "p99BatchMeanNs": 77.199219
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 77.61833,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 77.565674,
+              "p99BatchMeanNs": 79.101562
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 149.70625,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 150.115967,
+              "p99BatchMeanNs": 154.724121
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 387.73125,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 388.824463,
+              "p99BatchMeanNs": 409.688232
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 117.95167,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 116.007568,
+              "p99BatchMeanNs": 122.934814
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 124.29542,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 119.852783,
+              "p99BatchMeanNs": 144.989014
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 72.42833,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 72.01123,
+              "p99BatchMeanNs": 77.189209
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.000241,
+          "peakRssBytes": 10747904,
+          "queryCount": 880,
+          "rssAfterAllocatorReliefBytes": 10747904,
+          "rssAfterInstallBytes": 10715136,
+          "rssBeforeBytes": 8683520
+        },
+        "signatureBytes": 2200008,
+        "signatureSha256": "436f300cdef9edb6a9365f5d15869917e0a6fbc5f5c30e134265cb9a9c71244b"
+      },
+      "structured-rule-compute": {
+        "commonSignatureBytes": 1000008,
+        "commonSignatureSha256": "dc24d0a019e98d32a50b2d75e49c90054e57b094ef10fb51bdeef5574a35a63e",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1747920,
+          "heapInUseAfterInstallBytes": 1747920,
+          "installSeconds": 0.004345,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 15624457549600689762,
+              "meanNs": 103.26833,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 103.26123,
+              "p99BatchMeanNs": 105.041504
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 80.25417,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 79.772949,
+              "p99BatchMeanNs": 85.734131
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 134.2725,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 133.514404,
+              "p99BatchMeanNs": 140.94043
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 385.36,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 385.335205,
+              "p99BatchMeanNs": 403.747559
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 116.08708,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 115.570068,
+              "p99BatchMeanNs": 120.808838
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 121.24334,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 120.900391,
+              "p99BatchMeanNs": 125.854492
+            },
+            {
+              "checksum": 5731963071455331666,
+              "meanNs": 74.225,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 73.903564,
+              "p99BatchMeanNs": 79.081299
+            }
+          ],
+          "mode": "structured-rule-compute",
+          "parseSeconds": 5.2e-05,
+          "peakRssBytes": 10534912,
+          "queryCount": 880,
+          "rssAfterAllocatorReliefBytes": 10534912,
+          "rssAfterInstallBytes": 10502144,
+          "rssBeforeBytes": 8634368
+        },
+        "signatureBytes": 2200008,
+        "signatureSha256": "436f300cdef9edb6a9365f5d15869917e0a6fbc5f5c30e134265cb9a9c71244b"
+      }
+    },
+    "signatureSha256": "436f300cdef9edb6a9365f5d15869917e0a6fbc5f5c30e134265cb9a9c71244b"
+  },
+  "ubx-shaped-simplified": {
+    "byteIdentical": true,
+    "commonSignatureSha256": "13e64a65197e45297fec0e24af41194522bad59afda5229d691c64a977122d13",
+    "embeddedTextMatchesPortable": false,
+    "main": {
+      "commonSignatureBytes": 1000008,
+      "commonSignatureSha256": "13e64a65197e45297fec0e24af41194522bad59afda5229d691c64a977122d13",
+      "metrics": {
+        "allocatorReleasedBytes": 0,
+        "commit": "0ca0e95",
+        "heapInUseAfterAllocatorReliefBytes": 1763744,
+        "heapInUseAfterInstallBytes": 1763744,
+        "iterations": 100000,
+        "measurements": [
+          {
+            "checksum": 8916864752503630612,
+            "meanNs": 22.28792,
+            "missing": 0,
+            "name": "candidate-set",
+            "p50BatchMeanNs": 22.267822,
+            "p99BatchMeanNs": 22.603271
+          },
+          {
+            "checksum": 4951660633138909261,
+            "meanNs": 59.39958,
+            "missing": 0,
+            "name": "HASH",
+            "p50BatchMeanNs": 58.908936,
+            "p99BatchMeanNs": 65.134766
+          },
+          {
+            "checksum": 4951660633138909261,
+            "meanNs": 94.12459,
+            "missing": 0,
+            "name": "ADAPTIVE",
+            "p50BatchMeanNs": 93.62793,
+            "p99BatchMeanNs": 102.467773
+          }
+        ],
+        "peakRssBytes": 10878976,
+        "queryCount": 880,
+        "routingLoadSeconds": 0.000552,
+        "rssAfterAllocatorReliefBytes": 10878976,
+        "rssAfterInstallBytes": 10846208,
+        "rssBeforeBytes": 8667136,
+        "topologyInstallSeconds": 0.004082
+      }
+    },
+    "mainMatchesPortable": true,
+    "nodeCount": 20,
+    "queryCount": 880,
+    "runs": {
+      "full-compressed-table": {
+        "commonSignatureBytes": 1000008,
+        "commonSignatureSha256": "13e64a65197e45297fec0e24af41194522bad59afda5229d691c64a977122d13",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1686032,
+          "heapInUseAfterInstallBytes": 1686032,
+          "installSeconds": 0.004046,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 8916864752503630612,
+              "meanNs": 56.59083,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 56.325195,
+              "p99BatchMeanNs": 62.957764
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 79.38917,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 78.928467,
+              "p99BatchMeanNs": 81.858154
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 144.84208,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 144.765137,
+              "p99BatchMeanNs": 145.446777
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 385.43458,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 386.03066,
+              "p99BatchMeanNs": 404.79541
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 119.43084,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 119.221924,
+              "p99BatchMeanNs": 128.255371
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 124.63333,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 126.149414,
+              "p99BatchMeanNs": 128.356934
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 76.3675,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 76.161621,
+              "p99BatchMeanNs": 80.891846
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.000246,
+          "peakRssBytes": 10584064,
+          "queryCount": 880,
+          "rssAfterAllocatorReliefBytes": 10584064,
+          "rssAfterInstallBytes": 10551296,
+          "rssBeforeBytes": 8617984
+        },
+        "signatureBytes": 2200008,
+        "signatureSha256": "4a6931ad1b712cdc065b51c7434fe928d9342f13b8ee9df29f215b007e13f4f4"
+      },
+      "full-text-table": {
+        "commonSignatureBytes": 800008,
+        "commonSignatureSha256": "8142b4c59cd8d49e1d70f3f69f295e144154d300b0dba89943c9ef3f51b022cd",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1661056,
+          "heapInUseAfterInstallBytes": 1661056,
+          "installSeconds": 0.004115,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 0,
+              "meanNs": 3.18083,
+              "missing": 100000,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 3.173828,
+              "p99BatchMeanNs": 3.204346
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 89.72416,
+              "missing": 100000,
+              "name": "HASH64",
+              "p50BatchMeanNs": 89.070557,
+              "p99BatchMeanNs": 98.042969
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 83.77541,
+              "missing": 100000,
+              "name": "CRC32",
+              "p50BatchMeanNs": 83.119873,
+              "p99BatchMeanNs": 87.646484
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 84.45375,
+              "missing": 100000,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 83.140137,
+              "p99BatchMeanNs": 89.131592
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 81.82584,
+              "missing": 100000,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 80.454346,
+              "p99BatchMeanNs": 87.903302
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 81.7125,
+              "missing": 100000,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 80.210449,
+              "p99BatchMeanNs": 87.137695
+            },
+            {
+              "checksum": 13085469158882363993,
+              "meanNs": 87.31917,
+              "missing": 100000,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 87.351562,
+              "p99BatchMeanNs": 90.28125
+            }
+          ],
+          "mode": "text-table-lookup",
+          "parseSeconds": 4.6e-05,
+          "peakRssBytes": 10551296,
+          "queryCount": 880,
+          "rssAfterAllocatorReliefBytes": 10551296,
+          "rssAfterInstallBytes": 10502144,
+          "rssBeforeBytes": 8650752
+        },
+        "signatureBytes": 2000008,
+        "signatureSha256": "6bcf019111fcb7a4e5f3c2d73b15e9ddc01a5f0a02c4d535ca26feb0cd4d8bbf"
+      },
+      "mixed-compressed-table": {
+        "commonSignatureBytes": 1000008,
+        "commonSignatureSha256": "13e64a65197e45297fec0e24af41194522bad59afda5229d691c64a977122d13",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1686032,
+          "heapInUseAfterInstallBytes": 1686032,
+          "installSeconds": 0.004304,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 8916864752503630612,
+              "meanNs": 57.66292,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 57.769775,
+              "p99BatchMeanNs": 59.814453
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 81.29625,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 81.14624,
+              "p99BatchMeanNs": 83.394531
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 148.85583,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 151.672363,
+              "p99BatchMeanNs": 155.070068
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 387.54708,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 384.653809,
+              "p99BatchMeanNs": 408.121826
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 118.60167,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 117.655273,
+              "p99BatchMeanNs": 124.623535
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 117.26791,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 116.953369,
+              "p99BatchMeanNs": 127.258301
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 73.61208,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 74.056152,
+              "p99BatchMeanNs": 76.812744
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.00024,
+          "peakRssBytes": 10665984,
+          "queryCount": 880,
+          "rssAfterAllocatorReliefBytes": 10665984,
+          "rssAfterInstallBytes": 10633216,
+          "rssBeforeBytes": 8667136
+        },
+        "signatureBytes": 2200008,
+        "signatureSha256": "4a6931ad1b712cdc065b51c7434fe928d9342f13b8ee9df29f215b007e13f4f4"
+      },
+      "mixed-rule-compute": {
+        "commonSignatureBytes": 1000008,
+        "commonSignatureSha256": "13e64a65197e45297fec0e24af41194522bad59afda5229d691c64a977122d13",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1695824,
+          "heapInUseAfterInstallBytes": 1695824,
+          "installSeconds": 0.004282,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 8916864752503630612,
+              "meanNs": 107.88333,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 110.158203,
+              "p99BatchMeanNs": 113.311768
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 81.72083,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 81.654785,
+              "p99BatchMeanNs": 83.730225
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 153.23917,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 152.516602,
+              "p99BatchMeanNs": 157.450439
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 385.81208,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 382.954834,
+              "p99BatchMeanNs": 413.146973
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 124.07625,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 124.898193,
+              "p99BatchMeanNs": 130.859375
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 120.76625,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 121.866699,
+              "p99BatchMeanNs": 126.220703
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 69.96667,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 69.926025,
+              "p99BatchMeanNs": 70.558373
+            }
+          ],
+          "mode": "structured-rule-compute",
+          "parseSeconds": 5.1e-05,
+          "peakRssBytes": 10584064,
+          "queryCount": 880,
+          "rssAfterAllocatorReliefBytes": 10584064,
+          "rssAfterInstallBytes": 10551296,
+          "rssBeforeBytes": 8585216
+        },
+        "signatureBytes": 2200008,
+        "signatureSha256": "4a6931ad1b712cdc065b51c7434fe928d9342f13b8ee9df29f215b007e13f4f4"
+      },
+      "structured-compressed-table": {
+        "commonSignatureBytes": 1000008,
+        "commonSignatureSha256": "13e64a65197e45297fec0e24af41194522bad59afda5229d691c64a977122d13",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1686032,
+          "heapInUseAfterInstallBytes": 1686032,
+          "installSeconds": 0.004056,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 8916864752503630612,
+              "meanNs": 59.83875,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 59.651611,
+              "p99BatchMeanNs": 62.021729
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 83.44041,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 85.388184,
+              "p99BatchMeanNs": 87.331299
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 145.28375,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 145.192383,
+              "p99BatchMeanNs": 146.036621
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 384.16375,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 381.80542,
+              "p99BatchMeanNs": 406.779053
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 121.46125,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 121.185303,
+              "p99BatchMeanNs": 126.047852
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 123.34125,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 123.636719,
+              "p99BatchMeanNs": 129.608154
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 70.22625,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 70.19043,
+              "p99BatchMeanNs": 70.963379
+            }
+          ],
+          "mode": "compressed-table-lookup",
+          "parseSeconds": 0.000236,
+          "peakRssBytes": 10518528,
+          "queryCount": 880,
+          "rssAfterAllocatorReliefBytes": 10518528,
+          "rssAfterInstallBytes": 10485760,
+          "rssBeforeBytes": 8568832
+        },
+        "signatureBytes": 2200008,
+        "signatureSha256": "4a6931ad1b712cdc065b51c7434fe928d9342f13b8ee9df29f215b007e13f4f4"
+      },
+      "structured-rule-compute": {
+        "commonSignatureBytes": 1000008,
+        "commonSignatureSha256": "13e64a65197e45297fec0e24af41194522bad59afda5229d691c64a977122d13",
+        "metrics": {
+          "allocatorReleasedBytes": 0,
+          "heapInUseAfterAllocatorReliefBytes": 1695824,
+          "heapInUseAfterInstallBytes": 1695824,
+          "installSeconds": 0.0043,
+          "iterations": 100000,
+          "measurements": [
+            {
+              "checksum": 8916864752503630612,
+              "meanNs": 104.44958,
+              "missing": 0,
+              "name": "candidate-set",
+              "p50BatchMeanNs": 104.278564,
+              "p99BatchMeanNs": 105.733398
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 83.73208,
+              "missing": 0,
+              "name": "HASH64",
+              "p50BatchMeanNs": 83.384277,
+              "p99BatchMeanNs": 88.368652
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 149.9425,
+              "missing": 0,
+              "name": "CRC32",
+              "p50BatchMeanNs": 151.489258,
+              "p99BatchMeanNs": 155.477051
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 386.39,
+              "missing": 0,
+              "name": "TOEPLITZ",
+              "p50BatchMeanNs": 385.427002,
+              "p99BatchMeanNs": 406.555176
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 120.72875,
+              "missing": 0,
+              "name": "ROUND_ROBIN",
+              "p50BatchMeanNs": 119.578125,
+              "p99BatchMeanNs": 129.821777
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 126.15084,
+              "missing": 0,
+              "name": "ADAPTIVE",
+              "p50BatchMeanNs": 130.36084,
+              "p99BatchMeanNs": 134.338379
+            },
+            {
+              "checksum": 4951660633138909261,
+              "meanNs": 73.97792,
+              "missing": 0,
+              "name": "INGRESS_PORT_STRIPE",
+              "p50BatchMeanNs": 74.005127,
+              "p99BatchMeanNs": 75.592041
+            }
+          ],
+          "mode": "structured-rule-compute",
+          "parseSeconds": 5.2e-05,
+          "peakRssBytes": 10633216,
+          "queryCount": 880,
+          "rssAfterAllocatorReliefBytes": 10633216,
+          "rssAfterInstallBytes": 10600448,
+          "rssBeforeBytes": 8634368
+        },
+        "signatureBytes": 2200008,
+        "signatureSha256": "4a6931ad1b712cdc065b51c7434fe928d9342f13b8ee9df29f215b007e13f4f4"
+      }
+    },
+    "signatureSha256": "4a6931ad1b712cdc065b51c7434fe928d9342f13b8ee9df29f215b007e13f4f4"
+  }
+}

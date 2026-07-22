@@ -61,8 +61,9 @@ runner 通过 `structured_topology.txt` 交接，仿真开始后仍不存在跨�
 `--route-generation=full|structured|mixed` 只决定离线候选如何产生，
 `--route-runtime-mode=compressed-table-lookup|structured-rule-compute` 只决定运行时如何取得候选。
 
-任务 19 覆盖 UBX、1DPOD、N-D mesh 和含显式外扩连接的挑战拓扑。没有把含义不唯一的
-“UBMesh”产品标签当成物理拓扑定义；测试使用连接关系明确的 N-D mesh。
+任务 19 覆盖 UBX、1DPOD、明确物理含义为 `Path(4) cartesian Path(4)` 的 UBMesh fixture、
+Torus、经典 Dragonfly、显式端口外扩和 ring-inside-Dragonfly。UBMesh 只是本测试 fixture
+名称，不声称是外部标准定义。
 正确性同时比较 shortest/non-shortest 候选、`GetOutPort()` 返回值、最短路径标记和可稳定获取
 的输出字节。性能分别报告生成时间、工件大小、加载时间、峰值/常驻 RSS、候选查询与完整
 `GetOutPort()`，并与 `main`、旧全量表、压缩表和结构规则路径区分对比。

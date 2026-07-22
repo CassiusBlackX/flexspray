@@ -2,6 +2,8 @@
 """Aggregate the final 1024-NPU route runtime benchmark samples."""
 
 import json
+import argparse
+import hashlib
 import statistics
 from pathlib import Path
 
@@ -17,6 +19,46 @@ MODES = {
 
 def median(values):
     return statistics.median(values)
+
+
+def sha256(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def summarize_signatures(directory):
+    groups = {
+        "allNewSelectors": ("compressed-full-*.bin", "structured-full-*.bin"),
+        "mainCommonSelectors": (
+            "main-common-*.bin",
+            "compressed-common-*.bin",
+            "structured-common-*.bin",
+        ),
+    }
+    result = {}
+    for name, patterns in groups.items():
+        paths = [path for pattern in patterns for path in sorted(directory.glob(pattern))]
+        expected = 6 if name == "allNewSelectors" else 9
+        if len(paths) != expected:
+            raise ValueError(f"expected {expected} {name} signatures, found {len(paths)}")
+        digests = {sha256(path) for path in paths}
+        if len(digests) != 1:
+            raise ValueError(f"byte signature mismatch for {name}")
+        result[name] = {
+            "sha256": digests.pop(),
+            "fileCount": len(paths),
+            "queryCount": 100000,
+            "coverage": (
+                "candidate plus HASH64, CRC32, TOEPLITZ, ROUND_ROBIN, ADAPTIVE, "
+                "INGRESS_PORT_STRIPE"
+                if name == "allNewSelectors"
+                else "candidate plus HASH and ADAPTIVE across main and new runtimes"
+            ),
+        }
+    return result
 
 
 def measurement(samples, name):
@@ -64,11 +106,15 @@ def summarize(label, pattern):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--signature-dir", type=Path, required=True)
+    args = parser.parse_args()
     summary = {
         "benchmark": "1dpod-1024npu-route-runtime-closure",
         "mainCommit": "0ca0e95",
         "sampleCount": 3,
         "querySeed": 20260722,
+        "byteSignatures": summarize_signatures(args.signature_dir),
         "modes": {label: summarize(label, pattern) for label, pattern in MODES.items()},
     }
     output = ROOT / "route-runtime-closure-summary.json"

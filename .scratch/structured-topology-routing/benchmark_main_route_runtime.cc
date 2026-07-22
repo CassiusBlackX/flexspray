@@ -25,6 +25,8 @@
 
 namespace
 {
+constexpr uint64_t SIGNATURE_COUNT = 100000;
+
 struct Query
 {
     uint32_t current;
@@ -164,18 +166,26 @@ Measure(std::string name, uint64_t iterations, Function&& function)
             checksum,
             missing};
 }
+
+void
+WriteLittle16(std::ostream& output, uint16_t value)
+{
+    output.put(static_cast<char>(value));
+    output.put(static_cast<char>(value >> 8));
+}
 } // namespace
 
 int
 main(int argc, char* argv[])
 {
-    if (argc != 8)
+    if (argc != 9)
     {
-        std::cerr << "usage: benchmark NODE TOPOLOGY ROUTING QUERIES ITERATIONS OUTPUT SEED\n";
+        std::cerr << "usage: benchmark NODE TOPOLOGY ROUTING QUERIES ITERATIONS SIGNATURE "
+                     "OUTPUT SEED\n";
         return 2;
     }
     const uint64_t iterations = std::stoull(argv[5]);
-    const uint64_t seed = std::stoull(argv[7]);
+    const uint64_t seed = std::stoull(argv[8]);
     const uint64_t rssBefore = CurrentRss();
     const auto installStarted = std::chrono::steady_clock::now();
     utils::UbUtils::Get()->CreateNode(argv[1]);
@@ -205,6 +215,8 @@ main(int argc, char* argv[])
     auto queryAt = [&](uint64_t index) -> const Query& {
         return queries[Mix64(index ^ seed) % queries.size()];
     };
+    std::ofstream signature(argv[6], std::ios::binary);
+    signature.write("UBRTCMN1", 8);
 
     std::vector<Measurement> measurements;
     measurements.push_back(Measure("candidate-set",
@@ -222,16 +234,24 @@ main(int argc, char* argv[])
                                            checksum = Mix64(checksum ^ (port + 1));
                                        }
                                    }));
+    for (uint64_t index = 0; index < SIGNATURE_COUNT; ++index)
+    {
+        const auto& query = queryAt(index);
+        const auto ports = routing[query.current]->GetAllOutPorts(query.destination);
+        WriteLittle16(signature, static_cast<uint16_t>(ports.size()));
+        for (uint16_t port : ports)
+        {
+            WriteLittle16(signature, port);
+        }
+    }
     for (const std::string algorithm : {"HASH", "ADAPTIVE"})
     {
         for (const auto& process : routing)
         {
             process->SetAttribute("RoutingAlgorithm", ns3::StringValue(algorithm));
         }
-        measurements.push_back(Measure(
-            algorithm,
-            iterations,
-            [&](uint64_t index, uint64_t& checksum, uint64_t& missing) {
+        auto lookup =
+            [&](uint64_t index, uint64_t& checksum, uint64_t& missing, std::ostream* bytes) {
                 const auto& query = queryAt(index);
                 ns3::RoutingKey key{utils::NodeIdToIp(query.current).Get(),
                                     query.destination,
@@ -248,10 +268,26 @@ main(int argc, char* argv[])
                     ++missing;
                 }
                 checksum = Mix64(checksum ^ (static_cast<uint64_t>(port + 1) << 1) ^ shortest);
-            }));
+                if (bytes != nullptr)
+                {
+                    WriteLittle16(*bytes, static_cast<uint16_t>(port));
+                    bytes->put(static_cast<char>(shortest));
+                }
+            };
+        measurements.push_back(Measure(algorithm,
+                                       iterations,
+                                       [&](uint64_t index, uint64_t& checksum, uint64_t& missing) {
+                                           lookup(index, checksum, missing, nullptr);
+                                       }));
+        for (uint64_t index = 0; index < SIGNATURE_COUNT; ++index)
+        {
+            uint64_t checksum = 0;
+            uint64_t missing = 0;
+            lookup(index, checksum, missing, &signature);
+        }
     }
 
-    std::ofstream output(argv[6]);
+    std::ofstream output(argv[7]);
     output << std::fixed << std::setprecision(6) << "{\n"
            << "  \"commit\": \"0ca0e95\",\n"
            << "  \"queryCount\": " << queries.size() << ",\n"

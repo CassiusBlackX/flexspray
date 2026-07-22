@@ -201,14 +201,15 @@ main(int argc, char* argv[])
 {
     try
     {
-        if (argc != 9)
+        if (argc != 10)
         {
             throw std::runtime_error(
-                "usage: benchmark MODE TOPOLOGY BINARY|- QUERIES ITERATIONS SIGNATURE OUTPUT SEED");
+                "usage: benchmark MODE TOPOLOGY BINARY|- QUERIES ITERATIONS SIGNATURE "
+                "COMMON_SIGNATURE OUTPUT SEED");
         }
         const std::string mode = argv[1];
         const uint64_t iterations = std::stoull(argv[5]);
-        const uint64_t seed = std::stoull(argv[8]);
+        const uint64_t seed = std::stoull(argv[9]);
         constexpr uint64_t warmup = 100000;
         constexpr uint64_t batchSize = 4096;
         constexpr uint64_t signatureCount = 100000;
@@ -233,10 +234,9 @@ main(int argc, char* argv[])
                     connectedPorts[link.node1][link.port1] = true;
                     connectedPorts[link.node2][link.port2] = true;
                 }
-                config.tableNextHopIndex = ns3::UbNextHopIndex::Read(
-                    binaryInput,
-                    connectedPorts,
-                    config.routingFingerprint);
+                config.tableNextHopIndex = ns3::UbNextHopIndex::Read(binaryInput,
+                                                                     connectedPorts,
+                                                                     config.routingFingerprint);
                 config.portGroups.clear();
                 config.routingRules.clear();
                 config.routingRangeRules.clear();
@@ -280,6 +280,8 @@ main(int argc, char* argv[])
 
         std::ofstream signature(argv[6], std::ios::binary);
         signature.write("UBRTSIG1", 8);
+        std::ofstream commonSignature(argv[7], std::ios::binary);
+        commonSignature.write("UBRTCMN1", 8);
         std::vector<Measurement> measurements;
         measurements.push_back(
             Measure("candidate-set",
@@ -304,9 +306,11 @@ main(int argc, char* argv[])
             const auto& query = queryAt(index);
             const auto ports = routing[query.currentNodeId]->GetAllOutPorts(query.destinationIp);
             WriteLittle16(signature, static_cast<uint16_t>(ports.size()));
+            WriteLittle16(commonSignature, static_cast<uint16_t>(ports.size()));
             for (uint16_t port : ports)
             {
                 WriteLittle16(signature, port);
+                WriteLittle16(commonSignature, port);
             }
         }
 
@@ -362,10 +366,15 @@ main(int argc, char* argv[])
                 uint64_t checksum = 0;
                 uint64_t missing = 0;
                 lookup(index, checksum, missing, &signature);
+                if (selector == ns3::MultipathSelector::HASH64 ||
+                    selector == ns3::MultipathSelector::ADAPTIVE)
+                {
+                    lookup(index, checksum, missing, &commonSignature);
+                }
             }
         }
 
-        std::ofstream output(argv[7]);
+        std::ofstream output(argv[8]);
         output << std::fixed << std::setprecision(6) << "{\n"
                << "  \"mode\": \"" << mode << "\",\n"
                << "  \"queryCount\": " << queries.size() << ",\n"

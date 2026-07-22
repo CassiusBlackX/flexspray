@@ -3,6 +3,20 @@
   "mainCommit": "0ca0e95",
   "sampleCount": 3,
   "querySeed": 20260722,
+  "byteSignatures": {
+    "allNewSelectors": {
+      "sha256": "32cd30da87110ae02947f941c89e66b1a62d63e98d94f5405d898f8703637b78",
+      "fileCount": 6,
+      "queryCount": 100000,
+      "coverage": "candidate plus HASH64, CRC32, TOEPLITZ, ROUND_ROBIN, ADAPTIVE, INGRESS_PORT_STRIPE"
+    },
+    "mainCommonSelectors": {
+      "sha256": "428c40d6643912d3a961e79966e6060b1b6f6c2182b6592d97462080e3216a06",
+      "fileCount": 9,
+      "queryCount": 100000,
+      "coverage": "candidate plus HASH and ADAPTIVE across main and new runtimes"
+    }
+  },
   "modes": {
     "main-full-table": {
       "samples": [
@@ -12,30 +26,30 @@
       ],
       "queryCount": 9427968,
       "iterationsPerMeasurement": 5000000,
-      "topologyParseOrInstallSeconds": 0.313755,
-      "routeLoadOrInstallSeconds": 6.231969,
-      "rssAfterInstallBytes": 2599944192,
+      "topologyParseOrInstallSeconds": 0.297217,
+      "routeLoadOrInstallSeconds": 6.037479,
+      "rssAfterInstallBytes": 2600042496,
       "heapInUseAfterInstallBytes": 916480608,
-      "peakRssBytes": 2599976960,
+      "peakRssBytes": 2600075264,
       "measurements": {
         "candidate-set": {
-          "meanNs": 237.751725,
-          "p50BatchMeanNs": 234.954834,
-          "p99BatchMeanNs": 305.277588,
+          "meanNs": 241.552783,
+          "p50BatchMeanNs": 240.427734,
+          "p99BatchMeanNs": 281.911377,
           "checksum": 15609832159678945247,
           "missing": 0
         },
         "HASH": {
-          "meanNs": 386.553292,
-          "p50BatchMeanNs": 384.450195,
-          "p99BatchMeanNs": 446.32959,
+          "meanNs": 380.331458,
+          "p50BatchMeanNs": 379.79126,
+          "p99BatchMeanNs": 394.622803,
           "checksum": 17596006285552879576,
           "missing": 0
         },
         "ADAPTIVE": {
-          "meanNs": 545.793942,
-          "p50BatchMeanNs": 540.975098,
-          "p99BatchMeanNs": 655.24292,
+          "meanNs": 504.203183,
+          "p50BatchMeanNs": 499.735352,
+          "p99BatchMeanNs": 609.486816,
           "checksum": 16982587848491224938,
           "missing": 0
         }
@@ -49,58 +63,58 @@
       ],
       "queryCount": 9427968,
       "iterationsPerMeasurement": 5000000,
-      "topologyParseOrInstallSeconds": 0.291192,
-      "routeLoadOrInstallSeconds": 0.296244,
-      "rssAfterInstallBytes": 303841280,
+      "topologyParseOrInstallSeconds": 0.350328,
+      "routeLoadOrInstallSeconds": 0.295709,
+      "rssAfterInstallBytes": 303579136,
       "heapInUseAfterInstallBytes": 248091152,
-      "peakRssBytes": 303874048,
+      "peakRssBytes": 303611904,
       "measurements": {
         "candidate-set": {
-          "meanNs": 184.966667,
-          "p50BatchMeanNs": 185.424805,
-          "p99BatchMeanNs": 207.305908,
+          "meanNs": 181.751533,
+          "p50BatchMeanNs": 179.819824,
+          "p99BatchMeanNs": 224.497559,
           "checksum": 15609832159678945247,
           "missing": 0
         },
         "HASH64": {
-          "meanNs": 196.5738,
-          "p50BatchMeanNs": 195.129395,
-          "p99BatchMeanNs": 237.620117,
+          "meanNs": 192.5326,
+          "p50BatchMeanNs": 192.647217,
+          "p99BatchMeanNs": 210.449219,
           "checksum": 17596006285552879576,
           "missing": 0
         },
         "CRC32": {
-          "meanNs": 239.575892,
-          "p50BatchMeanNs": 237.26416,
-          "p99BatchMeanNs": 257.639648,
+          "meanNs": 235.043033,
+          "p50BatchMeanNs": 234.649658,
+          "p99BatchMeanNs": 249.796631,
           "checksum": 5334873313241362200,
           "missing": 0
         },
         "TOEPLITZ": {
-          "meanNs": 648.9463,
-          "p50BatchMeanNs": 647.898193,
-          "p99BatchMeanNs": 680.033447,
+          "meanNs": 637.025408,
+          "p50BatchMeanNs": 636.434082,
+          "p99BatchMeanNs": 671.518799,
           "checksum": 11346107290130456727,
           "missing": 0
         },
         "ROUND_ROBIN": {
-          "meanNs": 234.370717,
-          "p50BatchMeanNs": 234.018799,
-          "p99BatchMeanNs": 255.126953,
+          "meanNs": 235.254067,
+          "p50BatchMeanNs": 234.141113,
+          "p99BatchMeanNs": 265.981201,
           "checksum": 9069433590625901631,
           "missing": 0
         },
         "ADAPTIVE": {
-          "meanNs": 339.357083,
-          "p50BatchMeanNs": 338.104248,
-          "p99BatchMeanNs": 370.147705,
+          "meanNs": 338.908292,
+          "p50BatchMeanNs": 337.931396,
+          "p99BatchMeanNs": 377.390381,
           "checksum": 16982587848491224938,
           "missing": 0
         },
         "INGRESS_PORT_STRIPE": {
-          "meanNs": 203.1027,
-          "p50BatchMeanNs": 200.653076,
-          "p99BatchMeanNs": 252.064941,
+          "meanNs": 194.94745,
+          "p50BatchMeanNs": 195.841553,
+          "p99BatchMeanNs": 211.141113,
           "checksum": 6270412698303457832,
           "missing": 0
         }
@@ -114,58 +128,58 @@
       ],
       "queryCount": 9427968,
       "iterationsPerMeasurement": 5000000,
-      "topologyParseOrInstallSeconds": 0.008143,
-      "routeLoadOrInstallSeconds": 0.308211,
-      "rssAfterInstallBytes": 231440384,
+      "topologyParseOrInstallSeconds": 0.007083,
+      "routeLoadOrInstallSeconds": 0.308704,
+      "rssAfterInstallBytes": 231424000,
       "heapInUseAfterInstallBytes": 215147408,
-      "peakRssBytes": 231473152,
+      "peakRssBytes": 231456768,
       "measurements": {
         "candidate-set": {
-          "meanNs": 390.19185,
-          "p50BatchMeanNs": 390.248535,
-          "p99BatchMeanNs": 413.614746,
+          "meanNs": 390.379317,
+          "p50BatchMeanNs": 389.963867,
+          "p99BatchMeanNs": 431.56958,
           "checksum": 15609832159678945247,
           "missing": 0
         },
         "HASH64": {
-          "meanNs": 359.493525,
-          "p50BatchMeanNs": 360.70752,
-          "p99BatchMeanNs": 386.383057,
+          "meanNs": 358.629817,
+          "p50BatchMeanNs": 357.503174,
+          "p99BatchMeanNs": 396.5354,
           "checksum": 17596006285552879576,
           "missing": 0
         },
         "CRC32": {
-          "meanNs": 403.030483,
-          "p50BatchMeanNs": 402.822021,
-          "p99BatchMeanNs": 420.054199,
+          "meanNs": 402.118533,
+          "p50BatchMeanNs": 402.191162,
+          "p99BatchMeanNs": 419.352051,
           "checksum": 5334873313241362200,
           "missing": 0
         },
         "TOEPLITZ": {
-          "meanNs": 803.261133,
-          "p50BatchMeanNs": 803.375244,
-          "p99BatchMeanNs": 837.921143,
+          "meanNs": 799.822667,
+          "p50BatchMeanNs": 799.967529,
+          "p99BatchMeanNs": 839.131836,
           "checksum": 11346107290130456727,
           "missing": 0
         },
         "ROUND_ROBIN": {
-          "meanNs": 405.893908,
-          "p50BatchMeanNs": 404.947754,
-          "p99BatchMeanNs": 431.793213,
+          "meanNs": 401.840092,
+          "p50BatchMeanNs": 401.987793,
+          "p99BatchMeanNs": 419.911621,
           "checksum": 9069433590625901631,
           "missing": 0
         },
         "ADAPTIVE": {
-          "meanNs": 528.809083,
-          "p50BatchMeanNs": 527.760742,
-          "p99BatchMeanNs": 566.874268,
+          "meanNs": 509.481383,
+          "p50BatchMeanNs": 505.543945,
+          "p99BatchMeanNs": 574.320312,
           "checksum": 16982587848491224938,
           "missing": 0
         },
         "INGRESS_PORT_STRIPE": {
-          "meanNs": 354.210408,
-          "p50BatchMeanNs": 353.535889,
-          "p99BatchMeanNs": 372.293945,
+          "meanNs": 350.58855,
+          "p50BatchMeanNs": 350.820068,
+          "p99BatchMeanNs": 368.835449,
           "checksum": 6270412698303457832,
           "missing": 0
         }

@@ -18,8 +18,10 @@ from structured_case import prepare_structured_case
 from test_topology_recognition import (
     build_clos_with_port_extension,
     build_dimension_network,
+    build_dragonfly,
     build_grouped_fullmesh_with_direct_switches,
     build_grouped_fullmesh_with_multi_plane_switches,
+    build_ring_inside_dragonfly,
 )
 
 
@@ -44,14 +46,26 @@ def _factories(case_root):
             build_grouped_fullmesh_with_multi_plane_switches,
             ("full", "structured", "mixed"),
         ),
-        # No authoritative product topology named UBMesh is available locally. This
-        # corpus exercises the supported, unambiguous N-D mesh interpretation.
-        "nd-mesh-4x4": (
+        # UBMesh is not treated as an external standard name here. This fixture defines
+        # its physical meaning explicitly as Path(4) cartesian Path(4).
+        "ubmesh-4x4-cartesian": (
             lambda: build_dimension_network((4, 4), ("line", "line")),
+            ("full", "structured", "mixed"),
+        ),
+        "torus-4x5-cartesian": (
+            lambda: build_dimension_network((4, 5), ("ring", "ring")),
+            ("full", "structured", "mixed"),
+        ),
+        "classic-dragonfly": (
+            lambda: build_dragonfly(routers_per_group=3, global_links_per_router=1),
             ("full", "structured", "mixed"),
         ),
         "port-extension-mixed": (
             build_clos_with_port_extension,
+            ("full", "mixed"),
+        ),
+        "ring-inside-dragonfly-mixed": (
+            build_ring_inside_dragonfly,
             ("full", "mixed"),
         ),
     }

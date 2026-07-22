@@ -7,11 +7,12 @@ This benchmark uses the 1DPOD 1024-NPU topology with 2,336 nodes, 19,968 physica
 executes five million deterministic random queries after a 100,000-query warmup. Reported values
 are medians of three independent processes.
 
-The `main` baseline is detached commit `0ca0e95`. All paths use the same query corpus. Common
-candidate, HASH, and ADAPTIVE checksums match, and every measurement reports zero missing queries.
-The three new paths also emit 100,000-query signatures covering candidate sets, HASH64, CRC32,
-TOEPLITZ, ROUND_ROBIN, ADAPTIVE, INGRESS_PORT_STRIPE, and `selectedShortestPath`; all nine files are
-byte-identical.
+The `main` baseline is detached commit `0ca0e95`. All paths use the same query corpus and every
+measurement reports zero missing queries. Main, compressed lookup, and structured-rule compute emit
+the same 100,000-query common signature for candidate sets, HASH, ADAPTIVE, and
+`selectedShortestPath` (SHA-256 `428c40d6643912d3a961e79966e6060b1b6f6c2182b6592d97462080e3216a06`).
+The two new runtime modes also emit the same full six-selector signature (SHA-256
+`32cd30da87110ae02947f941c89e66b1a62d63e98d94f5405d898f8703637b78`).
 
 ## Prepared artifacts
 
@@ -31,15 +32,15 @@ shortest-path DAG producer avoids that expansion.
 
 | Runtime path | Topology parse/install | Route load/install | RSS after install | Live heap |
 | --- | ---: | ---: | ---: | ---: |
-| `main` complete table | 0.314 s | 6.232 s | 2,479.50 MiB | 874.02 MiB |
-| Compressed table lookup | 0.291 s | 0.296 s | 289.77 MiB | 236.60 MiB |
-| Structured rule compute | 0.008 s | 0.308 s | 220.72 MiB | 205.18 MiB |
+| `main` complete table | 0.297 s | 6.037 s | 2,479.59 MiB | 874.02 MiB |
+| Compressed table lookup | 0.350 s | 0.296 s | 289.52 MiB | 236.60 MiB |
+| Structured rule compute | 0.007 s | 0.309 s | 220.70 MiB | 205.18 MiB |
 | Complete text -> compressed lookup | 3.449 s | 0.297 s | 394.62 MiB | 236.69 MiB |
 
 Compared with current `main`, compressed lookup reduces installed RSS by 88.31% and live heap by
 72.93%. Structured-rule compute reduces installed RSS by 91.10% and live heap by 76.52%. Loading the
 same compressed index from the complete text proves that the 155 MiB intermediate is unnecessary:
-it adds about 3.16 seconds of parsing and 105 MiB of RSS without improving lookup behavior.
+it adds about 3.10 seconds of parsing and 105 MiB of RSS without improving exact-port lookup speed.
 
 ## Runtime lookup
 
@@ -47,18 +48,20 @@ Mean nanoseconds per query, median of three processes:
 
 | Runtime path | Candidate set | HASH | ADAPTIVE |
 | --- | ---: | ---: | ---: |
-| `main` complete table | 237.75 ns | 386.55 ns | 545.79 ns |
-| Compressed table lookup | 184.97 ns | 196.57 ns | 339.36 ns |
-| Structured rule compute | 390.19 ns | 359.49 ns | 528.81 ns |
+| `main` complete table | 241.55 ns | 380.33 ns | 504.20 ns |
+| Compressed table lookup | 181.75 ns | 192.53 ns | 338.91 ns |
+| Structured rule compute | 390.38 ns | 358.63 ns | 509.48 ns |
 | Complete text -> compressed lookup | 181.33 ns | 197.24 ns | 347.99 ns |
 
-Compressed lookup is 1.29x faster for candidate retrieval, 1.97x faster for HASH selection, and
-1.61x faster for ADAPTIVE selection than current `main`. Structured-rule candidate materialization
-is slower than the complete table, but common full `GetOutPort()` HASH and ADAPTIVE measurements are
-still slightly faster while using the least memory.
+Compressed lookup is 1.33x faster for candidate retrieval, 1.98x faster for HASH selection, and
+1.49x faster for ADAPTIVE selection than current `main`. Structured-rule candidate materialization
+is slower than the complete table; its HASH path is 1.06x faster and its ADAPTIVE path is about 1%
+slower than main while using the least memory.
 
-The direct binary and complete-text paths have equivalent lookup speed because both install the same
-`UbNextHopIndex`. Their difference is startup and temporary parsing memory. The benchmark also found
+The direct binary and complete-text paths install the same exact-port `UbNextHopIndex`, but protocol
+v4 text does not retain original numeric metrics needed to reconstruct node-primary classes across
+destination ports. It is retained only as a diagnostic startup benchmark; all formal byte-equivalence
+claims use the portable binary or verified-rule runtime. The benchmark also found
 and removed an empty-rule-table probe that previously preceded every compressed lookup; rule tables
 are now installed only when a prepared case contains rules.
 

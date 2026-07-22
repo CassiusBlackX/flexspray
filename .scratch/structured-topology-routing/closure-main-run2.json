@@ -2,18 +2,18 @@
   "commit": "0ca0e95",
   "queryCount": 9427968,
   "iterations": 5000000,
-  "topologyInstallSeconds": 0.313755,
-  "routingLoadSeconds": 6.150852,
-  "rssBeforeBytes": 8536064,
-  "rssAfterInstallBytes": 2599747584,
+  "topologyInstallSeconds": 0.292978,
+  "routingLoadSeconds": 6.015080,
+  "rssBeforeBytes": 8519680,
+  "rssAfterInstallBytes": 2600042496,
   "heapInUseAfterInstallBytes": 916480608,
   "allocatorReleasedBytes": 0,
-  "rssAfterAllocatorReliefBytes": 2599780352,
+  "rssAfterAllocatorReliefBytes": 2600075264,
   "heapInUseAfterAllocatorReliefBytes": 916480608,
-  "peakRssBytes": 2599780352,
+  "peakRssBytes": 2600075264,
   "measurements": [
-    {"name": "candidate-set", "meanNs": 228.220192, "p50BatchMeanNs": 225.341797, "p99BatchMeanNs": 282.155273, "checksum": 15609832159678945247, "missing": 0},
-    {"name": "HASH", "meanNs": 381.773108, "p50BatchMeanNs": 379.832031, "p99BatchMeanNs": 429.311035, "checksum": 17596006285552879576, "missing": 0},
-    {"name": "ADAPTIVE", "meanNs": 545.793942, "p50BatchMeanNs": 540.476562, "p99BatchMeanNs": 655.242920, "checksum": 16982587848491224938, "missing": 0}
+    {"name": "candidate-set", "meanNs": 241.552783, "p50BatchMeanNs": 240.987061, "p99BatchMeanNs": 299.713135, "checksum": 15609832159678945247, "missing": 0},
+    {"name": "HASH", "meanNs": 380.331458, "p50BatchMeanNs": 379.791260, "p99BatchMeanNs": 394.622803, "checksum": 17596006285552879576, "missing": 0},
+    {"name": "ADAPTIVE", "meanNs": 495.266600, "p50BatchMeanNs": 493.357422, "p99BatchMeanNs": 532.724854, "checksum": 16982587848491224938, "missing": 0}
   ]
 }
