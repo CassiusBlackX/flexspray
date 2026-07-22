@@ -2,11 +2,13 @@
 #ifndef UB_CONGESTION_CTRL_H
 #define UB_CONGESTION_CTRL_H
 
-#include <stdexcept>
 #include "ns3/object.h"
-#include "ns3/ub-switch.h"
-#include "ns3/ub-header.h"
 #include "ns3/ub-datatype.h"
+#include "ns3/ub-header.h"
+#include "ns3/ub-switch.h"
+
+#include <memory>
+#include <stdexcept>
 namespace ns3 {
 
 class UbTransportChannel;
@@ -14,6 +16,18 @@ class UbTransportChannel;
 enum CongestionCtrlAlgo {
     CAQM,
     DCQCN,
+};
+
+enum class UbCongestionControlDormancyEligibility : uint8_t
+{
+    INELIGIBLE,
+    ELIGIBLE,
+};
+
+class UbCongestionControlDormancyState
+{
+  public:
+    virtual ~UbCongestionControlDormancyState() = default;
 };
 
 /**
@@ -97,6 +111,18 @@ public:
     // 发送端TP在发送工作清空后进入空闲态
     virtual void OnSenderTransportIdle() {}
     virtual void OnTpDestroyRequested() {}
+
+    /**
+     * Endpoint dormancy is the congestion-control part of TP runtime state reclamation; it is not
+     * TP teardown or logical closure. An algorithm that does not implement this optional contract
+     * still simulates normally, but the endpoint fails closed and retains its live backing object.
+     * A stateless algorithm may explicitly declare itself eligible. An algorithm with windows,
+     * history, or scheduled events must define snapshot, restore, idle-reset, and event-deadline or
+     * event-drain semantics, with continuity tests, before it may declare itself eligible.
+     */
+    virtual UbCongestionControlDormancyEligibility GetDormancyEligibility() const;
+    virtual std::unique_ptr<UbCongestionControlDormancyState> SnapshotDormancyState() const;
+    virtual bool RestoreDormancyState(const UbCongestionControlDormancyState& state);
 
     // 绑定switch，初始化参数
     virtual void OnSwitchAttached(Ptr<UbSwitch> sw);

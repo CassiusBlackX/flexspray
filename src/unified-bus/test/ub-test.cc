@@ -1966,6 +1966,44 @@ public:
     }
 };
 
+class UbCongestionControlDormancyDefaultsFailClosedTest : public TestCase
+{
+  public:
+    UbCongestionControlDormancyDefaultsFailClosedTest()
+        : TestCase("UnifiedBus - congestion control dormancy defaults fail closed")
+    {
+    }
+
+    void DoRun() override
+    {
+        Ptr<UbCongestionControl> congestionControl = CreateObject<UbCongestionControl>();
+
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(congestionControl->GetDormancyEligibility()),
+            static_cast<uint32_t>(UbCongestionControlDormancyEligibility::INELIGIBLE),
+            "An algorithm without an explicit dormancy contract must retain live backing");
+        auto snapshot = congestionControl->SnapshotDormancyState();
+        NS_TEST_ASSERT_MSG_EQ(snapshot.get(),
+                              nullptr,
+                              "An ineligible algorithm must not produce a partial snapshot");
+        UbCongestionControlDormancyState unrelatedState;
+        NS_TEST_ASSERT_MSG_EQ(congestionControl->RestoreDormancyState(unrelatedState),
+                              false,
+                              "The base contract must reject unknown dormancy state");
+
+        Ptr<UbSwitchCaqm> switchCaqm = CreateObject<UbSwitchCaqm>();
+        Ptr<UbSwitchDcqcn> switchDcqcn = CreateObject<UbSwitchDcqcn>();
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(switchCaqm->GetDormancyEligibility()),
+            static_cast<uint32_t>(UbCongestionControlDormancyEligibility::INELIGIBLE),
+            "Switch CAQM must remain outside endpoint backing reclamation");
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(switchDcqcn->GetDormancyEligibility()),
+            static_cast<uint32_t>(UbCongestionControlDormancyEligibility::INELIGIBLE),
+            "Switch DCQCN must remain outside endpoint backing reclamation");
+    }
+};
+
 class UbCaqmHostRttUsesSmoothedEstimateTest : public TestCase
 {
 public:
@@ -1997,6 +2035,168 @@ public:
                               500,
                               "EWMA RTT estimate should smooth toward the sample rather than jump to it");
 
+        Config::Reset();
+    }
+};
+
+class UbCaqmDormancyPreservesContinuityTest : public TestCase
+{
+  public:
+    UbCaqmDormancyPreservesContinuityTest()
+        : TestCase("UnifiedBus - CAQM dormancy preserves host continuity and drains reset events")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(true));
+        GlobalValue::Bind("UB_CC_ALGO", StringValue("CAQM"));
+
+        Ptr<UbHostCaqm> original = DynamicCast<UbHostCaqm>(UbCongestionControl::Create(UB_DEVICE));
+        original->ApplyRttSampleForTest(NanoSeconds(100));
+        original->OnSenderDataPacketSent(7, 1000);
+        Simulator::Schedule(NanoSeconds(1000), []() {});
+        Simulator::Stop(NanoSeconds(1000));
+        Simulator::Run();
+
+        UbIpBasedNetworkHeader receivedHeader;
+        receivedHeader.SetC(0);
+        receivedHeader.SetI(1);
+        receivedHeader.SetHint(2);
+        original->OnReceiverDataPacketReceived(41, 512, receivedHeader);
+
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(original->GetDormancyEligibility()),
+            static_cast<uint32_t>(UbCongestionControlDormancyEligibility::ELIGIBLE),
+            "CAQM without a pending reset event should be eligible for a continuity snapshot");
+        auto snapshot = original->SnapshotDormancyState();
+        NS_TEST_ASSERT_MSG_NE(snapshot.get(), nullptr, "Eligible CAQM should produce a snapshot");
+        if (snapshot == nullptr)
+        {
+            return;
+        }
+        UbCongestionControlDormancyState unrelatedCaqmState;
+        NS_TEST_ASSERT_MSG_EQ(original->RestoreDormancyState(unrelatedCaqmState),
+                              false,
+                              "CAQM must reject a snapshot produced by another contract");
+
+        Ptr<UbHostCaqm> restored = DynamicCast<UbHostCaqm>(UbCongestionControl::Create(UB_DEVICE));
+        NS_TEST_ASSERT_MSG_EQ(restored->RestoreDormancyState(*snapshot),
+                              true,
+                              "CAQM should restore its own dormancy snapshot");
+        NS_TEST_ASSERT_MSG_EQ(restored->GetRttForTest(),
+                              original->GetRttForTest(),
+                              "CAQM restore must preserve the smoothed RTT");
+        NS_TEST_ASSERT_MSG_EQ(restored->GetInflightForTest(),
+                              original->GetInflightForTest(),
+                              "CAQM restore must preserve in-flight accounting");
+        NS_TEST_ASSERT_MSG_EQ(restored->GetDataByteSentForTest(),
+                              original->GetDataByteSentForTest(),
+                              "CAQM restore must preserve sent-byte accounting");
+        NS_TEST_ASSERT_MSG_EQ(restored->GetRestCwnd(),
+                              original->GetRestCwnd(),
+                              "CAQM restore must preserve the next admission decision");
+
+        UbCongestionExtTph regularAck;
+        regularAck.SetAckSequence(1000);
+        regularAck.SetC(0);
+        regularAck.SetI(true);
+        regularAck.SetHint(0);
+        original->OnSenderCongestionNotification(TpOpcode::TP_OPCODE_ACK_WITH_CETPH, 7, regularAck);
+        restored->OnSenderCongestionNotification(TpOpcode::TP_OPCODE_ACK_WITH_CETPH, 7, regularAck);
+        NS_TEST_ASSERT_MSG_EQ(restored->GetRttForTest(),
+                              original->GetRttForTest(),
+                              "CAQM restore must preserve RTT sampling from the PSN send-time map");
+
+        UbIpBasedNetworkHeader originalNextHeader;
+        UbIpBasedNetworkHeader restoredNextHeader;
+        original->OnSenderPrepareIpBasedNetworkHeader(originalNextHeader);
+        restored->OnSenderPrepareIpBasedNetworkHeader(restoredNextHeader);
+        NS_TEST_ASSERT_MSG_EQ(restoredNextHeader.GetC(),
+                              originalNextHeader.GetC(),
+                              "CAQM restore must preserve the next sender congestion bit");
+        NS_TEST_ASSERT_MSG_EQ(restoredNextHeader.GetI(),
+                              originalNextHeader.GetI(),
+                              "CAQM restore must preserve the next sender increase bit");
+        NS_TEST_ASSERT_MSG_EQ(restoredNextHeader.GetHint(),
+                              originalNextHeader.GetHint(),
+                              "CAQM restore must preserve the next sender hint");
+
+        const UbCongestionExtTph originalFeedback =
+            original->OnReceiverPrepareAckCongestionHeader(41, 42);
+        const UbCongestionExtTph restoredFeedback =
+            restored->OnReceiverPrepareAckCongestionHeader(41, 42);
+        NS_TEST_ASSERT_MSG_EQ(restoredFeedback.GetAckSequence(),
+                              originalFeedback.GetAckSequence(),
+                              "CAQM restore must preserve receiver byte aggregation");
+        NS_TEST_ASSERT_MSG_EQ(restoredFeedback.GetC(),
+                              originalFeedback.GetC(),
+                              "CAQM restore must preserve receiver congestion aggregation");
+        NS_TEST_ASSERT_MSG_EQ(restoredFeedback.GetI(),
+                              originalFeedback.GetI(),
+                              "CAQM restore must preserve receiver increase aggregation");
+        NS_TEST_ASSERT_MSG_EQ(restoredFeedback.GetHint(),
+                              originalFeedback.GetHint(),
+                              "CAQM restore must preserve receiver hint aggregation");
+
+        UbCongestionExtTph congestionFeedback;
+        congestionFeedback.SetAckSequence(1000);
+        congestionFeedback.SetC(1);
+        congestionFeedback.SetI(false);
+        congestionFeedback.SetHint(0);
+        restored->OnSenderCongestionNotification(TpOpcode::TP_OPCODE_ACK_WITH_CETPH,
+                                                 7,
+                                                 congestionFeedback);
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(restored->GetDormancyEligibility()),
+            static_cast<uint32_t>(UbCongestionControlDormancyEligibility::INELIGIBLE),
+            "CAQM must retain live backing while its state-reset event is pending");
+        auto pendingSnapshot = restored->SnapshotDormancyState();
+        NS_TEST_ASSERT_MSG_EQ(pendingSnapshot.get(),
+                              nullptr,
+                              "CAQM must not partially snapshot around a pending reset event");
+
+        UbIpBasedNetworkHeader partialHintHeader;
+        restored->OnSenderPrepareIpBasedNetworkHeader(partialHintHeader);
+        Simulator::Stop(Simulator::Now() + MicroSeconds(100));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(restored->GetDormancyEligibility()),
+            static_cast<uint32_t>(UbCongestionControlDormancyEligibility::ELIGIBLE),
+            "CAQM should become eligible after its state-reset event drains");
+        auto drainedSnapshot = restored->SnapshotDormancyState();
+        NS_TEST_ASSERT_MSG_NE(drainedSnapshot.get(),
+                              nullptr,
+                              "CAQM should snapshot after its reset event drains");
+        if (drainedSnapshot == nullptr)
+        {
+            return;
+        }
+
+        Ptr<UbHostCaqm> restoredAfterDrain =
+            DynamicCast<UbHostCaqm>(UbCongestionControl::Create(UB_DEVICE));
+        NS_TEST_ASSERT_MSG_EQ(restoredAfterDrain->RestoreDormancyState(*drainedSnapshot),
+                              true,
+                              "CAQM should restore state captured after its reset event drains");
+        restored->OnSenderCongestionNotification(TpOpcode::TP_OPCODE_ACK_WITH_CETPH,
+                                                 7,
+                                                 congestionFeedback);
+        restoredAfterDrain->OnSenderCongestionNotification(TpOpcode::TP_OPCODE_ACK_WITH_CETPH,
+                                                           7,
+                                                           congestionFeedback);
+        for (uint32_t packet = 0; packet < 128; ++packet)
+        {
+            UbIpBasedNetworkHeader continuedHeader;
+            UbIpBasedNetworkHeader restoredHeader;
+            restored->OnSenderPrepareIpBasedNetworkHeader(continuedHeader);
+            restoredAfterDrain->OnSenderPrepareIpBasedNetworkHeader(restoredHeader);
+            NS_TEST_ASSERT_MSG_EQ(restoredHeader.GetHint(),
+                                  continuedHeader.GetHint(),
+                                  "CAQM restore must preserve accumulated next-header hints");
+        }
+
+        Simulator::Destroy();
         Config::Reset();
     }
 };
@@ -5746,6 +5946,152 @@ public:
 
         Simulator::Stop(MicroSeconds(121));
         Simulator::Run();
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbDcqcnDormancyPreservesIdleResetAndCnpCooldownTest : public TestCase
+{
+  public:
+    UbDcqcnDormancyPreservesIdleResetAndCnpCooldownTest()
+        : TestCase("UnifiedBus - DCQCN dormancy preserves idle reset and receiver CNP cooldown")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(true));
+        GlobalValue::Bind("UB_CC_ALGO", StringValue("DCQCN"));
+        Config::SetDefault("ns3::UbHostDcqcn::LineRate", DataRateValue(DataRate("100Gbps")));
+        Config::SetDefault("ns3::UbHostDcqcn::InitialRate", DataRateValue(DataRate("25Gbps")));
+        Config::SetDefault("ns3::UbHostDcqcn::CnpInterval", TimeValue(MicroSeconds(50)));
+
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbController> senderController = topo.sender->GetObject<UbController>();
+        Ptr<UbTransportChannel> txTp =
+            senderController->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
+        Ptr<UbHostDcqcn> sender = DynamicCast<UbHostDcqcn>(txTp->GetCongestionCtrlForTest());
+
+        (void)sender->IsCcLimited(1);
+        sender->ApplySyntheticCnpForTest();
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(sender->GetDormancyEligibility()),
+            static_cast<uint32_t>(UbCongestionControlDormancyEligibility::INELIGIBLE),
+            "DCQCN must retain live backing while sender recovery events are pending");
+        auto activeSnapshot = sender->SnapshotDormancyState();
+        NS_TEST_ASSERT_MSG_EQ(activeSnapshot.get(),
+                              nullptr,
+                              "Active DCQCN recovery must not produce a partial snapshot");
+
+        sender->OnSenderTransportIdle();
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(sender->GetDormancyEligibility()),
+            static_cast<uint32_t>(UbCongestionControlDormancyEligibility::ELIGIBLE),
+            "The existing DCQCN idle reset should establish its sender dormancy boundary");
+        auto senderSnapshot = sender->SnapshotDormancyState();
+        NS_TEST_ASSERT_MSG_NE(senderSnapshot.get(),
+                              nullptr,
+                              "Idle DCQCN should produce a continuity snapshot");
+        if (senderSnapshot == nullptr)
+        {
+            return;
+        }
+        UbCongestionControlDormancyState unrelatedDcqcnState;
+        NS_TEST_ASSERT_MSG_EQ(sender->RestoreDormancyState(unrelatedDcqcnState),
+                              false,
+                              "DCQCN must reject a snapshot produced by another contract");
+
+        Ptr<UbHostDcqcn> restoredSender =
+            DynamicCast<UbHostDcqcn>(UbCongestionControl::Create(UB_DEVICE));
+        restoredSender->OnTpAttached(txTp);
+        NS_TEST_ASSERT_MSG_EQ(restoredSender->RestoreDormancyState(*senderSnapshot),
+                              true,
+                              "DCQCN should restore its own idle snapshot");
+        NS_TEST_ASSERT_MSG_EQ(restoredSender->GetCurrentRateForTest(),
+                              sender->GetCurrentRateForTest(),
+                              "DCQCN restore must preserve the idle-reset current rate");
+        NS_TEST_ASSERT_MSG_EQ(restoredSender->GetTargetRateForTest(),
+                              sender->GetTargetRateForTest(),
+                              "DCQCN restore must preserve the idle-reset target rate");
+        NS_TEST_ASSERT_MSG_EQ(restoredSender->GetNextAvailableSendTimeForTest(),
+                              sender->GetNextAvailableSendTimeForTest(),
+                              "DCQCN restore must preserve the next pacing admission time");
+        const bool originalLimited = sender->IsCcLimited(1);
+        const DataRate originalStartRate = sender->GetCurrentRateForTest();
+        sender->OnSenderTransportIdle();
+        const bool restoredLimited = restoredSender->IsCcLimited(1);
+        NS_TEST_ASSERT_MSG_EQ(restoredLimited,
+                              originalLimited,
+                              "DCQCN restore must preserve the next admission decision");
+        NS_TEST_ASSERT_MSG_EQ(restoredSender->GetCurrentRateForTest(),
+                              originalStartRate,
+                              "DCQCN restore must preserve the next sender start-rate decision");
+        restoredSender->OnSenderTransportIdle();
+
+        Ptr<UbTransportChannel> rxTp =
+            topo.receiver->GetObject<UbController>()->GetTransportChannelManager()->GetTp(
+                kUrmaWriteRegressionReceiverTpn);
+        Ptr<UbHostDcqcn> receiver = DynamicCast<UbHostDcqcn>(rxTp->GetCongestionCtrlForTest());
+        Ptr<UbLifecycleCoordinator> receiverCoordinator =
+            UbLifecycleCoordinator::GetOrCreate(topo.receiver);
+        const uint64_t registeredBeforeCnp =
+            receiverCoordinator->GetSnapshot(rxTp->GetLifecycleOwner()).registeredPackets;
+        UbIpBasedNetworkHeader marked;
+        marked.SetMode(0b100);
+        marked.SetFecn(0x1);
+        marked.SetLocation(false);
+        receiver->OnReceiverDataPacketReceived(1, 256, marked);
+        NS_TEST_ASSERT_MSG_EQ(rxTp->GetPendingCnpCountForTest(),
+                              1u,
+                              "First marked packet should emit one immediate CNP");
+
+        auto receiverSnapshot = receiver->SnapshotDormancyState();
+        NS_TEST_ASSERT_MSG_NE(
+            receiverSnapshot.get(),
+            nullptr,
+            "DCQCN should snapshot a drained receiver while retaining cooldown history");
+        if (receiverSnapshot == nullptr)
+        {
+            return;
+        }
+
+        Ptr<UbHostDcqcn> restoredReceiver =
+            DynamicCast<UbHostDcqcn>(UbCongestionControl::Create(UB_DEVICE));
+        restoredReceiver->OnTpAttached(rxTp);
+        NS_TEST_ASSERT_MSG_EQ(restoredReceiver->RestoreDormancyState(*receiverSnapshot),
+                              true,
+                              "DCQCN should restore receiver cooldown history");
+        restoredReceiver->OnReceiverDataPacketReceived(2, 256, marked);
+        NS_TEST_ASSERT_MSG_EQ(rxTp->GetPendingCnpCountForTest(),
+                              1u,
+                              "Restored cooldown must suppress an immediate second CNP");
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(restoredReceiver->GetDormancyEligibility()),
+            static_cast<uint32_t>(UbCongestionControlDormancyEligibility::INELIGIBLE),
+            "A restored pending CNP event must keep the endpoint live until it drains");
+
+        Simulator::Schedule(
+            MicroSeconds(49),
+            [this, receiverCoordinator, rxTp, registeredBeforeCnp]() {
+                NS_TEST_ASSERT_MSG_EQ(
+                    receiverCoordinator->GetSnapshot(rxTp->GetLifecycleOwner()).registeredPackets,
+                    registeredBeforeCnp + 1,
+                    "Restored CNP cooldown must preserve its original deadline");
+            });
+        Simulator::Schedule(
+            MicroSeconds(51),
+            [this, receiverCoordinator, rxTp, registeredBeforeCnp]() {
+                NS_TEST_ASSERT_MSG_EQ(
+                    receiverCoordinator->GetSnapshot(rxTp->GetLifecycleOwner()).registeredPackets,
+                    registeredBeforeCnp + 2,
+                    "Restored pending feedback should emit after the cooldown deadline");
+            });
+        Simulator::Stop(MicroSeconds(52));
+        Simulator::Run();
+
         Simulator::Destroy();
         Config::Reset();
     }
@@ -26748,8 +27094,10 @@ static UbFlowControlTestSuite g_ubFlowControlTestSuite;
 UbCongestionControlTestSuite::UbCongestionControlTestSuite()
     : TestSuite("unified-bus-congestion-control", Type::UNIT)
 {
+    AddTestCase(new UbCongestionControlDormancyDefaultsFailClosedTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnHostAckCeTphDefaultTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCaqmHostRttUsesSmoothedEstimateTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCaqmDormancyPreservesContinuityTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnSwitchMarksFecnTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnSwitchNoMarkPreservesPacketHeadersTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnSwitchMarksAboveKmaxEvenWhenPmaxIsZeroTest(), TestCase::Duration::QUICK);
@@ -26774,6 +27122,8 @@ UbCongestionControlTestSuite::UbCongestionControlTestSuite()
     AddTestCase(new UbDcqcnCnpCutRescalesOutstandingPacingDebtTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnCompletedFlowReleasesHostActiveSlotTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnIdleFlowCancelsRecoveryStateTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbDcqcnDormancyPreservesIdleResetAndCnpCooldownTest(),
+                TestCase::Duration::QUICK);
 }
 
 static UbCongestionControlTestSuite g_ubCongestionControlTestSuite;
