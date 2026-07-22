@@ -53,7 +53,8 @@ UbFunction::BindTransaction(Ptr<UbTransaction> transaction)
     m_jettyManager->BindTransaction(transaction);
 }
 
-void UbFunction::CreateJetty(uint32_t src, uint32_t dest, uint32_t jettyNum)
+void
+UbFunction::CreateJetty(uint32_t src, uint32_t dest, uint32_t jettyNum, UbJettyLifetime lifetime)
 {
     NS_LOG_DEBUG(this << src << dest << jettyNum);
     // 创建新的Jetty
@@ -64,11 +65,12 @@ void UbFunction::CreateJetty(uint32_t src, uint32_t dest, uint32_t jettyNum)
     jetty->SetSrc(src);
     jetty->SetDest(dest);
     jetty->SetTransaction(PeekPointer(m_transaction));
-    m_jettyManager->RegisterJetty(jetty);
+    m_jettyManager->RegisterJetty(jetty, lifetime);
     NS_LOG_DEBUG("Created jetty success");
 }
 
-void UbFunction::CreateJetty(uint32_t src, uint32_t jettyNum)
+void
+UbFunction::CreateJetty(uint32_t src, uint32_t jettyNum, UbJettyLifetime lifetime)
 {
     NS_LOG_DEBUG(this << src << jettyNum);
     Ptr<UbJetty> jetty = CreateObject<UbJetty>();
@@ -78,7 +80,7 @@ void UbFunction::CreateJetty(uint32_t src, uint32_t jettyNum)
     jetty->SetSrc(src);
     jetty->ClearDest();
     jetty->SetTransaction(PeekPointer(m_transaction));
-    m_jettyManager->RegisterJetty(jetty);
+    m_jettyManager->RegisterJetty(jetty, lifetime);
     NS_LOG_DEBUG("Created unbound jetty success");
 }
 
@@ -316,6 +318,12 @@ UbFunction::TryGetJettyState(uint32_t jettyNum, UbJettyLifecycleState& state) co
 }
 
 bool
+UbFunction::TryGetJettyLifetime(uint32_t jettyNum, UbJettyLifetime& lifetime) const
+{
+    return m_jettyManager->TryGetLifetime(jettyNum, lifetime);
+}
+
+bool
 UbFunction::IsJettyDrainReady(uint32_t jettyNum) const
 {
     return m_jettyManager->IsDrainReady(jettyNum);
@@ -398,7 +406,7 @@ UbJettyManager::GetTransaction() const
 }
 
 void
-UbJettyManager::RegisterJetty(Ptr<UbJetty> jetty)
+UbJettyManager::RegisterJetty(Ptr<UbJetty> jetty, UbJettyLifetime lifetime)
 {
     NS_ABORT_MSG_IF(jetty == nullptr, "Cannot register a null Jetty");
     const uint32_t jettyNum = jetty->GetJettyNum();
@@ -409,6 +417,7 @@ UbJettyManager::RegisterJetty(Ptr<UbJetty> jetty)
     JettyRecord record;
     record.jetty = jetty;
     record.identity = coordinator->OpenResource(UbLifecycleResourceKind::JETTY, jettyNum);
+    record.lifetime = lifetime;
     m_records.emplace(jettyNum, std::move(record));
 }
 
@@ -478,6 +487,18 @@ UbJettyManager::TryGetState(uint32_t jettyNum, UbJettyLifecycleState& state) con
         return false;
     }
     state = it->second.state;
+    return true;
+}
+
+bool
+UbJettyManager::TryGetLifetime(uint32_t jettyNum, UbJettyLifetime& lifetime) const
+{
+    const auto it = m_records.find(jettyNum);
+    if (it == m_records.end())
+    {
+        return false;
+    }
+    lifetime = it->second.lifetime;
     return true;
 }
 

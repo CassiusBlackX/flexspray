@@ -19,6 +19,12 @@ namespace ns3 {
     class UbJettyManager;
     enum class UbJettyLifecycleState : uint8_t;
 
+    enum class UbJettyLifetime : uint8_t
+    {
+        REUSABLE = 0,
+        TASK_SCOPED = 1,
+    };
+
     enum class UbWqeSubmissionStatus : uint8_t
     {
         ACCEPTED = 0,
@@ -65,8 +71,13 @@ namespace ns3 {
          * @param jettyNum Jetty identifier defined by user
          * @return Pointer to created jetty
          */
-        void CreateJetty(uint32_t src, uint32_t dest, uint32_t jettyNum);
-        void CreateJetty(uint32_t src, uint32_t jettyNum);
+        void CreateJetty(uint32_t src,
+                         uint32_t dest,
+                         uint32_t jettyNum,
+                         UbJettyLifetime lifetime = UbJettyLifetime::REUSABLE);
+        void CreateJetty(uint32_t src,
+                         uint32_t jettyNum,
+                         UbJettyLifetime lifetime = UbJettyLifetime::REUSABLE);
 
         void Init(uint32_t nodeId);
         void BindTransaction(Ptr<UbTransaction> transaction);
@@ -124,6 +135,7 @@ namespace ns3 {
         bool TryGetJettyLifecycleIdentity(uint32_t jettyNum,
                                           UbLifecycleResourceIdentity& identity) const;
         bool TryGetJettyState(uint32_t jettyNum, UbJettyLifecycleState& state) const;
+        bool TryGetJettyLifetime(uint32_t jettyNum, UbJettyLifetime& lifetime) const;
         bool IsJettyDrainReady(uint32_t jettyNum) const;
         uint64_t GetResidentWqeCount() const;
         void RegisterJettyRtpBinding(
@@ -157,13 +169,14 @@ namespace ns3 {
 
         void Init(uint32_t nodeId, Ptr<UbLifecycleCoordinator> coordinator);
         void BindTransaction(Ptr<UbTransaction> transaction);
-        void RegisterJetty(Ptr<UbJetty> jetty);
+        void RegisterJetty(Ptr<UbJetty> jetty, UbJettyLifetime lifetime);
         bool IsJettyExists(uint32_t jettyNum) const;
         Ptr<UbJetty> GetJetty(uint32_t jettyNum) const;
         bool IsAcceptingWqes(uint32_t jettyNum) const;
         bool ShouldContinueAcceptedWqes(uint32_t jettyNum) const;
         bool ShouldForceDrainAcceptedWqes(uint32_t jettyNum) const;
         bool TryGetState(uint32_t jettyNum, UbJettyLifecycleState& state) const;
+        bool TryGetLifetime(uint32_t jettyNum, UbJettyLifetime& lifetime) const;
         void RegisterWqe(uint32_t jettyNum,
                          uint32_t wqeId,
                          const UbLifecycleResourceIdentity& identity);
@@ -206,6 +219,7 @@ namespace ns3 {
             Ptr<UbJetty> jetty;
             UbLifecycleResourceIdentity identity;
             UbJettyLifecycleState state{UbJettyLifecycleState::ACTIVE};
+            UbJettyLifetime lifetime{UbJettyLifetime::REUSABLE};
             UbDestroyReason reason{UbDestroyReason::EXPLICIT};
             CleanupMode cleanupMode{CleanupMode::GRACEFUL};
             std::map<uint32_t, UbLifecycleResourceIdentity> wqes;
