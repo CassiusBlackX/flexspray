@@ -21,6 +21,18 @@
 路由视为编译问题：先验证物理图中的规则结构，再把结构和路由策略编译成共享规则。这里没有
 要求用户声明 leaf、spine、pod 等角色，也没有假设任意图都能被一种通用公式压缩。
 
+## Issue 16 覆盖范围
+
+本功能处理 Issue 16 中由拓扑与路由表示直接造成的成本：大规模路由离线生成、完整表输入、
+C++ 路由安装、路由常驻内存和候选端口查询。1024-NPU 结果证明这一部分可以从逐目的表改为
+拓扑规则或通用 packed index。
+
+它不限制同时激活的 traffic task，也不改变 AllToAll 的任务数量、报文数量或仿真语义；
+不负责压缩 RTP/Jetty/WQE、packet/event backlog 或 MTP worker 状态；也不自动关闭 trace。
+因此它是 Issue 16 的一个独立优化切片，不能单独证明 1024 x 1023 AllToAll 的 36 小时业务
+仿真和 400 GB 日志问题已经全部解决。后两项仍需要端到端 profile、任务与事件生命周期优化，
+以及按证据需要选择 trace 开关。
+
 ## 设计演进
 
 ### 第一阶段：先证明替换正确
@@ -214,6 +226,9 @@ shortest 和 non-shortest 候选；不同来源的候选集合不会合并。
 | 父仓库 `c71eb2a` | 设计稿、测试拓扑、benchmark、原始样本和阶段报告，增加 scratch runner |
 | 父仓库 `724e9fe` | `UbRuleRoutingTable`、`UbTopologyNextHopIndex`、`UbNextHopIndex` 和 C++ 安装路径 |
 | 父仓库 `71d5ad6` | prepared case 用户文档和统一领域用词 |
+| 父仓库 `0e060dd` | 优化总览、1024-NPU 结果索引和 ADR 0002 |
+| 子模块 `895335c` / 父仓库 `d530fb8` | README 改用仓库内现有组合拓扑示例 |
+| 父仓库 `3016963` | scratch 用户入口说明 CSV 与 prepared structured 两条并列路径 |
 
 ## 证据索引
 

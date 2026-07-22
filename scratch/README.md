@@ -91,6 +91,29 @@ supported structures, cache behavior, routing modes, and diagnostic export. See 
 [structured topology optimization overview](../.scratch/structured-topology-routing/README.md) for
 the design history, correctness evidence, and 1024-NPU generation, memory, startup, and lookup results.
 
+### Compatibility and automatic recognition
+
+Existing users do not need to rewrite every case:
+
+- An explicit CSV case remains unchanged and continues to run through `ub-quick-example`.
+- An existing Python `NetworkSimulationGraph` builder can return the graph instead of writing topology
+  and routing CSV, then use `prepare_structured_case.py` for analysis and compilation.
+- An existing custom CSV topology can be loaded with `case_topology_loader.load_case_topology()` so
+  assigned physical ports, unused ports, and parallel links remain authoritative during analysis.
+
+Automatic topology-rule recognition currently covers FullMesh; Ring, Mesh, Torus, and N-dimensional
+Dimension FullMesh; direct-switch networks; two-level switch networks with independent planes or local
+plus shared upper switches; classic Dragonfly; pair-design incidence networks such as Balanced Sparse
+Tree; switch port extensions; and verified safe combinations of these structures. Recognition does not
+trust group names, node ID ranges, port ranges, or declaration order. Candidate structures are accepted
+only after endpoint ports, parallel links, physical link ownership, and route behavior are verified.
+
+`layeredConnections` can construct an arbitrary number of switch layers, but topology-rule recognition
+currently supports two switch levels (`leaf -> upper`). A topology with three or more switch levels is
+still valid input: default `mixed` routing uses exact/range rules or table entries for every lookup that
+the two-level recognizer cannot safely own. This preserves correctness but does not provide the maximum
+topology-rule memory and startup reduction for the unrecognized levels.
+
 ---
 
 ## Directory layout of an explicit CSV case
