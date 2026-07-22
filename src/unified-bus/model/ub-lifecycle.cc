@@ -866,32 +866,40 @@ UbLifecycleCoordinator::GetSnapshot(const UbLifecycleResourceIdentity& owner) co
 }
 
 UbLifecycleStorageSnapshot
-UbLifecycleCoordinator::GetStorageSnapshotForTest() const
+UbLifecycleCoordinator::GetStorageSnapshot() const
 {
     UbLifecycleStorageSnapshot storage;
     storage.resourceCount = m_resources.size();
     for (const auto& [kind, runs] : m_compactHistories)
     {
-        (void)kind;
+        UbLifecycleKindStorageSnapshot& kindStorage = storage.byKind[kind];
         storage.compactHistoryRunCount += runs.size();
+        kindStorage.compactHistoryRunCount += runs.size();
         for (const auto& [firstLocalId, run] : runs)
         {
-            storage.resourceCount +=
+            const std::size_t resourceCount =
                 static_cast<std::size_t>(run.lastLocalId - firstLocalId) + 1;
+            storage.resourceCount += resourceCount;
+            kindStorage.resourceCount += resourceCount;
         }
     }
     for (const auto& [key, state] : m_resources)
     {
-        (void)key;
+        UbLifecycleKindStorageSnapshot& kindStorage = storage.byKind[key.kind];
+        ++kindStorage.resourceCount;
         if (state.active != nullptr)
         {
             ++storage.activeStateCount;
+            ++kindStorage.activeStateCount;
             storage.activeAttemptWordCount += state.active->activeAttemptWords.size();
+            kindStorage.activeAttemptWordCount += state.active->activeAttemptWords.size();
             storage.activeLeaseCount += state.active->activeLeases.size();
+            kindStorage.activeLeaseCount += state.active->activeLeases.size();
         }
         if (state.retainedSummary != nullptr)
         {
             ++storage.retainedSummaryCount;
+            ++kindStorage.retainedSummaryCount;
         }
     }
     return storage;

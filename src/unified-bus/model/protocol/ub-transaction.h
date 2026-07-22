@@ -234,6 +234,8 @@ namespace ns3 {
                             const UbCtpEntityKey& key);
         bool HasWqeOperation(uint32_t jettyNum, uint32_t wqeId) const;
         bool HasLifecycleOperationForJetty(uint32_t jettyNum) const;
+        uint32_t GetResidentOperationCount() const;
+        uint64_t GetResidentSegmentCount() const;
         uint32_t GetActiveOperationCount() const;
         uint32_t GetAdmissionDomainReadySourceCountForTest(
             const UbLifecycleResourceIdentity& identity) const;

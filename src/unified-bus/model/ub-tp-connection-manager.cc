@@ -1106,7 +1106,7 @@ TpConnectionManager::GetConnectionLifecycleSnapshot(uint32_t localTpn,
 }
 
 size_t
-TpConnectionManager::GetCanonicalConnectionCountForTest() const
+TpConnectionManager::GetCanonicalConnectionCount() const
 {
     std::lock_guard<std::mutex> lock(m_stateLock);
     return m_canonicalConnections.size();

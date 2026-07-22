@@ -1951,9 +1951,27 @@ UbTransaction::HasWqeOperation(uint32_t jettyNum, uint32_t wqeId) const
 }
 
 uint32_t
-UbTransaction::GetActiveOperationCount() const
+UbTransaction::GetResidentOperationCount() const
 {
     return static_cast<uint32_t>(m_operations.size());
+}
+
+uint64_t
+UbTransaction::GetResidentSegmentCount() const
+{
+    uint64_t count = 0;
+    for (const auto& [operationId, operation] : m_operations)
+    {
+        (void)operationId;
+        count += operation.segments.size();
+    }
+    return count;
+}
+
+uint32_t
+UbTransaction::GetActiveOperationCount() const
+{
+    return GetResidentOperationCount();
 }
 
 uint32_t

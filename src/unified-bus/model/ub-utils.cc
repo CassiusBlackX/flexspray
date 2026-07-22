@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "ub-utils.h"
 
+#include "ub-ldst-instance.h"
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -28,6 +30,49 @@ using namespace ns3;
 
 namespace
 {
+const char*
+LifecycleResourceKindToString(UbLifecycleResourceKind kind)
+{
+    switch (kind)
+    {
+    case UbLifecycleResourceKind::RTP_ENDPOINT:
+        return "RTP_ENDPOINT";
+    case UbLifecycleResourceKind::WQE:
+        return "WQE";
+    case UbLifecycleResourceKind::TRANSACTION_OPERATION:
+        return "TRANSACTION_OPERATION";
+    case UbLifecycleResourceKind::TRANSACTION_SEGMENT:
+        return "TRANSACTION_SEGMENT";
+    case UbLifecycleResourceKind::JETTY:
+        return "JETTY";
+    case UbLifecycleResourceKind::RTP_TPG:
+        return "RTP_TPG";
+    case UbLifecycleResourceKind::RTP_CONNECTION:
+        return "RTP_CONNECTION";
+    case UbLifecycleResourceKind::CTP_SERVICE:
+        return "CTP_SERVICE";
+    case UbLifecycleResourceKind::LDST_INSTANCE:
+        return "LDST_INSTANCE";
+    case UbLifecycleResourceKind::LDST_SEGMENT:
+        return "LDST_SEGMENT";
+    case UbLifecycleResourceKind::DATALINK_PORT_VL:
+        return "DATALINK_PORT_VL";
+    }
+    NS_ABORT_MSG("Unknown lifecycle resource kind");
+}
+
+void
+AccumulateLifecycleKindStorage(UbLifecycleKindStorageSnapshot& aggregate,
+                               const UbLifecycleKindStorageSnapshot& value)
+{
+    aggregate.resourceCount += value.resourceCount;
+    aggregate.compactHistoryRunCount += value.compactHistoryRunCount;
+    aggregate.activeStateCount += value.activeStateCount;
+    aggregate.retainedSummaryCount += value.retainedSummaryCount;
+    aggregate.activeAttemptWordCount += value.activeAttemptWordCount;
+    aggregate.activeLeaseCount += value.activeLeaseCount;
+}
+
 struct LegacyNetworkAttributeKey
 {
     const char* legacy;
@@ -1092,6 +1137,171 @@ UbUtils::GetTraceOwner(uint32_t ownerId)
     (void)inserted;
     cache = {epoch, ownerId, &it->second};
     return *cache.owner;
+}
+
+UbTraceWriterStorageSnapshot
+UbUtils::GetTraceWriterStorageSnapshot()
+{
+    UbTraceWriterStorageSnapshot snapshot;
+    std::vector<TraceOwnerState*> owners;
+    {
+        std::lock_guard<std::mutex> filesGuard(files_mutex);
+        snapshot.ownerCount = trace_owners.size();
+        snapshot.fileCount = files.size();
+        snapshot.openFileCount = trace_open_files;
+        snapshot.openCount = trace_writer_stats.openCount;
+        snapshot.writeCount = trace_writer_stats.writeCount;
+        snapshot.flushCount = trace_writer_stats.flushCount;
+        snapshot.closeCount = trace_writer_stats.closeCount;
+        snapshot.lruCloseCount = trace_writer_stats.lruCloseCount;
+        snapshot.pressureFlushCount = trace_writer_stats.pressureFlushCount;
+        snapshot.peakOpenFiles = trace_writer_stats.peakOpenFiles;
+        snapshot.peakBufferedBytes = trace_writer_stats.peakBufferedBytes;
+        owners.reserve(trace_owners.size());
+        for (auto& [ownerId, owner] : trace_owners)
+        {
+            (void)ownerId;
+            owners.push_back(&owner);
+        }
+    }
+    for (TraceOwnerState* owner : owners)
+    {
+        std::lock_guard<std::mutex> ownerGuard(owner->mutex);
+        snapshot.currentBufferedBytes += owner->bufferedBytes;
+        snapshot.maxOwnerBufferedBytes =
+            std::max<uint64_t>(snapshot.maxOwnerBufferedBytes, owner->bufferedBytes);
+    }
+    return snapshot;
+}
+
+UbRuntimeStorageSnapshot
+UbUtils::CaptureRuntimeStorageSnapshot()
+{
+    UbRuntimeStorageSnapshot snapshot;
+    snapshot.nodeCount = NodeList::GetNNodes();
+    for (auto node = NodeList::Begin(); node != NodeList::End(); ++node)
+    {
+        Ptr<UbController> controller = (*node)->GetObject<UbController>();
+        if (controller != nullptr)
+        {
+            Ptr<TpConnectionManager> connections = controller->GetTpConnManager();
+            if (connections != nullptr)
+            {
+                snapshot.canonicalConnections += connections->GetCanonicalConnectionCount();
+            }
+            Ptr<UbTransportChannelManager> endpoints = controller->GetTransportChannelManager();
+            if (endpoints != nullptr)
+            {
+                snapshot.residentTpEndpoints += endpoints->GetCount();
+            }
+            Ptr<UbFunction> function = controller->GetUbFunction();
+            if (function != nullptr)
+            {
+                snapshot.residentWqes += function->GetResidentWqeCount();
+            }
+            Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+            if (transaction != nullptr)
+            {
+                snapshot.residentOperations += transaction->GetResidentOperationCount();
+                snapshot.residentSegments += transaction->GetResidentSegmentCount();
+            }
+        }
+
+        Ptr<UbLdstInstance> ldst = (*node)->GetObject<UbLdstInstance>();
+        if (ldst != nullptr)
+        {
+            snapshot.activeLdstTasks += ldst->GetActiveTaskCount();
+            snapshot.activeLdstSegments += ldst->GetActiveSegmentCount();
+        }
+
+        Ptr<UbLifecycleCoordinator> coordinator = (*node)->GetObject<UbLifecycleCoordinator>();
+        if (coordinator != nullptr)
+        {
+            const UbLifecycleStorageSnapshot nodeStorage = coordinator->GetStorageSnapshot();
+            AccumulateLifecycleKindStorage(snapshot.lifecycle, nodeStorage);
+            for (const auto& [kind, kindStorage] : nodeStorage.byKind)
+            {
+                AccumulateLifecycleKindStorage(snapshot.lifecycle.byKind[kind], kindStorage);
+            }
+        }
+    }
+
+    UbTrafficGen* traffic = UbTrafficGen::Get();
+    snapshot.storedTrafficTasks = traffic->GetStoredTaskCount();
+    snapshot.completedTrafficTasks = traffic->GetCompletedTaskCount();
+    snapshot.trafficDependencyReferences = traffic->GetDependencyReferenceCount();
+    snapshot.traceWriter = GetTraceWriterStorageSnapshot();
+    return snapshot;
+}
+
+void
+UbUtils::WriteRuntimeStorageSnapshot(const std::string& outputPath)
+{
+    namespace fs = std::filesystem;
+    const fs::path path(outputPath);
+    NS_ABORT_MSG_IF(path.empty(), "Runtime storage snapshot path must not be empty");
+    std::error_code ec;
+    if (!path.parent_path().empty())
+    {
+        fs::create_directories(path.parent_path(), ec);
+        NS_ABORT_MSG_IF(ec,
+                        "Failed to create runtime storage snapshot directory: "
+                            << path.parent_path() << " err=" << ec.message());
+    }
+    std::ofstream output(path, std::ios::out | std::ios::trunc);
+    NS_ABORT_MSG_IF(!output.is_open(), "Cannot open runtime storage snapshot: " << outputPath);
+
+    const UbRuntimeStorageSnapshot snapshot = CaptureRuntimeStorageSnapshot();
+    const auto write = [&](std::string_view category,
+                           std::string_view metric,
+                           std::string_view resourceKind,
+                           uint64_t value) {
+        output << UbRuntimeStorageSnapshot::SCHEMA_VERSION << ',' << category << ',' << metric
+               << ',' << resourceKind << ',' << value << '\n';
+    };
+    output << "schema_version,category,metric,resource_kind,value\n";
+    write("runtime", "node_count", "", snapshot.nodeCount);
+    write("runtime", "canonical_connections", "", snapshot.canonicalConnections);
+    write("runtime", "resident_tp_endpoints", "", snapshot.residentTpEndpoints);
+    write("runtime", "resident_wqes", "", snapshot.residentWqes);
+    write("runtime", "resident_operations", "", snapshot.residentOperations);
+    write("runtime", "resident_segments", "", snapshot.residentSegments);
+    write("runtime", "active_ldst_tasks", "", snapshot.activeLdstTasks);
+    write("runtime", "active_ldst_segments", "", snapshot.activeLdstSegments);
+    write("traffic", "stored_tasks", "", snapshot.storedTrafficTasks);
+    write("traffic", "completed_tasks", "", snapshot.completedTrafficTasks);
+    write("traffic", "dependency_references", "", snapshot.trafficDependencyReferences);
+
+    const auto writeLifecycle = [&](std::string_view kind,
+                                    const UbLifecycleKindStorageSnapshot& storage) {
+        write("lifecycle", "resource_count", kind, storage.resourceCount);
+        write("lifecycle", "compact_history_run_count", kind, storage.compactHistoryRunCount);
+        write("lifecycle", "active_state_count", kind, storage.activeStateCount);
+        write("lifecycle", "retained_summary_count", kind, storage.retainedSummaryCount);
+        write("lifecycle", "active_attempt_word_count", kind, storage.activeAttemptWordCount);
+        write("lifecycle", "active_lease_count", kind, storage.activeLeaseCount);
+    };
+    writeLifecycle("", snapshot.lifecycle);
+    for (const auto& [kind, storage] : snapshot.lifecycle.byKind)
+    {
+        writeLifecycle(LifecycleResourceKindToString(kind), storage);
+    }
+
+    write("trace_writer", "owner_count", "", snapshot.traceWriter.ownerCount);
+    write("trace_writer", "file_count", "", snapshot.traceWriter.fileCount);
+    write("trace_writer", "open_file_count", "", snapshot.traceWriter.openFileCount);
+    write("trace_writer", "current_buffered_bytes", "", snapshot.traceWriter.currentBufferedBytes);
+    write("trace_writer", "max_owner_buffered_bytes", "", snapshot.traceWriter.maxOwnerBufferedBytes);
+    write("trace_writer", "open_count", "", snapshot.traceWriter.openCount);
+    write("trace_writer", "write_count", "", snapshot.traceWriter.writeCount);
+    write("trace_writer", "flush_count", "", snapshot.traceWriter.flushCount);
+    write("trace_writer", "close_count", "", snapshot.traceWriter.closeCount);
+    write("trace_writer", "lru_close_count", "", snapshot.traceWriter.lruCloseCount);
+    write("trace_writer", "pressure_flush_count", "", snapshot.traceWriter.pressureFlushCount);
+    write("trace_writer", "peak_open_files", "", snapshot.traceWriter.peakOpenFiles);
+    write("trace_writer", "peak_buffered_bytes", "", snapshot.traceWriter.peakBufferedBytes);
+    output.flush();
+    NS_ABORT_MSG_IF(output.fail(), "Failed to write runtime storage snapshot: " << outputPath);
 }
 
 void

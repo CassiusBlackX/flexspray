@@ -67,8 +67,16 @@ public:
     void ScheduleNow(Callback<void> action);
     void RegisterPacketBirth(Ptr<Packet> packet);
 
-    size_t GetActiveTaskCountForTest() const;
-    size_t GetActiveSegmentCountForTest() const;
+    size_t GetActiveTaskCount() const;
+    size_t GetActiveSegmentCount() const;
+    size_t GetActiveTaskCountForTest() const
+    {
+        return GetActiveTaskCount();
+    }
+    size_t GetActiveSegmentCountForTest() const
+    {
+        return GetActiveSegmentCount();
+    }
     Ptr<UbLdstTaskSegment> GetTaskSegmentForTest(uint32_t taskSegmentId) const;
     UbLifecycleResourceSnapshot GetLifecycleSnapshotForTest() const;
     const UbLdstForcedStopResidue& GetLastForcedStopResidueForTest() const;

@@ -52,6 +52,7 @@ struct QuickExampleOptions
     std::string linkDelayOffsetWindow = "0ps";
     uint32_t timingOffsetSeed = 1;
     std::string canonicalOutputPath;
+    std::string runtimeStorageSnapshotPath;
 };
 
 struct DropAbortState
@@ -536,6 +537,21 @@ void ConfigureCanonicalOutput(const QuickExampleOptions& options, const RuntimeS
     }
 }
 
+std::string
+ResolveRuntimeStorageSnapshotPath(const QuickExampleOptions& options,
+                                  const RuntimeSelection& runtime)
+{
+    if (options.runtimeStorageSnapshotPath.empty() || !runtime.enableMpi)
+    {
+        return options.runtimeStorageSnapshotPath;
+    }
+    const std::filesystem::path path(options.runtimeStorageSnapshotPath);
+    const std::string extension = path.extension().string();
+    return (path.parent_path() /
+            (path.stem().string() + ".rank" + std::to_string(runtime.mpiRank) + extension))
+        .string();
+}
+
 void
 ConfigureInitialTaskStartOffset(const QuickExampleOptions& options,
                                 const RuntimeSelection& runtime)
@@ -715,6 +731,9 @@ QuickExampleOptions ParseOptions(int argc, char* argv[])
     cmd.AddValue("canonical-output",
                  "Write deterministic UbTrafficGen canonical events to this output basename",
                  options.canonicalOutputPath);
+    cmd.AddValue("runtime-storage-snapshot",
+                 "Write a versioned case-end runtime storage attribution CSV to this path",
+                 options.runtimeStorageSnapshotPath);
     cmd.AddNonOption("casePath",
                      "Required unified-bus case directory when --case-path is omitted",
                      positionalCasePath);
@@ -855,6 +874,13 @@ PhaseTiming RunScenario(const QuickExampleOptions& options,
     }
     Simulator::Run();
     timing.simulationEnd = std::chrono::high_resolution_clock::now();
+
+    const std::string runtimeStorageSnapshotPath =
+        ResolveRuntimeStorageSnapshotPath(options, runtime);
+    if (!runtimeStorageSnapshotPath.empty())
+    {
+        UbUtils::WriteRuntimeStorageSnapshot(runtimeStorageSnapshotPath);
+    }
 
     UbUtils::Get()->Destroy();
     UbTrafficGen::Get()->WriteCanonicalOutput();

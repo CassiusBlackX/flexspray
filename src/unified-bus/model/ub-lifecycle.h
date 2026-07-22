@@ -238,7 +238,7 @@ struct UbLifecycleResourceSnapshot
     bool retired{false};
 };
 
-struct UbLifecycleStorageSnapshot
+struct UbLifecycleKindStorageSnapshot
 {
     std::size_t resourceCount{0};
     std::size_t compactHistoryRunCount{0};
@@ -246,6 +246,11 @@ struct UbLifecycleStorageSnapshot
     std::size_t retainedSummaryCount{0};
     std::size_t activeAttemptWordCount{0};
     std::size_t activeLeaseCount{0};
+};
+
+struct UbLifecycleStorageSnapshot : UbLifecycleKindStorageSnapshot
+{
+    std::map<UbLifecycleResourceKind, UbLifecycleKindStorageSnapshot> byKind;
 };
 
 class UbLifecycleCoordinator : public Object
@@ -273,7 +278,11 @@ class UbLifecycleCoordinator : public Object
     UbPacketAttemptIdentity RegisterPacketAttempt(const UbLifecycleResourceIdentity& owner,
                                                   Ptr<Packet> packet);
     UbLifecycleResourceSnapshot GetSnapshot(const UbLifecycleResourceIdentity& owner) const;
-    UbLifecycleStorageSnapshot GetStorageSnapshotForTest() const;
+    UbLifecycleStorageSnapshot GetStorageSnapshot() const;
+    UbLifecycleStorageSnapshot GetStorageSnapshotForTest() const
+    {
+        return GetStorageSnapshot();
+    }
     void EmitLifecycleSummary();
 
     static void ObservePacketTransfer(Ptr<Packet> packet,

@@ -46,6 +46,43 @@ class UbTraceFileConcurrencyTest;
 class UbTraceWriterBoundedTest;
 class UbTraceWriterDescriptorLruTest;
 class UbQueueSamplerEventRetentionTest;
+
+struct UbTraceWriterStorageSnapshot
+{
+    uint64_t ownerCount{0};
+    uint64_t fileCount{0};
+    uint64_t openFileCount{0};
+    uint64_t currentBufferedBytes{0};
+    uint64_t maxOwnerBufferedBytes{0};
+    uint64_t openCount{0};
+    uint64_t writeCount{0};
+    uint64_t flushCount{0};
+    uint64_t closeCount{0};
+    uint64_t lruCloseCount{0};
+    uint64_t pressureFlushCount{0};
+    uint64_t peakOpenFiles{0};
+    uint64_t peakBufferedBytes{0};
+};
+
+struct UbRuntimeStorageSnapshot
+{
+    static constexpr uint32_t SCHEMA_VERSION = 1;
+
+    uint64_t nodeCount{0};
+    uint64_t canonicalConnections{0};
+    uint64_t residentTpEndpoints{0};
+    uint64_t residentWqes{0};
+    uint64_t residentOperations{0};
+    uint64_t residentSegments{0};
+    uint64_t activeLdstTasks{0};
+    uint64_t activeLdstSegments{0};
+    uint64_t storedTrafficTasks{0};
+    uint64_t completedTrafficTasks{0};
+    uint64_t trafficDependencyReferences{0};
+    ns3::UbLifecycleStorageSnapshot lifecycle;
+    UbTraceWriterStorageSnapshot traceWriter;
+};
+
 /**
  *  @brief UbUtils单例类
  */
@@ -80,6 +117,12 @@ public:
     static TraceSinkHandle ResolveTraceSink(const std::string& fileName);
 
     static void AppendTraceInfoNoTs(const TraceSinkHandle& sink, const std::string& info);
+
+    static UbTraceWriterStorageSnapshot GetTraceWriterStorageSnapshot();
+
+    static UbRuntimeStorageSnapshot CaptureRuntimeStorageSnapshot();
+
+    static void WriteRuntimeStorageSnapshot(const std::string& outputPath);
 
     // MPI locality helpers used by config-driven builder/tests.
     static uint32_t ExtractMpiRank(uint32_t systemId);
