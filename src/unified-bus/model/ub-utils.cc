@@ -1187,7 +1187,12 @@ UbUtils::CaptureRuntimeStorageSnapshot()
             Ptr<TpConnectionManager> connections = controller->GetTpConnManager();
             if (connections != nullptr)
             {
-                snapshot.canonicalConnections += connections->GetCanonicalConnectionCount();
+                const ConnectionStorageSnapshot connectionStorage =
+                    connections->GetConnectionStorageSnapshot();
+                snapshot.canonicalConnections += connectionStorage.canonicalRecords;
+                snapshot.authoritativeLocalConnectionViews +=
+                    connectionStorage.authoritativeLocalViews;
+                snapshot.secondaryConnectionIndexEntries += connectionStorage.secondaryIndexEntries;
             }
             Ptr<UbTransportChannelManager> endpoints = controller->GetTransportChannelManager();
             if (endpoints != nullptr)
@@ -1262,6 +1267,14 @@ UbUtils::WriteRuntimeStorageSnapshot(const std::string& outputPath)
     output << "schema_version,category,metric,resource_kind,value\n";
     write("runtime", "node_count", "", snapshot.nodeCount);
     write("runtime", "canonical_connections", "", snapshot.canonicalConnections);
+    write("runtime",
+          "authoritative_local_connection_views",
+          "",
+          snapshot.authoritativeLocalConnectionViews);
+    write("runtime",
+          "secondary_connection_index_entries",
+          "",
+          snapshot.secondaryConnectionIndexEntries);
     write("runtime", "resident_tp_endpoints", "", snapshot.residentTpEndpoints);
     write("runtime", "resident_wqes", "", snapshot.residentWqes);
     write("runtime", "resident_operations", "", snapshot.residentOperations);

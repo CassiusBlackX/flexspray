@@ -2,15 +2,18 @@
 #ifndef UB_TP_CONNECTION_MANAGER_H
 #define UB_TP_CONNECTION_MANAGER_H
 
-#include <unordered_map>
-#include <vector>
-#include <set>
-#include <map>
-#include "ub-network-address.h"
 #include "ub-lifecycle.h"
+#include "ub-network-address.h"
+
 #include "ns3/log.h"
 #include "ns3/random-variable-stream.h"
+
+#include <compare>
+#include <map>
 #include <mutex>
+#include <set>
+#include <unordered_map>
+#include <vector>
 
 namespace ns3
 {
@@ -55,6 +58,13 @@ struct ConnectionLifecycleSnapshot
     EndpointSlotState slot2{EndpointSlotState::UNMATERIALIZED};
     bool destroyRequested{false};
     UbDestroyReason reason{UbDestroyReason::EXPLICIT};
+};
+
+struct ConnectionStorageSnapshot
+{
+    uint64_t canonicalRecords{0};
+    uint64_t authoritativeLocalViews{0};
+    uint64_t secondaryIndexEntries{0};
 };
 
 /**
@@ -145,16 +155,10 @@ public:
     std::set<uint32_t> GetNeighborNodes(uint32_t nodeId) const;
 
     // 获取所有连接
-    const std::vector<Connection>& GetAllConnections() const
-    {
-        return m_allConnections;
-    }
+    const std::vector<Connection>& GetAllConnections() const;
 
     // 获取连接总数
-    size_t GetConnectionCount() const
-    {
-        return m_allConnections.size();
-    }
+    size_t GetConnectionCount() const;
 
     // 获取与该tp相关的conn
     Connection GetConnection(uint32_t tpn, uint32_t src, uint32_t dst, uint32_t priority);
@@ -194,6 +198,8 @@ public:
     {
         return GetCanonicalConnectionCount();
     }
+
+    ConnectionStorageSnapshot GetConnectionStorageSnapshot() const;
 
     // 清空指定节点的连接
     void ClearNodeConnections(uint32_t nodeId);
@@ -272,49 +278,75 @@ private:
     void CompleteRemoteDestroy(const UbLifecycleResourceIdentity& identity, uint64_t requestId);
     void EraseConnectionView(uint32_t localNodeId, uint32_t localTpn);
 
-  // 为指定节点建立各种索引
-  void BuildIndexesForNode(uint32_t localNodeId, Connection conn);
+    struct LocalConnectionRef
+    {
+        uint32_t localNodeId{UINT32_MAX};
+        uint32_t localTpn{UINT32_MAX};
+        uint64_t reservationGeneration{0};
 
-  // 从索引中清理指定节点
-  void ClearNodeFromIndexes(uint32_t nodeId);
+        auto operator<=>(const LocalConnectionRef&) const = default;
+    };
 
-  // Reserve new TP connection records and return their local TPN/metric pairs.
-  std::vector<std::pair<uint32_t, uint32_t>> ReserveNewTpConnections(uint32_t src,
-                                                                     uint32_t dst,
-                                                                     uint32_t priority,
-                                                                     bool useShortestPath);
+    struct ConnectionOrderRef
+    {
+        LocalConnectionRef localView;
+        bool reverseToOriginalOrientation{false};
+    };
 
-  // 重建tp对
-  std::vector<uint32_t> ReconstructTPs(std::vector<uint32_t> tpns,
-                                       uint32_t src,
-                                       uint32_t dst,
-                                       uint32_t priority,
-                                       bool useShortestPath,
-                                       bool useMultiPath);
+    const Connection* ResolveConnectionRefLocked(const LocalConnectionRef& ref) const;
+    void InvalidateAllConnectionsCacheLocked();
 
-  uint32_t ReconstructTp(Connection conn);
+    // 为指定节点建立各种索引
+    LocalConnectionRef BuildIndexesForNode(uint32_t localNodeId, Connection conn);
 
-private:
-    // 主存储：所有连接
-    std::vector<Connection> m_allConnections;
+    // 从索引中清理指定节点
+    void ClearNodeFromIndexes(uint32_t nodeId);
+
+    // Reserve new TP connection records and return their local TPN/metric pairs.
+    std::vector<std::pair<uint32_t, uint32_t>> ReserveNewTpConnections(uint32_t src,
+                                                                       uint32_t dst,
+                                                                       uint32_t priority,
+                                                                       bool useShortestPath);
+
+    // 重建tp对
+    std::vector<uint32_t> ReconstructTPs(std::vector<uint32_t> tpns,
+                                         uint32_t src,
+                                         uint32_t dst,
+                                         uint32_t priority,
+                                         bool useShortestPath,
+                                         bool useMultiPath);
+
+    uint32_t ReconstructTp(Connection conn);
+
+  private:
+    // 每个本地端点视图仅保留一个完整的定向连接值。
+    std::map<LocalConnectionRef, Connection> m_localConnectionViews;
+
+    // 公共列表顺序及其按需兼容缓存。
+    std::vector<ConnectionOrderRef> m_allConnectionOrder;
+    mutable std::vector<Connection> m_allConnectionsCache;
+    mutable bool m_allConnectionsCacheValid{false};
 
     // 每个节点的相关连接
-    std::unordered_map<uint32_t, std::vector<Connection>> m_nodeConnections;
+    std::unordered_map<uint32_t, std::vector<LocalConnectionRef>> m_nodeConnections;
 
     // 索引2: (localNodeId, peerNodeId) -> connections
-    std::map<std::pair<uint32_t, uint32_t>, std::vector<Connection>> m_peerNodeIndex;
+    std::map<std::pair<uint32_t, uint32_t>, std::vector<LocalConnectionRef>> m_peerNodeIndex;
 
     // 索引3: (localNodeId, peerNodeId, priority) -> connections
-    std::map<std::tuple<uint32_t, uint32_t, uint32_t>, std::vector<Connection>> m_peerNodePriorityIndex;
+    std::map<std::tuple<uint32_t, uint32_t, uint32_t>, std::vector<LocalConnectionRef>>
+        m_peerNodePriorityIndex;
 
     // 索引4: (localNodeId, peerNodeId, localPort) -> connections
-    std::map<std::tuple<uint32_t, uint32_t, uint32_t>, std::vector<Connection>> m_peerNodeLocalPortIndex;
+    std::map<std::tuple<uint32_t, uint32_t, uint32_t>, std::vector<LocalConnectionRef>>
+        m_peerNodeLocalPortIndex;
 
     // 索引5: (localNodeId, peerNodeId, localPort, peerPort) -> connections
-    std::map<std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>, std::vector<Connection>> m_bothPortsIndex;
+    std::map<std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>, std::vector<LocalConnectionRef>>
+        m_bothPortsIndex;
 
-    // 索引6: (localNodeId, localTpn) -> connection
-    std::map<std::pair<uint32_t, uint32_t>, Connection> m_localTpnIndex;
+    // 索引6: (localNodeId, localTpn) -> generation-aware local view reference
+    std::map<std::pair<uint32_t, uint32_t>, LocalConnectionRef> m_localTpnIndex;
     std::set<std::pair<uint32_t, uint32_t>> m_destroyRequestedViews;
 
     std::set<uint32_t> m_tpnList;
