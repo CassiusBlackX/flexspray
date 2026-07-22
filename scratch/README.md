@@ -65,7 +65,8 @@ python3 scratch/ns-3-ub-tools/prepare_structured_case.py \
 The target case directory must already provide `network_attribute.txt`, `traffic.csv`, and an optional
 `transport_channel.csv`. Preparation writes:
 
-- `structured_topology.txt` — versioned physical topology and compiled routing input;
+- `structured_topology.txt` — versioned physical topology and verified structure rules;
+- `compressed_routing.bin` — portable, indexed candidate table loaded directly by C++;
 - `structured_summary.json` — compiler version, cache key, routing mode, coverage, and record counts.
 
 It does not write topology or routing CSV by default. In this mode, existing `node.csv`, `topology.csv`,
@@ -73,18 +74,29 @@ and `routing_table.csv` in the same directory are not read by the runner. Run th
 independently:
 
 ```bash
-python3 scratch/run_structured_topo_case.py --case-path path/to/case
+python3 scratch/run_structured_topo_case.py \
+  --case-path path/to/case \
+  --route-runtime-mode compressed-table-lookup
 ```
 
-The default `mixed` mode uses verified topology, exact, or range rules for complete route lookup items
-and keeps table entries only where rules cannot safely own the lookup. Use `--routing-mode=table` during
-preparation to require table representation, or `--routing-mode=rule` to reject incomplete rule
-coverage. Candidate generation changes, but the existing `GetOutPort()` path and HASH, round-robin,
-adaptive, and packet-spray selectors still choose the final physical output port.
+Preparation and runtime use separate choices. `--route-generation=full|structured|mixed` controls how
+the offline compiler derives candidates. `full` uses the complete graph-derived route baseline;
+`structured` requires complete verified structure coverage; the default `mixed` uses structure where
+possible and graph-derived candidates for the rest. Every strategy writes the same binary runtime
+format instead of a large routing CSV.
+
+At runtime, `--route-runtime-mode=compressed-table-lookup|structured-rule-compute` chooses between a
+direct lookup in `compressed_routing.bin` and evaluation of the verified rules in
+`structured_topology.txt`. The default compressed-table lookup works for all three generation
+strategies. Structured-rule compute requires a `structured` or `mixed` case with usable rules.
+Candidate generation changes, but the existing `GetOutPort()` path and HASH, round-robin, adaptive,
+and packet-spray selectors still choose the final physical output port.
 
 The preparation process exits before simulation starts. The scratch runner does not import NetworkX or
-compile routes, and the C++ simulation has no Python runtime interaction. Optional diagnostic CSV can be
-requested from the preparation command, but the runner never reads that export back.
+compile routes, and the C++ simulation has no Python runtime interaction. The prepared artifacts are
+files, not a stdin stream or cross-language runtime protocol. Optional diagnostic CSV can be requested
+with `--export-csv`, but the runner never reads that export back. Add `--verify-routes` only when an
+exhaustive comparison against the complete route baseline is wanted.
 
 See the [ns-3-ub-tools README](./ns-3-ub-tools/README.md) for Python and JSON/YAML input details,
 supported structures, cache behavior, routing modes, and diagnostic export. See the

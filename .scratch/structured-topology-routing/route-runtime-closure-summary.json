@@ -1,0 +1,240 @@
+{
+  "benchmark": "1dpod-1024npu-route-runtime-closure",
+  "mainCommit": "0ca0e95",
+  "sampleCount": 3,
+  "querySeed": 20260722,
+  "modes": {
+    "main-full-table": {
+      "samples": [
+        "closure-main-run1.json",
+        "closure-main-run2.json",
+        "closure-main-run3.json"
+      ],
+      "queryCount": 9427968,
+      "iterationsPerMeasurement": 5000000,
+      "topologyParseOrInstallSeconds": 0.313755,
+      "routeLoadOrInstallSeconds": 6.231969,
+      "rssAfterInstallBytes": 2599944192,
+      "heapInUseAfterInstallBytes": 916480608,
+      "peakRssBytes": 2599976960,
+      "measurements": {
+        "candidate-set": {
+          "meanNs": 237.751725,
+          "p50BatchMeanNs": 234.954834,
+          "p99BatchMeanNs": 305.277588,
+          "checksum": 15609832159678945247,
+          "missing": 0
+        },
+        "HASH": {
+          "meanNs": 386.553292,
+          "p50BatchMeanNs": 384.450195,
+          "p99BatchMeanNs": 446.32959,
+          "checksum": 17596006285552879576,
+          "missing": 0
+        },
+        "ADAPTIVE": {
+          "meanNs": 545.793942,
+          "p50BatchMeanNs": 540.975098,
+          "p99BatchMeanNs": 655.24292,
+          "checksum": 16982587848491224938,
+          "missing": 0
+        }
+      }
+    },
+    "compressed-table-lookup": {
+      "samples": [
+        "closure-compressed-run1.json",
+        "closure-compressed-run2.json",
+        "closure-compressed-run3.json"
+      ],
+      "queryCount": 9427968,
+      "iterationsPerMeasurement": 5000000,
+      "topologyParseOrInstallSeconds": 0.291192,
+      "routeLoadOrInstallSeconds": 0.296244,
+      "rssAfterInstallBytes": 303841280,
+      "heapInUseAfterInstallBytes": 248091152,
+      "peakRssBytes": 303874048,
+      "measurements": {
+        "candidate-set": {
+          "meanNs": 184.966667,
+          "p50BatchMeanNs": 185.424805,
+          "p99BatchMeanNs": 207.305908,
+          "checksum": 15609832159678945247,
+          "missing": 0
+        },
+        "HASH64": {
+          "meanNs": 196.5738,
+          "p50BatchMeanNs": 195.129395,
+          "p99BatchMeanNs": 237.620117,
+          "checksum": 17596006285552879576,
+          "missing": 0
+        },
+        "CRC32": {
+          "meanNs": 239.575892,
+          "p50BatchMeanNs": 237.26416,
+          "p99BatchMeanNs": 257.639648,
+          "checksum": 5334873313241362200,
+          "missing": 0
+        },
+        "TOEPLITZ": {
+          "meanNs": 648.9463,
+          "p50BatchMeanNs": 647.898193,
+          "p99BatchMeanNs": 680.033447,
+          "checksum": 11346107290130456727,
+          "missing": 0
+        },
+        "ROUND_ROBIN": {
+          "meanNs": 234.370717,
+          "p50BatchMeanNs": 234.018799,
+          "p99BatchMeanNs": 255.126953,
+          "checksum": 9069433590625901631,
+          "missing": 0
+        },
+        "ADAPTIVE": {
+          "meanNs": 339.357083,
+          "p50BatchMeanNs": 338.104248,
+          "p99BatchMeanNs": 370.147705,
+          "checksum": 16982587848491224938,
+          "missing": 0
+        },
+        "INGRESS_PORT_STRIPE": {
+          "meanNs": 203.1027,
+          "p50BatchMeanNs": 200.653076,
+          "p99BatchMeanNs": 252.064941,
+          "checksum": 6270412698303457832,
+          "missing": 0
+        }
+      }
+    },
+    "structured-rule-compute": {
+      "samples": [
+        "closure-structured-run1.json",
+        "closure-structured-run2.json",
+        "closure-structured-run3.json"
+      ],
+      "queryCount": 9427968,
+      "iterationsPerMeasurement": 5000000,
+      "topologyParseOrInstallSeconds": 0.008143,
+      "routeLoadOrInstallSeconds": 0.308211,
+      "rssAfterInstallBytes": 231440384,
+      "heapInUseAfterInstallBytes": 215147408,
+      "peakRssBytes": 231473152,
+      "measurements": {
+        "candidate-set": {
+          "meanNs": 390.19185,
+          "p50BatchMeanNs": 390.248535,
+          "p99BatchMeanNs": 413.614746,
+          "checksum": 15609832159678945247,
+          "missing": 0
+        },
+        "HASH64": {
+          "meanNs": 359.493525,
+          "p50BatchMeanNs": 360.70752,
+          "p99BatchMeanNs": 386.383057,
+          "checksum": 17596006285552879576,
+          "missing": 0
+        },
+        "CRC32": {
+          "meanNs": 403.030483,
+          "p50BatchMeanNs": 402.822021,
+          "p99BatchMeanNs": 420.054199,
+          "checksum": 5334873313241362200,
+          "missing": 0
+        },
+        "TOEPLITZ": {
+          "meanNs": 803.261133,
+          "p50BatchMeanNs": 803.375244,
+          "p99BatchMeanNs": 837.921143,
+          "checksum": 11346107290130456727,
+          "missing": 0
+        },
+        "ROUND_ROBIN": {
+          "meanNs": 405.893908,
+          "p50BatchMeanNs": 404.947754,
+          "p99BatchMeanNs": 431.793213,
+          "checksum": 9069433590625901631,
+          "missing": 0
+        },
+        "ADAPTIVE": {
+          "meanNs": 528.809083,
+          "p50BatchMeanNs": 527.760742,
+          "p99BatchMeanNs": 566.874268,
+          "checksum": 16982587848491224938,
+          "missing": 0
+        },
+        "INGRESS_PORT_STRIPE": {
+          "meanNs": 354.210408,
+          "p50BatchMeanNs": 353.535889,
+          "p99BatchMeanNs": 372.293945,
+          "checksum": 6270412698303457832,
+          "missing": 0
+        }
+      }
+    },
+    "text-table-to-compressed-lookup": {
+      "samples": [
+        "closure-text-run1.json",
+        "closure-text-run2.json",
+        "closure-text-run3.json"
+      ],
+      "queryCount": 9427968,
+      "iterationsPerMeasurement": 5000000,
+      "topologyParseOrInstallSeconds": 3.448825,
+      "routeLoadOrInstallSeconds": 0.296777,
+      "rssAfterInstallBytes": 413794304,
+      "heapInUseAfterInstallBytes": 248186352,
+      "peakRssBytes": 413827072,
+      "measurements": {
+        "candidate-set": {
+          "meanNs": 181.33025,
+          "p50BatchMeanNs": 181.45752,
+          "p99BatchMeanNs": 200.246094,
+          "checksum": 15609832159678945247,
+          "missing": 0
+        },
+        "HASH64": {
+          "meanNs": 197.238942,
+          "p50BatchMeanNs": 197.265625,
+          "p99BatchMeanNs": 218.638184,
+          "checksum": 17596006285552879576,
+          "missing": 0
+        },
+        "CRC32": {
+          "meanNs": 236.378225,
+          "p50BatchMeanNs": 235.646484,
+          "p99BatchMeanNs": 250.742676,
+          "checksum": 5334873313241362200,
+          "missing": 0
+        },
+        "TOEPLITZ": {
+          "meanNs": 648.172433,
+          "p50BatchMeanNs": 647.674561,
+          "p99BatchMeanNs": 682.851318,
+          "checksum": 11346107290130456727,
+          "missing": 0
+        },
+        "ROUND_ROBIN": {
+          "meanNs": 235.150842,
+          "p50BatchMeanNs": 234.466553,
+          "p99BatchMeanNs": 257.873535,
+          "checksum": 9069433590625901631,
+          "missing": 0
+        },
+        "ADAPTIVE": {
+          "meanNs": 347.9906,
+          "p50BatchMeanNs": 346.435547,
+          "p99BatchMeanNs": 393.809082,
+          "checksum": 16982587848491224938,
+          "missing": 0
+        },
+        "INGRESS_PORT_STRIPE": {
+          "meanNs": 199.556242,
+          "p50BatchMeanNs": 198.77124,
+          "p99BatchMeanNs": 221.028564,
+          "checksum": 6270412698303457832,
+          "missing": 0
+        }
+      }
+    }
+  }
+}

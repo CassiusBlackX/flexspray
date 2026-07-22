@@ -71,9 +71,13 @@ public:
     void GetShortestCandidates(uint32_t &dip, uint16_t inPortId, std::vector<uint16_t>& outPorts);
     void GetNonShortestCandidates(uint32_t &dip, uint16_t inPortId, std::vector<uint16_t>& outPorts);
     bool TryGetRuleCandidates(uint32_t dip,
-                              uint16_t inPortId,
                               std::vector<uint16_t>& shortestPorts,
                               std::vector<uint16_t>& nonShortestPorts) const;
+    bool TryGetRuleCandidatesWithPrimaryFallback(
+        uint32_t dip,
+        uint16_t inPortId,
+        std::vector<uint16_t>& shortestPorts,
+        std::vector<uint16_t>& nonShortestPorts) const;
     int GetOutPort(RoutingKey &rtKey, bool &selectedShortestPath, uint16_t inPort = UINT16_MAX);
     int SelectOutPort(RoutingKey &rtKey, const std::vector<uint16_t>& shortestPorts, 
                       const std::vector<uint16_t>& nonShortestPorts, bool &selectedShortestPath,
@@ -120,7 +124,6 @@ private:
                                  uint32_t nodeId,
                                  std::vector<uint16_t>& outPorts);
     bool TryGetIndexedCandidates(uint32_t dip,
-                                 uint16_t inPortId,
                                  std::vector<uint16_t>& shortestPorts,
                                  std::vector<uint16_t>& nonShortestPorts) const;
     bool TryGetIndexedCandidatesWithPrimaryFallback(uint32_t dip,

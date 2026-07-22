@@ -1,0 +1,19 @@
+{
+  "commit": "0ca0e95",
+  "queryCount": 9427968,
+  "iterations": 5000000,
+  "topologyInstallSeconds": 0.313755,
+  "routingLoadSeconds": 6.150852,
+  "rssBeforeBytes": 8536064,
+  "rssAfterInstallBytes": 2599747584,
+  "heapInUseAfterInstallBytes": 916480608,
+  "allocatorReleasedBytes": 0,
+  "rssAfterAllocatorReliefBytes": 2599780352,
+  "heapInUseAfterAllocatorReliefBytes": 916480608,
+  "peakRssBytes": 2599780352,
+  "measurements": [
+    {"name": "candidate-set", "meanNs": 228.220192, "p50BatchMeanNs": 225.341797, "p99BatchMeanNs": 282.155273, "checksum": 15609832159678945247, "missing": 0},
+    {"name": "HASH", "meanNs": 381.773108, "p50BatchMeanNs": 379.832031, "p99BatchMeanNs": 429.311035, "checksum": 17596006285552879576, "missing": 0},
+    {"name": "ADAPTIVE", "meanNs": 545.793942, "p50BatchMeanNs": 540.476562, "p99BatchMeanNs": 655.242920, "checksum": 16982587848491224938, "missing": 0}
+  ]
+}

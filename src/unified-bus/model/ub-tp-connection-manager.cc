@@ -524,7 +524,6 @@ TpConnectionManager::ReserveNewTpConnections(uint32_t src,
         Ipv4Address dstPortIp = NodeIdToIp(dst, dstPort);
         std::vector<uint16_t> shortestOutPortsVec, otherOutPortsVec;
         if (!rt->TryGetRuleCandidates(dstPortIp.Get(),
-                                      UINT16_MAX,
                                       shortestOutPortsVec,
                                       otherOutPortsVec))
         {
