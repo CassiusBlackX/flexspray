@@ -10,6 +10,7 @@
 
 #include <compare>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <unordered_map>
@@ -65,6 +66,11 @@ struct ConnectionStorageSnapshot
     uint64_t canonicalRecords{0};
     uint64_t authoritativeLocalViews{0};
     uint64_t secondaryIndexEntries{0};
+    uint64_t unmaterializedReservationRecords{0};
+    uint64_t unmaterializedEndpointSlots{0};
+    uint64_t activeLifecycleSidecars{0};
+    uint64_t destroyCallbackBundles{0};
+    uint64_t destroyCallbackEntries{0};
 };
 
 /**
@@ -224,10 +230,14 @@ private:
 
     uint32_t ReserveNextTpnLocked();
 
-    struct ConnectionLifecycleRecord
+    struct DestroyCallbackBundle
     {
-        Connection connection;
-        uint64_t generation{0};
+        std::vector<UbDestroyCallback> callbacks;
+        std::vector<std::pair<uint32_t, uint64_t>> remoteCallbacks;
+    };
+
+    struct ConnectionLifecycleSidecar
+    {
         EndpointSlotState slot1{EndpointSlotState::UNMATERIALIZED};
         EndpointSlotState slot2{EndpointSlotState::UNMATERIALIZED};
         bool destroyRequested{false};
@@ -235,10 +245,15 @@ private:
         bool slot2Materialized{false};
         bool finalizing{false};
         UbDestroyReason reason{UbDestroyReason::EXPLICIT};
-        UbLifecycleResourceIdentity identity;
-        std::vector<UbDestroyCallback> callbacks;
-        std::vector<std::pair<uint32_t, uint64_t>> remoteCallbacks;
         uint8_t erasedViews{0};
+        std::unique_ptr<DestroyCallbackBundle> callbackBundle;
+    };
+
+    struct ConnectionLifecycleRecord
+    {
+        Connection connection;
+        UbLifecycleResourceIdentity identity;
+        std::unique_ptr<ConnectionLifecycleSidecar> lifecycle;
     };
 
     void RegisterCanonicalConnectionLocked(Connection& conn);
@@ -360,7 +375,6 @@ private:
 
     mutable std::mutex m_stateLock;
     uint32_t m_ownerNodeId{UINT32_MAX};
-    uint64_t m_nextConnectionGeneration{0};
     std::map<std::pair<uint32_t, uint32_t>, ConnectionLifecycleRecord>
         m_canonicalConnections;
     struct PendingRemoteDestroy
