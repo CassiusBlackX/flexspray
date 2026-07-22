@@ -523,8 +523,14 @@ TpConnectionManager::ReserveNewTpConnections(uint32_t src,
         // 查找去往该ip的出端口，若非空则记录
         Ipv4Address dstPortIp = NodeIdToIp(dst, dstPort);
         std::vector<uint16_t> shortestOutPortsVec, otherOutPortsVec;
-        rt->GetShortestOutPorts(dstPortIp.Get(), shortestOutPortsVec);
-        rt->GetOtherOutPorts(dstPortIp.Get(), otherOutPortsVec);
+        if (!rt->TryGetRuleCandidates(dstPortIp.Get(),
+                                      UINT16_MAX,
+                                      shortestOutPortsVec,
+                                      otherOutPortsVec))
+        {
+            rt->GetShortestOutPorts(dstPortIp.Get(), shortestOutPortsVec);
+            rt->GetOtherOutPorts(dstPortIp.Get(), otherOutPortsVec);
+        }
         if (!shortestOutPortsVec.empty()) {
             routingEntries[dstPortIp] = std::vector<std::pair<uint16_t, uint32_t>>();
             for (uint16_t outPort : shortestOutPortsVec) {

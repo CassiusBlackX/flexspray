@@ -42,6 +42,8 @@ build_lib(
 	model/protocol/ub-transport.cc
 	model/protocol/ub-retrans.cc
 	model/protocol/ub-routing-process.cc
+	model/protocol/ub-next-hop-index.cc
+	model/protocol/ub-rule-routing.cc
 	model/ub-switch-allocator.cc
 	model/ub-utils.cc
 	model/protocol/ub-ldst-api.cc
@@ -75,6 +77,8 @@ build_lib(
 	model/protocol/ub-transport.h
 	model/protocol/ub-retrans.h
 	model/protocol/ub-routing-process.h
+	model/protocol/ub-next-hop-index.h
+	model/protocol/ub-rule-routing.h
 	model/ub-switch-allocator.h
 	model/ub-utils.h
 	model/ub-network-address.h
@@ -96,5 +100,7 @@ build_lib(
                     ${libconfig-store}
                     ${mtp_libraries}
                     ${mpi_libraries}
-  TEST_SOURCES test/ub-test.cc
+  TEST_SOURCES
+    test/ub-test.cc
+    test/ub-structured-routing-test.cc
 )

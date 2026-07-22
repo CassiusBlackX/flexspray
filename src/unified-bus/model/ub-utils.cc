@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "ub-utils.h"
 
+#include "ns3/ub-next-hop-index.h"
+#include "ns3/ub-rule-routing.h"
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -8,9 +11,11 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string_view>
 #include <unordered_map>
@@ -326,6 +331,74 @@ IsLegacyNodeForwardDelayHeader(const std::vector<std::string>& header)
 {
     return header.size() == 4 && header[0] == "nodeId" && header[1] == "nodeType" &&
            header[2] == "portNum" && header[3] == "forwardDelay";
+}
+
+uint32_t
+ReadStructuredUint32(std::istream& input, const char* field)
+{
+    uint64_t value = 0;
+    NS_ABORT_MSG_IF(!(input >> value), "structured topology missing or invalid " << field);
+    NS_ABORT_MSG_IF(value > std::numeric_limits<uint32_t>::max(),
+                    "structured topology " << field << " exceeds uint32 range");
+    return static_cast<uint32_t>(value);
+}
+
+std::string
+ReadStructuredToken(std::istream& input, const char* field)
+{
+    std::string value;
+    NS_ABORT_MSG_IF(!(input >> value), "structured topology missing " << field);
+    return value;
+}
+
+void
+ReadStructuredSection(std::istream& input, const char* expected, uint32_t& count)
+{
+    const std::string section = ReadStructuredToken(input, "section name");
+    NS_ABORT_MSG_IF(section != expected,
+                    "structured topology expected section " << expected << ", got " << section);
+    count = ReadStructuredUint32(input, "section count");
+}
+
+std::vector<uint32_t>
+ReadStructuredUint32List(std::istream& input, const char* field)
+{
+    const uint32_t count = ReadStructuredUint32(input, field);
+    std::vector<uint32_t> values;
+    values.reserve(count);
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        values.push_back(ReadStructuredUint32(input, field));
+    }
+    return values;
+}
+
+std::vector<std::string>
+ReadStructuredTokenList(std::istream& input, const char* field)
+{
+    const uint32_t count = ReadStructuredUint32(input, field);
+    std::vector<std::string> values;
+    values.reserve(count);
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        values.push_back(ReadStructuredToken(input, field));
+    }
+    return values;
+}
+
+std::vector<uint16_t>
+ReadStructuredPortList(std::istream& input, const char* field)
+{
+    const std::vector<uint32_t> values = ReadStructuredUint32List(input, field);
+    std::vector<uint16_t> ports;
+    ports.reserve(values.size());
+    for (uint32_t value : values)
+    {
+        NS_ABORT_MSG_IF(value > std::numeric_limits<uint16_t>::max(),
+                        "structured topology " << field << " contains an invalid port");
+        ports.push_back(static_cast<uint16_t>(value));
+    }
+    return ports;
 }
 
 void
@@ -2179,6 +2252,217 @@ UbUtils::ResolveLinkDelayWithOffset(Time baseDelay,
     return baseDelay + TimeStep(static_cast<int64_t>(hash % slotCount));
 }
 
+UbStructuredTopologyConfig
+UbUtils::ReadStructuredTopologyConfig(std::istream& input)
+{
+    const std::string magic = ReadStructuredToken(input, "protocol header");
+    NS_ABORT_MSG_IF(magic != "NS3_UB_STRUCTURED",
+                    "invalid structured topology protocol header: " << magic);
+    const uint32_t version = ReadStructuredUint32(input, "protocol version");
+    NS_ABORT_MSG_IF(version != 1 && version != 2 && version != 3,
+                    "unsupported structured topology protocol version: " << version);
+
+    UbStructuredTopologyConfig config;
+    uint32_t count = 0;
+    ReadStructuredSection(input, "NODES", count);
+    config.nodes.reserve(count);
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        config.nodes.push_back(UbStructuredNodeConfig{
+            ReadStructuredUint32(input, "node ID"),
+            ReadStructuredToken(input, "node type"),
+            ReadStructuredUint32(input, "port count"),
+            ReadStructuredToken(input, "allocation delay"),
+            ReadStructuredToken(input, "forward delay"),
+            ReadStructuredUint32(input, "system ID"),
+        });
+    }
+
+    ReadStructuredSection(input, "LINKS", count);
+    config.links.reserve(count);
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        config.links.push_back(UbStructuredLinkConfig{
+            ReadStructuredUint32(input, "first link node"),
+            ReadStructuredUint32(input, "first link port"),
+            ReadStructuredUint32(input, "second link node"),
+            ReadStructuredUint32(input, "second link port"),
+            ReadStructuredToken(input, "link bandwidth"),
+            ReadStructuredToken(input, "link delay"),
+        });
+    }
+
+    ReadStructuredSection(input, "TABLE", count);
+    config.tableRouteCount = count;
+    std::unique_ptr<UbNextHopIndexBuilder> tableBuilder;
+    if (count != 0)
+    {
+        tableBuilder = std::make_unique<UbNextHopIndexBuilder>(config.nodes.size(), count);
+    }
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        UbStructuredTableRoute route{
+            ReadStructuredUint32(input, "table current node"),
+            ReadStructuredUint32(input, "table destination node"),
+            ReadStructuredUint32(input, "table destination port"),
+            ReadStructuredPortList(input, "shortest table ports"),
+            ReadStructuredPortList(input, "non-shortest table ports"),
+        };
+        NS_ABORT_MSG_IF(route.currentNodeId >= config.nodes.size() ||
+                            route.destinationNodeId >= config.nodes.size(),
+                        "structured table route references an unknown node");
+        const auto& current = config.nodes[route.currentNodeId];
+        const auto& destination = config.nodes[route.destinationNodeId];
+        NS_ABORT_MSG_IF(current.nodeId != route.currentNodeId ||
+                            destination.nodeId != route.destinationNodeId,
+                        "structured table streaming requires node IDs in canonical order");
+        NS_ABORT_MSG_IF(route.destinationPortId >= destination.portCount,
+                        "structured table route destination port is outside the node port count");
+        auto validatePorts = [&](const std::vector<uint16_t>& ports) {
+            for (uint16_t port : ports)
+            {
+                NS_ABORT_MSG_IF(
+                    port >= current.portCount,
+                    "structured table route output port is outside the node port count");
+            }
+        };
+        validatePorts(route.shortestPorts);
+        validatePorts(route.nonShortestPorts);
+        tableBuilder->AddRoute(route);
+    }
+    if (tableBuilder != nullptr)
+    {
+        config.tableNextHopIndex = tableBuilder->Build();
+    }
+
+    ReadStructuredSection(input, "PORT_GROUPS", count);
+    config.portGroups.reserve(count);
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        config.portGroups.push_back(UbPortGroup{
+            ReadStructuredUint32(input, "port-group node"),
+            ReadStructuredUint32(input, "port-group ID"),
+            ReadStructuredPortList(input, "port-group ports"),
+        });
+    }
+
+    ReadStructuredSection(input, "RULES", count);
+    config.routingRules.reserve(count);
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        config.routingRules.push_back(UbRoutingRule{
+            ReadStructuredUint32(input, "rule current node"),
+            UbRuleDestination{
+                ReadStructuredUint32(input, "rule destination node"),
+                ReadStructuredUint32(input, "rule destination port"),
+            },
+            ReadStructuredUint32List(input, "shortest rule groups"),
+            ReadStructuredUint32List(input, "non-shortest rule groups"),
+        });
+    }
+
+    if (version >= 2)
+    {
+        ReadStructuredSection(input, "RULE_RANGES", count);
+        config.routingRangeRules.reserve(count);
+        for (uint32_t index = 0; index < count; ++index)
+        {
+            config.routingRangeRules.push_back(UbRoutingRangeRule{
+                ReadStructuredUint32(input, "range-rule current node"),
+                ReadStructuredUint32(input, "range-rule destination start node"),
+                ReadStructuredUint32(input, "range-rule destination end node"),
+                ReadStructuredUint32(input, "range-rule destination port"),
+                ReadStructuredUint32List(input, "shortest range-rule groups"),
+                ReadStructuredUint32List(input, "non-shortest range-rule groups"),
+            });
+        }
+    }
+
+    if (version >= 3)
+    {
+        auto parseRuleType = [](const std::string& value) {
+            if (value == "dimension")
+            {
+                return UbTopologyRuleType::DIMENSION;
+            }
+            if (value == "direct-switch")
+            {
+                return UbTopologyRuleType::DIRECT_SWITCH;
+            }
+            if (value == "two-level-switch")
+            {
+                return UbTopologyRuleType::TWO_LEVEL_SWITCH;
+            }
+            if (value == "dragonfly")
+            {
+                return UbTopologyRuleType::DRAGONFLY;
+            }
+            NS_ABORT_MSG("unknown topology rule type: " << value);
+            return UbTopologyRuleType::DIMENSION;
+        };
+        auto parseConnection = [](const std::string& value) {
+            if (value == "line")
+            {
+                return UbDimensionConnection::LINE;
+            }
+            if (value == "ring")
+            {
+                return UbDimensionConnection::RING;
+            }
+            if (value == "fullMesh")
+            {
+                return UbDimensionConnection::FULL_MESH;
+            }
+            NS_ABORT_MSG("unknown dimension connection: " << value);
+            return UbDimensionConnection::LINE;
+        };
+
+        ReadStructuredSection(input, "TOPOLOGY_RULES", count);
+        config.topologyRules.reserve(count);
+        for (uint32_t index = 0; index < count; ++index)
+        {
+            const UbTopologyRuleType type =
+                parseRuleType(ReadStructuredToken(input, "topology rule type"));
+            std::vector<uint32_t> shape = ReadStructuredUint32List(input, "topology rule shape");
+            const auto connectionTokens =
+                ReadStructuredTokenList(input, "topology rule connections");
+            std::vector<UbDimensionConnection> connections;
+            connections.reserve(connectionTokens.size());
+            std::transform(connectionTokens.begin(),
+                           connectionTokens.end(),
+                           std::back_inserter(connections),
+                           parseConnection);
+            const uint32_t nodeCount = ReadStructuredUint32(input, "topology rule node count");
+            std::vector<UbTopologyRuleNode> nodes;
+            nodes.reserve(nodeCount);
+            for (uint32_t nodeIndex = 0; nodeIndex < nodeCount; ++nodeIndex)
+            {
+                const uint32_t nodeId = ReadStructuredUint32(input, "topology rule node ID");
+                const std::string nodeType = ReadStructuredToken(input, "topology rule node type");
+                NS_ABORT_MSG_IF(nodeType != "HOST" && nodeType != "SWITCH",
+                                "unknown topology rule node type: " << nodeType);
+                nodes.push_back(UbTopologyRuleNode{
+                    nodeId,
+                    nodeType == "HOST",
+                    ReadStructuredUint32List(input, "topology rule coordinates"),
+                });
+            }
+            config.topologyRules.push_back(UbTopologyRule{
+                type,
+                std::move(shape),
+                std::move(connections),
+                std::move(nodes),
+            });
+        }
+    }
+
+    const std::string end = ReadStructuredToken(input, "protocol terminator");
+    NS_ABORT_MSG_IF(end != "END", "structured topology expected END, got " << end);
+    std::string trailing;
+    NS_ABORT_MSG_IF(input >> trailing, "structured topology contains data after END: " << trailing);
+    return config;
+}
+
 // 读取拓扑文件
 void
 UbUtils::CreateTopo(const string& filename)
@@ -2189,20 +2473,16 @@ UbUtils::CreateTopo(const string& filename)
 UbUtils::LinkDelayOffsetStats
 UbUtils::CreateTopo(const string& filename, Time offsetWindow, uint32_t offsetSeed)
 {
-    NS_ABORT_MSG_IF(offsetWindow.IsStrictlyNegative(),
-                    "link delay offset window must be non-negative");
-    LinkDelayOffsetStats offsetStats;
-    std::unordered_map<int64_t, uint64_t> slotOccupancy;
-
     PrintTimestamp("[setup] Load " + DisplayFilename(filename));
     ifstream file(filename);
     if (!file.is_open())
         NS_ASSERT_MSG(0, "Can not open File: " << filename);
     string line;
     getline(file, line);
+    std::vector<UbStructuredLinkConfig> links;
     // node1,port1,node2,port2,bandwidth,delay 0,0,2,0,400Gbps,10ns
-    while (getline(file, line)) {
-        vector<string> row;
+    while (getline(file, line))
+    {
         stringstream ss(line);
         // 跳过空行、#开头行、纯空格行
         if (line.empty() || line[0] == '#' || line.find_first_not_of(" \t") == string::npos) {
@@ -2227,21 +2507,49 @@ UbUtils::CreateTopo(const string& filename, Time offsetWindow, uint32_t offsetSe
         bandwidth = TrimFieldCopy(cell);
         getline(ss, cell, ',');
         delay = TrimFieldCopy(cell);
-        Ptr<Node> n1 = NodeList::GetNode(node1);
-        Ptr<Node> n2 = NodeList::GetNode(node2);
+        links.push_back(UbStructuredLinkConfig{node1, port1, node2, port2, bandwidth, delay});
+    }
+    file.close();
+    return CreateTopo(links, offsetWindow, offsetSeed);
+}
 
-        Ptr<UbPort> p1 = DynamicCast<UbPort>(n1->GetDevice(port1));
-        Ptr<UbPort> p2 = DynamicCast<UbPort>(n2->GetDevice(port2));
-        p1->SetDataRate(DataRate(bandwidth));
-        p2->SetDataRate(DataRate(bandwidth));
-        const Time baseDelay(delay);
+UbUtils::LinkDelayOffsetStats
+UbUtils::CreateTopo(const std::vector<UbStructuredLinkConfig>& links,
+                    Time offsetWindow,
+                    uint32_t offsetSeed)
+{
+    NS_ABORT_MSG_IF(offsetWindow.IsStrictlyNegative(),
+                    "link delay offset window must be non-negative");
+    LinkDelayOffsetStats offsetStats;
+    std::unordered_map<int64_t, uint64_t> slotOccupancy;
+    std::set<std::pair<uint32_t, uint32_t>> usedEndpoints;
+
+    for (const auto& link : links)
+    {
+        NS_ABORT_MSG_IF(link.node1 >= NodeList::GetNNodes() || link.node2 >= NodeList::GetNNodes(),
+                        "structured topology link references an unknown node");
+        Ptr<Node> n1 = NodeList::GetNode(link.node1);
+        Ptr<Node> n2 = NodeList::GetNode(link.node2);
+        NS_ABORT_MSG_IF(link.port1 >= n1->GetNDevices() || link.port2 >= n2->GetNDevices(),
+                        "structured topology link references a port outside the node port count");
+        NS_ABORT_MSG_IF(!usedEndpoints.emplace(link.node1, link.port1).second ||
+                            !usedEndpoints.emplace(link.node2, link.port2).second,
+                        "structured topology physical port is connected more than once");
+
+        Ptr<UbPort> p1 = DynamicCast<UbPort>(n1->GetDevice(link.port1));
+        Ptr<UbPort> p2 = DynamicCast<UbPort>(n2->GetDevice(link.port2));
+        NS_ABORT_MSG_IF(p1 == nullptr || p2 == nullptr,
+                        "structured topology link endpoint is not a unified-bus port");
+        p1->SetDataRate(DataRate(link.bandwidth));
+        p2->SetDataRate(DataRate(link.bandwidth));
+        const Time baseDelay(link.delay);
         const Time effectiveDelay = ResolveLinkDelayWithOffset(baseDelay,
                                                                offsetWindow,
                                                                offsetSeed,
-                                                               node1,
-                                                               port1,
-                                                               node2,
-                                                               port2);
+                                                               link.node1,
+                                                               link.port1,
+                                                               link.node2,
+                                                               link.port2);
         if (baseDelay.IsZero())
         {
             ++offsetStats.zeroDelayLinkCount;
@@ -2267,8 +2575,6 @@ UbUtils::CreateTopo(const string& filename, Time offsetWindow, uint32_t offsetSe
             swCaqm->ResetLocalCc();
         }
     }
-    file.close();
-
     if (offsetWindow.IsStrictlyPositive())
     {
         offsetStats.distinctOffsetCount = slotOccupancy.size();
@@ -2336,34 +2642,57 @@ void UbUtils::CreateNode(const string &filename)
         ParseNodeRange(nodeEle.nodeIdStr, nodeEle);
     }
     file.close();
-    // 创建节点
-    for (auto it: nodeEle_map) {
-        string nodeIdStr = it.second.nodeIdStr;
-        string nodeTypeStr = it.second.nodeTypeStr;
-        string portNumStr = it.second.portNumStr;
-        string forwardDelay = it.second.forwardDelay;
-        string allocationDelay = it.second.allocationDelay;
-        string systemIdStr = it.second.systemIdStr;
-        int portNum = stoi(portNumStr);
-        uint32_t systemId = systemIdStr.empty() ? 0 : static_cast<uint32_t>(stoul(systemIdStr));
-        Ptr<Node> node = CreateObject<Node>(systemId);
+
+    std::vector<UbStructuredNodeConfig> nodes;
+    nodes.reserve(nodeEle_map.size());
+    for (const auto& [nodeId, nodeEle] : nodeEle_map)
+    {
+        nodes.push_back(UbStructuredNodeConfig{
+            nodeId,
+            nodeEle.nodeTypeStr,
+            static_cast<uint32_t>(stoul(nodeEle.portNumStr)),
+            nodeEle.allocationDelay,
+            nodeEle.forwardDelay,
+            nodeEle.systemIdStr.empty() ? 0 : static_cast<uint32_t>(stoul(nodeEle.systemIdStr)),
+        });
+    }
+    CreateNode(nodes);
+}
+
+void
+UbUtils::CreateNode(const std::vector<UbStructuredNodeConfig>& nodes)
+{
+    const uint32_t firstNodeId = NodeList::GetNNodes();
+    for (std::size_t index = 0; index < nodes.size(); ++index)
+    {
+        const auto& nodeConfig = nodes[index];
+        NS_ABORT_MSG_IF(nodeConfig.nodeId != firstNodeId + index,
+                        "node IDs must be consecutive and continue from the current NodeList");
+
+        Ptr<Node> node = CreateObject<Node>(nodeConfig.systemId);
         Ptr<UbSwitch> sw = CreateObject<UbSwitch>();
         node->AggregateObject(sw);
         Ptr<ns3::UbLdstInstance> ldst = CreateObject<UbLdstInstance>();
         node->AggregateObject(ldst);
         ldst->Init(node->GetId());
-        if (nodeTypeStr == "DEVICE") {
+        if (nodeConfig.nodeType == "DEVICE")
+        {
             Ptr<UbController> ubCtrl = CreateObject<UbController>();
             node->AggregateObject(ubCtrl);
             ubCtrl->CreateUbFunction();
             ubCtrl->CreateUbTransaction();
             sw->SetNodeType(UB_DEVICE);
-        } else if (nodeTypeStr == "SWITCH") {
-            sw->SetNodeType(UB_SWITCH);
-        } else {
-            NS_ASSERT_MSG(0, "node type not support");
         }
-        for (int i = 0; i < portNum; i++) {
+        else if (nodeConfig.nodeType == "SWITCH")
+        {
+            sw->SetNodeType(UB_SWITCH);
+        }
+        else
+        {
+            NS_ABORT_MSG("unsupported structured topology node type: " << nodeConfig.nodeType);
+        }
+        for (uint32_t portId = 0; portId < nodeConfig.portCount; ++portId)
+        {
             Ptr<UbPort> port = CreateObject<UbPort>();
             port->SetAddress(Mac48Address::Allocate());
             node->AddDevice(port);
@@ -2371,12 +2700,14 @@ void UbUtils::CreateNode(const string &filename)
         sw->Init();
         auto cc = UbCongestionControl::Create(UB_SWITCH);
         cc->OnSwitchAttached(sw);
-        if (!forwardDelay.empty()) {
-            sw->SetAttribute("InPortProcessingDelay", StringValue(forwardDelay));
+        if (!nodeConfig.forwardDelay.empty())
+        {
+            sw->SetAttribute("InPortProcessingDelay", StringValue(nodeConfig.forwardDelay));
         }
-        if (!allocationDelay.empty()) {
+        if (!nodeConfig.allocationDelay.empty())
+        {
             auto allocator = sw->GetAllocator();
-            allocator->SetAttribute("AllocationTime", StringValue(allocationDelay));
+            allocator->SetAttribute("AllocationTime", StringValue(nodeConfig.allocationDelay));
         }
     }
 }
@@ -2455,6 +2786,9 @@ void UbUtils::AddRoutingTable(const string &filename)
                                              routeValue});
     }
     ValidateRouteRangeRowsNoConflicts(rangeRows);
+
+    // The runtime keeps only the minimum-metric ports and one combined non-shortest group.
+    // TODO: Preserve numeric metrics if a future routing policy needs more than these two groups.
     for (const auto& row : rangeRows) {
         const uint32_t nodeStart = row.nodeStart;
         const uint32_t nodeEnd = row.nodeEnd;
@@ -2500,6 +2834,304 @@ void UbUtils::AddRoutingTable(const string &filename)
         }
     }
     file.close();
+}
+
+void
+UbUtils::AddRoutingTable(const std::vector<UbStructuredTableRoute>& routes)
+{
+    if (routes.empty())
+    {
+        return;
+    }
+    for (const auto& route : routes)
+    {
+        NS_ABORT_MSG_IF(route.currentNodeId >= NodeList::GetNNodes() ||
+                            route.destinationNodeId >= NodeList::GetNNodes(),
+                        "structured table route references an unknown node");
+        Ptr<Node> current = NodeList::GetNode(route.currentNodeId);
+        Ptr<Node> destination = NodeList::GetNode(route.destinationNodeId);
+        NS_ABORT_MSG_IF(route.destinationPortId >= destination->GetNDevices(),
+                        "structured table route destination port is outside the node port count");
+        NS_ABORT_MSG_IF(
+            route.destinationPortId >= BYTE_RANGE - 1,
+            "structured table route destination port cannot be encoded in the UB address");
+        NS_ABORT_MSG_IF(route.shortestPorts.empty() && route.nonShortestPorts.empty(),
+                        "structured table route must contain at least one output port");
+
+        auto validatePorts = [&](const std::vector<uint16_t>& ports) {
+            for (uint16_t port : ports)
+            {
+                NS_ABORT_MSG_IF(
+                    port >= current->GetNDevices(),
+                    "structured table route output port is outside the node port count");
+            }
+        };
+        validatePorts(route.shortestPorts);
+        validatePorts(route.nonShortestPorts);
+    }
+
+    const auto nextHopIndex = ns3::UbNextHopIndex::Build(routes, NodeList::GetNNodes());
+    for (uint32_t nodeId = 0; nodeId < NodeList::GetNNodes(); ++nodeId)
+    {
+        auto routing = NodeList::GetNode(nodeId)->GetObject<UbSwitch>()->GetRoutingProcess();
+        routing->SetNextHopIndex(nextHopIndex);
+    }
+}
+
+void
+UbUtils::AddRuleRoutingTable(const std::string& portGroupFilename,
+                             const std::string& ruleFilename,
+                             const std::string& rangeRuleFilename)
+{
+    PrintTimestamp("[setup] Load " + DisplayFilename(portGroupFilename));
+    std::ifstream portGroupFile(portGroupFilename);
+    NS_ABORT_MSG_IF(!portGroupFile.is_open(), "Can not open File: " << portGroupFilename);
+
+    auto parseValues = [](const std::string& field) {
+        std::vector<uint32_t> values;
+        std::stringstream stream(field);
+        uint32_t value;
+        while (stream >> value)
+        {
+            values.push_back(value);
+        }
+        return values;
+    };
+
+    std::vector<UbPortGroup> portGroups;
+    std::string line;
+    std::getline(portGroupFile, line);
+    while (std::getline(portGroupFile, line))
+    {
+        if (line.empty())
+        {
+            continue;
+        }
+        std::stringstream row(line);
+        std::string nodeField;
+        std::string groupField;
+        std::string portsField;
+        std::getline(row, nodeField, ',');
+        std::getline(row, groupField, ',');
+        std::getline(row, portsField, ',');
+        const auto portValues = parseValues(portsField);
+        std::vector<uint16_t> ports;
+        ports.reserve(portValues.size());
+        for (uint32_t port : portValues)
+        {
+            NS_ABORT_MSG_IF(port > std::numeric_limits<uint16_t>::max(),
+                            "routing port group contains an invalid port");
+            ports.push_back(static_cast<uint16_t>(port));
+        }
+        portGroups.push_back(UbPortGroup{
+            static_cast<uint32_t>(std::stoul(nodeField)),
+            static_cast<uint32_t>(std::stoul(groupField)),
+            std::move(ports),
+        });
+    }
+
+    PrintTimestamp("[setup] Load " + DisplayFilename(ruleFilename));
+    std::ifstream ruleFile(ruleFilename);
+    NS_ABORT_MSG_IF(!ruleFile.is_open(), "Can not open File: " << ruleFilename);
+    std::vector<UbRoutingRule> routingRules;
+    std::getline(ruleFile, line);
+    while (std::getline(ruleFile, line))
+    {
+        if (line.empty())
+        {
+            continue;
+        }
+        std::stringstream row(line);
+        std::array<std::string, 5> fields;
+        for (size_t index = 0; index < fields.size(); ++index)
+        {
+            std::getline(row, fields[index], ',');
+        }
+        routingRules.push_back(UbRoutingRule{
+            static_cast<uint32_t>(std::stoul(fields[0])),
+            UbRuleDestination{
+                static_cast<uint32_t>(std::stoul(fields[1])),
+                static_cast<uint32_t>(std::stoul(fields[2])),
+            },
+            parseValues(fields[3]),
+            parseValues(fields[4]),
+        });
+    }
+
+    std::vector<UbRoutingRangeRule> routingRangeRules;
+    if (!rangeRuleFilename.empty())
+    {
+        PrintTimestamp("[setup] Load " + DisplayFilename(rangeRuleFilename));
+        std::ifstream rangeRuleFile(rangeRuleFilename);
+        NS_ABORT_MSG_IF(!rangeRuleFile.is_open(), "Can not open File: " << rangeRuleFilename);
+        std::getline(rangeRuleFile, line);
+        while (std::getline(rangeRuleFile, line))
+        {
+            if (line.empty())
+            {
+                continue;
+            }
+            std::stringstream row(line);
+            std::array<std::string, 6> fields;
+            for (size_t index = 0; index < fields.size(); ++index)
+            {
+                std::getline(row, fields[index], ',');
+            }
+            routingRangeRules.push_back(UbRoutingRangeRule{
+                static_cast<uint32_t>(std::stoul(fields[0])),
+                static_cast<uint32_t>(std::stoul(fields[1])),
+                static_cast<uint32_t>(std::stoul(fields[2])),
+                static_cast<uint32_t>(std::stoul(fields[3])),
+                parseValues(fields[4]),
+                parseValues(fields[5]),
+            });
+        }
+    }
+    AddRuleRoutingTable(portGroups, routingRules, routingRangeRules);
+}
+
+void
+UbUtils::AddRuleRoutingTable(const std::vector<UbPortGroup>& portGroups,
+                             const std::vector<UbRoutingRule>& routingRules,
+                             const std::vector<UbRoutingRangeRule>& routingRangeRules,
+                             const std::vector<UbTopologyLink>& topologyLinks,
+                             const std::vector<UbTopologyRule>& topologyRules)
+{
+    if (portGroups.empty() && routingRules.empty() && routingRangeRules.empty() &&
+        topologyRules.empty())
+    {
+        return;
+    }
+
+    auto ruleTable = std::make_shared<UbRuleRoutingTable>();
+    for (const auto& portGroup : portGroups)
+    {
+        NS_ABORT_MSG_IF(portGroup.nodeId >= NodeList::GetNNodes(),
+                        "structured port group references an unknown node");
+        const uint32_t portCount = NodeList::GetNode(portGroup.nodeId)->GetNDevices();
+        for (uint16_t port : portGroup.ports)
+        {
+            NS_ABORT_MSG_IF(port >= portCount,
+                            "structured port group contains a port outside the node port count");
+        }
+        ruleTable->AddPortGroup(portGroup);
+    }
+    for (const auto& rule : routingRules)
+    {
+        NS_ABORT_MSG_IF(rule.currentNodeId >= NodeList::GetNNodes() ||
+                            rule.destination.nodeId >= NodeList::GetNNodes(),
+                        "structured routing rule references an unknown node");
+        if (rule.destination.portId != UbRuleDestination::ANY_PORT)
+        {
+            NS_ABORT_MSG_IF(
+                rule.destination.portId >=
+                    NodeList::GetNode(rule.destination.nodeId)->GetNDevices(),
+                "structured routing rule destination port is outside the node port count");
+            NS_ABORT_MSG_IF(
+                rule.destination.portId >= BYTE_RANGE - 1,
+                "structured routing rule destination port cannot be encoded in the UB address");
+        }
+        ruleTable->AddRule(rule);
+    }
+    for (const auto& rule : routingRangeRules)
+    {
+        NS_ABORT_MSG_IF(rule.currentNodeId >= NodeList::GetNNodes() ||
+                            rule.destinationStartNodeId > rule.destinationEndNodeId ||
+                            rule.destinationEndNodeId >= NodeList::GetNNodes(),
+                        "structured routing range references an invalid node range");
+        if (rule.destinationPortId != UbRuleDestination::ANY_PORT)
+        {
+            NS_ABORT_MSG_IF(
+                rule.destinationPortId >= BYTE_RANGE - 1,
+                "structured routing range destination port cannot be encoded in the UB address");
+            for (uint32_t destinationNodeId = rule.destinationStartNodeId;
+                 destinationNodeId <= rule.destinationEndNodeId;
+                 ++destinationNodeId)
+            {
+                NS_ABORT_MSG_IF(
+                    rule.destinationPortId >= NodeList::GetNode(destinationNodeId)->GetNDevices(),
+                    "structured routing range destination port is outside a node port count");
+            }
+        }
+        ruleTable->AddRangeRule(rule);
+    }
+    for (const auto& link : topologyLinks)
+    {
+        NS_ABORT_MSG_IF(link.node1 >= NodeList::GetNNodes() || link.node2 >= NodeList::GetNNodes(),
+                        "topology routing link references an unknown node");
+        NS_ABORT_MSG_IF(link.port1 >= NodeList::GetNode(link.node1)->GetNDevices() ||
+                            link.port2 >= NodeList::GetNode(link.node2)->GetNDevices(),
+                        "topology routing link references an invalid port");
+        ruleTable->AddTopologyLink(link);
+    }
+    for (const auto& rule : topologyRules)
+    {
+        for (const auto& node : rule.nodes)
+        {
+            NS_ABORT_MSG_IF(node.nodeId >= NodeList::GetNNodes(),
+                            "topology rule references an unknown node");
+            const bool isHost =
+                NodeList::GetNode(node.nodeId)->GetObject<UbSwitch>()->GetNodeType() == UB_DEVICE;
+            NS_ABORT_MSG_IF(isHost != node.isHost,
+                            "topology rule node type differs from the installed node");
+        }
+        ruleTable->AddTopologyRule(rule);
+    }
+    ruleTable->PrepareForLookup();
+
+    for (uint32_t nodeId = 0; nodeId < NodeList::GetNNodes(); ++nodeId)
+    {
+        auto routing = NodeList::GetNode(nodeId)->GetObject<UbSwitch>()->GetRoutingProcess();
+        routing->SetRuleRoutingTable(ruleTable);
+    }
+}
+
+UbUtils::LinkDelayOffsetStats
+UbUtils::InstallStructuredTopology(const UbStructuredTopologyConfig& config,
+                                   Time offsetWindow,
+                                   uint32_t offsetSeed)
+{
+    NS_ABORT_MSG_IF(NodeList::GetNNodes() != 0,
+                    "structured topology installation requires an empty NodeList");
+    NS_ABORT_MSG_IF(config.nodes.empty(), "structured topology must contain at least one node");
+    PrintTimestamp("[setup] Install structured topology and routing");
+    CreateNode(config.nodes);
+    const LinkDelayOffsetStats offsetStats = CreateTopo(config.links, offsetWindow, offsetSeed);
+    if (config.tableNextHopIndex != nullptr)
+    {
+        for (uint32_t nodeId = 0; nodeId < NodeList::GetNNodes(); ++nodeId)
+        {
+            auto routing = NodeList::GetNode(nodeId)->GetObject<UbSwitch>()->GetRoutingProcess();
+            routing->SetNextHopIndex(config.tableNextHopIndex);
+        }
+    }
+    else
+    {
+        AddRoutingTable(config.tableRoutes);
+    }
+    std::vector<UbTopologyLink> topologyLinks;
+    if (!config.topologyRules.empty())
+    {
+        topologyLinks.reserve(config.links.size());
+        for (const auto& link : config.links)
+        {
+            NS_ABORT_MSG_IF(link.port1 > std::numeric_limits<uint16_t>::max() ||
+                                link.port2 > std::numeric_limits<uint16_t>::max(),
+                            "topology routing cannot encode a physical port above uint16 range");
+            topologyLinks.push_back(UbTopologyLink{
+                link.node1,
+                static_cast<uint16_t>(link.port1),
+                link.node2,
+                static_cast<uint16_t>(link.port2),
+            });
+        }
+    }
+    AddRuleRoutingTable(config.portGroups,
+                        config.routingRules,
+                        config.routingRangeRules,
+                        topologyLinks,
+                        config.topologyRules);
+    return offsetStats;
 }
 
 // 读取TP配置文件
