@@ -47,6 +47,7 @@ struct QuickExampleOptions
     uint32_t stopMs = 0;
     uint32_t rngRun = 10;
     std::string configPath;
+    std::string structuredTopologyFile;
     std::string dependencyVisibilityDelay;
     std::string initialTaskStartOffsetWindow = "0ps";
     std::string linkDelayOffsetWindow = "0ps";
@@ -398,13 +399,14 @@ ParseOffsetWindow(const std::string& value, const char* optionName)
     return window;
 }
 
-void ValidateCasePathOrExit(const std::string& configPath)
+void
+ValidateCasePathOrExit(const std::string& configPath, const std::string& structuredTopologyFile)
 {
-    static const std::array<const char*, 5> kRequiredCaseFiles = {"network_attribute.txt",
-                                                                   "node.csv",
-                                                                   "topology.csv",
-                                                                   "routing_table.csv",
-                                                                   "traffic.csv"};
+    static const std::array<const char*, 2> kSharedCaseFiles = {"network_attribute.txt",
+                                                                "traffic.csv"};
+    static const std::array<const char*, 3> kCsvTopologyFiles = {"node.csv",
+                                                                 "topology.csv",
+                                                                 "routing_table.csv"};
 
     const std::filesystem::path caseDir(configPath);
     if (!std::filesystem::exists(caseDir))
@@ -418,14 +420,46 @@ void ValidateCasePathOrExit(const std::string& configPath)
         std::exit(1);
     }
 
-    for (const char* filename : kRequiredCaseFiles)
-    {
-        const std::filesystem::path requiredFile = caseDir / filename;
-        if (!std::filesystem::exists(requiredFile))
+    auto requireFiles = [&](const auto& filenames) {
+        for (const char* filename : filenames)
         {
-            std::cerr << "missing required case file: " << requiredFile.string() << std::endl;
+            const std::filesystem::path requiredFile = caseDir / filename;
+            if (!std::filesystem::exists(requiredFile))
+            {
+                std::cerr << "missing required case file: " << requiredFile.string() << std::endl;
+                std::exit(1);
+            }
+        }
+    };
+    requireFiles(kSharedCaseFiles);
+    if (!structuredTopologyFile.empty())
+    {
+        const std::filesystem::path topologyFile(structuredTopologyFile);
+        if (!std::filesystem::is_regular_file(topologyFile))
+        {
+            std::cerr << "structured topology file does not exist: " << topologyFile.string()
+                      << std::endl;
             std::exit(1);
         }
+        return;
+    }
+    requireFiles(kCsvTopologyFiles);
+
+    const bool hasPortGroups = std::filesystem::exists(caseDir / "routing_port_groups.csv");
+    const bool hasRules = std::filesystem::exists(caseDir / "routing_rules.csv");
+    const bool hasRangeRules = std::filesystem::exists(caseDir / "routing_rule_ranges.csv");
+    if (hasPortGroups != hasRules)
+    {
+        std::cerr << "routing_port_groups.csv and routing_rules.csv must be provided together"
+                  << std::endl;
+        std::exit(1);
+    }
+    if (hasRangeRules && !hasPortGroups)
+    {
+        std::cerr
+            << "routing_rule_ranges.csv requires routing_port_groups.csv and routing_rules.csv"
+            << std::endl;
+        std::exit(1);
     }
 }
 
@@ -437,11 +471,37 @@ BuildScenarioFromConfig(const QuickExampleOptions& options, const RuntimeSelecti
         ParseOffsetWindow(options.linkDelayOffsetWindow, "--link-delay-offset-window");
     UbUtils::Get()->SetComponentsAttribute(configPath + "/network_attribute.txt");
     UbUtils::Get()->CreateTraceDir();
-    UbUtils::Get()->CreateNode(configPath + "/node.csv");
-    const auto offsetStats = UbUtils::Get()->CreateTopo(configPath + "/topology.csv",
-                                                        linkOffsetWindow,
-                                                        options.timingOffsetSeed);
-    UbUtils::Get()->AddRoutingTable(configPath + "/routing_table.csv");
+    UbUtils::LinkDelayOffsetStats offsetStats;
+    if (!options.structuredTopologyFile.empty())
+    {
+        std::ifstream structuredInput(options.structuredTopologyFile);
+        NS_ABORT_MSG_IF(!structuredInput.is_open(),
+                        "cannot open structured topology file: " << options.structuredTopologyFile);
+        const auto structuredConfig = UbUtils::ReadStructuredTopologyConfig(structuredInput);
+        offsetStats = UbUtils::Get()->InstallStructuredTopology(structuredConfig,
+                                                                linkOffsetWindow,
+                                                                options.timingOffsetSeed);
+    }
+    else
+    {
+        UbUtils::Get()->CreateNode(configPath + "/node.csv");
+        offsetStats = UbUtils::Get()->CreateTopo(configPath + "/topology.csv",
+                                                 linkOffsetWindow,
+                                                 options.timingOffsetSeed);
+        UbUtils::Get()->AddRoutingTable(configPath + "/routing_table.csv");
+        const std::filesystem::path portGroups =
+            std::filesystem::path(configPath) / "routing_port_groups.csv";
+        const std::filesystem::path rules = std::filesystem::path(configPath) / "routing_rules.csv";
+        const std::filesystem::path rangeRules =
+            std::filesystem::path(configPath) / "routing_rule_ranges.csv";
+        if (std::filesystem::exists(portGroups))
+        {
+            UbUtils::Get()->AddRuleRoutingTable(
+                portGroups.string(),
+                rules.string(),
+                std::filesystem::exists(rangeRules) ? rangeRules.string() : "");
+        }
+    }
     UbUtils::Get()->CreateTp(configPath + "/transport_channel.csv");
     UbUtils::Get()->TopoTraceConnect();
 
@@ -688,6 +748,9 @@ QuickExampleOptions ParseOptions(int argc, char* argv[])
               "  node.csv:    allocationDelay maps to AllocationTime; forwardDelay maps to "
               "InPortProcessingDelay; legacy 4-column forwardDelay maps to AllocationTime.\n");
     cmd.AddValue("test", "Enable regression-test style output", options.test);
+    cmd.AddValue("structured-topology-file",
+                 "Read prepared topology and compiled routing from this file",
+                 options.structuredTopologyFile);
     cmd.AddValue("mtp-threads",
                  "Number of MTP threads (0-1 to disable, >=2 to enable)",
                  options.mtpThreads);
@@ -733,7 +796,7 @@ QuickExampleOptions ParseOptions(int argc, char* argv[])
         std::exit(1);
     }
     options.configPath = NormalizeCasePath(options.configPath);
-    ValidateCasePathOrExit(options.configPath);
+    ValidateCasePathOrExit(options.configPath, options.structuredTopologyFile);
 
     return options;
 }
@@ -831,9 +894,19 @@ PhaseTiming RunScenario(const QuickExampleOptions& options,
     EnableExampleLogging();
 
     UbUtils::Get()->PrintTimestamp("[case] Run case: " + options.configPath);
-    UbUtils::Get()->PrintTimestamp(
-        "[case] node.csv delay fields: allocationDelay -> AllocationTime; "
-        "forwardDelay -> InPortProcessingDelay; legacy 4-column forwardDelay -> AllocationTime.");
+    if (!options.structuredTopologyFile.empty())
+    {
+        UbUtils::Get()->PrintTimestamp(
+            "[case] Structured topology input: allocationDelay -> AllocationTime; "
+            "forwardDelay -> InPortProcessingDelay.");
+    }
+    else
+    {
+        UbUtils::Get()->PrintTimestamp(
+            "[case] node.csv delay fields: allocationDelay -> AllocationTime; "
+            "forwardDelay -> InPortProcessingDelay; legacy 4-column forwardDelay -> "
+            "AllocationTime.");
+    }
     RngSeedManager::SetSeed(options.rngRun);
 
     timing.simulationStart = std::chrono::high_resolution_clock::now();

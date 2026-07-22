@@ -2,44 +2,95 @@
 #ifndef UTILS_H
 #define UTILS_H
 
-#include <iostream>
-#include <sstream>
-#include <chrono>
-#include <functional>
-#include <map>
-#include <fstream>
-#include <mutex>
-#include <tuple>
-#include <vector>
+#include "ub-tp-connection-manager.h"
+
+#include "ns3/config-store.h"
 #include "ns3/core-module.h"
-#include "ns3/singleton.h"
-#include "ns3/ub-transaction.h"
-#include "ns3/ub-controller.h"
-#include "ns3/ub-transport.h"
-#include "ns3/ub-link.h"
-#include "ns3/ub-port.h"
-#include "ns3/ptr.h"
+#include "ns3/enum.h"
+#include "ns3/internet-module.h"
+#include "ns3/ipv4-static-routing-helper.h"
+#include "ns3/network-module.h"
 #include "ns3/object-factory.h"
+#include "ns3/point-to-point-module.h"
+#include "ns3/ptr.h"
+#include "ns3/random-variable-stream.h"
+#include "ns3/singleton.h"
+#include "ns3/ub-app.h"
+#include "ns3/ub-caqm.h"
+#include "ns3/ub-controller.h"
+#include "ns3/ub-fault.h"
+#include "ns3/ub-link.h"
+#include "ns3/ub-network-address.h"
+#include "ns3/ub-port.h"
+#include "ns3/ub-rule-routing.h"
 #include "ns3/ub-switch.h"
 #include "ns3/ub-traffic-gen.h"
-#include "ns3/ub-app.h"
-#include "ns3/network-module.h"
-#include "ns3/internet-module.h"
-#include "ns3/point-to-point-module.h"
-#include "ns3/ipv4-static-routing-helper.h"
-#include "ns3/config-store.h"
-#include "ns3/ub-caqm.h"
-#include "ns3/ub-network-address.h"
-#include "ub-tp-connection-manager.h"
-#include "ns3/random-variable-stream.h"
-#include "ns3/enum.h"
-#include "ns3/ub-fault.h"
+#include "ns3/ub-transaction.h"
+#include "ns3/ub-transport.h"
+
+#include <chrono>
+#include <fstream>
+#include <functional>
+#include <iostream>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <sstream>
+#include <tuple>
+#include <vector>
 
 class UbLinkDelayOffsetTest;
+
+namespace ns3
+{
+class UbNextHopIndex;
+}
 
 namespace utils {
 class UbTraceFileConcurrencyTest;
 class UbQueueSamplerEventRetentionTest;
+
+struct UbStructuredNodeConfig
+{
+    uint32_t nodeId;
+    std::string nodeType;
+    uint32_t portCount;
+    std::string allocationDelay;
+    std::string forwardDelay;
+    uint32_t systemId{0};
+};
+
+struct UbStructuredLinkConfig
+{
+    uint32_t node1;
+    uint32_t port1;
+    uint32_t node2;
+    uint32_t port2;
+    std::string bandwidth;
+    std::string delay;
+};
+
+struct UbStructuredTableRoute
+{
+    uint32_t currentNodeId;
+    uint32_t destinationNodeId;
+    uint32_t destinationPortId;
+    std::vector<uint16_t> shortestPorts;
+    std::vector<uint16_t> nonShortestPorts;
+};
+
+struct UbStructuredTopologyConfig
+{
+    std::vector<UbStructuredNodeConfig> nodes;
+    std::vector<UbStructuredLinkConfig> links;
+    std::vector<UbStructuredTableRoute> tableRoutes;
+    uint64_t tableRouteCount{0};
+    std::shared_ptr<const ns3::UbNextHopIndex> tableNextHopIndex;
+    std::vector<ns3::UbPortGroup> portGroups;
+    std::vector<ns3::UbRoutingRule> routingRules;
+    std::vector<ns3::UbRoutingRangeRule> routingRangeRules;
+    std::vector<ns3::UbTopologyRule> topologyRules;
+};
 /**
  *  @brief UbUtils单例类
  */
@@ -67,6 +118,8 @@ public:
 
     // Config-driven builder surface used by ub-quick-example and white-box tests.
     void CreateNode(const std::string &filename);
+
+    void CreateNode(const std::vector<UbStructuredNodeConfig>& nodes);
 
     // Loads traffic records and initializes phase-dependency state in UbTrafficGen.
     std::vector<TrafficRecord> LoadTrafficConfig(const std::string &filename);
@@ -105,7 +158,29 @@ public:
                                     ns3::Time offsetWindow,
                                     uint32_t offsetSeed);
 
+    LinkDelayOffsetStats CreateTopo(const std::vector<UbStructuredLinkConfig>& links,
+                                    ns3::Time offsetWindow,
+                                    uint32_t offsetSeed);
+
     void AddRoutingTable(const std::string &filename);
+
+    void AddRoutingTable(const std::vector<UbStructuredTableRoute>& routes);
+
+    void AddRuleRoutingTable(const std::string& portGroupFilename,
+                             const std::string& ruleFilename,
+                             const std::string& rangeRuleFilename = "");
+
+    void AddRuleRoutingTable(const std::vector<ns3::UbPortGroup>& portGroups,
+                             const std::vector<ns3::UbRoutingRule>& routingRules,
+                             const std::vector<ns3::UbRoutingRangeRule>& routingRangeRules = {},
+                             const std::vector<ns3::UbTopologyLink>& topologyLinks = {},
+                             const std::vector<ns3::UbTopologyRule>& topologyRules = {});
+
+    static UbStructuredTopologyConfig ReadStructuredTopologyConfig(std::istream& input);
+
+    LinkDelayOffsetStats InstallStructuredTopology(const UbStructuredTopologyConfig& config,
+                                                   ns3::Time offsetWindow,
+                                                   uint32_t offsetSeed);
 
     void CreateTp(const std::string &filename);
 

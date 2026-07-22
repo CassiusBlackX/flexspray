@@ -2,17 +2,20 @@
 #ifndef UB_ROUTING_PROCESS_H
 #define UB_ROUTING_PROCESS_H
 
-#include "ns3/ub-datatype.h"
 #include "ns3/node.h"
+#include "ns3/ub-datatype.h"
 
 #include <array>
 #include <map>
+#include <memory>
 #include <set>
 namespace ns3 {
 
 class UbQueueManager;
 class UbController;
+class UbNextHopIndex;
 class UbPacketQueue;
+class UbRuleRoutingTable;
 
 /**
  * @brief 查路由需要的相关参数
@@ -34,7 +37,13 @@ public:
     UbRoutingProcess();
     ~UbRoutingProcess() {}
     static TypeId GetTypeId(void);
-    void SetNodeId(uint32_t nodeId) {m_nodeId = nodeId;}
+    void SetNodeId(uint32_t nodeId)
+    {
+        m_nodeId = nodeId;
+    }
+
+    void SetNextHopIndex(std::shared_ptr<const UbNextHopIndex> nextHopIndex);
+    void SetRuleRoutingTable(std::shared_ptr<const UbRuleRoutingTable> ruleRoutingTable);
 
     // 添加路由条目
     void AddShortestRoute(const uint32_t destIP, const std::vector<uint16_t>& outPorts);
@@ -61,6 +70,10 @@ public:
     // 获取最短路径候选端口和非最短路径候选端口
     void GetShortestCandidates(uint32_t &dip, uint16_t inPortId, std::vector<uint16_t>& outPorts);
     void GetNonShortestCandidates(uint32_t &dip, uint16_t inPortId, std::vector<uint16_t>& outPorts);
+    bool TryGetRuleCandidates(uint32_t dip,
+                              uint16_t inPortId,
+                              std::vector<uint16_t>& shortestPorts,
+                              std::vector<uint16_t>& nonShortestPorts) const;
     int GetOutPort(RoutingKey &rtKey, bool &selectedShortestPath, uint16_t inPort = UINT16_MAX);
     int SelectOutPort(RoutingKey &rtKey, const std::vector<uint16_t>& shortestPorts, 
                       const std::vector<uint16_t>& nonShortestPorts, bool &selectedShortestPath,
@@ -106,6 +119,14 @@ private:
     bool GetRangeOutPortsFromMap(const RouteRangeMap& routeRanges,
                                  uint32_t nodeId,
                                  std::vector<uint16_t>& outPorts);
+    bool TryGetIndexedCandidates(uint32_t dip,
+                                 uint16_t inPortId,
+                                 std::vector<uint16_t>& shortestPorts,
+                                 std::vector<uint16_t>& nonShortestPorts) const;
+    bool TryGetIndexedCandidatesWithPrimaryFallback(uint32_t dip,
+                                                    uint16_t inPortId,
+                                                    std::vector<uint16_t>& shortestPorts,
+                                                    std::vector<uint16_t>& nonShortestPorts) const;
     void GetRangeOutPorts(const RouteRangeByPortMap& routeRangesByPort,
                           const uint32_t destIP,
                           std::vector<uint16_t>& outPorts);
@@ -118,7 +139,9 @@ private:
     std::unordered_map<uint32_t, std::shared_ptr<std::vector<uint16_t> > > m_rtOther;
     RouteRangeByPortMap m_rtShortestRanges;
     RouteRangeByPortMap m_rtOtherRanges;
-    
+    std::shared_ptr<const UbNextHopIndex> m_nextHopIndex;
+    std::shared_ptr<const UbRuleRoutingTable> m_ruleRoutingTable;
+
     // 辅助函数：标准化端口集合（排序去重）
     std::vector<uint16_t> normalizePorts(const std::vector<uint16_t>& ports)
     {
