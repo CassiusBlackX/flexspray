@@ -19,6 +19,13 @@ class UbCongestionControl;
 class UbController;
 class UbIngressQueue;
 
+struct UbTransportEndpointStorageSnapshot
+{
+    uint64_t liveBackingObjects{0};
+    uint64_t dormantRecords{0};
+    uint64_t backingRehydrations{0};
+};
+
 class UbTransportChannelManager : public Object
 {
   public:
@@ -54,6 +61,7 @@ class UbTransportChannelManager : public Object
     bool Contains(uint32_t tpn) const;
     uint32_t GetCount() const;
     std::map<uint32_t, Ptr<UbTransportChannel>> GetTpnMap() const;
+    UbTransportEndpointStorageSnapshot GetStorageSnapshot() const;
 
   private:
     enum class EndpointState : uint8_t
@@ -87,6 +95,7 @@ class UbTransportChannelManager : public Object
     UbController* m_controller{nullptr};
     std::map<uint32_t, EndpointRecord> m_endpoints;
     uint32_t m_transportsCount{0};
+    uint64_t m_backingRehydrations{0};
 };
 
 } // namespace ns3

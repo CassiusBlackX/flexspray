@@ -16093,6 +16093,14 @@ class UbLifecycleJettyLifetimeClassificationTest : public TestCase
                               taskScopedJettyNum,
                               UbJettyLifetime::TASK_SCOPED);
 
+        const UbJettyStorageSnapshot initialStorage = function->GetJettyStorageSnapshot();
+        NS_TEST_ASSERT_MSG_EQ(initialStorage.taskScopedJetties,
+                              1u,
+                              "Owner storage should count the task-scoped Jetty record");
+        NS_TEST_ASSERT_MSG_EQ(initialStorage.reusableJetties,
+                              2u,
+                              "Owner storage should count both reusable Jetty records");
+
         UbJettyLifetime lifetime = UbJettyLifetime::TASK_SCOPED;
         NS_TEST_ASSERT_MSG_EQ(function->TryGetJettyLifetime(boundJettyNum, lifetime),
                               true,
@@ -16130,6 +16138,13 @@ class UbLifecycleJettyLifetimeClassificationTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(lifetime),
                               static_cast<uint32_t>(UbJettyLifetime::REUSABLE),
                               "Replacement generation must not inherit the retired lifetime");
+        const UbJettyStorageSnapshot replacementStorage = function->GetJettyStorageSnapshot();
+        NS_TEST_ASSERT_MSG_EQ(replacementStorage.taskScopedJetties,
+                              0u,
+                              "Retired task-scoped records should not remain owner-resident");
+        NS_TEST_ASSERT_MSG_EQ(replacementStorage.reusableJetties,
+                              3u,
+                              "Replacement owner record should use its reusable lifetime");
 
         Simulator::Destroy();
         Config::Reset();
@@ -21035,6 +21050,15 @@ class UbTrafficDrivenReservationDoesNotRemoteCreateReceiverTpTest : public TestC
         NS_TEST_ASSERT_MSG_EQ(receiverCtrl->GetTransportChannelManager()->Contains(receiverTpn),
                               false,
                               "Receiver endpoint should not be materialized before packet arrival");
+        NS_TEST_ASSERT_MSG_NE(
+            receiverCtrl->GetTransportChannelManager()->CreateReservedTpEndpoint(receiverTpn),
+            nullptr,
+            "Explicit receiver demand should materialize the reserved endpoint");
+        const ConnectionStorageSnapshot fullyMaterializedStorage =
+            senderCtrl->GetTpConnManager()->GetConnectionStorageSnapshot();
+        NS_TEST_ASSERT_MSG_EQ(fullyMaterializedStorage.unmaterializedEndpointSlots,
+                              0u,
+                              "Materializing both endpoints should consume all reserved slots");
 
         Simulator::Destroy();
         Config::Reset();
@@ -21604,6 +21628,16 @@ class UbDormantTpBackingReclaimsAndResolvesSameGenerationTest : public TestCase
         Ptr<UbTransportChannel> first = manager->CreateReservedTpEndpoint(tpn);
         NS_TEST_ASSERT_MSG_NE(first, nullptr, "Reserved endpoint should materialize");
         const UbLifecycleResourceIdentity identity = first->GetLifecycleOwner();
+        const UbTransportEndpointStorageSnapshot initiallyLive = manager->GetStorageSnapshot();
+        NS_TEST_ASSERT_MSG_EQ(initiallyLive.liveBackingObjects,
+                              1u,
+                              "Initial materialization should expose one live backing object");
+        NS_TEST_ASSERT_MSG_EQ(initiallyLive.dormantRecords,
+                              0u,
+                              "Initial materialization should not expose a dormant record");
+        NS_TEST_ASSERT_MSG_EQ(initiallyLive.backingRehydrations,
+                              0u,
+                              "Initial materialization is not a backing rehydration");
 
         constexpr uint32_t directJettyNum = kUrmaWriteRegressionJettyNum + 101;
         Ptr<UbFunction> function = receiver->GetUbFunction();
@@ -21723,6 +21757,17 @@ class UbDormantTpBackingReclaimsAndResolvesSameGenerationTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(manager->GetTp(tpn),
                               nullptr,
                               "A dormant endpoint should have no live backing object");
+        const UbTransportEndpointStorageSnapshot dormant = manager->GetStorageSnapshot();
+        NS_TEST_ASSERT_MSG_EQ(dormant.liveBackingObjects,
+                              0u,
+                              "Dormant reclaim should release the live backing object");
+        NS_TEST_ASSERT_MSG_EQ(dormant.dormantRecords,
+                              1u,
+                              "Dormant reclaim should retain one logical endpoint record");
+        NS_TEST_ASSERT_MSG_EQ(
+            dormant.backingRehydrations,
+            1u,
+            "The earlier ordinary resolution should count one successful rehydration");
         NS_TEST_ASSERT_MSG_EQ(first->CanAdmitWqeSegment(CreateObject<UbWqeSegment>()),
                               false,
                               "Detached dormant backing must reject stale admissions");
@@ -21747,6 +21792,10 @@ class UbDormantTpBackingReclaimsAndResolvesSameGenerationTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(manager->GetTp(tpn),
                               nullptr,
                               "Rejected resolution must leave the record dormant");
+        const UbTransportEndpointStorageSnapshot rejected = manager->GetStorageSnapshot();
+        NS_TEST_ASSERT_MSG_EQ(rejected.backingRehydrations,
+                              dormant.backingRehydrations,
+                              "Wrong identities must not increment successful rehydrations");
         NS_TEST_ASSERT_MSG_EQ(receiver->GetUbTransaction()->GetTpRoundRobinIndexForTest(tpn),
                               7u,
                               "Dormant pointer replacement should preserve transaction RR phase");
@@ -21769,6 +21818,17 @@ class UbDormantTpBackingReclaimsAndResolvesSameGenerationTest : public TestCase
             second->GetLifecycleOwner(),
             identity,
             "Rehydration should preserve exact lifecycle identity and generation");
+        const UbTransportEndpointStorageSnapshot rehydrated = manager->GetStorageSnapshot();
+        NS_TEST_ASSERT_MSG_EQ(rehydrated.liveBackingObjects,
+                              1u,
+                              "Successful rehydration should publish one live backing object");
+        NS_TEST_ASSERT_MSG_EQ(rehydrated.dormantRecords,
+                              0u,
+                              "Successful rehydration should consume the dormant record");
+        NS_TEST_ASSERT_MSG_EQ(
+            rehydrated.backingRehydrations,
+            dormant.backingRehydrations + 1,
+            "Only the successful restore and publish should increment rehydrations");
         NS_TEST_ASSERT_MSG_EQ(second->GetPsnSndUnaForTest(),
                               41u,
                               "ACK continuity should survive dormancy");
@@ -21843,6 +21903,85 @@ class UbDormantTpBackingReclaimsAndResolvesSameGenerationTest : public TestCase
     UbLifecycleResourceIdentity m_destroyedIdentity;
     UbDestroyStatus m_destroyStatus{UbDestroyStatus::NOT_FOUND};
     uint32_t m_destroyCallbackCount{0};
+};
+
+class UbGlobalTpBackingPeakTracksConcurrentOwnersTest : public TestCase
+{
+  public:
+    UbGlobalTpBackingPeakTracksConcurrentOwnersTest()
+        : TestCase("UnifiedBus - global TP backing peak tracks concurrent owners")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Config::Reset();
+        utils::UbUtils::Get()->Destroy();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        Ptr<UbController> sender = topo.sender->GetObject<UbController>();
+        Ptr<UbController> receiver = topo.receiver->GetObject<UbController>();
+        sender->GetTpConnManager()->ReserveTpnsForTraffic(true,
+                                                          topo.sender->GetId(),
+                                                          topo.receiver->GetId(),
+                                                          kUrmaWriteRegressionPriority);
+        const auto senderTpns =
+            sender->GetTpConnManager()->GetTpnsByPeerNodePriority(topo.sender->GetId(),
+                                                                  topo.receiver->GetId(),
+                                                                  kUrmaWriteRegressionPriority);
+        const auto receiverTpns =
+            receiver->GetTpConnManager()->GetTpnsByPeerNodePriority(topo.receiver->GetId(),
+                                                                    topo.sender->GetId(),
+                                                                    kUrmaWriteRegressionPriority);
+        NS_TEST_ASSERT_MSG_EQ(senderTpns.size(), 1u, "Expected one sender reservation");
+        NS_TEST_ASSERT_MSG_EQ(receiverTpns.size(), 1u, "Expected one receiver reservation");
+
+        Ptr<UbTransportChannelManager> senderManager = sender->GetTransportChannelManager();
+        Ptr<UbTransportChannelManager> receiverManager = receiver->GetTransportChannelManager();
+        NS_TEST_ASSERT_MSG_NE(senderManager->CreateReservedTpEndpoint(senderTpns[0].first),
+                              nullptr,
+                              "Sender backing should materialize first");
+        utils::UbRuntimeStorageSnapshot snapshot = utils::UbUtils::CaptureRuntimeStorageSnapshot();
+        NS_TEST_ASSERT_MSG_EQ(snapshot.liveTpBackingObjects,
+                              1u,
+                              "Only the sender backing should be live initially");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.peakLiveTpBackingObjects,
+                              1u,
+                              "The first owner should establish a global peak of one");
+
+        NS_TEST_ASSERT_MSG_EQ(
+            senderManager->ReclaimBackingState(senderTpns[0].first),
+            true,
+            "The idle sender backing should reclaim before receiver materialization");
+        snapshot = utils::UbUtils::CaptureRuntimeStorageSnapshot();
+        NS_TEST_ASSERT_MSG_EQ(snapshot.liveTpBackingObjects,
+                              0u,
+                              "No backing should remain live between staggered owners");
+        NS_TEST_ASSERT_MSG_EQ(snapshot.peakLiveTpBackingObjects,
+                              1u,
+                              "Reclaim should preserve the prior global peak");
+
+        NS_TEST_ASSERT_MSG_NE(receiverManager->CreateReservedTpEndpoint(receiverTpns[0].first),
+                              nullptr,
+                              "Receiver backing should materialize after sender reclaim");
+        snapshot = utils::UbUtils::CaptureRuntimeStorageSnapshot();
+        NS_TEST_ASSERT_MSG_EQ(snapshot.liveTpBackingObjects,
+                              1u,
+                              "Only the receiver backing should be live after the stagger");
+        NS_TEST_ASSERT_MSG_EQ(
+            snapshot.peakLiveTpBackingObjects,
+            1u,
+            "Non-overlapping per-owner peaks must not be summed into a false global peak");
+
+        utils::UbUtils::Get()->Destroy();
+        Simulator::Destroy();
+        NS_TEST_ASSERT_MSG_EQ(
+            utils::UbUtils::GetPeakLiveTpBackingObjects(),
+            0u,
+            "Active teardown should reset the global peak after the final release");
+        utils::UbUtils::Get()->Destroy();
+        Config::Reset();
+    }
 };
 
 class UbDormantTpBackingPreservesCaqmStateTest : public TestCase
@@ -27421,6 +27560,7 @@ UbTpReservationTestSuite::UbTpReservationTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbDormantTpBackingReclaimsAndResolvesSameGenerationTest(),
                 TestCase::Duration::QUICK);
+    AddTestCase(new UbGlobalTpBackingPeakTracksConcurrentOwnersTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDormantTpBackingPreservesCaqmStateTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDwrrReclaimsEveryReleasedTpInOneRoundTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbExplicitConnectionDestroyAggregatesBothEndpointsTest(),
@@ -29061,6 +29201,14 @@ class UbQuickExampleRuntimeStorageSnapshotSystemTest : public TestCase
         NS_TEST_ASSERT_MSG_NE(csv.find("schema_version,category,metric,resource_kind,value\n"),
                               std::string::npos,
                               "Runtime storage snapshot should expose a versioned CSV schema");
+        std::istringstream rows(csv);
+        std::string row;
+        while (std::getline(rows, row))
+        {
+            NS_TEST_ASSERT_MSG_EQ(SplitCsvLine(row).size(),
+                                  5u,
+                                  "Every runtime storage snapshot row must retain five columns");
+        }
         NS_TEST_ASSERT_MSG_NE(csv.find("1,runtime,canonical_connections,,2\n"),
                               std::string::npos,
                               "The maintained case should retain two canonical connections");
@@ -29075,6 +29223,30 @@ class UbQuickExampleRuntimeStorageSnapshotSystemTest : public TestCase
         NS_TEST_ASSERT_MSG_NE(csv.find("1,runtime,resident_tp_endpoints,,4\n"),
                               std::string::npos,
                               "The maintained case should retain four materialized endpoints");
+        NS_TEST_ASSERT_MSG_NE(csv.find("1,runtime,reserved_endpoint_slots,,"),
+                              std::string::npos,
+                              "Runtime storage should expose unmaterialized reservation slots");
+        NS_TEST_ASSERT_MSG_NE(csv.find("1,runtime,live_tp_backing_objects,,"),
+                              std::string::npos,
+                              "Runtime storage should expose live TP backing objects");
+        NS_TEST_ASSERT_MSG_NE(csv.find("1,runtime,dormant_tp_records,,"),
+                              std::string::npos,
+                              "Runtime storage should expose dormant TP records");
+        NS_TEST_ASSERT_MSG_NE(csv.find("1,runtime,tp_backing_rehydrations,,"),
+                              std::string::npos,
+                              "Runtime storage should expose successful TP backing rehydrations");
+        NS_TEST_ASSERT_MSG_NE(csv.find("1,runtime,peak_live_tp_backing_objects,,"),
+                              std::string::npos,
+                              "Runtime storage should expose the live TP backing peak");
+        NS_TEST_ASSERT_MSG_NE(csv.find("1,runtime,task_scoped_jetties,,"),
+                              std::string::npos,
+                              "Runtime storage should expose task-scoped owner records");
+        NS_TEST_ASSERT_MSG_NE(csv.find("1,runtime,reusable_jetties,,"),
+                              std::string::npos,
+                              "Runtime storage should expose reusable owner records");
+        NS_TEST_ASSERT_MSG_NE(csv.find("1,runtime,simulator_event_count,,"),
+                              std::string::npos,
+                              "Runtime storage should expose the simulator event count");
         NS_TEST_ASSERT_MSG_NE(csv.find("1,traffic,stored_tasks,,4\n"),
                               std::string::npos,
                               "Traffic storage should retain the completed workload definition");

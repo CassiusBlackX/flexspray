@@ -51,6 +51,12 @@ namespace ns3 {
         uint32_t wqeId{0};
         UbWorkOutcome outcome{UbWorkOutcome::COMPLETED};
     };
+
+    struct UbJettyStorageSnapshot
+    {
+        uint64_t taskScopedJetties{0};
+        uint64_t reusableJetties{0};
+    };
     /**
     * @brief 管理jetty
     */
@@ -138,6 +144,7 @@ namespace ns3 {
         bool TryGetJettyLifetime(uint32_t jettyNum, UbJettyLifetime& lifetime) const;
         bool IsJettyDrainReady(uint32_t jettyNum) const;
         uint64_t GetResidentWqeCount() const;
+        UbJettyStorageSnapshot GetJettyStorageSnapshot() const;
         void RegisterJettyRtpBinding(
             uint32_t jettyNum,
             const UbLifecycleResourceIdentity& transportIdentity);
@@ -190,6 +197,7 @@ namespace ns3 {
         void NotifyProgress(uint32_t jettyNum);
         bool IsDrainReady(uint32_t jettyNum) const;
         uint64_t GetResidentWqeCount() const;
+        UbJettyStorageSnapshot GetStorageSnapshot() const;
         uint64_t TrackEvent(uint32_t jettyNum);
         void AttachEvent(uint32_t jettyNum,
                          uint64_t token,
