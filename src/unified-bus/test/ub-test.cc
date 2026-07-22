@@ -20743,6 +20743,26 @@ class UbTrafficDrivenReservationDoesNotRemoteCreateReceiverTpTest : public TestC
             topo.receiver->GetId(),
             topo.sender->GetId(),
             kUrmaWriteRegressionPriority);
+        const ConnectionStorageSnapshot reservedStorage =
+            senderCtrl->GetTpConnManager()->GetConnectionStorageSnapshot();
+        NS_TEST_ASSERT_MSG_EQ(reservedStorage.canonicalRecords,
+                              1u,
+                              "Reservation should create one canonical record");
+        NS_TEST_ASSERT_MSG_EQ(reservedStorage.unmaterializedReservationRecords,
+                              1u,
+                              "A fully reserved connection should remain compact");
+        NS_TEST_ASSERT_MSG_EQ(reservedStorage.unmaterializedEndpointSlots,
+                              2u,
+                              "A new reservation should expose two unmaterialized endpoint slots");
+        NS_TEST_ASSERT_MSG_EQ(reservedStorage.activeLifecycleSidecars,
+                              0u,
+                              "A reservation should not allocate active endpoint state");
+        NS_TEST_ASSERT_MSG_EQ(reservedStorage.destroyCallbackBundles,
+                              0u,
+                              "A reservation should not allocate callback collections");
+        NS_TEST_ASSERT_MSG_EQ(reservedStorage.destroyCallbackEntries,
+                              0u,
+                              "A reservation should not retain callback entries");
         NS_TEST_ASSERT_MSG_EQ(reservedSenderTpns.size(),
                               1u,
                               "Traffic load should reserve one sender TPN");
@@ -20771,6 +20791,21 @@ class UbTrafficDrivenReservationDoesNotRemoteCreateReceiverTpTest : public TestC
         NS_TEST_ASSERT_MSG_EQ(senderCtrl->GetTransportChannelManager()->Contains(senderTpns[0]),
                               true,
                               "Sender endpoint should be materialized by TP resolution");
+        const ConnectionStorageSnapshot senderMaterializedStorage =
+            senderCtrl->GetTpConnManager()->GetConnectionStorageSnapshot();
+        NS_TEST_ASSERT_MSG_EQ(
+            senderMaterializedStorage.unmaterializedReservationRecords,
+            0u,
+            "A partially materialized connection should no longer be fully compact");
+        NS_TEST_ASSERT_MSG_EQ(senderMaterializedStorage.unmaterializedEndpointSlots,
+                              1u,
+                              "Materializing the sender should leave one reserved receiver slot");
+        NS_TEST_ASSERT_MSG_EQ(senderMaterializedStorage.activeLifecycleSidecars,
+                              1u,
+                              "First materialization should allocate one lifecycle sidecar");
+        NS_TEST_ASSERT_MSG_EQ(senderMaterializedStorage.destroyCallbackBundles,
+                              0u,
+                              "Materialization alone should not allocate callback collections");
 
         NS_TEST_ASSERT_MSG_EQ(receiverTpns.size(),
                               1u,
@@ -21371,6 +21406,20 @@ class UbExplicitConnectionDestroyAggregatesBothEndpointsTest : public TestCase
         Ptr<UbTransportChannel> receiverTp =
             m_receiverController->GetTransportChannelManager()->CreateReservedTpEndpoint(m_connection.tpn2);
         NS_TEST_ASSERT_MSG_NE(receiverTp, nullptr, "Expected one materialized receiver endpoint");
+        const ConnectionStorageSnapshot materializedStorage =
+            m_senderManager->GetConnectionStorageSnapshot();
+        NS_TEST_ASSERT_MSG_EQ(materializedStorage.unmaterializedReservationRecords,
+                              0u,
+                              "A materialized connection should not count as fully compact");
+        NS_TEST_ASSERT_MSG_EQ(materializedStorage.unmaterializedEndpointSlots,
+                              0u,
+                              "Materializing both endpoints should leave no reserved-only slot");
+        NS_TEST_ASSERT_MSG_EQ(materializedStorage.activeLifecycleSidecars,
+                              1u,
+                              "Both endpoints should share one connection lifecycle sidecar");
+        NS_TEST_ASSERT_MSG_EQ(materializedStorage.destroyCallbackBundles,
+                              0u,
+                              "Materialization alone should not allocate callback collections");
         Ptr<UbTransportChannel> senderTp = m_senderController->GetTransportChannelManager()->GetTp(m_connection.tpn1);
         NS_TEST_ASSERT_MSG_NE(senderTp, nullptr, "Expected one materialized sender endpoint");
 
@@ -21411,6 +21460,14 @@ class UbExplicitConnectionDestroyAggregatesBothEndpointsTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(upgraded.reason),
                               static_cast<uint32_t>(UbDestroyReason::ERROR),
                               "A stronger repeated request should upgrade the destroy reason");
+        const ConnectionStorageSnapshot destroyingStorage =
+            m_senderManager->GetConnectionStorageSnapshot();
+        NS_TEST_ASSERT_MSG_EQ(destroyingStorage.destroyCallbackBundles,
+                              1u,
+                              "Pending destroy should allocate one callback bundle");
+        NS_TEST_ASSERT_MSG_EQ(destroyingStorage.destroyCallbackEntries,
+                              2u,
+                              "Repeated destroy should aggregate both callbacks lazily");
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_receiverManager->DestroyConnection(
                                   topo.receiver->GetId(),
                                   m_connection.tpn2,
@@ -21424,6 +21481,14 @@ class UbExplicitConnectionDestroyAggregatesBothEndpointsTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(upgraded.reason),
                               static_cast<uint32_t>(UbDestroyReason::ERROR),
                               "A weaker repeated request must not downgrade the destroy reason");
+        const ConnectionStorageSnapshot noCallbackStorage =
+            m_senderManager->GetConnectionStorageSnapshot();
+        NS_TEST_ASSERT_MSG_EQ(noCallbackStorage.destroyCallbackBundles,
+                              1u,
+                              "A destroy request without a callback should not allocate a bundle");
+        NS_TEST_ASSERT_MSG_EQ(noCallbackStorage.destroyCallbackEntries,
+                              2u,
+                              "A destroy request without a callback should not add an entry");
         NS_TEST_ASSERT_MSG_EQ(m_callbackCount,
                               0u,
                               "Connection callback must wait for both endpoint slots");

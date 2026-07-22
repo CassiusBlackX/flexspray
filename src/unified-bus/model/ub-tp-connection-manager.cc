@@ -112,16 +112,13 @@ TpConnectionManager::RegisterCanonicalConnectionLocked(Connection& conn)
         conn.reservationGeneration = existing->second.identity.generation;
         return;
     }
-    NS_ABORT_MSG_IF(m_nextConnectionGeneration == std::numeric_limits<uint64_t>::max(),
-                    "Connection lifecycle generation exhausted");
     ConnectionLifecycleRecord record;
     record.connection = conn;
-    record.generation = ++m_nextConnectionGeneration;
     record.identity = UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(conn.ownerNodeId))
                           ->OpenResource(UbLifecycleResourceKind::RTP_CONNECTION, ownerTpn);
     conn.reservationGeneration = record.identity.generation;
     record.connection = conn;
-    m_canonicalConnections.emplace(key, record);
+    m_canonicalConnections.emplace(key, std::move(record));
 }
 
 UbLifecycleResourceIdentity
@@ -593,12 +590,17 @@ TpConnectionManager::NotifyEndpointMaterializedLocked(uint32_t localNodeId,
     const auto it = m_canonicalConnections.find({localNodeId, localTpn});
     if (it != m_canonicalConnections.end())
     {
-        if (it->second.destroyRequested)
+        if (it->second.lifecycle == nullptr)
+        {
+            it->second.lifecycle = std::make_unique<ConnectionLifecycleSidecar>();
+        }
+        ConnectionLifecycleSidecar& lifecycle = *it->second.lifecycle;
+        if (lifecycle.destroyRequested)
         {
             state = EndpointSlotState::DRAINING;
         }
-        it->second.slot1 = state;
-        it->second.slot1Materialized = true;
+        lifecycle.slot1 = state;
+        lifecycle.slot1Materialized = true;
         return true;
     }
     for (auto& [key, record] : m_canonicalConnections)
@@ -606,12 +608,17 @@ TpConnectionManager::NotifyEndpointMaterializedLocked(uint32_t localNodeId,
         (void)key;
         if (record.connection.node2 == localNodeId && record.connection.tpn2 == localTpn)
         {
-            if (record.destroyRequested)
+            if (record.lifecycle == nullptr)
+            {
+                record.lifecycle = std::make_unique<ConnectionLifecycleSidecar>();
+            }
+            ConnectionLifecycleSidecar& lifecycle = *record.lifecycle;
+            if (lifecycle.destroyRequested)
             {
                 state = EndpointSlotState::DRAINING;
             }
-            record.slot2 = state;
-            record.slot2Materialized = true;
+            lifecycle.slot2 = state;
+            lifecycle.slot2Materialized = true;
             return true;
         }
     }
@@ -710,39 +717,52 @@ TpConnectionManager::DestroyConnectionOwned(const UbLifecycleResourceIdentity& i
             return UbDestroyStatus::NOT_FOUND;
         }
         ConnectionLifecycleRecord& record = it->second;
-        if (!callback.IsNull())
+        connection = record.connection;
+        if (record.lifecycle == nullptr)
         {
-            record.callbacks.push_back(callback);
+            record.lifecycle = std::make_unique<ConnectionLifecycleSidecar>();
         }
-        if (requestId != 0)
+        ConnectionLifecycleSidecar& lifecycle = *record.lifecycle;
+        if (!callback.IsNull() || requestId != 0)
         {
-            record.remoteCallbacks.emplace_back(callbackNodeId, requestId);
-        }
-        if (record.destroyRequested)
-        {
-            if (static_cast<uint8_t>(reason) > static_cast<uint8_t>(record.reason))
+            if (lifecycle.callbackBundle == nullptr)
             {
-                record.reason = reason;
+                lifecycle.callbackBundle = std::make_unique<DestroyCallbackBundle>();
+            }
+            if (!callback.IsNull())
+            {
+                lifecycle.callbackBundle->callbacks.push_back(callback);
+            }
+            if (requestId != 0)
+            {
+                lifecycle.callbackBundle->remoteCallbacks.emplace_back(callbackNodeId, requestId);
+            }
+        }
+        if (lifecycle.destroyRequested)
+        {
+            if (static_cast<uint8_t>(reason) > static_cast<uint8_t>(lifecycle.reason))
+            {
+                lifecycle.reason = reason;
             }
             return UbDestroyStatus::PENDING;
         }
-        record.destroyRequested = true;
-        record.reason = reason;
-        connection = record.connection;
-        active1 = record.slot1Materialized;
-        active2 = record.slot2Materialized;
+        lifecycle.destroyRequested = true;
+        lifecycle.reason = reason;
+        active1 = lifecycle.slot1Materialized;
+        active2 = lifecycle.slot2Materialized;
     }
 
     {
         std::lock_guard<std::mutex> lock(m_stateLock);
         ConnectionLifecycleRecord& record =
             m_canonicalConnections.at({m_ownerNodeId, ownerTpn});
-        record.slot1 = active1 ? EndpointSlotState::DRAINING
-                               : (active2 ? EndpointSlotState::DRAINING
-                                          : EndpointSlotState::RETIRED);
-        record.slot2 = active2 ? EndpointSlotState::DRAINING
-                               : (active1 ? EndpointSlotState::DRAINING
-                                          : EndpointSlotState::RETIRED);
+        ConnectionLifecycleSidecar& lifecycle = *record.lifecycle;
+        lifecycle.slot1 =
+            active1 ? EndpointSlotState::DRAINING
+                    : (active2 ? EndpointSlotState::DRAINING : EndpointSlotState::RETIRED);
+        lifecycle.slot2 =
+            active2 ? EndpointSlotState::DRAINING
+                    : (active1 ? EndpointSlotState::DRAINING : EndpointSlotState::RETIRED);
     }
 
     RequestDestroyNotice(connection, identity, 1, reason, active1);
@@ -835,22 +855,25 @@ TpConnectionManager::OnEndpointDestroyed(const UbLifecycleResourceIdentity& iden
             return;
         }
         ConnectionLifecycleRecord& record = it->second;
+        NS_ABORT_MSG_IF(record.lifecycle == nullptr,
+                        "Endpoint destroy completed without lifecycle state");
+        ConnectionLifecycleSidecar& lifecycle = *record.lifecycle;
         if (slot == 1)
         {
-            record.slot1 = EndpointSlotState::RETIRED;
-            record.slot1Materialized = false;
-            if (record.slot2 == EndpointSlotState::DRAINING && !record.slot2Materialized)
+            lifecycle.slot1 = EndpointSlotState::RETIRED;
+            lifecycle.slot1Materialized = false;
+            if (lifecycle.slot2 == EndpointSlotState::DRAINING && !lifecycle.slot2Materialized)
             {
-                record.slot2 = EndpointSlotState::RETIRED;
+                lifecycle.slot2 = EndpointSlotState::RETIRED;
             }
         }
         else
         {
-            record.slot2 = EndpointSlotState::RETIRED;
-            record.slot2Materialized = false;
-            if (record.slot1 == EndpointSlotState::DRAINING && !record.slot1Materialized)
+            lifecycle.slot2 = EndpointSlotState::RETIRED;
+            lifecycle.slot2Materialized = false;
+            if (lifecycle.slot1 == EndpointSlotState::DRAINING && !lifecycle.slot1Materialized)
             {
-                record.slot1 = EndpointSlotState::RETIRED;
+                lifecycle.slot1 = EndpointSlotState::RETIRED;
             }
         }
     }
@@ -865,14 +888,14 @@ TpConnectionManager::TryFinalizeConnection(const UbLifecycleResourceIdentity& id
         std::lock_guard<std::mutex> lock(m_stateLock);
         auto it = m_canonicalConnections.find(
             {m_ownerNodeId, static_cast<uint32_t>(identity.localId)});
-        if (it == m_canonicalConnections.end() || it->second.finalizing ||
-            it->second.identity != identity ||
-            it->second.slot1 != EndpointSlotState::RETIRED ||
-            it->second.slot2 != EndpointSlotState::RETIRED)
+        if (it == m_canonicalConnections.end() || it->second.identity != identity ||
+            it->second.lifecycle == nullptr || it->second.lifecycle->finalizing ||
+            it->second.lifecycle->slot1 != EndpointSlotState::RETIRED ||
+            it->second.lifecycle->slot2 != EndpointSlotState::RETIRED)
         {
             return;
         }
-        it->second.finalizing = true;
+        it->second.lifecycle->finalizing = true;
         connection = it->second.connection;
     }
 
@@ -905,12 +928,12 @@ TpConnectionManager::OnConnectionViewErased(const UbLifecycleResourceIdentity& i
         auto record = m_canonicalConnections.find(
             {m_ownerNodeId, static_cast<uint32_t>(identity.localId)});
         if (record == m_canonicalConnections.end() || record->second.identity != identity ||
-            !record->second.finalizing)
+            record->second.lifecycle == nullptr || !record->second.lifecycle->finalizing)
         {
             return;
         }
-        record->second.erasedViews |= slot == 1 ? 1 : 2;
-        complete = record->second.erasedViews == 3;
+        record->second.lifecycle->erasedViews |= slot == 1 ? 1 : 2;
+        complete = record->second.lifecycle->erasedViews == 3;
     }
     if (complete)
     {
@@ -928,12 +951,15 @@ TpConnectionManager::CompleteFinalizeConnection(const UbLifecycleResourceIdentit
         auto record = m_canonicalConnections.find(
             {m_ownerNodeId, static_cast<uint32_t>(identity.localId)});
         if (record == m_canonicalConnections.end() || record->second.identity != identity ||
-            record->second.erasedViews != 3)
+            record->second.lifecycle == nullptr || record->second.lifecycle->erasedViews != 3)
         {
             return;
         }
-        callbacks = record->second.callbacks;
-        remoteCallbacks = record->second.remoteCallbacks;
+        if (record->second.lifecycle->callbackBundle != nullptr)
+        {
+            callbacks = record->second.lifecycle->callbackBundle->callbacks;
+            remoteCallbacks = record->second.lifecycle->callbackBundle->remoteCallbacks;
+        }
     }
     UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(identity.ownerNodeId))
         ->RetireResource(identity);
@@ -1171,15 +1197,18 @@ TpConnectionManager::GetConnectionLifecycleSnapshot(uint32_t localTpn,
     }
     const ConnectionLifecycleRecord& record = it->second;
     snapshot.ownerNodeId = m_ownerNodeId;
-    snapshot.generation = record.generation;
+    snapshot.generation = record.identity.generation;
     snapshot.node1 = record.connection.node1;
     snapshot.tpn1 = record.connection.tpn1;
     snapshot.node2 = record.connection.node2;
     snapshot.tpn2 = record.connection.tpn2;
-    snapshot.slot1 = record.slot1;
-    snapshot.slot2 = record.slot2;
-    snapshot.destroyRequested = record.destroyRequested;
-    snapshot.reason = record.reason;
+    snapshot.slot1 =
+        record.lifecycle == nullptr ? EndpointSlotState::UNMATERIALIZED : record.lifecycle->slot1;
+    snapshot.slot2 =
+        record.lifecycle == nullptr ? EndpointSlotState::UNMATERIALIZED : record.lifecycle->slot2;
+    snapshot.destroyRequested = record.lifecycle != nullptr && record.lifecycle->destroyRequested;
+    snapshot.reason =
+        record.lifecycle == nullptr ? UbDestroyReason::EXPLICIT : record.lifecycle->reason;
     return true;
 }
 
@@ -1210,6 +1239,28 @@ TpConnectionManager::GetConnectionStorageSnapshot() const
     countEntries(m_peerNodePriorityIndex);
     countEntries(m_peerNodeLocalPortIndex);
     countEntries(m_bothPortsIndex);
+    for (const auto& [key, record] : m_canonicalConnections)
+    {
+        (void)key;
+        if (record.lifecycle == nullptr)
+        {
+            ++snapshot.unmaterializedReservationRecords;
+            snapshot.unmaterializedEndpointSlots += 2;
+            continue;
+        }
+        ++snapshot.activeLifecycleSidecars;
+        snapshot.unmaterializedEndpointSlots +=
+            record.lifecycle->slot1 == EndpointSlotState::UNMATERIALIZED ? 1 : 0;
+        snapshot.unmaterializedEndpointSlots +=
+            record.lifecycle->slot2 == EndpointSlotState::UNMATERIALIZED ? 1 : 0;
+        if (record.lifecycle->callbackBundle != nullptr)
+        {
+            ++snapshot.destroyCallbackBundles;
+            snapshot.destroyCallbackEntries +=
+                record.lifecycle->callbackBundle->callbacks.size() +
+                record.lifecycle->callbackBundle->remoteCallbacks.size();
+        }
+    }
     return snapshot;
 }
 
