@@ -266,12 +266,12 @@ void UbLdstInstance::RegisterPacketBirth(Ptr<Packet> packet)
         ->RegisterPacketAttempt(m_lifecycleOwner, packet);
 }
 
-size_t UbLdstInstance::GetActiveTaskCountForTest() const
+size_t UbLdstInstance::GetActiveTaskCount() const
 {
     return m_taskToSegmentMap.size();
 }
 
-size_t UbLdstInstance::GetActiveSegmentCountForTest() const
+size_t UbLdstInstance::GetActiveSegmentCount() const
 {
     return m_taskSegmentsMap.size();
 }

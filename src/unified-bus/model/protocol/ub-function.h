@@ -125,6 +125,7 @@ namespace ns3 {
                                           UbLifecycleResourceIdentity& identity) const;
         bool TryGetJettyState(uint32_t jettyNum, UbJettyLifecycleState& state) const;
         bool IsJettyDrainReady(uint32_t jettyNum) const;
+        uint64_t GetResidentWqeCount() const;
         void RegisterJettyRtpBinding(
             uint32_t jettyNum,
             const UbLifecycleResourceIdentity& transportIdentity);
@@ -175,6 +176,7 @@ namespace ns3 {
                                      UbDestroyCallback callback);
         void NotifyProgress(uint32_t jettyNum);
         bool IsDrainReady(uint32_t jettyNum) const;
+        uint64_t GetResidentWqeCount() const;
         uint64_t TrackEvent(uint32_t jettyNum);
         void AttachEvent(uint32_t jettyNum,
                          uint64_t token,

@@ -189,7 +189,11 @@ public:
 
     bool GetConnectionLifecycleSnapshot(uint32_t localTpn,
                                         ConnectionLifecycleSnapshot& snapshot) const;
-    size_t GetCanonicalConnectionCountForTest() const;
+    size_t GetCanonicalConnectionCount() const;
+    size_t GetCanonicalConnectionCountForTest() const
+    {
+        return GetCanonicalConnectionCount();
+    }
 
     // 清空指定节点的连接
     void ClearNodeConnections(uint32_t nodeId);

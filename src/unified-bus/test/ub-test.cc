@@ -18044,6 +18044,20 @@ class UbLifecycleRetiredStorageTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(storage.activeLeaseCount,
                               0u,
                               "Balanced retired resources should retain no lease nodes");
+        const auto wqeStorage = storage.byKind.find(UbLifecycleResourceKind::WQE);
+        const bool hasWqeStorage = wqeStorage != storage.byKind.end();
+        NS_TEST_ASSERT_MSG_EQ(hasWqeStorage,
+                              true,
+                              "Storage snapshot should attribute retired WQE history by kind");
+        NS_TEST_ASSERT_MSG_EQ(wqeStorage->second.resourceCount,
+                              kResourceCount,
+                              "Per-kind resource count should preserve compact WQE history");
+        NS_TEST_ASSERT_MSG_EQ(wqeStorage->second.compactHistoryRunCount,
+                              1u,
+                              "Per-kind storage should expose the compact WQE history run");
+        NS_TEST_ASSERT_MSG_EQ(wqeStorage->second.activeStateCount,
+                              0u,
+                              "Retired WQE history should own no per-kind active state");
         std::cout << "T25_STORAGE resources=" << storage.resourceCount
                   << " active_states=" << storage.activeStateCount
                   << " retained_summaries=" << storage.retainedSummaryCount
@@ -21574,6 +21588,25 @@ class UbTraceWriterBoundedTest : public TestCase
         UbUtils::AppendTraceInfoNoTs(first, largeA);
         UbUtils::AppendTraceInfoNoTs(UbUtils::ResolveTraceSink(secondFile.string()), largeB);
         UbUtils::AppendTraceInfoNoTs(UbUtils::ResolveTraceSink(tailFile.string()), tail);
+
+        const UbTraceWriterStorageSnapshot writerSnapshot =
+            UbUtils::GetTraceWriterStorageSnapshot();
+        NS_TEST_ASSERT_MSG_EQ(writerSnapshot.ownerCount,
+                              1u,
+                              "Writer snapshot should report the active execution owner");
+        NS_TEST_ASSERT_MSG_EQ(writerSnapshot.fileCount,
+                              3u,
+                              "Writer snapshot should report every resolved trace sink");
+        NS_TEST_ASSERT_MSG_EQ(writerSnapshot.currentBufferedBytes,
+                              UbUtils::trace_owners.at(Simulator::GetSystemId()).bufferedBytes,
+                              "Writer snapshot should report current owner-buffered bytes");
+        NS_TEST_ASSERT_MSG_EQ(
+            writerSnapshot.maxOwnerBufferedBytes,
+            writerSnapshot.currentBufferedBytes,
+            "Single-owner snapshot should report that owner's current bytes as max");
+        NS_TEST_ASSERT_MSG_EQ(writerSnapshot.pressureFlushCount,
+                              1u,
+                              "Writer snapshot should preserve cumulative pressure flushes");
 
         auto& owner = UbUtils::trace_owners.at(Simulator::GetSystemId());
         NS_TEST_ASSERT_MSG_EQ(owner.chunks.size(),
@@ -27820,6 +27853,70 @@ class UbQuickExampleOptionalTransportChannelSystemTest : public TestCase
                               "ub-quick-example should accept case directories without transport_channel.csv");
     }
 };
+
+class UbQuickExampleRuntimeStorageSnapshotSystemTest : public TestCase
+{
+  public:
+    UbQuickExampleRuntimeStorageSnapshotSystemTest()
+        : TestCase("UnifiedBus - ub-quick-example writes an explicit runtime storage snapshot")
+    {
+    }
+
+    void DoRun() override
+    {
+        SetDataDir(NS_TEST_SOURCEDIR);
+        const std::filesystem::path snapshotPath =
+            CreateSafeTempBasename("ub-runtime-storage-snapshot").replace_extension(".csv");
+        auto [status, output] =
+            RunQuickExampleCommand(CreateTempDirFilename(GetName() + ".log"),
+                                   "--runtime-storage-snapshot=\"" + snapshotPath.string() + "\"",
+                                   "",
+                                   "scratch/2nodes_single-tp");
+
+        NS_TEST_ASSERT_MSG_EQ(
+            status,
+            0,
+            "ub-quick-example should write a requested runtime storage snapshot: " << output);
+        std::ifstream input(snapshotPath);
+        std::ostringstream contents;
+        contents << input.rdbuf();
+        const std::string csv = contents.str();
+        NS_TEST_ASSERT_MSG_NE(csv.find("schema_version,category,metric,resource_kind,value\n"),
+                              std::string::npos,
+                              "Runtime storage snapshot should expose a versioned CSV schema");
+        NS_TEST_ASSERT_MSG_NE(csv.find("1,runtime,canonical_connections,,2\n"),
+                              std::string::npos,
+                              "The maintained case should retain two canonical connections");
+        NS_TEST_ASSERT_MSG_NE(csv.find("1,runtime,resident_tp_endpoints,,4\n"),
+                              std::string::npos,
+                              "The maintained case should retain four materialized endpoints");
+        NS_TEST_ASSERT_MSG_NE(csv.find("1,traffic,stored_tasks,,4\n"),
+                              std::string::npos,
+                              "Traffic storage should retain the completed workload definition");
+        NS_TEST_ASSERT_MSG_NE(csv.find("1,traffic,completed_tasks,,4\n"),
+                              std::string::npos,
+                              "Traffic state should expose the completed task separately");
+        NS_TEST_ASSERT_MSG_NE(csv.find("1,lifecycle,resource_count,RTP_CONNECTION,2\n"),
+                              std::string::npos,
+                              "Lifecycle storage should attribute the connection resource by kind");
+
+        std::error_code ec;
+        std::filesystem::remove(snapshotPath, ec);
+    }
+};
+
+class UbRuntimeStorageSnapshotSystemTestSuite : public TestSuite
+{
+  public:
+    UbRuntimeStorageSnapshotSystemTestSuite()
+        : TestSuite("unified-bus-runtime-storage-snapshot", Type::SYSTEM)
+    {
+        AddTestCase(new UbQuickExampleRuntimeStorageSnapshotSystemTest(),
+                    TestCase::Duration::QUICK);
+    }
+};
+
+static UbRuntimeStorageSnapshotSystemTestSuite g_ubRuntimeStorageSnapshotSystemTestSuite;
 
 class UbQuickExampleLegacyNetworkAttributeHintSystemTest : public TestCase
 {

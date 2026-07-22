@@ -998,7 +998,7 @@ uint32_t UbTrafficGen::GetCompletedTaskCount() const
 }
 
 uint64_t
-UbTrafficGen::GetDependencyReferenceCountForTesting() const
+UbTrafficGen::GetDependencyReferenceCount() const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     uint64_t referenceCount = 0;
@@ -1023,7 +1023,7 @@ UbTrafficGen::IsUsingDenseTaskStoreForTesting() const
 }
 
 uint32_t
-UbTrafficGen::GetStoredTaskCountForTesting() const
+UbTrafficGen::GetStoredTaskCount() const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (!m_useDenseTaskStore) {

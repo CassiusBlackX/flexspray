@@ -147,6 +147,10 @@ public:
 
     uint32_t GetCompletedTaskCount() const;
 
+    uint32_t GetStoredTaskCount() const;
+
+    uint64_t GetDependencyReferenceCount() const;
+
     /**
      * @brief 任务完成回调
      */
@@ -290,13 +294,19 @@ public:
 
     void SetPendingPhaseCountLocked(uint32_t taskId, uint32_t count);
 
-    uint64_t GetDependencyReferenceCountForTesting() const;
+    uint64_t GetDependencyReferenceCountForTesting() const
+    {
+        return GetDependencyReferenceCount();
+    }
 
     uint32_t GetPendingPhaseCountForTesting(uint32_t taskId) const;
 
     bool IsUsingDenseTaskStoreForTesting() const;
 
-    uint32_t GetStoredTaskCountForTesting() const;
+    uint32_t GetStoredTaskCountForTesting() const
+    {
+        return GetStoredTaskCount();
+    }
 
     std::vector<uint32_t> CollectReadyTaskIdsForTesting();
 

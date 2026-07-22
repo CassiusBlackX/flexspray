@@ -321,6 +321,12 @@ UbFunction::IsJettyDrainReady(uint32_t jettyNum) const
     return m_jettyManager->IsDrainReady(jettyNum);
 }
 
+uint64_t
+UbFunction::GetResidentWqeCount() const
+{
+    return m_jettyManager == nullptr ? 0 : m_jettyManager->GetResidentWqeCount();
+}
+
 void
 UbFunction::RegisterJettyRtpBinding(
     uint32_t jettyNum,
@@ -602,6 +608,18 @@ UbJettyManager::IsDrainReady(uint32_t jettyNum) const
 {
     const auto it = m_records.find(jettyNum);
     return it != m_records.end() && IsDrainReady(it->second);
+}
+
+uint64_t
+UbJettyManager::GetResidentWqeCount() const
+{
+    uint64_t count = 0;
+    for (const auto& [jettyNum, record] : m_records)
+    {
+        (void)jettyNum;
+        count += record.wqes.size();
+    }
+    return count;
 }
 
 uint64_t
