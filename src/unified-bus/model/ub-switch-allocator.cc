@@ -56,7 +56,12 @@ TypeId UbSwitchAllocator::GetTypeId(void)
                       "Latency of the switch allocation pipeline per scheduling round.",
                       TimeValue(NanoSeconds(10)),
                       MakeTimeAccessor(&UbSwitchAllocator::m_allocationTime),
-                      MakeTimeChecker());
+                      MakeTimeChecker())
+        .AddAttribute("EnableDirectAllocationCompletion",
+                      "Synchronously start an idle egress port after allocation completes.",
+                      BooleanValue(true),
+                      MakeBooleanAccessor(&UbSwitchAllocator::m_enableDirectAllocationCompletion),
+                      MakeBooleanChecker());
     return tid;
 }
 UbSwitchAllocator::UbSwitchAllocator()
@@ -323,8 +328,13 @@ void UbRoundRobinAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
         }
     }
     m_isRunning[outPortId] = false;
-    // 通知port发包
-    Simulator::ScheduleNow(&UbPort::NotifyAllocationFinish, outPort);
+    if (m_enableDirectAllocationCompletion) {
+        if (!outPort->GetUbQueue()->IsEmpty()) {
+            outPort->NotifyAllocationFinish();
+        }
+    } else {
+        Simulator::ScheduleNow(&UbPort::NotifyAllocationFinish, outPort);
+    }
     if (m_oneMoreRound[outPortId] == true) {
         m_oneMoreRound[outPortId] = false;
         Simulator::ScheduleNow(&UbRoundRobinAllocator::TriggerAllocator, this, outPort);
@@ -595,8 +605,13 @@ void UbDwrrAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
     }
 
     m_isRunning[outPortId] = false;
-    // 通知 port 发包
-    Simulator::ScheduleNow(&UbPort::NotifyAllocationFinish, outPort);
+    if (m_enableDirectAllocationCompletion) {
+        if (!outPort->GetUbQueue()->IsEmpty()) {
+            outPort->NotifyAllocationFinish();
+        }
+    } else {
+        Simulator::ScheduleNow(&UbPort::NotifyAllocationFinish, outPort);
+    }
     if (m_oneMoreRound[outPortId]) {
         m_oneMoreRound[outPortId] = false;
         Simulator::ScheduleNow(&UbDwrrAllocator::TriggerAllocator, this, outPort);
