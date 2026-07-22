@@ -1301,3 +1301,161 @@ Closeout:
 - Typed versus exact pre-T42 measures `-6.90%` wall, `-8.44%` user CPU, and `-0.33%` RSS. Typed versus
   next measures `+4.41%` wall, `+11.80%` user CPU, and `+1.19%` RSS, recovering 10.58 percentage
   points of wall gap while retaining an explicit CPU residual.
+
+# Follow-up: Production RTP/TP Memory Compaction
+
+These tickets implement `.scratch/rtp-tp-memory-production/PRD.md` without turning task completion
+or transport idleness into logical TP teardown. They preserve the T00-T42 lifecycle contracts above.
+
+## Task 43: Freeze the RTP/TP compaction acceptance baseline
+
+**What to build:** Freeze the exact `aa2b26a` inputs, runtime variants, commands, artifacts, and
+comparison eligibility used to prove that production compaction preserves user-visible behavior.
+
+**Blocked by:** None - can start immediately.
+
+- [x] Record source, executable, library, input, configuration, trace-preset, environment, and MTP
+      hashes without rebuilding or mutating the accepted feature baseline.
+- [x] Prove which canonical artifacts are byte-stable through repeated bounded runs and classify
+      every generated artifact as raw-byte, canonical-only, diagnostic-only, or excluded.
+- [x] Preserve separate local and MTP runtime variants and reject comparisons across mismatched
+      inputs, executable revisions, runtime settings, or trace settings.
+- [x] Keep the guarded p001 -> p004 -> p016 checkpoint policy; do not run a larger scale without
+      explicit approval.
+
+Closeout:
+
+- One release executable built with MTP enabled serves both local-single and MTP16 runtime modes;
+  its source, build cache, executable, Unified Bus library, and p001 input hashes are frozen in the
+  feature manifest and verified without rebuilding.
+- Two local and two MTP16 p001 runs completed serially below the 10 GiB/900-second guards. All four
+  emitted byte-identical 1,024-file task-trace trees; both MTP storage snapshots are also raw-byte
+  identical.
+- Local storage snapshots differ only in trace-writer buffering and flush/write diagnostics. The
+  complete non-trace-writer snapshot is canonical-byte identical across all four runs; trace-writer
+  rows and RSS/timing remain diagnostic-only.
+- The detached reference worktree is retained under `.worktrees/t43-reference-aa2b26a`. No p004,
+  p016, p064, or full-workload checkpoint was run.
+
+## Task 44: Define congestion-control dormancy contracts
+
+**What to build:** Give every currently supported host congestion-control algorithm an explicit
+snapshot, restore, idle-reset, and reclamation-eligibility contract so endpoint compaction cannot
+silently change later traffic.
+
+**Blocked by:** None - can start immediately.
+
+- [ ] Characterize DCQCN using its existing sender-idle reset, tracked-event cancellation, receiver
+      CNP cooldown, pending feedback, rate, alpha, and pacing behavior.
+- [ ] Characterize CAQM sender window, inflight and byte counters, RTT state, PSN send-time state,
+      receiver aggregation maps, accumulated feedback, and congestion-state reset event.
+- [ ] Prove with focused tests which state survives dormancy and which state may use the algorithm's
+      existing idle reset without changing the next packet, feedback, or admission decision.
+- [ ] Algorithms without a proven contract report the endpoint ineligible and retain the live
+      backing object; they never reset partially, abort the simulation, or fall through to a base
+      implementation.
+- [ ] Adding a future algorithm requires explicit eligibility and focused continuity tests before
+      reclamation can activate.
+
+## Task 45: Deduplicate canonical connection indexes
+
+**What to build:** Preserve every public connection lookup and ordering rule while secondary indexes
+store compact stable local references instead of repeated connection values.
+
+**Blocked by:** None - can start immediately.
+
+- [ ] Keep one authoritative canonical connection value and one authoritative value for each local
+      endpoint view.
+- [ ] Preserve full-criteria, node, neighbor, local endpoint, erase, reuse, and ordered multipath
+      behavior through public manager APIs.
+- [ ] Do not store pointers, references, or iterators into relocatable or erasable containers.
+- [ ] Storage snapshots attribute canonical records and secondary index entries separately.
+
+## Task 46: Compact unmaterialized TP reservations
+
+**What to build:** Keep reserved endpoint slots valid for inbound validation and deterministic later
+materialization while avoiding active-endpoint-only allocations before a TP backing object exists.
+
+**Blocked by:** T45 Deduplicate canonical connection indexes.
+
+- [ ] Preserve reservation order, both TPNs, selected ports, priority, owner, connection generation,
+      endpoint slot identity, and all local lookup views.
+- [ ] Allocate callback collections and active-endpoint-only state only when the corresponding
+      behavior first requires them.
+- [ ] An unmaterialized reserved endpoint remains distinguishable from an invalid or retired TPN.
+- [ ] Focused reservation, inbound validation, materialization, multipath-order, and reuse tests stay
+      green without changing public case input or commands.
+
+## Task 47: Make Jetty lifetime explicit and retire task-scoped Jetties
+
+**What to build:** Mark Jetty lifetime at creation and reclaim only application-owned one-shot
+Jetties after their completion is already visible, without inferring ownership from idleness.
+
+**Blocked by:** None - can start immediately.
+
+- [ ] Creation paths classify each Jetty as `TASK_SCOPED` or `REUSABLE`; existing application
+      per-task creation is task-scoped while default, shared, and external paths remain reusable.
+- [ ] Task completion is published exactly once at the original timestamp before retirement starts,
+      and cleanup is never a dependency barrier.
+- [ ] Active child work, bindings, tracked events, or lifecycle leases block Jetty destruction.
+- [ ] Reusable Jetties are not destroyed because they are temporarily idle or have a low reference
+      count.
+
+## Task 48: Add dormant TP backing records and manager seams
+
+**What to build:** Let a fully drained live RTP endpoint become a manager-owned dormant record and
+restore the same logical endpoint generation on demand through one reclaim/resolve contract.
+
+**Blocked by:** T44 Define congestion-control dormancy contracts; T46 Compact unmaterialized TP
+reservations.
+
+- [ ] `ReclaimBackingState` atomically checks the existing owner, generation, lease, packet, event,
+      queue, retransmission, pending-work, binding, and congestion-control eligibility predicates.
+- [ ] Reclamation releases only reconstructible backing state and preserves reservation, TPN,
+      endpoint identity and generation, PSN/MSN continuity, receive and ordering state, bindings,
+      and required congestion-control history.
+- [ ] Duplicate attempts are idempotent; a failed gate leaves the endpoint live and unchanged and
+      does not schedule polling or a same-transition retry.
+- [ ] `ResolveLiveTp` reconstructs and restores the endpoint synchronously on its owner before work
+      admission or packet consumption, without creating a new reservation or generation.
+- [ ] Focused tests cover reclaim rejection, same-generation rehydration, long-idle reuse,
+      bidirectional traffic, retransmission, and both supported congestion-control algorithms.
+
+## Task 49: Route TP use through owner-local reclaim and resolve
+
+**What to build:** Carry sender work, inbound packets, direct TP references, and TPG members through
+the unified manager seam, then reclaim eligible backing state only at an owner-local transition.
+
+**Blocked by:** T48 Add dormant TP backing records and manager seams.
+
+- [ ] Sender, inbound, direct-TP, and TPG-member paths use one live-or-dormant resolution contract;
+      none treats a dormant backing object as an invalid TPN or stale same-generation binding.
+- [ ] Inbound resolution completes before packet consumption; sender, direct, and TPG resolution
+      completes before work admission.
+- [ ] Reclamation runs synchronously at the end of the current owner event after an owner-local idle
+      or terminal transition, schedules no simulator event, and sends no remote lifecycle message.
+- [ ] A non-owner uses the existing owner-delivery path and never borrows a remote LP or directly
+      mutates remote endpoint state.
+- [ ] A failed reclaim gate is reconsidered only after a later owner-local state transition.
+
+## Task 50: Prove production compaction and retire the prototype surface
+
+**What to build:** Attribute the memory reduction, prove milestone semantic equivalence, run guarded
+RSS checkpoints, and remove the temporary prototype behavior without changing user workflows.
+
+**Blocked by:** T43 Freeze the RTP/TP compaction acceptance baseline; T45 Deduplicate canonical
+connection indexes; T46 Compact unmaterialized TP reservations; T47 Make Jetty lifetime explicit
+and retire task-scoped Jetties; T49 Route TP use through owner-local reclaim and resolve.
+
+- [ ] Runtime storage evidence distinguishes reservations, canonical connections, index entries,
+      live TP backing objects, dormant records, rehydrations, task-scoped and reusable Jetties, and
+      peak live backing objects without changing existing row meanings.
+- [ ] Canonical local and MTP milestone artifacts match the admitted frozen baseline, including task
+      `START` and `COMPLETE_VISIBLE` timestamps and ordering.
+- [ ] Long-idle reuse, repeated pair use, bidirectional traffic, multipath, loss/retransmission,
+      DCQCN, and CAQM cases pass their focused and milestone gates.
+- [ ] Guarded RSS, wall time, event count, and runtime-state counts are reported separately; RSS is
+      performance evidence rather than a correctness oracle.
+- [ ] The prototype flag and task-driven reclamation surface are removed or remain unsupported and
+      fail-fast; normal case schemas, attributes, commands, trace contracts, routing, flow control,
+      and dependency scheduling remain unchanged.
