@@ -6621,6 +6621,9 @@ CreateMultiPortSwitchFixture(FcType mode,
                              const std::vector<std::pair<int32_t, int32_t>>& pfcThresholds)
 {
     Config::SetDefault("ns3::UbSwitch::FlowControl", EnumValue(mode));
+    // This queue-only fixture intentionally has no channels attached.
+    Config::SetDefault("ns3::UbSwitchAllocator::EnableDirectAllocationCompletion",
+                       BooleanValue(false));
     Config::SetDefault("ns3::UbQueueManager::ReservePerQueueBytes", UintegerValue(reserveBytes));
     Config::SetDefault("ns3::UbQueueManager::SharedPoolBytes", UintegerValue(sharedPoolBytes));
     Config::SetDefault("ns3::UbQueueManager::HeadroomPerPortBytes", UintegerValue(headroomPerPortBytes));
@@ -10905,6 +10908,72 @@ class UbDwrrAllocatorKeepsNonVoqQueuesAfterVoqSlotsTest : public TestCase
     }
 };
 
+class UbAllocatorDirectCompletionStartsIdlePortTest : public TestCase
+{
+  public:
+    UbAllocatorDirectCompletionStartsIdlePortTest()
+        : TestCase("UnifiedBus - direct allocation completion starts an idle egress port")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        auto fixture = CreateSinglePortPfcFixture(FcType::NONE, 1024, 0, 0, 0, 0, 0, 0);
+        fixture.sw->SetCongestionCtrl(CreateObject<UbCongestionControl>());
+        fixture.port->SetFaultCallBack(MakeCallback(&ConsumeEgressPacketForTest));
+        fixture.port->NotifyLinkUp();
+
+        fixture.sw->SendPacket(Create<Packet>(128), 0, 0, 1);
+        fixture.sw->GetAllocator()->AllocateNextPacket(fixture.port);
+
+        NS_TEST_ASSERT_MSG_EQ(fixture.port->GetUbQueue()->IsEmpty(),
+                              true,
+                              "Default direct completion should synchronously drain an idle port");
+        NS_TEST_ASSERT_MSG_EQ(fixture.port->IsBusy(),
+                              true,
+                              "Direct completion should enter the port send state immediately");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbAllocatorScheduledCompletionCompatibilityTest : public TestCase
+{
+  public:
+    UbAllocatorScheduledCompletionCompatibilityTest()
+        : TestCase("UnifiedBus - scheduled allocation completion remains available")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        Config::SetDefault("ns3::UbSwitchAllocator::EnableDirectAllocationCompletion",
+                           BooleanValue(false));
+        auto fixture = CreateSinglePortPfcFixture(FcType::NONE, 1024, 0, 0, 0, 0, 0, 0);
+        fixture.sw->SetCongestionCtrl(CreateObject<UbCongestionControl>());
+        fixture.port->SetFaultCallBack(MakeCallback(&ConsumeEgressPacketForTest));
+        fixture.port->NotifyLinkUp();
+
+        fixture.sw->SendPacket(Create<Packet>(128), 0, 0, 1);
+        fixture.sw->GetAllocator()->AllocateNextPacket(fixture.port);
+
+        NS_TEST_ASSERT_MSG_EQ(fixture.port->GetUbQueue()->GetCurrentBytes(),
+                              128u,
+                              "Compatibility mode should retain the zero-delay completion boundary");
+        Simulator::Stop(NanoSeconds(1));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(fixture.port->GetUbQueue()->IsEmpty(),
+                              true,
+                              "Scheduled completion should drain the port at the same timestamp");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
 class UbPacketQueueInlineStoragePreservesFifoTest : public TestCase
 {
   public:
@@ -12940,6 +13009,8 @@ UbTestSuite::UbTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbDwrrAllocatorKeepsNonVoqQueuesAfterVoqSlotsTest(),
                 TestCase::Duration::QUICK);
+    AddTestCase(new UbAllocatorDirectCompletionStartsIdlePortTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbAllocatorScheduledCompletionCompatibilityTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbPacketQueueInlineStoragePreservesFifoTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbSmallFifoQueueReleasesHeapWhenDrainedTest(), TestCase::Duration::QUICK);
 #ifndef _WIN32
@@ -13230,6 +13301,8 @@ UbSwitchVoqTestSuite::UbSwitchVoqTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbDwrrAllocatorKeepsNonVoqQueuesAfterVoqSlotsTest(),
                 TestCase::Duration::QUICK);
+    AddTestCase(new UbAllocatorDirectCompletionStartsIdlePortTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbAllocatorScheduledCompletionCompatibilityTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbPacketQueueInlineStoragePreservesFifoTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbSmallFifoQueueReleasesHeapWhenDrainedTest(), TestCase::Duration::QUICK);
 }

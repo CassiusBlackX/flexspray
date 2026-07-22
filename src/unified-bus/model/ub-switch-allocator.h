@@ -59,6 +59,7 @@ protected:
     std::vector<bool> m_isRunning;	
     std::vector<bool> m_oneMoreRound;
     uint32_t m_voqIngressSlotCount = 0;
+    bool m_enableDirectAllocationCompletion = true;
 };
 
 
