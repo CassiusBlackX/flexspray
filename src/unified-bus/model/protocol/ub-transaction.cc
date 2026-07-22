@@ -265,6 +265,13 @@ UbTransaction::SetFunction(UbFunction* function)
     m_function = function;
 }
 
+void
+UbTransaction::SetOwnerController(UbController* controller)
+{
+    NS_ABORT_MSG_IF(controller == nullptr, "Transaction requires an owner Controller");
+    m_ownerController = controller;
+}
+
 Ptr<UbJetty> UbTransaction::GetJetty(uint32_t jettyNum)
 {
     return GetFunction()->GetJetty(jettyNum);
@@ -285,12 +292,21 @@ bool UbTransaction::JettyBindTp(uint32_t src, uint32_t dest, uint32_t jettyNum,
 
     std::vector<Ptr<UbTransportChannel>> requestedTransports;
     requestedTransports.reserve(tpns.size());
+    Ptr<UbController> controller = GetOwnerController();
+    Ptr<UbTransportChannelManager> manager =
+        controller == nullptr ? nullptr : controller->GetTransportChannelManager();
     for (uint32_t tpn : tpns) {
-        const auto transport = m_tpnMap.find(tpn);
-        if (transport == m_tpnMap.end() || transport->second == nullptr) {
+        UbLifecycleResourceIdentity identity;
+        if (manager == nullptr || !manager->TryGetEndpointIdentity(tpn, identity))
+        {
             return false;
         }
-        requestedTransports.push_back(transport->second);
+        Ptr<UbTransportChannel> transport = manager->ResolveLiveTp(tpn, identity);
+        if (transport == nullptr)
+        {
+            return false;
+        }
+        requestedTransports.push_back(transport);
     }
     if (requestedTransports.empty()) {
         return false;
@@ -304,7 +320,6 @@ bool UbTransaction::JettyBindTp(uint32_t src, uint32_t dest, uint32_t jettyNum,
     if (multiPath && requestedTransports.size() > 1) {
         NS_LOG_DEBUG("Multiple tp");
         boundTransports = requestedTransports;
-        Ptr<UbController> controller = GetOwnerController();
         if (controller == nullptr)
         {
             return false;
@@ -349,9 +364,23 @@ bool UbTransaction::JettyBindTp(uint32_t src, uint32_t dest, uint32_t jettyNum,
 
 void UbTransaction::DestroyJettyTpMap(uint32_t jettyNum)
 {
+    std::vector<uint32_t> directTpns;
+    const auto reference = m_jettyRtpReferences.find(jettyNum);
+    if (reference != m_jettyRtpReferences.end() && reference->second.IsDirectTp())
+    {
+        directTpns.push_back(reference->second.GetDirectTpn());
+    }
     m_jettyRtpReferences.erase(jettyNum);
     m_jettyTpgMaterializations.erase(jettyNum);
     m_jettyTpNextIndex.erase(jettyNum);
+    Ptr<UbController> controller = GetOwnerController();
+    for (uint32_t tpn : directTpns)
+    {
+        if (controller != nullptr)
+        {
+            controller->GetTransportChannelManager()->ReclaimBackingState(tpn);
+        }
+    }
 }
 
 void
@@ -389,13 +418,17 @@ const std::vector<Ptr<UbTransportChannel>> UbTransaction::GetJettyRelatedTpVec(u
     }
     if (reference->second.IsDirectTp())
     {
-        const auto transport = m_tpnMap.find(reference->second.GetDirectTpn());
-        if (transport == m_tpnMap.end() || transport->second == nullptr ||
-            transport->second->GetLifecycleOwner() != reference->second.GetIdentity())
+        Ptr<UbController> controller = GetOwnerController();
+        Ptr<UbTransportChannel> transport =
+            controller == nullptr ? nullptr
+                                  : controller->GetTransportChannelManager()->ResolveLiveTp(
+                                        reference->second.GetDirectTpn(),
+                                        reference->second.GetIdentity());
+        if (transport == nullptr)
         {
             return {};
         }
-        return {transport->second};
+        return {transport};
     }
 
     Ptr<UbController> controller = GetOwnerController();
@@ -423,6 +456,22 @@ UbTransaction::MaterializeRtpTpGroup(uint32_t jettyNum,
         existing->second.groupIdentity == reference.GetIdentity() &&
         existing->second.membershipVersion == membershipVersion)
     {
+        Ptr<UbController> controller = GetOwnerController();
+        Ptr<UbTransportChannelManager> manager =
+            controller == nullptr ? nullptr : controller->GetTransportChannelManager();
+        existing->second.liveTransports.clear();
+        for (uint32_t index = 0; index < group->GetMemberCount(); ++index)
+        {
+            const UbTransportGroupMember& member = group->GetMember(index);
+            Ptr<UbTransportChannel> transport =
+                manager == nullptr ? nullptr
+                                   : manager->ResolveLiveTp(member.tpn, member.tpIdentity);
+            existing->second.indexedTransports[index] = transport;
+            if (transport != nullptr)
+            {
+                existing->second.liveTransports.push_back(transport);
+            }
+        }
         return existing->second;
     }
 
@@ -431,17 +480,20 @@ UbTransaction::MaterializeRtpTpGroup(uint32_t jettyNum,
     materialization.membershipVersion = membershipVersion;
     materialization.indexedTransports.resize(group->GetMemberCount());
     materialization.liveTransports.reserve(group->GetMemberCount());
+    Ptr<UbController> controller = GetOwnerController();
+    Ptr<UbTransportChannelManager> manager =
+        controller == nullptr ? nullptr : controller->GetTransportChannelManager();
     for (uint32_t index = 0; index < group->GetMemberCount(); ++index)
     {
         const UbTransportGroupMember& member = group->GetMember(index);
-        const auto transport = m_tpnMap.find(member.tpn);
-        if (transport == m_tpnMap.end() || transport->second == nullptr ||
-            transport->second->GetLifecycleOwner() != member.tpIdentity)
+        Ptr<UbTransportChannel> transport =
+            manager == nullptr ? nullptr : manager->ResolveLiveTp(member.tpn, member.tpIdentity);
+        if (transport == nullptr)
         {
             continue;
         }
-        materialization.indexedTransports[index] = transport->second;
-        materialization.liveTransports.push_back(transport->second);
+        materialization.indexedTransports[index] = transport;
+        materialization.liveTransports.push_back(transport);
     }
     if (m_collectRtpResolutionCountersForTest)
     {
@@ -995,8 +1047,17 @@ UbTransaction::EnqueueRtpSource(uint32_t jettyNum,
 void
 UbTransaction::EnqueueRemoteRtpSource(uint32_t tpn, Ptr<UbWqeSegment> segment)
 {
-    const auto transport = m_tpnMap.find(tpn);
-    if (segment == nullptr || transport == m_tpnMap.end() || transport->second == nullptr)
+    Ptr<UbController> controller = GetOwnerController();
+    Ptr<UbTransportChannelManager> manager =
+        controller == nullptr ? nullptr : controller->GetTransportChannelManager();
+    UbLifecycleResourceIdentity tpIdentity;
+    if (segment == nullptr || manager == nullptr ||
+        !manager->TryGetEndpointIdentity(tpn, tpIdentity))
+    {
+        return;
+    }
+    Ptr<UbTransportChannel> transport = manager->ResolveLiveTp(tpn, tpIdentity);
+    if (transport == nullptr)
     {
         return;
     }
@@ -1020,9 +1081,8 @@ UbTransaction::EnqueueRemoteRtpSource(uint32_t tpn, Ptr<UbWqeSegment> segment)
     RemoteSourceState& remote = m_tpRelatedRemoteRequests[tpn][remoteKey];
     remote.segments.push_back(segment);
 
-    const AdmissionDomainKey domainKey{
-        UbRtpTransportReferenceKind::DIRECT_TP,
-        transport->second->GetLifecycleOwner()};
+    const AdmissionDomainKey domainKey{UbRtpTransportReferenceKind::DIRECT_TP,
+                                       transport->GetLifecycleOwner()};
     AdmissionDomainState& domain = m_admissionDomains[domainKey];
     if (!remote.readyQueued)
     {
@@ -1043,14 +1103,16 @@ UbTransaction::RunRemoteRtpSource(const AdmissionDomainKey& domainKey,
                                   const ReadySourceKey& source)
 {
     const uint32_t tpn = static_cast<uint32_t>(domainKey.identity.localId);
-    const auto transport = m_tpnMap.find(tpn);
+    Ptr<UbController> controller = GetOwnerController();
+    Ptr<UbTransportChannel> transport =
+        controller == nullptr
+            ? nullptr
+            : controller->GetTransportChannelManager()->ResolveLiveTp(tpn, domainKey.identity);
     auto remoteByTp = m_tpRelatedRemoteRequests.find(tpn);
     const RemoteSourceKey remoteKey{source.jettyNum,
                                     source.wqeId,
                                     source.operationIdentity};
-    if (transport == m_tpnMap.end() || transport->second == nullptr ||
-        transport->second->GetLifecycleOwner() != domainKey.identity ||
-        remoteByTp == m_tpRelatedRemoteRequests.end())
+    if (transport == nullptr || remoteByTp == m_tpRelatedRemoteRequests.end())
     {
         return;
     }
@@ -1075,7 +1137,7 @@ UbTransaction::RunRemoteRtpSource(const AdmissionDomainKey& domainKey,
     }
 
     Ptr<UbWqeSegment> segment = remote->second.segments.front();
-    if (!transport->second->TryAdmitWqeSegment(segment))
+    if (!transport->TryAdmitWqeSegment(segment))
     {
         AdmissionDomainState& domain = m_admissionDomains[domainKey];
         domain.readySources.push_front(source);
@@ -1100,7 +1162,7 @@ UbTransaction::RunRemoteRtpSource(const AdmissionDomainKey& domainKey,
     }
     NS_LOG_INFO("Remote WQE Segment Sends, taskId:" << segment->GetTaskId()
                                                      << "TASSN: " << segment->GetTaSsn());
-    transport->second->WqeSegmentTriggerPortTransmit(segment);
+    transport->WqeSegmentTriggerPortTransmit(segment);
     ScheduleAdmissionDomain(domainKey);
 }
 
@@ -1766,8 +1828,7 @@ UbTransaction::FindRtpTransportReference(uint32_t jettyNum) const
 Ptr<UbController>
 UbTransaction::GetOwnerController() const
 {
-    Ptr<Node> node = NodeList::GetNode(m_nodeId);
-    return node == nullptr ? nullptr : node->GetObject<UbController>();
+    return m_ownerController == nullptr ? nullptr : Ptr<UbController>(m_ownerController);
 }
 
 bool
@@ -1790,13 +1851,17 @@ UbTransaction::ResolveRtpTransportReference(
     }
     if (reference.IsDirectTp())
     {
-        const auto transport = m_tpnMap.find(reference.GetDirectTpn());
-        if (transport == m_tpnMap.end() || transport->second == nullptr ||
-            transport->second->GetLifecycleOwner() != reference.GetIdentity())
+        Ptr<UbController> controller = GetOwnerController();
+        Ptr<UbTransportChannel> transport =
+            controller == nullptr
+                ? nullptr
+                : controller->GetTransportChannelManager()->ResolveLiveTp(reference.GetDirectTpn(),
+                                                                          reference.GetIdentity());
+        if (transport == nullptr)
         {
             return false;
         }
-        resolution.directTp = transport->second;
+        resolution.directTp = transport;
         return true;
     }
 
@@ -2446,6 +2511,7 @@ void UbTransaction::DoDispose()
     m_operations.clear();
     m_suppressedTpgOwnerProgress.clear();
     m_coordinator = nullptr;
+    m_ownerController = nullptr;
     m_function = nullptr;
     for (auto &it : m_jettyOrderedWqe) {
         it.second.clear();
@@ -2470,7 +2536,34 @@ std::vector<uint32_t> UbTransaction::GetUselessTpns()
 bool UbTransaction::IsTpInUse(uint32_t tpn)
 {
     NS_ASSERT_MSG(m_tpnMap.find(tpn) != m_tpnMap.end(), "no such tp.");
-    return !GetTpRelatedJettyVec(tpn).empty();
+    Ptr<UbController> controller = GetOwnerController();
+    for (const auto& [jettyNum, reference] : m_jettyRtpReferences)
+    {
+        (void)jettyNum;
+        if (reference.IsDirectTp())
+        {
+            if (reference.GetDirectTpn() == tpn)
+            {
+                return true;
+            }
+            continue;
+        }
+        Ptr<UbTransportGroup> group = controller == nullptr
+                                          ? nullptr
+                                          : controller->ResolveRtpTpGroup(reference.GetIdentity());
+        if (group == nullptr)
+        {
+            continue;
+        }
+        for (uint32_t index = 0; index < group->GetMemberCount(); ++index)
+        {
+            if (group->GetMember(index).tpn == tpn)
+            {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 bool

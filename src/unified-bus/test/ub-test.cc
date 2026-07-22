@@ -10229,8 +10229,17 @@ class UbLifecycleLiveTpgDestroyReleasesExactBindingTest : public TestCase
                               firstTp,
                               "TPG destroy must retain the first member TP");
         NS_TEST_ASSERT_MSG_EQ(controller->GetTransportChannelManager()->GetTp(secondTp->GetTpn()),
-                              secondTp,
-                              "TPG destroy must retain the second member TP");
+                              nullptr,
+                              "An otherwise unused second member may release its live backing");
+        Ptr<UbTransportChannel> resolvedSecond =
+            controller->GetTransportChannelManager()->ResolveLiveTp(secondTp->GetTpn(),
+                                                                    secondTp->GetLifecycleOwner());
+        NS_TEST_ASSERT_MSG_NE(resolvedSecond,
+                              nullptr,
+                              "TPG destroy must retain the second member endpoint generation");
+        NS_TEST_ASSERT_MSG_EQ(resolvedSecond->GetLifecycleOwner(),
+                              secondTp->GetLifecycleOwner(),
+                              "TPG destroy must resolve the exact second member identity");
         NS_TEST_ASSERT_MSG_EQ(coordinator->IsResourceActive(firstTp->GetLifecycleOwner()),
                               true,
                               "First member endpoint generation should remain active");
@@ -10520,8 +10529,18 @@ class UbLifecycleLastTpgMemberRemovalWaitsForUseLeaseTest : public TestCase
             0u,
             "Final assignment should release the exact TPG-use lease");
         NS_TEST_ASSERT_MSG_EQ(m_controller->GetTransportChannelManager()->GetTp(m_lastTp->GetTpn()),
-                              m_lastTp,
-                              "Member removal must not destroy the member TP");
+                              nullptr,
+                              "Member removal may release otherwise unused live backing");
+        Ptr<UbTransportChannel> resolvedLast =
+            m_controller->GetTransportChannelManager()->ResolveLiveTp(
+                m_lastTp->GetTpn(),
+                m_lastTp->GetLifecycleOwner());
+        NS_TEST_ASSERT_MSG_NE(resolvedLast,
+                              nullptr,
+                              "Member removal must retain the member endpoint generation");
+        NS_TEST_ASSERT_MSG_EQ(resolvedLast->GetLifecycleOwner(),
+                              m_lastTp->GetLifecycleOwner(),
+                              "Member removal must resolve the exact member identity");
         NS_TEST_ASSERT_MSG_EQ(m_coordinator->IsResourceActive(m_lastTp->GetLifecycleOwner()),
                               true,
                               "Member TP generation should remain active after removal");
@@ -21585,6 +21604,33 @@ class UbDormantTpBackingReclaimsAndResolvesSameGenerationTest : public TestCase
         Ptr<UbTransportChannel> first = manager->CreateReservedTpEndpoint(tpn);
         NS_TEST_ASSERT_MSG_NE(first, nullptr, "Reserved endpoint should materialize");
         const UbLifecycleResourceIdentity identity = first->GetLifecycleOwner();
+
+        constexpr uint32_t directJettyNum = kUrmaWriteRegressionJettyNum + 101;
+        Ptr<UbFunction> function = receiver->GetUbFunction();
+        function->CreateJetty(topo.receiver->GetId(), topo.sender->GetId(), directJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(receiver->GetUbTransaction()->JettyBindTp(topo.receiver->GetId(),
+                                                                        topo.sender->GetId(),
+                                                                        directJettyNum,
+                                                                        false,
+                                                                        {tpn}),
+                              true,
+                              "Direct Jetty should bind the reserved endpoint generation");
+        NS_TEST_ASSERT_MSG_EQ(manager->ReclaimBackingState(tpn),
+                              false,
+                              "A direct Jetty binding should block backing reclaim");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(function->DestroyJetty(directJettyNum)),
+                              static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
+                              "Idle direct Jetty should destroy synchronously");
+        NS_TEST_ASSERT_MSG_EQ(manager->GetTp(tpn),
+                              nullptr,
+                              "Direct Jetty retirement should reclaim after its binding is erased");
+        first = manager->CreateReservedTpEndpoint(tpn);
+        NS_TEST_ASSERT_MSG_NE(first,
+                              nullptr,
+                              "Ordinary reserved resolution should rehydrate dormant backing");
+        NS_TEST_ASSERT_MSG_EQ(first->GetLifecycleOwner(),
+                              identity,
+                              "Ordinary reserved resolution should preserve exact identity");
         const uint32_t allocatorOutPort = first->GetOutPortId();
         const uint32_t allocatorInPort = first->GetInPortId();
         const uint32_t allocatorPriority = first->GetIngressPriority();
@@ -21603,6 +21649,11 @@ class UbDormantTpBackingReclaimsAndResolvesSameGenerationTest : public TestCase
             UbLifecycleCoordinator::GetOrCreate(topo.receiver);
         const UbLifecycleLeaseIdentity activeLease =
             coordinator->AcquireLease(identity, UbLifecycleLeaseKind::TRANSPORT_WORK, identity);
+        first->EnqueueAckForTest(Create<Packet>(1));
+        first->SetRetransEnable(true);
+        first->RetainSentPsnForTest(41, 64);
+        Ptr<UbCongestionControl> supportedCc = first->GetCongestionCtrlForTest();
+        first->SetCongestionControlForTest(CreateObject<UbCongestionControl>());
         NS_TEST_ASSERT_MSG_EQ(manager->ReclaimBackingState(tpn),
                               false,
                               "An active lifecycle lease should reject backing reclaim");
@@ -21611,7 +21662,6 @@ class UbDormantTpBackingReclaimsAndResolvesSameGenerationTest : public TestCase
                               "Rejected lifecycle gate must retain the original backing object");
         coordinator->ReleaseLease(activeLease);
 
-        first->EnqueueAckForTest(Create<Packet>(1));
         NS_TEST_ASSERT_MSG_EQ(manager->ReclaimBackingState(tpn),
                               false,
                               "Pending ACK work should reject backing reclaim");
@@ -21620,8 +21670,6 @@ class UbDormantTpBackingReclaimsAndResolvesSameGenerationTest : public TestCase
                               "Rejected queue gate must retain the original backing object");
         first->PopAckForTest();
 
-        first->SetRetransEnable(true);
-        first->RetainSentPsnForTest(41, 64);
         NS_TEST_ASSERT_MSG_EQ(manager->ReclaimBackingState(tpn),
                               false,
                               "Retained retransmission state should reject backing reclaim");
@@ -21632,8 +21680,6 @@ class UbDormantTpBackingReclaimsAndResolvesSameGenerationTest : public TestCase
         first->SetRetransEnable(false);
         first->SetPsnSndNxtForTest(41);
 
-        Ptr<UbCongestionControl> supportedCc = first->GetCongestionCtrlForTest();
-        first->SetCongestionControlForTest(CreateObject<UbCongestionControl>());
         NS_TEST_ASSERT_MSG_EQ(manager->ReclaimBackingState(tpn),
                               false,
                               "Unsupported congestion control should fail closed");
@@ -21842,6 +21888,66 @@ class UbDormantTpBackingPreservesCaqmStateTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(restored->GetRttForTest(),
                               expectedRtt,
                               "Manager reclaim/resolve should preserve CAQM RTT continuity");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbDwrrReclaimsEveryReleasedTpInOneRoundTest : public TestCase
+{
+  public:
+    UbDwrrReclaimsEveryReleasedTpInOneRoundTest()
+        : TestCase("UnifiedBus - DWRR reclaims every released TP in one round")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        Config::SetDefault("ns3::UbSwitch::FlowControl", EnumValue(FcType::NONE));
+        Config::SetDefault("ns3::UbSwitch::VlScheduler", StringValue("DWRR"));
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(true));
+        GlobalValue::Bind("UB_CC_ALGO", StringValue("DCQCN"));
+
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        InstallAdditionalTpPair(topo, 303, 404);
+
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbTransportChannelManager> manager = controller->GetTransportChannelManager();
+        Ptr<UbTransportChannel> first = manager->GetTp(kUrmaWriteRegressionSenderTpn);
+        Ptr<UbTransportChannel> second = manager->GetTp(303);
+        NS_TEST_ASSERT_MSG_NE(first, nullptr, "First DWRR TP should be materialized");
+        NS_TEST_ASSERT_MSG_NE(second, nullptr, "Second DWRR TP should be materialized");
+        const UbLifecycleResourceIdentity firstIdentity = first->GetLifecycleOwner();
+        const UbLifecycleResourceIdentity secondIdentity = second->GetLifecycleOwner();
+
+        first->EnqueueAckForTest(Create<Packet>(64));
+        second->EnqueueAckForTest(Create<Packet>(64));
+        Ptr<UbDwrrAllocator> allocator =
+            DynamicCast<UbDwrrAllocator>(topo.sender->GetObject<UbSwitch>()->GetAllocator());
+        NS_TEST_ASSERT_MSG_NE(allocator, nullptr, "Fixture should use the DWRR allocator");
+        allocator->SetQuantum(first->GetOutPortId(), first->GetIngressPriority(), 1024);
+        Ptr<UbPort> outPort = DynamicCast<UbPort>(topo.sender->GetDevice(first->GetOutPortId()));
+        allocator->AllocateNextPacket(outPort);
+
+        NS_TEST_ASSERT_MSG_EQ(manager->GetTp(first->GetTpn()),
+                              nullptr,
+                              "DWRR should reclaim the first released TP backing");
+        NS_TEST_ASSERT_MSG_EQ(manager->GetTp(second->GetTpn()),
+                              nullptr,
+                              "DWRR should reclaim the final released TP backing");
+        Ptr<UbTransportChannel> resolvedFirst =
+            manager->ResolveLiveTp(first->GetTpn(), firstIdentity);
+        Ptr<UbTransportChannel> resolvedSecond =
+            manager->ResolveLiveTp(second->GetTpn(), secondIdentity);
+        NS_TEST_ASSERT_MSG_NE(resolvedFirst,
+                              nullptr,
+                              "First released TP should retain its exact generation");
+        NS_TEST_ASSERT_MSG_NE(resolvedSecond,
+                              nullptr,
+                              "Second released TP should retain its exact generation");
 
         Simulator::Destroy();
         Config::Reset();
@@ -27316,6 +27422,7 @@ UbTpReservationTestSuite::UbTpReservationTestSuite()
     AddTestCase(new UbDormantTpBackingReclaimsAndResolvesSameGenerationTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbDormantTpBackingPreservesCaqmStateTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbDwrrReclaimsEveryReleasedTpInOneRoundTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbExplicitConnectionDestroyAggregatesBothEndpointsTest(),
                 TestCase::Duration::QUICK);
 }

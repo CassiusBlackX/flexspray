@@ -153,6 +153,7 @@ namespace ns3 {
 
         UbFunction* GetFunction();
         void SetFunction(UbFunction* function);
+        void SetOwnerController(UbController* controller);
 
         Ptr<UbJetty> GetJetty(uint32_t jettyNum);
 
@@ -449,6 +450,7 @@ namespace ns3 {
         void ReleaseTransportUseLease(OperationRecord& operation);
 
         uint32_t m_nodeId;
+        UbController* m_ownerController{nullptr};
         UbFunction* m_function{nullptr};
         Ptr<UbLifecycleCoordinator> m_coordinator;
 
