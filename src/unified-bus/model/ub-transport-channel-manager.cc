@@ -47,6 +47,41 @@ UbTransportChannelManager::GetTp(uint32_t tpn) const
 }
 
 bool
+UbTransportChannelManager::TryGetEndpointIdentity(uint32_t tpn,
+                                                  UbLifecycleResourceIdentity& identity) const
+{
+    std::lock_guard<std::mutex> lock(TpConnectionManager::g_tpConnectionControlLock);
+    return TryGetEndpointIdentityLocked(tpn, identity);
+}
+
+bool
+UbTransportChannelManager::TryGetEndpointIdentityLocked(uint32_t tpn,
+                                                        UbLifecycleResourceIdentity& identity) const
+{
+    const auto it = m_endpoints.find(tpn);
+    if (it == m_endpoints.end() || it->second.state == EndpointState::DRAINING)
+    {
+        return false;
+    }
+    const EndpointRecord& record = it->second;
+    if (record.state == EndpointState::LIVE)
+    {
+        if (record.channel == nullptr)
+        {
+            return false;
+        }
+        identity = record.channel->GetLifecycleOwner();
+        return true;
+    }
+    if (record.dormantState == nullptr)
+    {
+        return false;
+    }
+    identity = record.dormantState->lifecycleIdentity;
+    return true;
+}
+
+bool
 UbTransportChannelManager::CreateTp(uint32_t src,
                                     uint32_t dest,
                                     uint8_t sport,
@@ -92,6 +127,10 @@ UbTransportChannelManager::CreateTp(uint32_t src,
     }
     tp->SetLifecycleStateChangedCallback(
         MakeCallback(&UbTransportChannelManager::NotifyStateChanged, this));
+    UbLifecycleCoordinator::GetOrCreate(currentNode)
+        ->SetResourceStateChangedCallback(
+            tp->GetLifecycleOwner(),
+            MakeCallback(&UbTransportChannelManager::NotifyLifecycleStateChanged, this));
     m_controller->GetUbTransaction()->TpInit(tp);
     m_endpoints.emplace(srcTpn, EndpointRecord{tp});
     ++m_transportsCount;
@@ -120,10 +159,16 @@ UbTransportChannelManager::CreateReservedTpEndpoint(uint32_t tpn)
 Ptr<UbTransportChannel>
 UbTransportChannelManager::CreateReservedTpEndpointLocked(uint32_t tpn, bool drainOnly)
 {
-    Ptr<UbTransportChannel> existingTp = GetTp(tpn);
-    if (existingTp != nullptr)
+    const auto existing = m_endpoints.find(tpn);
+    if (existing != m_endpoints.end())
     {
-        return existingTp;
+        if (existing->second.state == EndpointState::LIVE)
+        {
+            return existing->second.channel;
+        }
+        UbLifecycleResourceIdentity identity;
+        return TryGetEndpointIdentityLocked(tpn, identity) ? ResolveLiveTpLocked(tpn, identity)
+                                                           : nullptr;
     }
 
     Ptr<Node> currentNode = m_controller->GetObject<Node>();
@@ -175,45 +220,54 @@ UbTransportChannelManager::ResolveInboundTp(uint32_t srcTpn,
                                             UbPriority priority)
 {
     std::lock_guard<std::mutex> lock(TpConnectionManager::g_tpConnectionControlLock);
-    Ptr<UbTransportChannel> targetTp = GetTp(dstTpn);
-
-    uint32_t expectedSrcTpn;
-    Ipv4Address expectedSourceIp;
-    Ipv4Address expectedDestinationIp;
-    UbPriority expectedPriority;
-    if (targetTp != nullptr)
+    const auto endpoint = m_endpoints.find(dstTpn);
+    if (endpoint != m_endpoints.end())
     {
-        expectedSrcTpn = targetTp->GetDestTpn();
-        expectedSourceIp = targetTp->GetDip();
-        expectedDestinationIp = targetTp->GetSip();
-        expectedPriority = static_cast<UbPriority>(targetTp->GetPriority());
-    }
-    else
-    {
-        Ptr<Node> currentNode = m_controller->GetObject<Node>();
-        NS_ASSERT_MSG(currentNode != nullptr, "Inbound TP resolution requires an attached node");
-        Connection conn;
-        if (!m_controller->GetTpConnManager()->TryGetLocalConnection(currentNode->GetId(),
-                                                                      dstTpn,
-                                                                      conn))
+        const EndpointRecord& record = endpoint->second;
+        const UbTransportDormantState* dormant = record.dormantState.get();
+        if (record.state == EndpointState::DRAINING ||
+            (record.channel == nullptr && dormant == nullptr))
         {
             return nullptr;
         }
-        expectedSrcTpn = conn.tpn2;
-        expectedSourceIp = NodeIdToIp(conn.node2, conn.port2);
-        expectedDestinationIp = NodeIdToIp(conn.node1, conn.port1);
-        expectedPriority = static_cast<UbPriority>(conn.priority);
+        const uint32_t expectedSrcTpn =
+            record.channel != nullptr ? record.channel->GetDestTpn() : dormant->dstTpn;
+        const Ipv4Address expectedSourceIp =
+            record.channel != nullptr ? record.channel->GetDip() : dormant->dip;
+        const Ipv4Address expectedDestinationIp =
+            record.channel != nullptr ? record.channel->GetSip() : dormant->sip;
+        const UbPriority expectedPriority = static_cast<UbPriority>(
+            record.channel != nullptr ? record.channel->GetPriority() : dormant->priority);
+        if (srcTpn != expectedSrcTpn || sourceIp != expectedSourceIp ||
+            destinationIp != expectedDestinationIp || priority != expectedPriority)
+        {
+            return nullptr;
+        }
+        UbLifecycleResourceIdentity identity;
+        return TryGetEndpointIdentityLocked(dstTpn, identity)
+                   ? ResolveLiveTpLocked(dstTpn, identity)
+                   : nullptr;
     }
 
-    if (srcTpn != expectedSrcTpn || sourceIp != expectedSourceIp ||
-        destinationIp != expectedDestinationIp || priority != expectedPriority)
+    Ptr<Node> currentNode = m_controller->GetObject<Node>();
+    NS_ASSERT_MSG(currentNode != nullptr, "Inbound TP resolution requires an attached node");
+    Connection conn;
+    if (!m_controller->GetTpConnManager()->TryGetLocalConnection(currentNode->GetId(),
+                                                                 dstTpn,
+                                                                 conn))
     {
         return nullptr;
     }
-    const bool drainOnly = targetTp == nullptr &&
-                           m_controller->GetTpConnManager()->IsConnectionDestroyRequested(
-                               m_controller->GetObject<Node>()->GetId(), dstTpn);
-    return targetTp != nullptr ? targetTp : CreateReservedTpEndpointLocked(dstTpn, drainOnly);
+    if (srcTpn != conn.tpn2 || sourceIp != NodeIdToIp(conn.node2, conn.port2) ||
+        destinationIp != NodeIdToIp(conn.node1, conn.port1) ||
+        priority != static_cast<UbPriority>(conn.priority))
+    {
+        return nullptr;
+    }
+    const bool drainOnly =
+        m_controller->GetTpConnManager()->IsConnectionDestroyRequested(currentNode->GetId(),
+                                                                       dstTpn);
+    return CreateReservedTpEndpointLocked(dstTpn, drainOnly);
 }
 
 bool
@@ -433,8 +487,15 @@ void
 UbTransportChannelManager::NotifyStateChanged(uint32_t tpn)
 {
     const auto it = m_endpoints.find(tpn);
-    if (it != m_endpoints.end() && it->second.state == EndpointState::DRAINING &&
-        CanFinalize(it->second))
+    if (it == m_endpoints.end())
+    {
+        return;
+    }
+    if (it->second.state == EndpointState::LIVE)
+    {
+        ReclaimBackingState(tpn);
+    }
+    else if (it->second.state == EndpointState::DRAINING && CanFinalize(it->second))
     {
         FinalizeDestroy(tpn, false);
     }

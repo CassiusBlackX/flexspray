@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "ns3/ub-switch-allocator.h"
-#include "ns3/ub-switch.h"
-#include "ns3/ub-port.h"
+
 #include "protocol/ub-routing-process.h"
 #include "protocol/ub-transport.h"
 #include "ub-queue-manager.h"
+
+#include "ns3/ub-controller.h"
+#include "ns3/ub-port.h"
+#include "ns3/ub-switch.h"
+#include "ns3/ub-transport-channel-manager.h"
 
 #include <algorithm>
 
@@ -43,6 +47,18 @@ MakeAllocatorFlowControlEventContext(Ptr<Packet> packet,
         .outPortId = outPortId,
         .priority = priority,
     };
+}
+
+void
+TryReclaimReleasedTp(uint32_t nodeId, Ptr<UbIngressQueue> ingressQueue)
+{
+    Ptr<UbTransportChannel> tp = DynamicCast<UbTransportChannel>(ingressQueue);
+    Ptr<Node> node = NodeList::GetNode(nodeId);
+    Ptr<UbController> controller = node == nullptr ? nullptr : node->GetObject<UbController>();
+    if (tp != nullptr && controller != nullptr)
+    {
+        controller->GetTransportChannelManager()->ReclaimBackingState(tp->GetTpn());
+    }
 }
 
 } // namespace
@@ -433,6 +449,7 @@ void UbRoundRobinAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
                          << " outPortId=" << outPortId
                          << " bytes=" << nextPacketBytes);
             ClearActiveIngressQueue();
+            TryReclaimReleasedTp(m_nodeId, ingressQueue);
             m_isRunning[outPortId] = false;
             return;
         }
@@ -463,6 +480,7 @@ void UbRoundRobinAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
         }
     }
     ClearActiveIngressQueue();
+    TryReclaimReleasedTp(m_nodeId, ingressQueue);
     m_isRunning[outPortId] = false;
     // 通知port发包
     TrackEvent(Simulator::ScheduleNow(&UbRoundRobinAllocator::NotifyAllocationFinish, this, outPort),
@@ -660,7 +678,12 @@ void UbDwrrAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
                     break;
                 }
                 auto q = candidate->queue;
+                Ptr<UbIngressQueue> releasedIngressQueue = m_activeIngressQueue;
                 SetActiveIngressQueue(q);
+                if (releasedIngressQueue != q)
+                {
+                    TryReclaimReleasedTp(m_nodeId, releasedIngressQueue);
+                }
                 ingressQueueSlot = candidate->ingressQueueSlot;
 
                 uint32_t pktSize = q->GetNextPacketSize();
@@ -735,7 +758,9 @@ void UbDwrrAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
     }
 
     if (ingressQueue != nullptr && !sentAny) {
+        Ptr<UbIngressQueue> releasedIngressQueue = m_activeIngressQueue;
         ClearActiveIngressQueue();
+        TryReclaimReleasedTp(m_nodeId, releasedIngressQueue);
         TrackEvent(Simulator::Schedule(m_allocationTime,
                                        &UbDwrrAllocator::AllocateNextPacket,
                                        this,
@@ -745,7 +770,9 @@ void UbDwrrAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
         return;
     }
 
+    Ptr<UbIngressQueue> releasedIngressQueue = m_activeIngressQueue;
     ClearActiveIngressQueue();
+    TryReclaimReleasedTp(m_nodeId, releasedIngressQueue);
     m_isRunning[outPortId] = false;
     // 通知 port 发包
     TrackEvent(Simulator::ScheduleNow(&UbDwrrAllocator::NotifyAllocationFinish, this, outPort),

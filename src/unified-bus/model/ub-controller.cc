@@ -42,6 +42,7 @@ void UbController::CreateUbFunction()
 void UbController::CreateUbTransaction()
 {
     m_transaction = CreateObject<UbTransaction>(GetObject<Node>());
+    m_transaction->SetOwnerController(this);
     NS_ABORT_MSG_IF(m_function == nullptr,
                     "UbFunction must be created before UbTransaction binding");
     m_transaction->SetFunction(PeekPointer(m_function));
@@ -249,6 +250,7 @@ UbController::FinalizeRtpTpGroupMemberRemoval(Ptr<UbTransportGroup> group, uint3
                         membership->second != group->GetLifecycleIdentity().localId,
                     "TPG member reverse index is stale");
     m_rtpTpGroupByTpn.erase(membership);
+    m_transportChannelManager->ReclaimBackingState(removed.tpn);
 }
 
 UbTpgMemberMutationStatus
@@ -278,9 +280,8 @@ UbController::AddRtpTpGroupMember(
         return UbTpgMemberMutationStatus::REJECTED;
     }
     const uint32_t tpn = static_cast<uint32_t>(tpIdentity.localId);
-    Ptr<UbTransportChannel> transport = m_transportChannelManager->GetTp(tpn);
-    if (transport == nullptr || transport->GetLifecycleOwner() != tpIdentity ||
-        group->FindMemberIndex(tpIdentity) >= 0 ||
+    Ptr<UbTransportChannel> transport = m_transportChannelManager->ResolveLiveTp(tpn, tpIdentity);
+    if (transport == nullptr || group->FindMemberIndex(tpIdentity) >= 0 ||
         m_rtpTpGroupByTpn.find(tpn) != m_rtpTpGroupByTpn.end())
     {
         return UbTpgMemberMutationStatus::REJECTED;

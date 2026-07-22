@@ -35,6 +35,7 @@ class UbTransportChannelManager : public Object
                   Ptr<UbCongestionControl> congestionCtrl,
                   bool drainOnly = false);
     Ptr<UbTransportChannel> GetTp(uint32_t tpn) const;
+    bool TryGetEndpointIdentity(uint32_t tpn, UbLifecycleResourceIdentity& identity) const;
     Ptr<UbTransportChannel> CreateReservedTpEndpoint(uint32_t tpn);
     Ptr<UbTransportChannel> ResolveInboundTp(uint32_t srcTpn,
                                              uint32_t dstTpn,
@@ -77,6 +78,7 @@ class UbTransportChannelManager : public Object
     Ptr<UbTransportChannel> ResolveLiveTpLocked(
         uint32_t tpn,
         const UbLifecycleResourceIdentity& expectedIdentity);
+    bool TryGetEndpointIdentityLocked(uint32_t tpn, UbLifecycleResourceIdentity& identity) const;
     void BeginDrainOnlyDestroy(uint32_t tpn);
     bool CanFinalize(const EndpointRecord& record) const;
     void FinalizeDestroy(uint32_t tpn, bool force);
