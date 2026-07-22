@@ -420,6 +420,10 @@ _Avoid_: topology
 The links and connectivity rules between nodes in a simulation case.
 _Avoid_: routing table
 
+**Topology graph**:
+The concrete nodes and links produced after a topology description has been expanded.
+_Avoid_: topology family, routing table
+
 **Routing table**:
 The per-node forwarding information used to move packets toward destinations.
 _Avoid_: topology, traffic
@@ -443,8 +447,8 @@ _Avoid_: bug
 ### Topology And Workload Planning
 
 **Topology family**:
-A named topology shape such as ring, full mesh, two-layer Clos, fat tree, or custom graph.
-_Avoid_: case type
+A named planning shorthand such as ring, full mesh, two-layer Clos, or fat tree. A custom graph does not need a topology-family label.
+_Avoid_: case type, required custom-graph label
 
 **Two-layer Clos**:
 A leaf-spine Clos topology parameterized by host and leaf-switch counts.
@@ -455,12 +459,48 @@ A canonical Clos-family topology parameterized by `k`.
 _Avoid_: generic leaf-spine
 
 **Custom graph**:
-A bounded topology described by node groups and connectivity rules when no supported family fits cleanly.
-_Avoid_: unsupported topology
+A bounded topology given directly as nodes and links, without requiring a topology-family label.
+_Avoid_: unsupported topology, named topology family
+
+**Structured topology input**:
+A Python-built NetworkX graph, or a JSON/YAML adapter input that builds the same graph, used as the authoritative topology for structured compilation. The routing representation is a separate preparation choice.
+_Avoid_: topology-family declaration, generated CSV, separate declarative compiler
+
+**Prepared structured case**:
+A simulation directory containing `structured_topology.txt`, produced after structure verification and route compilation. The runner consumes the directory without importing NetworkX or recompiling routes.
+_Avoid_: runtime Python integration, diagnostic CSV, user-maintained topology source
+
+**Node group**:
+A named collection of nodes with the same type and default physical attributes.
+_Avoid_: routing group, topology family
+
+**Group connection**:
+A compact instruction that creates repeated physical connections within or between node groups.
+_Avoid_: layered connection, routing rule, verified structure
+
+**Layered connection**:
+A compact instruction that connects an ordered set of node layers across one or more planes without assigning fixed topology roles to those layers.
+_Avoid_: Clos label, leaf-spine role declaration, routing rule
+
+**Explicit connection**:
+One physical connection whose endpoint nodes and ports are stated individually.
+_Avoid_: group connection, routing entry
+
+**Group-local node reference**:
+A node reference made from a node-group name and a zero-based index within that group.
+_Avoid_: user-computed global node ID, topology role
 
 **Connectivity rule**:
 The rule that says which node groups connect and how many links are created.
 _Avoid_: routing policy
+
+**Allocation delay**:
+The time consumed by one switch allocation round.
+_Avoid_: forward delay, link delay
+
+**Forward delay**:
+The input-port processing time before a packet becomes eligible for switch allocation.
+_Avoid_: allocation delay, link delay
 
 **Convergence ratio**:
 The ratio of downstream bandwidth to upstream bandwidth at a topology boundary.
@@ -488,9 +528,73 @@ _Avoid_: traffic pattern
 The planning choice that captures the desired routing behavior, such as hash, adaptive, shortest-path-only, generated routes, or manual routes.
 _Avoid_: topology intent
 
+**Route lookup**:
+A request for candidate output ports at the current node for a destination and routing constraints. It is separate from the final choice of one output port.
+_Avoid_: port selection, path generation
+
+**Route lookup item**:
+One independently owned lookup at a current node for a destination node and destination UB port. Table routing or rule routing owns the whole item; their candidate port sets are not merged.
+_Avoid_: RoutingKey, destination node alone, merged route
+
+**Table routing**:
+A route representation that stores candidate output ports for individual destinations or destination ranges.
+_Avoid_: full route table when range compression is included, rule routing
+
+**Rule routing**:
+A route representation that uses verified structure, destination ranges, and local port groups to return candidate output ports.
+_Avoid_: generated route table, topology detection
+
+**Topology rule**:
+A compact runtime rule that maps physical nodes to verified coordinates or switch groups and derives legal next-hop ports from the rule plus authoritative physical links. It does not contain one record per destination lookup.
+_Avoid_: expanded route table, topology label, unverified graph pattern
+
+**Mixed routing**:
+A route representation that uses rules for some route lookups and table entries for the rest, with exactly one source responsible for each lookup.
+_Avoid_: hybrid candidate merging, combining two candidate sets
+
+**Verified structure**:
+A compact description of repeated groups, coordinates, layers, and destination coverage that has been checked against the topology graph.
+_Avoid_: guessed topology family, confidence-based match
+
+**Pair-design network**:
+A verified two-level incidence structure where each pair of lower nodes shares exactly one upper neighbor. Balanced Sparse Tree is one topology that can produce this relation; users do not declare this name in their input.
+_Avoid_: required BST label, ordinary tree, unverified BIBD parameters
+
+**Dimension network**:
+A verified Cartesian-product structure in which every physical edge changes one coordinate. Each dimension uses line, ring, or full-mesh connectivity; Ring, Mesh, Torus, Hypercube, and N-dimensional Dimension FullMesh are instances of this one structure.
+_Avoid_: required product topology label, two-dimensional-only full mesh
+
+**Classic Dragonfly**:
+A verified router-group structure with equal-size full-mesh groups, one logical global router pair between every pair of groups, uniform global degree, and uniform terminal attachment to one router. The name does not include Dragonfly+, random global wiring, or non-minimal routing.
+_Avoid_: arbitrary grouped network, UGAL routing, Dragonfly+
+
+**Local port group**:
+The output ports on one node that are eligible under the same routing rule before hash or adaptive selection chooses one port.
+_Avoid_: final output port, global port group
+
+**Destination coverage**:
+The destination nodes represented by a structured node group or reachable through a structured boundary.
+_Avoid_: route table, physical connectivity alone
+
+**Diagnostic routing export**:
+An optional CSV snapshot of compiled table entries, exact/range rules, topology rules, and local port groups produced only when inspection is requested.
+_Avoid_: default simulation input, topology source
+
+**Rule coverage**:
+The route lookups handled by rule routing in a simulation case.
+_Avoid_: topology coverage, detected-node count
+
+**Routing equivalence**:
+The condition where two route representations return the same shortest and non-shortest candidate port sets for every route lookup in scope.
+_Avoid_: graph similarity, sampled confidence
+
 **Auto path finder**:
-A route-generation approach that derives forwarding paths from topology connectivity.
+A route-generation approach that derives shortest-path candidates from topology connectivity. The default structured compiler emits topology rules for a complete safe structure composition; otherwise it uses one destination DAG at a time. Neither default path materializes a complete baseline table.
 _Avoid_: manual routing
+
+**Custom path finder**:
+A user-provided route-generation function that derives forwarding paths from a topology graph and defines the complete baseline routes for equivalence checks and caching.
+_Avoid_: topology recognizer, routing representation
 
 **Manual route table**:
 A user-specified forwarding table for cases where generated routes are not the intended behavior.
