@@ -1,6 +1,6 @@
 # T46 Task Brief: Compact Unmaterialized TP Reservations
 
-Status: ready-for-agent
+Status: complete
 
 ## Authority And Scope
 
@@ -124,3 +124,13 @@ and no runtime/scale evidence directory is created.
   duplicate generation storage and lazy-allocated active lifecycle/callback state.
 - Scale, runtime system snapshot, and frozen canonical differential were not run because T46 does not
   change runtime CSV rows and is not an integration milestone.
+
+## Closeout
+
+- Implementation commit: `7717b91` (`perf(unified-bus): compact TP reservation lifecycle state`).
+- Standards review: passed after recording reproducible validation commands and consolidating the
+  callback bundle allocation path.
+- Spec review: passed with canonical connection ownership, default unmaterialized state, lazy
+  sidecar/callback allocation, destroy ordering, and reuse semantics preserved.
+- Final focused rerun added proof that destroy requests without callbacks neither allocate a second
+  bundle nor append callback entries; the reservation suite remained 13/13 PASS.
