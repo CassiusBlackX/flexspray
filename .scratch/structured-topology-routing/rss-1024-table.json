@@ -1,0 +1,21 @@
+{
+  "mode": "table",
+  "nodeCount": 2336,
+  "linkCount": 19968,
+  "tableRouteCount": 9427968,
+  "portGroupCount": 0,
+  "exactRuleCount": 0,
+  "rangeRuleCount": 0,
+  "topologyRuleCount": 0,
+  "topologyMembershipCount": 0,
+  "parseSeconds": 6.167785,
+  "installSeconds": 10.703308,
+  "rssBeforeParseBytes": 14483456,
+  "peakBeforeParseBytes": 14696448,
+  "rssAfterParseBytes": 770867200,
+  "rssAfterInstallBytes": 1659060224,
+  "rssAfterConfigReleaseBytes": 1648459776,
+  "allocatorReleasedBytes": 0,
+  "rssAfterAllocatorReliefBytes": 1648459776,
+  "peakRssBytes": 1659207680
+}

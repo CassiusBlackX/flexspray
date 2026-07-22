@@ -1,0 +1,253 @@
+{
+  "case": {
+    "name": "1dpod-1024npu",
+    "npuCount": 1024,
+    "nodeCount": 2336,
+    "fullTableRoutes": 9427968,
+    "topologyRules": 136
+  },
+  "queryCorpora": {
+    "exhaustive": {
+      "queryCount": 9427968,
+      "sequential": "sorted by currentNodeId and destinationIp",
+      "random": "stateless SplitMix64 index with a fixed seed and replacement"
+    },
+    "existingWorkloadEndpoints": {
+      "queryCount": 65536,
+      "source": "lianqiuhu-ctp-8plane/scratch/20260512-8plane-ctp-taack-bidir-load/traffic.csv",
+      "classification": "existing synthetic simulation workload",
+      "realTrafficTrace": false,
+      "limitation": "traffic.csv has endpoint tasks but no destination-port hint or intermediate forwarding-node sequence"
+    }
+  },
+  "method": {
+    "independentProcessPerRoutingMode": true,
+    "processSamplesPerMode": 3,
+    "aggregate": "median of independent process samples for each reported metric",
+    "iterationsPerMeasurement": 10000000,
+    "warmupIterationsPerMeasurement": 100000,
+    "batchSize": 4096,
+    "latencyStatistic": "per-query mean within timed batches",
+    "percentiles": "nearest-rank percentile over timed batch means",
+    "candidateLookup": "table GetShortestCandidates versus topology-rule TryGetRuleCandidates with reused output vectors",
+    "getOutPort": "both modes call UbRoutingProcess::GetOutPort with HASH routing and shortest-path-only selection",
+    "routingKey": "sip is the current node primary address, dip is the corpus destination, and sport varies with query index; exhaustive queries are not packet traces"
+  },
+  "setupSeconds": {
+    "table": {
+      "parseMedian": 5.500508,
+      "installMedian": 9.326484
+    },
+    "topologyRule": {
+      "parseMedian": 0.012438,
+      "installMedian": 0.535943
+    }
+  },
+  "rawSamples": {
+    "table": [
+      ".scratch/structured-topology-routing/lookup-1024-index-table-run1.json",
+      ".scratch/structured-topology-routing/lookup-1024-index-table-run2.json",
+      ".scratch/structured-topology-routing/lookup-1024-index-table-run3.json"
+    ],
+    "topologyRule": [
+      ".scratch/structured-topology-routing/lookup-1024-index-rule-run1.json",
+      ".scratch/structured-topology-routing/lookup-1024-index-rule-run2.json",
+      ".scratch/structured-topology-routing/lookup-1024-index-rule-run3.json"
+    ]
+  },
+  "correctness": {
+    "allChecksumsMatch": true,
+    "missingQueries": 0,
+    "fullPortCandidateEquivalenceQueries": 9427968,
+    "fullNodeCandidateEquivalenceQueries": 2145280,
+    "checksumCoversAllCandidatePorts": true
+  },
+  "comparisons": [
+    {
+      "distribution": "exhaustive-sequential",
+      "lookupPath": "candidate-lookup",
+      "queryCount": 10000000,
+      "batchSize": 4096,
+      "table": {
+        "meanNs": 30.797083,
+        "p50BatchMeanNs": 27.740479,
+        "p99BatchMeanNs": 68.603516,
+        "queriesPerSecond": 32470607.265362
+      },
+      "topologyRule": {
+        "meanNs": 346.997358,
+        "p50BatchMeanNs": 320.983887,
+        "p99BatchMeanNs": 596.262695,
+        "queriesPerSecond": 2881866.31913
+      },
+      "topologyRuleOverTableMean": 11.267215,
+      "tableMeanNsSamples": [
+        29.460554,
+        32.836562,
+        30.797083
+      ],
+      "topologyRuleMeanNsSamples": [
+        346.997358,
+        312.158296,
+        361.188913
+      ],
+      "checksum": 4727517065281743115,
+      "missing": 0
+    },
+    {
+      "distribution": "exhaustive-sequential",
+      "lookupPath": "get-out-port",
+      "queryCount": 10000000,
+      "batchSize": 4096,
+      "table": {
+        "meanNs": 113.573633,
+        "p50BatchMeanNs": 109.262939,
+        "p99BatchMeanNs": 190.226318,
+        "queriesPerSecond": 8804860.520386
+      },
+      "topologyRule": {
+        "meanNs": 414.900508,
+        "p50BatchMeanNs": 370.992188,
+        "p99BatchMeanNs": 742.421631,
+        "queriesPerSecond": 2410216.377168
+      },
+      "topologyRuleOverTableMean": 3.653141,
+      "tableMeanNsSamples": [
+        113.573633,
+        135.508725,
+        112.897417
+      ],
+      "topologyRuleMeanNsSamples": [
+        401.439562,
+        414.900508,
+        436.635325
+      ],
+      "checksum": 50000119756846,
+      "missing": 0
+    },
+    {
+      "distribution": "exhaustive-random",
+      "lookupPath": "candidate-lookup",
+      "queryCount": 10000000,
+      "batchSize": 4096,
+      "table": {
+        "meanNs": 244.519763,
+        "p50BatchMeanNs": 239.013672,
+        "p99BatchMeanNs": 334.716797,
+        "queriesPerSecond": 4089648.99105
+      },
+      "topologyRule": {
+        "meanNs": 581.809525,
+        "p50BatchMeanNs": 580.393555,
+        "p99BatchMeanNs": 882.781982,
+        "queriesPerSecond": 1718775.573501
+      },
+      "topologyRuleOverTableMean": 2.379397,
+      "tableMeanNsSamples": [
+        229.649975,
+        344.662904,
+        244.519763
+      ],
+      "topologyRuleMeanNsSamples": [
+        565.652471,
+        608.337112,
+        581.809525
+      ],
+      "checksum": 4398849842099615630,
+      "missing": 0
+    },
+    {
+      "distribution": "exhaustive-random",
+      "lookupPath": "get-out-port",
+      "queryCount": 10000000,
+      "batchSize": 4096,
+      "table": {
+        "meanNs": 565.793367,
+        "p50BatchMeanNs": 553.487305,
+        "p99BatchMeanNs": 818.227051,
+        "queriesPerSecond": 1767429.699349
+      },
+      "topologyRule": {
+        "meanNs": 775.970067,
+        "p50BatchMeanNs": 724.131104,
+        "p99BatchMeanNs": 1371.002197,
+        "queriesPerSecond": 1288709.504289
+      },
+      "topologyRuleOverTableMean": 1.371473,
+      "tableMeanNsSamples": [
+        497.739742,
+        583.092446,
+        565.793367
+      ],
+      "topologyRuleMeanNsSamples": [
+        646.317908,
+        775.970067,
+        899.415721
+      ],
+      "checksum": 50000121296480,
+      "missing": 0
+    },
+    {
+      "distribution": "existing-workload-endpoints",
+      "lookupPath": "candidate-lookup",
+      "queryCount": 10000000,
+      "batchSize": 4096,
+      "table": {
+        "meanNs": 44.951046,
+        "p50BatchMeanNs": 44.606689,
+        "p99BatchMeanNs": 66.050293,
+        "queriesPerSecond": 22246423.463634
+      },
+      "topologyRule": {
+        "meanNs": 820.395329,
+        "p50BatchMeanNs": 797.719238,
+        "p99BatchMeanNs": 1112.650391,
+        "queriesPerSecond": 1218924.540898
+      },
+      "topologyRuleOverTableMean": 18.250862,
+      "tableMeanNsSamples": [
+        44.951046,
+        44.380288,
+        62.610075
+      ],
+      "topologyRuleMeanNsSamples": [
+        820.395329,
+        860.468704,
+        731.404221
+      ],
+      "checksum": 323170672433446592,
+      "missing": 0
+    },
+    {
+      "distribution": "existing-workload-endpoints",
+      "lookupPath": "get-out-port",
+      "queryCount": 10000000,
+      "batchSize": 4096,
+      "table": {
+        "meanNs": 104.316283,
+        "p50BatchMeanNs": 102.355957,
+        "p99BatchMeanNs": 162.678955,
+        "queriesPerSecond": 9586231.107603
+      },
+      "topologyRule": {
+        "meanNs": 1047.464979,
+        "p50BatchMeanNs": 1040.618896,
+        "p99BatchMeanNs": 1558.410645,
+        "queriesPerSecond": 954685.855716
+      },
+      "topologyRuleOverTableMean": 10.041241,
+      "tableMeanNsSamples": [
+        104.316283,
+        100.653179,
+        129.74975
+      ],
+      "topologyRuleMeanNsSamples": [
+        1129.194117,
+        1047.464979,
+        856.027521
+      ],
+      "checksum": 50000095390570,
+      "missing": 0
+    }
+  ]
+}

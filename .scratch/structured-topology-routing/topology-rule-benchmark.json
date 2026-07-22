@@ -1,0 +1,178 @@
+{
+  "1dpod-1024npu": {
+    "bruteForce": {
+      "exactRules": 0,
+      "memoryMode": "streamed-one-destination-at-a-time",
+      "protocolBytes": 162121150,
+      "pythonCurrentBytes": 3199897,
+      "pythonPeakBytes": 6393657,
+      "rangeRules": 0,
+      "seconds": 337.79580854199594,
+      "secondsWithoutMemoryTracking": 17.977965000027325,
+      "tableLookups": 9427968,
+      "topologyNodeMemberships": 0,
+      "topologyRules": 0
+    },
+    "equivalence": {
+      "bruteForceLookups": 9427968,
+      "extra": 0,
+      "mismatchExamples": [],
+      "mismatched": 0,
+      "missing": 0,
+      "ruleLookups": 9427968,
+      "seconds": 196.28803266701289
+    },
+    "topologyRules": {
+      "exactRules": 0,
+      "protocolBytes": 789816,
+      "pythonCurrentBytes": 2358185,
+      "pythonPeakBytes": 32594289,
+      "rangeRules": 0,
+      "seconds": 6.814876582997385,
+      "secondsWithoutMemoryTracking": 1.3731756249908358,
+      "tableLookups": 0,
+      "topologyNodeMemberships": 10528,
+      "topologyRules": 136
+    }
+  },
+  "1dpod-64npu": {
+    "bruteForce": {
+      "exactRules": 0,
+      "protocolBytes": 611134,
+      "pythonCurrentBytes": 12368925,
+      "pythonPeakBytes": 24364469,
+      "rangeRules": 0,
+      "seconds": 1.4808643329888582,
+      "secondsWithoutMemoryTracking": 0.4112287500174716,
+      "tableLookups": 36288,
+      "topologyNodeMemberships": 0,
+      "topologyRules": 0
+    },
+    "equivalence": {
+      "bruteForceLookups": 36288,
+      "extra": 0,
+      "mismatchExamples": [],
+      "mismatched": 0,
+      "missing": 0,
+      "ruleLookups": 36288,
+      "seconds": 0.7329600409721024
+    },
+    "topologyRules": {
+      "exactRules": 0,
+      "protocolBytes": 44689,
+      "pythonCurrentBytes": 709089,
+      "pythonPeakBytes": 2529879,
+      "rangeRules": 0,
+      "seconds": 0.17488791700452566,
+      "secondsWithoutMemoryTracking": 0.022514125041197985,
+      "tableLookups": 0,
+      "topologyNodeMemberships": 688,
+      "topologyRules": 16
+    }
+  },
+  "dragonfly-a4-h1": {
+    "bruteForce": {
+      "exactRules": 0,
+      "protocolBytes": 12805,
+      "pythonCurrentBytes": 289637,
+      "pythonPeakBytes": 539441,
+      "rangeRules": 0,
+      "seconds": 0.01594429201213643,
+      "secondsWithoutMemoryTracking": 0.003360792004968971,
+      "tableLookups": 780,
+      "topologyNodeMemberships": 0,
+      "topologyRules": 0
+    },
+    "equivalence": {
+      "bruteForceLookups": 780,
+      "extra": 0,
+      "mismatchExamples": [],
+      "mismatched": 0,
+      "missing": 0,
+      "ruleLookups": 780,
+      "seconds": 0.005076208035461605
+    },
+    "topologyRules": {
+      "exactRules": 0,
+      "protocolBytes": 3110,
+      "pythonCurrentBytes": 89529,
+      "pythonPeakBytes": 228233,
+      "rangeRules": 0,
+      "seconds": 0.00841458298964426,
+      "secondsWithoutMemoryTracking": 0.0011519159888848662,
+      "tableLookups": 0,
+      "topologyNodeMemberships": 40,
+      "topologyRules": 1
+    }
+  },
+  "nd-fullmesh-4x4x4": {
+    "bruteForce": {
+      "exactRules": 0,
+      "protocolBytes": 144551,
+      "pythonCurrentBytes": 3020421,
+      "pythonPeakBytes": 5904429,
+      "rangeRules": 0,
+      "seconds": 0.2653394590015523,
+      "secondsWithoutMemoryTracking": 0.06697241601068527,
+      "tableLookups": 9216,
+      "topologyNodeMemberships": 0,
+      "topologyRules": 0
+    },
+    "equivalence": {
+      "bruteForceLookups": 9216,
+      "extra": 0,
+      "mismatchExamples": [],
+      "mismatched": 0,
+      "missing": 0,
+      "ruleLookups": 9216,
+      "seconds": 0.1016043329727836
+    },
+    "topologyRules": {
+      "exactRules": 0,
+      "protocolBytes": 9100,
+      "pythonCurrentBytes": 194733,
+      "pythonPeakBytes": 661031,
+      "rangeRules": 0,
+      "seconds": 0.02331150003010407,
+      "secondsWithoutMemoryTracking": 0.003685500007122755,
+      "tableLookups": 0,
+      "topologyNodeMemberships": 64,
+      "topologyRules": 1
+    }
+  },
+  "ubx-16npu": {
+    "bruteForce": {
+      "exactRules": 0,
+      "protocolBytes": 13721,
+      "pythonCurrentBytes": 316267,
+      "pythonPeakBytes": 588423,
+      "rangeRules": 0,
+      "seconds": 0.012471791997086257,
+      "secondsWithoutMemoryTracking": 0.002831874997355044,
+      "tableLookups": 880,
+      "topologyNodeMemberships": 0,
+      "topologyRules": 0
+    },
+    "equivalence": {
+      "bruteForceLookups": 880,
+      "extra": 0,
+      "mismatchExamples": [],
+      "mismatched": 0,
+      "missing": 0,
+      "ruleLookups": 880,
+      "seconds": 0.003814416006207466
+    },
+    "topologyRules": {
+      "exactRules": 0,
+      "protocolBytes": 3030,
+      "pythonCurrentBytes": 166693,
+      "pythonPeakBytes": 315649,
+      "rangeRules": 0,
+      "seconds": 0.012104958994314075,
+      "secondsWithoutMemoryTracking": 0.00179387500975281,
+      "tableLookups": 0,
+      "topologyNodeMemberships": 36,
+      "topologyRules": 5
+    }
+  }
+}
