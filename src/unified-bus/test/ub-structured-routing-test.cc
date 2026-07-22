@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 #include "ns3/config.h"
+#include "ns3/enum.h"
 #include "ns3/simulator.h"
 #include "ns3/test.h"
 #include "ns3/ub-next-hop-index.h"
@@ -10,6 +11,7 @@
 #include "ns3/ub-utils.h"
 
 #include <csignal>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <sstream>
@@ -24,6 +26,110 @@ using namespace ns3;
 
 namespace
 {
+
+void
+AppendUint16(std::string& output, uint16_t value)
+{
+    output.push_back(static_cast<char>(value));
+    output.push_back(static_cast<char>(value >> 8));
+}
+
+void
+AppendUint32(std::string& output, uint32_t value)
+{
+    for (uint32_t index = 0; index < 4; ++index)
+    {
+        output.push_back(static_cast<char>(value >> (index * 8)));
+    }
+}
+
+void
+AppendUint64(std::string& output, uint64_t value)
+{
+    for (uint32_t index = 0; index < 8; ++index)
+    {
+        output.push_back(static_cast<char>(value >> (index * 8)));
+    }
+}
+
+uint32_t
+CalculateFixtureCrc32(const std::string& bytes)
+{
+    uint32_t crc = 0xffffffffU;
+    for (unsigned char byte : bytes)
+    {
+        crc ^= byte;
+        for (uint32_t bit = 0; bit < 8; ++bit)
+        {
+            const uint32_t mask = 0U - (crc & 1U);
+            crc = (crc >> 1) ^ (0xedb88320U & mask);
+        }
+    }
+    return crc ^ 0xffffffffU;
+}
+
+std::string
+BuildCompressedRoutingFixture(bool corruptChecksum = false,
+                              uint32_t shortestCount = 2,
+                              uint16_t firstShortestPort = 2,
+                              uint64_t extraDeclaredPayloadBytes = 0,
+                              uint16_t secondShortestPort = 3,
+                              uint16_t nonShortestPort = 4)
+{
+    constexpr uint32_t nodeCount = 44;
+    constexpr uint32_t invalid = UINT32_MAX;
+    std::string payload;
+    for (uint32_t nodeId = 0; nodeId < nodeCount; ++nodeId)
+    {
+        AppendUint32(payload, nodeId == 7 ? 0 : invalid);
+    }
+    for (uint32_t nodeId = 0; nodeId < nodeCount; ++nodeId)
+    {
+        AppendUint32(payload, nodeId == 42 ? 0 : invalid);
+    }
+    for (uint32_t address = 0; address < nodeCount * 256; ++address)
+    {
+        AppendUint32(payload, address == 42 * 256 + 2 ? 0 : invalid);
+    }
+    AppendUint32(payload, 0);
+    AppendUint32(payload, 0);
+    AppendUint32(payload, shortestCount);
+    AppendUint32(payload, 1);
+    AppendUint16(payload, firstShortestPort);
+    AppendUint16(payload, secondShortestPort);
+    AppendUint16(payload, nonShortestPort);
+    payload.push_back(1);
+    payload.push_back(1);
+
+    std::string artifact("UBCRIDX\0", 8);
+    AppendUint16(artifact, 1);
+    AppendUint16(artifact, 0);
+    AppendUint32(artifact, 0x01020304);
+    AppendUint32(artifact, 88);
+    AppendUint32(artifact, nodeCount);
+    AppendUint32(artifact, 1);
+    AppendUint32(artifact, 1);
+    AppendUint32(artifact, 1);
+    AppendUint32(artifact, 2);
+    artifact.push_back(1);
+    artifact.push_back(1);
+    AppendUint16(artifact, 0);
+    artifact.append(32, '\0');
+    AppendUint64(artifact, payload.size() + extraDeclaredPayloadBytes);
+    AppendUint32(artifact, CalculateFixtureCrc32(payload) ^ (corruptChecksum ? 1U : 0U));
+    artifact += payload;
+    return artifact;
+}
+
+std::vector<std::vector<bool>>
+BuildFixtureConnectedPorts()
+{
+    std::vector<std::vector<bool>> ports(44, std::vector<bool>(16, false));
+    ports[7][2] = true;
+    ports[7][3] = true;
+    ports[7][4] = true;
+    return ports;
+}
 
 #ifndef _WIN32
 int
@@ -172,6 +278,16 @@ class UbNextHopIndexTest : public TestCase
                               true,
                               "direct lookup should not hide a missing destination port");
 
+        routing->AddShortestRouteRange(40, 45, 2, {11});
+        routing->GetShortestOutPorts(utils::NodeIdToIp(42, 2).Get(), shortestPorts);
+        NS_TEST_ASSERT_MSG_EQ((shortestPorts == std::vector<uint16_t>({2, 3, 7})),
+                              true,
+                              "indexed exact route should take precedence over a CSV range");
+        routing->GetShortestOutPorts(utils::NodeIdToIp(43, 2).Get(), shortestPorts);
+        NS_TEST_ASSERT_MSG_EQ((shortestPorts == std::vector<uint16_t>({11})),
+                              true,
+                              "indexed exact miss should fall back to a CSV range");
+
         RoutingKey key{};
         key.sip = utils::NodeIdToIp(1).Get();
         key.dip = utils::NodeIdToIp(42, 10).Get();
@@ -187,6 +303,108 @@ class UbNextHopIndexTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(usedAggregatedShortestPort,
                               true,
                               "primary-address fallback should use aggregated shortest candidates");
+
+        const auto fallbackIndex = UbNextHopIndex::Build(
+            {
+                {7, 42, 2, {2}, {}},
+                {7, 42, 3, {5}, {6}},
+            },
+            44);
+        auto fallbackRules = std::make_shared<UbRuleRoutingTable>();
+        fallbackRules->AddPortGroup({7, 20, {2}});
+        fallbackRules->AddPortGroup({7, 21, {5}});
+        fallbackRules->AddPortGroup({7, 22, {6}});
+        fallbackRules->AddRule({7, {42, 2}, {20}, {}});
+        fallbackRules->AddRule({7, {42, 3}, {21}, {22}});
+        fallbackRules->AddTopologyLink({42, 2, 100, 0});
+        fallbackRules->AddTopologyLink({42, 3, 101, 0});
+        fallbackRules->PrepareForLookup();
+
+        Ptr<UbRoutingProcess> indexedRouting = CreateObject<UbRoutingProcess>();
+        indexedRouting->SetNodeId(7);
+        indexedRouting->SetNextHopIndex(fallbackIndex);
+        indexedRouting->SetAttribute("MultipathSelector",
+                                     EnumValue(MultipathSelector::ROUND_ROBIN));
+        Ptr<UbRoutingProcess> ruleRouting = CreateObject<UbRoutingProcess>();
+        ruleRouting->SetNodeId(7);
+        ruleRouting->SetRuleRoutingTable(fallbackRules);
+        ruleRouting->SetAttribute("MultipathSelector", EnumValue(MultipathSelector::ROUND_ROBIN));
+
+        key.dip = utils::NodeIdToIp(42, 2).Get();
+        key.routingType = RoutingType::PER_PACKET_ALL_PATHS;
+        bool indexedShortest = false;
+        bool ruleShortest = false;
+        const int indexedPort = indexedRouting->GetOutPort(key, indexedShortest);
+        const int rulePort = ruleRouting->GetOutPort(key, ruleShortest);
+        NS_TEST_ASSERT_MSG_EQ(indexedPort,
+                              rulePort,
+                              "rule and index should fill missing candidate groups identically");
+        NS_TEST_ASSERT_MSG_EQ(indexedShortest,
+                              ruleShortest,
+                              "rule and index should agree on detour selection");
+        NS_TEST_ASSERT_MSG_EQ(
+            indexedRouting->GetOutPort(key, indexedShortest),
+            ruleRouting->GetOutPort(key, ruleShortest),
+            "round robin should see the same second candidate without ANY_PORT rules");
+        NS_TEST_ASSERT_MSG_EQ(indexedShortest,
+                              ruleShortest,
+                              "round robin detour marking should match without ANY_PORT rules");
+
+        key.routingType = RoutingType::PER_PACKET_SHORTEST_PATHS;
+        NS_TEST_ASSERT_MSG_EQ(indexedRouting->GetOutPort(key, indexedShortest, 2),
+                              -1,
+                              "ingress filtering must happen after primary fallback");
+        NS_TEST_ASSERT_MSG_EQ(ruleRouting->GetOutPort(key, ruleShortest, 2),
+                              -1,
+                              "rule ingress filtering must match the index");
+
+        key.routingType = RoutingType::PER_PACKET_ALL_PATHS;
+        NS_TEST_ASSERT_MSG_EQ(indexedRouting->GetOutPort(key, indexedShortest, 2),
+                              6,
+                              "a valid non-shortest candidate remains after ingress filtering");
+        NS_TEST_ASSERT_MSG_EQ(ruleRouting->GetOutPort(key, ruleShortest, 2),
+                              6,
+                              "rule and index should use the same remaining candidate");
+        NS_TEST_ASSERT_MSG_EQ(indexedShortest,
+                              false,
+                              "the remaining candidate must retain non-shortest semantics");
+        NS_TEST_ASSERT_MSG_EQ(ruleShortest, false, "rule detour marking must match the index");
+
+        key.dip = utils::NodeIdToIp(42).Get();
+        NS_TEST_ASSERT_MSG_EQ(indexedRouting->GetOutPort(key, indexedShortest),
+                              ruleRouting->GetOutPort(key, ruleShortest),
+                              "node-primary lookup should match across runtime modes");
+    }
+};
+
+class UbCompressedNextHopArtifactTest : public TestCase
+{
+  public:
+    UbCompressedNextHopArtifactTest()
+        : TestCase("Portable compressed next-hop artifact loads without rebuilding routes")
+    {
+    }
+
+    void DoRun() override
+    {
+        std::stringstream input(BuildCompressedRoutingFixture());
+        const auto index =
+            UbNextHopIndex::Read(input, BuildFixtureConnectedPorts(), std::string(64, '0'));
+        std::vector<uint16_t> shortestPorts;
+        std::vector<uint16_t> nonShortestPorts;
+        NS_TEST_ASSERT_MSG_EQ(index->TryLookup(7, 42, 2, shortestPorts, nonShortestPorts),
+                              true,
+                              "binary exact route should resolve");
+        NS_TEST_ASSERT_MSG_EQ((shortestPorts == std::vector<uint16_t>({2, 3})),
+                              true,
+                              "binary shortest candidates");
+        NS_TEST_ASSERT_MSG_EQ((nonShortestPorts == std::vector<uint16_t>({4})),
+                              true,
+                              "binary non-shortest candidates");
+        NS_TEST_ASSERT_MSG_EQ(
+            index->TryLookup(7, 42, UbRuleDestination::ANY_PORT, shortestPorts, nonShortestPorts),
+            true,
+            "binary node-primary route should resolve");
     }
 };
 
@@ -286,6 +504,74 @@ class UbStructuredTopologyRejectsInvalidInputTest : public TestCase
         });
         NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, "invalid physical port should abort");
         NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status), SIGABRT, "invalid port should use SIGABRT");
+
+        status = RunStructuredTestInChild([]() {
+            std::stringstream input(BuildCompressedRoutingFixture(true));
+            (void)UbNextHopIndex::Read(input, BuildFixtureConnectedPorts(), std::string(64, '0'));
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, "bad binary checksum should abort");
+        NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status), SIGABRT, "bad binary checksum should use SIGABRT");
+
+        status = RunStructuredTestInChild([]() {
+            std::stringstream input(BuildCompressedRoutingFixture(false, UINT32_MAX, 2));
+            (void)UbNextHopIndex::Read(input, BuildFixtureConnectedPorts(), std::string(64, '0'));
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, "oversized candidate count should abort");
+        NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status), SIGABRT, "oversized count should use SIGABRT");
+
+        status = RunStructuredTestInChild([]() {
+            std::stringstream input(BuildCompressedRoutingFixture(false, 2, 3, 0, UINT16_MAX));
+            (void)UbNextHopIndex::Read(input, BuildFixtureConnectedPorts(), std::string(64, '0'));
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, "out-of-range candidate port should abort");
+        NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status), SIGABRT, "invalid port should use SIGABRT");
+
+        status = RunStructuredTestInChild([]() {
+            std::stringstream input(BuildCompressedRoutingFixture(false, 2, 2, 1ULL << 32));
+            (void)UbNextHopIndex::Read(input, BuildFixtureConnectedPorts(), std::string(64, '0'));
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, "truncated declared payload should abort");
+        NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status), SIGABRT, "truncated payload should use SIGABRT");
+
+        status = RunStructuredTestInChild([]() {
+            std::stringstream input(BuildCompressedRoutingFixture(false, 2, 2, 0, 5, 6));
+            (void)UbNextHopIndex::Read(input, BuildFixtureConnectedPorts(), std::string(64, '0'));
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, "disconnected candidate port should abort");
+        NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status), SIGABRT, "disconnected port should use SIGABRT");
+
+        status = RunStructuredTestInChild([]() {
+            std::stringstream input(BuildCompressedRoutingFixture(false, 2, 2, 0, 2));
+            (void)UbNextHopIndex::Read(input, BuildFixtureConnectedPorts(), std::string(64, '0'));
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, "duplicate candidate port should abort");
+        NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status), SIGABRT, "duplicate port should use SIGABRT");
+
+        status = RunStructuredTestInChild([]() {
+            std::stringstream input(BuildCompressedRoutingFixture(false, 2, 3, 0, 2));
+            (void)UbNextHopIndex::Read(input, BuildFixtureConnectedPorts(), std::string(64, '0'));
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, "unsorted candidate ports should abort");
+        NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status), SIGABRT, "unsorted ports should use SIGABRT");
+
+        status = RunStructuredTestInChild([]() {
+            std::stringstream input(BuildCompressedRoutingFixture(false, 2, 2, 0, 3, 3));
+            (void)UbNextHopIndex::Read(input, BuildFixtureConnectedPorts(), std::string(64, '0'));
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, "overlapping candidate groups should abort");
+        NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status), SIGABRT, "overlapping groups should use SIGABRT");
+
+        status = RunStructuredTestInChild([]() {
+            std::stringstream payload;
+            payload << "NS3_UB_STRUCTURED 4\n"
+                    << "NODES 1\n"
+                    << "0 DEVICE 1 1ns 0ns 0\n"
+                    << "LINKS 0\n"
+                    << "ROUTING_FINGERPRINT not-a-sha256\n";
+            (void)utils::UbUtils::ReadStructuredTopologyConfig(payload);
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, "invalid routing fingerprint should abort");
+        NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status), SIGABRT, "invalid fingerprint should use SIGABRT");
     }
 };
 #endif
@@ -298,6 +584,7 @@ class UbStructuredRoutingTestSuite : public TestSuite
     {
         AddTestCase(new UbRuleRoutingTableTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbNextHopIndexTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbCompressedNextHopArtifactTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbStructuredTopologyInstallTest(), TestCase::Duration::QUICK);
 #ifndef _WIN32
         AddTestCase(new UbStructuredTopologyRejectsInvalidInputTest(), TestCase::Duration::QUICK);

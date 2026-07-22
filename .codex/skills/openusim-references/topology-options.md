@@ -304,9 +304,10 @@ graph.add_netisim_edge(u, v, bandwidth='400Gbps', delay='20ns', edge_count=1)
 # Discover, verify, and prepare a reusable case without topology/routing CSV
 result = graph.prepare_structured_case(
     case_path="path/to/case",
-    routing_mode="mixed",
+    route_generation="mixed",
 )
 assert result.topology_path.is_file()
+assert result.compressed_routing_path.is_file()
 ```
 
 `prepare_structured_case()` automatically calls `build_graph_config()` when needed. It creates the physical
@@ -316,9 +317,10 @@ coordinate/group topology rules without per-destination DAGs. Partly recognized 
 destination DAG at a time for exact/range rules and only necessary table entries. Neither path
 enumerates all shortest paths or materializes a complete baseline. A custom `path_finding_algo` keeps
 the full baseline equivalence and content-cache path. The compiled result is atomically written to
-`structured_topology.txt`, with `structured_summary.json` recording its version, cache key, and
-routing coverage. It writes no topology or routing CSV by default. Set `export_dir` only when a
-diagnostic snapshot is needed.
+`structured_topology.txt` and `compressed_routing.bin`, with `structured_summary.json` recording its
+version, cache key, routing coverage, and binary dimensions. It writes no topology or routing CSV by
+default. Set `export_dir` only when a diagnostic snapshot is needed; set `verify_routes=True` only
+for exhaustive baseline comparison.
 
 The tools CLI prepares the same case directory:
 
@@ -331,7 +333,9 @@ python3 scratch/ns-3-ub-tools/prepare_structured_case.py \
 The repository-level runner later consumes only that directory:
 
 ```bash
-python3 scratch/run_structured_topo_case.py --case-path path/to/case
+python3 scratch/run_structured_topo_case.py \
+  --case-path path/to/case \
+  --route-runtime-mode compressed-table-lookup
 ```
 
 The CLI also accepts the JSON/YAML adapter. Its four independent sections are `nodeGroups`,
@@ -358,10 +362,13 @@ command. `routing_rule_ranges.csv` is optional, but when present it is loaded wi
 - `multiple_workers`: parallel workers for routing, e.g. `4`
 - `get_physical_topology()`: after `build_graph_config()`, return the cached normalized topology with one record per node and per physical link, including both endpoint port IDs, expanded parallel links, and custom attributes. It does not change CSV generation or routing behavior.
 - `build_graph_config_from_links(link_infos, port_counts=...)`: install links that already carry both endpoint port IDs. This is the low-level path used by the custom-case loader; normal generated graphs should keep using `build_graph_config()`.
-- `prepare_structured_case(case_path, routing_mode="mixed", ...)`: compile and atomically write
-  `structured_topology.txt` plus `structured_summary.json`. Modes are `table`, `rule`, and `mixed`;
-  `mixed` is the normal default and keeps table entries for every lookup not fully owned by verified
-  rules. It never launches ns-3.
+- `prepare_structured_case(case_path, route_generation="mixed", ...)`: compile and atomically write
+  `structured_topology.txt`, `compressed_routing.bin`, and `structured_summary.json`. Offline
+  strategies are `full`, `structured`, and `mixed`. The default `mixed` uses verified structure where
+  possible and graph-derived routes for the rest. It never launches ns-3.
+- `run_structured_topo_case.py --route-runtime-mode=...`: select `compressed-table-lookup` for direct
+  indexed lookup or `structured-rule-compute` for runtime evaluation of verified rules. The latter
+  requires usable structure rules; `full` supports only compressed-table lookup.
 - `compile_structured_routes(...)`: return the cached or newly verified compiled routing configuration without launching ns-3.
 - `export_structured_config(...)`: optional CSV snapshot of the exact in-memory configuration; the runner never reads this export back.
 - `gen_compressed_route_table(path_finding_algo=...)`: CSV table-route generator; emits compressed

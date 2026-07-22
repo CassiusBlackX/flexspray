@@ -47,8 +47,8 @@ its topology input or needs a manual route table.
    - Adjust bandwidth/delay if specified in Network Overrides
    - Adjust priority_list if specified in Network Overrides
 4. **For prepared structured routing**, record two commands in the manifest. First prepare:
-   `python3 scratch/ns-3-ub-tools/prepare_structured_case.py {case_dir}/generate_topology.py:build_topology --case-path {case_dir}`.
-   Then run: `python3 scratch/run_structured_topo_case.py --case-path {case_dir}`.
+   `python3 scratch/ns-3-ub-tools/prepare_structured_case.py {case_dir}/generate_topology.py:build_topology --case-path {case_dir} --route-generation mixed`.
+   Then run: `python3 scratch/run_structured_topo_case.py --case-path {case_dir} --route-runtime-mode compressed-table-lookup`.
 5. **For CSV input**, set `graph.output_dir`, call the selected route generator plus
    `write_config(...)`, then run the script to create `node.csv`, `topology.csv`, `routing_table.csv`,
    optional `routing_port_groups.csv` + `routing_rules.csv` +
@@ -310,9 +310,11 @@ mechanical mapping from the confirmed profile to case attributes and route gener
 - `path_source = auto-path-finder` uses a prepared structured case by default. Call
   `graph.gen_compressed_route_table(...)` only when the selected topology input is CSV table routing.
 - For a prepared structured case, `prepare_structured_case.py` calls
-  `graph.prepare_structured_case(case_path=..., routing_mode=...)`; it discovers and verifies the
-  physical graph and writes `structured_topology.txt` without intermediate topology or route CSV.
-  `run_structured_topo_case.py` later launches ns-3 using only the prepared case directory.
+  `graph.prepare_structured_case(case_path=..., route_generation=...)`; it discovers and verifies the
+  physical graph and writes `structured_topology.txt` plus `compressed_routing.bin` without
+  intermediate topology or route CSV. `run_structured_topo_case.py` later launches ns-3 using only
+  the prepared case directory. `--route-runtime-mode=compressed-table-lookup` loads the binary index;
+  `structured-rule-compute` evaluates verified rules without the complete route matrix.
 - Complete verified structures emit coordinate/group topology rules. Partly recognized graphs build
   destination DAGs and exact/range rules without a complete baseline table. A custom path finder keeps
   complete baseline equivalence validation and content caching.

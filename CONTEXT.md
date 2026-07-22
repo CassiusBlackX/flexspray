@@ -533,24 +533,44 @@ A request for candidate output ports at the current node for a destination and r
 _Avoid_: port selection, path generation
 
 **Route lookup item**:
-One independently owned lookup at a current node for a destination node and destination UB port. Table routing or rule routing owns the whole item; their candidate port sets are not merged.
+One independently owned lookup at a current node for a destination node and destination UB port. One routing representation owns the whole item; candidate port sets from different representations are not merged.
 _Avoid_: RoutingKey, destination node alone, merged route
 
-**Table routing**:
-A route representation that stores candidate output ports for individual destinations or destination ranges.
-_Avoid_: full route table when range compression is included, rule routing
+**Full routing table**:
+A generated or manually supplied route representation that materializes candidate output ports for every route lookup in scope. Existing CSV routing input is the compatibility form of this representation.
+_Avoid_: compressed routing table, structured topology and routing
 
-**Rule routing**:
-A route representation that uses verified structure, destination ranges, and local port groups to return candidate output ports.
-_Avoid_: generated route table, topology detection
+**Compressed routing table**:
+A runtime route representation that interns repeated candidate port sets and stores compact identifiers for materialized route lookups. It preserves full-table forwarding semantics but does not by itself avoid generating every route lookup.
+_Avoid_: topology compression, structure rule, packed index as a user-facing name
+
+**Structured topology and routing**:
+A route representation that preserves verified topology rules and derives candidate output ports without materializing every route lookup. It is the memory-priority runtime form of structured route generation.
+_Avoid_: compressed routing table, topology label, rule routing as a user-facing name
 
 **Topology rule**:
 A compact runtime rule that maps physical nodes to verified coordinates or switch groups and derives legal next-hop ports from the rule plus authoritative physical links. It does not contain one record per destination lookup.
 _Avoid_: expanded route table, topology label, unverified graph pattern
 
 **Mixed routing**:
-A route representation that uses rules for some route lookups and table entries for the rest, with exactly one source responsible for each lookup.
-_Avoid_: hybrid candidate merging, combining two candidate sets
+A route-generation strategy that uses structured topology and routing for verified route lookups and materialized table entries for the rest, with exactly one source responsible for each lookup. It is not a fourth runtime route representation.
+_Avoid_: hybrid candidate merging, combining two candidate sets, mixed runtime backend
+
+**Route generation**:
+The offline method used to produce route candidates: `full` materializes every lookup, `structured` requires complete verified rule coverage, and `mixed` uses verified rules plus materialized entries for uncovered lookups.
+_Avoid_: runtime routing mode, candidate selection algorithm
+
+**Route runtime mode**:
+The runtime method used to obtain a complete candidate set. `compressed-table-lookup` reads a
+precomputed compressed route table; `structured-rule-compute` evaluates verified structure rules
+and consults a compact supplemental table only for lookup items not owned by rules.
+_Avoid_: route generation, HASH, round-robin, adaptive routing
+
+**Compressed routing artifact**:
+A versioned, little-endian `compressed_routing.bin` file prepared by `ns-3-ub-tools`. It contains
+interned shortest/non-shortest candidate classes and packed lookup IDs, and is bound to the prepared
+topology by a content fingerprint and payload checksum.
+_Avoid_: C++ struct dump, CSV cache, structured topology input
 
 **Verified structure**:
 A compact description of repeated groups, coordinates, layers, and destination coverage that has been checked against the topology graph.

@@ -3,9 +3,11 @@
 #define UB_NEXT_HOP_INDEX_H
 
 #include <cstdint>
+#include <istream>
 #include <map>
 #include <memory>
 #include <set>
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -30,6 +32,10 @@ class UbNextHopIndex
     static std::shared_ptr<const UbNextHopIndex> Build(
         const std::vector<utils::UbStructuredTableRoute>& routes,
         uint32_t nodeCount);
+    static std::shared_ptr<const UbNextHopIndex> Read(
+        std::istream& input,
+        const std::vector<std::vector<bool>>& connectedPorts,
+        const std::string& expectedFingerprint);
 
     bool TryLookup(uint32_t currentNodeId,
                    uint32_t destinationNodeId,
@@ -68,6 +74,10 @@ class UbNextHopIndex
         void Set(std::size_t index, uint32_t value);
         uint32_t Get(std::size_t index) const;
         uint32_t GetWidthBits() const;
+        static PackedIds Read(const std::vector<uint8_t>& payload,
+                              std::size_t& offset,
+                              std::size_t count,
+                              uint32_t widthBytes);
 
       private:
         using Storage =

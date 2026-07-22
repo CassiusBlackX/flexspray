@@ -1108,4 +1108,117 @@ UbRuleRoutingTable::TryLookup(uint32_t currentNodeId,
     return true;
 }
 
+bool
+UbRuleRoutingTable::TryLookupWithPrimaryFallback(uint32_t currentNodeId,
+                                                 uint32_t destinationNodeId,
+                                                 uint32_t destinationPortId,
+                                                 std::vector<uint16_t>& shortestPorts,
+                                                 std::vector<uint16_t>& nonShortestPorts) const
+{
+    shortestPorts.clear();
+    nonShortestPorts.clear();
+    const ResolvedRule* rule = FindRule(currentNodeId, destinationNodeId, destinationPortId);
+    if (destinationPortId == UbRuleDestination::ANY_PORT)
+    {
+        if (rule != nullptr)
+        {
+            if (rule->shortestPorts != nullptr)
+            {
+                shortestPorts = *rule->shortestPorts;
+            }
+            if (rule->nonShortestPorts != nullptr)
+            {
+                nonShortestPorts = *rule->nonShortestPorts;
+            }
+            return true;
+        }
+        if (currentNodeId < m_nodeRules.size() && m_nodeRules[currentNodeId] != nullptr)
+        {
+            return TryLookupPrimary(currentNodeId,
+                                    destinationNodeId,
+                                    shortestPorts,
+                                    nonShortestPorts);
+        }
+        return TryLookupTopology(currentNodeId,
+                                 destinationNodeId,
+                                 destinationPortId,
+                                 shortestPorts);
+    }
+    if (rule == nullptr)
+    {
+        return TryLookupTopology(currentNodeId,
+                                 destinationNodeId,
+                                 destinationPortId,
+                                 shortestPorts);
+    }
+    if (rule->shortestPorts != nullptr)
+    {
+        shortestPorts = *rule->shortestPorts;
+    }
+    if (rule->nonShortestPorts != nullptr)
+    {
+        nonShortestPorts = *rule->nonShortestPorts;
+    }
+    if (!shortestPorts.empty() && !nonShortestPorts.empty())
+    {
+        return true;
+    }
+
+    std::vector<uint16_t> primaryShortestPorts;
+    std::vector<uint16_t> primaryNonShortestPorts;
+    if (!TryLookupPrimary(currentNodeId,
+                          destinationNodeId,
+                          primaryShortestPorts,
+                          primaryNonShortestPorts))
+    {
+        return true;
+    }
+    if (shortestPorts.empty())
+    {
+        shortestPorts = std::move(primaryShortestPorts);
+    }
+    if (nonShortestPorts.empty())
+    {
+        nonShortestPorts = std::move(primaryNonShortestPorts);
+    }
+    return true;
+}
+
+bool
+UbRuleRoutingTable::TryLookupPrimary(uint32_t currentNodeId,
+                                     uint32_t destinationNodeId,
+                                     std::vector<uint16_t>& shortestPorts,
+                                     std::vector<uint16_t>& nonShortestPorts) const
+{
+    shortestPorts.clear();
+    nonShortestPorts.clear();
+    if (destinationNodeId >= m_physicalAdjacency.size())
+    {
+        return false;
+    }
+
+    bool handled = false;
+    std::vector<uint16_t> portShortest;
+    std::vector<uint16_t> portNonShortest;
+    for (const auto& link : m_physicalAdjacency[destinationNodeId])
+    {
+        if (!TryLookup(currentNodeId,
+                       destinationNodeId,
+                       link.localPort,
+                       portShortest,
+                       portNonShortest))
+        {
+            continue;
+        }
+        shortestPorts.insert(shortestPorts.end(), portShortest.begin(), portShortest.end());
+        nonShortestPorts.insert(nonShortestPorts.end(),
+                                portNonShortest.begin(),
+                                portNonShortest.end());
+        handled = true;
+    }
+    NormalizePorts(shortestPorts);
+    NormalizePorts(nonShortestPorts);
+    return handled && (!shortestPorts.empty() || !nonShortestPorts.empty());
+}
+
 } // namespace ns3

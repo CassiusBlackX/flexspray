@@ -90,6 +90,7 @@ struct UbStructuredTopologyConfig
     std::vector<ns3::UbRoutingRule> routingRules;
     std::vector<ns3::UbRoutingRangeRule> routingRangeRules;
     std::vector<ns3::UbTopologyRule> topologyRules;
+    std::string routingFingerprint;
 };
 /**
  *  @brief UbUtils单例类
