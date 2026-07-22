@@ -1,6 +1,7 @@
 # USAGE — Running cases under `scratch/`
 
-`scratch/` provides a set of scenario cases. Each case can be executed quickly by preparing the case directory and editing its configuration files (TXT/CSVs).
+`scratch/` provides a set of scenario cases. A case can use either explicit TXT/CSV topology files
+or a prepared structured topology compiled from Python/NetworkX or JSON/YAML.
 
 This document describes:
 - The case directory layout and configuration file semantics (schema, constraints, and legal values).
@@ -42,7 +43,57 @@ If you need to reset old configure choices, use the explicit reset form above. I
 
 ---
 
-## Directory layout of a typical case
+## Prepared structured case
+
+CSV cases and prepared structured cases are peer supported paths:
+
+| Path | Topology and routing input | Run command |
+| --- | --- | --- |
+| Explicit CSV case | `node.csv`, `topology.csv`, `routing_table.csv`, and optional rule CSVs | `ub-quick-example --case-path=...` |
+| Prepared structured case | `structured_topology.txt`, compiled from a Python/NetworkX builder or JSON/YAML | `run_structured_topo_case.py --case-path=...` |
+
+The repository includes `scratch/structured_topo_example.py`. It builds four devices with an internal
+FullMesh and connects them to a two-switch external network. Prepare a reusable case from this existing
+builder:
+
+```bash
+python3 scratch/ns-3-ub-tools/prepare_structured_case.py \
+  scratch/structured_topo_example.py:build_topology \
+  --case-path path/to/case
+```
+
+The target case directory must already provide `network_attribute.txt`, `traffic.csv`, and an optional
+`transport_channel.csv`. Preparation writes:
+
+- `structured_topology.txt` — versioned physical topology and compiled routing input;
+- `structured_summary.json` — compiler version, cache key, routing mode, coverage, and record counts.
+
+It does not write topology or routing CSV by default. In this mode, existing `node.csv`, `topology.csv`,
+and `routing_table.csv` in the same directory are not read by the runner. Run the prepared directory
+independently:
+
+```bash
+python3 scratch/run_structured_topo_case.py --case-path path/to/case
+```
+
+The default `mixed` mode uses verified topology, exact, or range rules for complete route lookup items
+and keeps table entries only where rules cannot safely own the lookup. Use `--routing-mode=table` during
+preparation to require table representation, or `--routing-mode=rule` to reject incomplete rule
+coverage. Candidate generation changes, but the existing `GetOutPort()` path and HASH, round-robin,
+adaptive, and packet-spray selectors still choose the final physical output port.
+
+The preparation process exits before simulation starts. The scratch runner does not import NetworkX or
+compile routes, and the C++ simulation has no Python runtime interaction. Optional diagnostic CSV can be
+requested from the preparation command, but the runner never reads that export back.
+
+See the [ns-3-ub-tools README](./ns-3-ub-tools/README.md) for Python and JSON/YAML input details,
+supported structures, cache behavior, routing modes, and diagnostic export. See the
+[structured topology optimization overview](../.scratch/structured-topology-routing/README.md) for
+the design history, correctness evidence, and 1024-NPU generation, memory, startup, and lookup results.
+
+---
+
+## Directory layout of an explicit CSV case
 
 Each case directory under `scratch/` usually contains:
 
