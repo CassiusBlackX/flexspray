@@ -286,6 +286,10 @@ _Avoid_: TP endpoint object, dynamically added connection child
 A simulator-local release of reconstructible TP endpoint state while the TP reservation, TPN, endpoint identity, and current generation remain valid.
 _Avoid_: TP teardown, logical closure, endpoint destroy
 
+**Congestion-control dormancy contract**:
+The algorithm-owned eligibility, snapshot, restore, idle-reset, and event-drain rules that permit congestion-control state to participate in TP runtime state reclamation without changing later control decisions.
+_Avoid_: congestion-control teardown, implicit reset, generic inactivity
+
 **TP endpoint destroy**:
 An explicit simulator-local management action that ends one local TP endpoint generation after its accepted work and packets drain, while its parent reservation may remain valid.
 _Avoid_: idle-state reclamation, connection teardown, automatic cleanup

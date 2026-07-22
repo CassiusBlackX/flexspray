@@ -59,6 +59,25 @@ UbCongestionControl::OnSwitchAttached(Ptr<UbSwitch> sw)
     }
 }
 
+UbCongestionControlDormancyEligibility
+UbCongestionControl::GetDormancyEligibility() const
+{
+    return UbCongestionControlDormancyEligibility::INELIGIBLE;
+}
+
+std::unique_ptr<UbCongestionControlDormancyState>
+UbCongestionControl::SnapshotDormancyState() const
+{
+    return nullptr;
+}
+
+bool
+UbCongestionControl::RestoreDormancyState(const UbCongestionControlDormancyState& state)
+{
+    (void)state;
+    return false;
+}
+
 Ptr<UbCongestionControl> UbCongestionControl::Create(UbNodeType_t nodeType)
 {
     EnumValue<CongestionCtrlAlgo> val;
