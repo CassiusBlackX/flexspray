@@ -289,41 +289,97 @@ During planning, validate these constraints before proceeding to the run stage. 
 
 ```python
 import net_sim_builder as netsim
-import networkx as nx
-
-def all_shortest_paths(G, source, target):
-    try:
-        return nx.all_shortest_paths(G, source, target)
-    except nx.NetworkXNoPath:
-        return []
-
 # Create graph
 graph = netsim.NetworkSimulationGraph()
 
 # Add hosts (must be numbered 0, 1, 2, ... consecutively)
-graph.add_netisim_host(node_id, forward_delay='1ns')
+graph.add_netisim_host(node_id, allocation_delay='1ns', forward_delay='0ns')
 
 # Add switches (must be added after all hosts)
-graph.add_netisim_node(node_id, forward_delay='1ns')
+graph.add_netisim_node(node_id, allocation_delay='1ns', forward_delay='0ns')
 
 # Add links
 graph.add_netisim_edge(u, v, bandwidth='400Gbps', delay='20ns', edge_count=1)
 
-# Generate config files
-graph.build_graph_config()
-graph.gen_compressed_route_table(path_finding_algo=all_shortest_paths, multiple_workers=4)
-graph.write_config(include_transport=False)
+# Discover, verify, and prepare a reusable case without topology/routing CSV
+result = graph.prepare_structured_case(
+    case_path="path/to/case",
+    routing_mode="mixed",
+)
+assert result.topology_path.is_file()
 ```
+
+`prepare_structured_case()` automatically calls `build_graph_config()` when needed. It creates the physical
+topology view, discovers candidates without trusting IDs or names, and verifies physical ports and
+links. With the default shortest-path behavior, a complete safe structure composition becomes compact
+coordinate/group topology rules without per-destination DAGs. Partly recognized graphs use one
+destination DAG at a time for exact/range rules and only necessary table entries. Neither path
+enumerates all shortest paths or materializes a complete baseline. A custom `path_finding_algo` keeps
+the full baseline equivalence and content-cache path. The compiled result is atomically written to
+`structured_topology.txt`, with `structured_summary.json` recording its version, cache key, and
+routing coverage. It writes no topology or routing CSV by default. Set `export_dir` only when a
+diagnostic snapshot is needed.
+
+The tools CLI prepares the same case directory:
+
+```bash
+python3 scratch/ns-3-ub-tools/prepare_structured_case.py \
+  path/to/topology.py:build_topology \
+  --case-path path/to/case
+```
+
+The repository-level runner later consumes only that directory:
+
+```bash
+python3 scratch/run_structured_topo_case.py --case-path path/to/case
+```
+
+The CLI also accepts the JSON/YAML adapter. Its four independent sections are `nodeGroups`,
+`groupConnections`, `layeredConnections`, and `explicitConnections`; all expand into the same
+`NetworkSimulationGraph` before discovery. Generation declarations are never accepted as routing
+proof. The top-level `version` must be `1`.
+
+For an existing custom case whose `topology.csv` already assigns physical port IDs, load it through `case_topology_loader.load_case_topology(case_dir)`. Do not rebuild it with `add_netisim_edge()` plus `build_graph_config()`: that path packs ports again and can change reserved-port and destination-port semantics. The loader preserves unused ports and parallel links, then exposes the same `get_physical_topology()` and structured-route APIs.
+
+CSV generation remains a separate supported path: call `build_graph_config()`, a table or structured
+route generator, and `write_config(...)`, then run the normal `ub-quick-example --case-path=...`
+command. `routing_rule_ranges.csv` is optional, but when present it is loaded with
+`routing_port_groups.csv` and `routing_rules.csv`.
 
 ### Common parameters
 
 - `bandwidth`: link bandwidth with unit, e.g. `400Gbps` (valid: bps, Kbps, Mbps, Gbps, Tbps)
 - `delay`: link delay with unit, e.g. `20ns` (valid: ns, us, ms, s)
-- `forward_delay`: switch forward delay, e.g. `1ns`
+- `allocation_delay`: switch allocation-round delay, e.g. `1ns`
+- `forward_delay`: fixed input-port processing delay, e.g. `0ns`
 - `priority_list`: TP priority list, e.g. `[7, 8]`
-- `path_finding_algo`: routing algorithm function, default `nx.all_shortest_paths`
+- `path_finding_algo`: optional custom routing function. Omit it for the direct, range-compressed
+  default shortest-path compiler.
 - `multiple_workers`: parallel workers for routing, e.g. `4`
-- `gen_compressed_route_table(path_finding_algo=...)`: default new-case route generator; emits compressed `a..b` ranges where identical route rules occur and avoids storing all paths or a dense route matrix.
+- `get_physical_topology()`: after `build_graph_config()`, return the cached normalized topology with one record per node and per physical link, including both endpoint port IDs, expanded parallel links, and custom attributes. It does not change CSV generation or routing behavior.
+- `build_graph_config_from_links(link_infos, port_counts=...)`: install links that already carry both endpoint port IDs. This is the low-level path used by the custom-case loader; normal generated graphs should keep using `build_graph_config()`.
+- `prepare_structured_case(case_path, routing_mode="mixed", ...)`: compile and atomically write
+  `structured_topology.txt` plus `structured_summary.json`. Modes are `table`, `rule`, and `mixed`;
+  `mixed` is the normal default and keeps table entries for every lookup not fully owned by verified
+  rules. It never launches ns-3.
+- `compile_structured_routes(...)`: return the cached or newly verified compiled routing configuration without launching ns-3.
+- `export_structured_config(...)`: optional CSV snapshot of the exact in-memory configuration; the runner never reads this export back.
+- `gen_compressed_route_table(path_finding_algo=...)`: CSV table-route generator; emits compressed
+  `a..b` ranges where identical route rows occur and avoids storing all paths or a dense route matrix.
+- `gen_structured_route_config(routing_mode=...)`: discover and verify supported structure. A fully
+  verified safe composition writes `routing_topology_rules.csv` and does not expand destination
+  lookups. Other default-shortest-path graphs write `routing_port_groups.csv`, exact
+  `routing_rules.csv`, compressed `routing_rule_ranges.csv`, and only remaining `routing_table.csv`
+  rows. A custom path finder first builds and compares its complete baseline. `routing_mode` accepts
+  `table`, `rule`, or `mixed`; `rule` fails unless every lookup is verified.
+- Discovery currently covers FullMesh; Ring, Mesh, Torus, and N-dimensional Dimension FullMesh through
+  one dimension-network model; direct-switch networks; two-level and multi-plane switch networks,
+  including local plus shared upper switches; classic Dragonfly; pair-design incidence networks such
+  as Balanced Sparse Tree; and switch port extensions.
+  Classic Dragonfly requires equal-size router cliques, one logical global router pair between every
+  pair of groups, uniform global degree, and uniform single-router host attachment. A simplified
+  adjacency graph may propose candidates, but physical endpoint ports, every parallel link, and complete
+  link ownership are checked before rule routing can use them.
 - `gen_2layer_clos_compressed_route_table(host_num, leaf_sw_num)`: explicit two-layer Clos optimization; emits compressed `a..b` destination ranges and avoids all host-pair path enumeration.
 - `write_config(include_transport=False)`: write node/topology without `transport_channel.csv`; required with compressed routes and on-demand TP generation.
 

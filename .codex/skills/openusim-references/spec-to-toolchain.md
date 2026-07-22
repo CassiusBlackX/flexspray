@@ -20,7 +20,11 @@
 
 ## Core Principle
 
-**Always generate a new Python script** in the case directory that calls `net_sim_builder.py` library. Do NOT copy or modify existing example scripts (`user_topo_*.py`). These are code templates for reference only, not reusable tools.
+**Always generate a new Python builder function** in the case directory that returns
+`NetworkSimulationGraph`. Do NOT copy or modify existing example scripts (`user_topo_*.py`). These are
+code templates for reference only, not reusable tools. Prefer prepared structured cases for new
+auto-generated routing cases; use CSV generation only when the experiment explicitly requires CSV as
+its topology input or needs a manual route table.
 
 ## Node Delay Fields
 
@@ -39,11 +43,16 @@
 3. **Generate a new script** `{case_dir}/generate_topology.py`:
    - Copy the complete pattern from `topology-options.md`
    - Substitute spec parameters (host_num, leaf_sw_num, etc.)
-   - Set `graph.output_dir = str(Path(case_dir)) + "/"` so CSVs land directly in the case directory
+   - Expose `build_topology()` and return the graph
    - Adjust bandwidth/delay if specified in Network Overrides
    - Adjust priority_list if specified in Network Overrides
-4. **Run the script:** `python3 {case_dir}/generate_topology.py`
-5. **Outputs:** `node.csv`, `topology.csv`, `routing_table.csv`, and `transport_channel.csv` only when `transport_channel_mode = precomputed`
+4. **For prepared structured routing**, record two commands in the manifest. First prepare:
+   `python3 scratch/ns-3-ub-tools/prepare_structured_case.py {case_dir}/generate_topology.py:build_topology --case-path {case_dir}`.
+   Then run: `python3 scratch/run_structured_topo_case.py --case-path {case_dir}`.
+5. **For CSV input**, set `graph.output_dir`, call the selected route generator plus
+   `write_config(...)`, then run the script to create `node.csv`, `topology.csv`, `routing_table.csv`,
+   optional `routing_port_groups.csv` + `routing_rules.csv` +
+   `routing_rule_ranges.csv`, and optional `transport_channel.csv`.
 
 ### Important Rules
 
@@ -51,7 +60,8 @@
 - **Do NOT** run `net_sim_builder.py` directly (it's a library, not a CLI)
 - **Do NOT** reuse scripts across cases (each case gets its own generated script)
 - **Always** use the complete pattern from `topology-options.md`, not abbreviated code
-- **Always** write generated CSVs into `{case_dir}/`, not an extra timestamped output directory
+- When CSV output is selected, write it into `{case_dir}/`, not an extra timestamped output directory
+- Do not export diagnostic CSV from the prepared path unless the experiment evidence plan requires it
 
 ### Example
 
@@ -297,7 +307,20 @@ mechanical mapping from the confirmed profile to case attributes and route gener
 - Hash selectors consume the complete 17-byte routing key once: `sip`, `dip`, `sport/Lb`, `dport`, `priority`, and node salt. Do not add a separate entropy or packet-ordinal field.
 - `INGRESS_PORT_STRIPE` maps ingress port modulo candidate count; local injection falls back to full-key `HASH64`.
 - Invalid routing-type/selector combinations are rejected during `network_attribute.txt` loading.
-- `path_source = auto-path-finder` means the topology script should call `graph.gen_compressed_route_table(...)` by default for new cases.
+- `path_source = auto-path-finder` uses a prepared structured case by default. Call
+  `graph.gen_compressed_route_table(...)` only when the selected topology input is CSV table routing.
+- For a prepared structured case, `prepare_structured_case.py` calls
+  `graph.prepare_structured_case(case_path=..., routing_mode=...)`; it discovers and verifies the
+  physical graph and writes `structured_topology.txt` without intermediate topology or route CSV.
+  `run_structured_topo_case.py` later launches ns-3 using only the prepared case directory.
+- Complete verified structures emit coordinate/group topology rules. Partly recognized graphs build
+  destination DAGs and exact/range rules without a complete baseline table. A custom path finder keeps
+  complete baseline equivalence validation and content caching.
+- For an existing custom case with explicit endpoint ports, use
+  `case_topology_loader.load_case_topology(case_dir)` rather than repacking ports with
+  `build_graph_config()`.
+- `mixed` assigns each destination-port lookup to either rules or table entries; candidate sets are not
+  merged. `rule` fails if any lookup still needs table routing.
 - `graph.gen_route_table(...)` is only for cases that explicitly need exact per-destination rows plus precomputed transport channels.
 - `graph.gen_2layer_clos_compressed_route_table(host_num, leaf_sw_num)` is an explicit two-layer Clos optimization, not the default new-case path.
 - `path_source = manual-route-table` means the topology script should use `graph.set_route_table(...)` for bounded route entries or directly write `routing_table.csv`
