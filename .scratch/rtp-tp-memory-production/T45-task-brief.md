@@ -1,6 +1,6 @@
 # T45 Task Brief: Deduplicate Canonical Connection Indexes
 
-Status: ready-for-agent
+Status: complete
 
 ## Authority And Scope
 
@@ -99,6 +99,16 @@ allocation, lifecycle destroy ordering, endpoint materialization, or CSV columns
 - System test: `unified-bus-runtime-storage-snapshot` passed 1/1 after building
   `scratch_ub-quick-example` (the configured Ninja target name).
 - Scale and frozen canonical differential were not run because T45 is not an integration milestone.
+
+## Closeout
+
+- Implementation commit: `89403f7` (`perf(unified-bus): compact TP connection indexes`).
+- Standards review: passed after adding the batch ledger, applying changed-line formatting, and
+  using `LocalConnectionRef` directly as the authoritative-view key.
+- Spec review: passed after covering the derived node manager and both `GetConnection` overloads;
+  the invalid clear/re-add oracle was removed.
+- Final acceptance: targeted build, 13 TP reservation cases, and the runtime storage system test all
+  passed with no unrelated files staged.
 
 ## Validation Contract
 
