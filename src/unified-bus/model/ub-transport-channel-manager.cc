@@ -134,6 +134,7 @@ UbTransportChannelManager::CreateTp(uint32_t src,
     m_controller->GetUbTransaction()->TpInit(tp);
     m_endpoints.emplace(srcTpn, EndpointRecord{tp});
     ++m_transportsCount;
+    utils::UbUtils::NotifyTpBackingMaterialized();
     currentNode->GetObject<UbSwitch>()->RegisterTpWithAllocator(tp, sport, priority);
     m_controller->GetTpConnManager()->NotifyEndpointMaterialized(currentNode->GetId(),
                                                                   srcTpn,
@@ -338,6 +339,7 @@ UbTransportChannelManager::ReclaimBackingStateLocked(uint32_t tpn)
     record.dormantState = std::move(dormantState);
     record.allocatorPlaceholder = placeholder;
     record.state = EndpointState::DORMANT;
+    utils::UbUtils::NotifyTpBackingReleased();
     return true;
 }
 
@@ -411,6 +413,8 @@ UbTransportChannelManager::ResolveLiveTpLocked(uint32_t tpn,
     record.allocatorPlaceholder = nullptr;
     record.state = EndpointState::LIVE;
     utils::UbUtils::Get()->SingleTpTraceConnect(tp->GetSrc(), tpn);
+    ++m_backingRehydrations;
+    utils::UbUtils::NotifyTpBackingMaterialized();
     return tp;
 }
 
@@ -561,6 +565,7 @@ UbTransportChannelManager::FinalizeDestroy(uint32_t tpn, bool force)
         coordinator->RetirePacketOwner(identity);
     }
     m_endpoints.erase(it);
+    utils::UbUtils::NotifyTpBackingReleased();
     if (m_transportsCount > 0)
     {
         --m_transportsCount;
@@ -611,6 +616,21 @@ UbTransportChannelManager::GetTpnMap() const
         result.emplace(tpn, record.channel);
     }
     return result;
+}
+
+UbTransportEndpointStorageSnapshot
+UbTransportChannelManager::GetStorageSnapshot() const
+{
+    std::lock_guard<std::mutex> lock(TpConnectionManager::g_tpConnectionControlLock);
+    UbTransportEndpointStorageSnapshot snapshot;
+    for (const auto& [tpn, record] : m_endpoints)
+    {
+        (void)tpn;
+        snapshot.liveBackingObjects += record.channel != nullptr;
+        snapshot.dormantRecords += record.state == EndpointState::DORMANT;
+    }
+    snapshot.backingRehydrations = m_backingRehydrations;
+    return snapshot;
 }
 
 } // namespace ns3

@@ -73,6 +73,14 @@ struct UbRuntimeStorageSnapshot
     uint64_t authoritativeLocalConnectionViews{0};
     uint64_t secondaryConnectionIndexEntries{0};
     uint64_t residentTpEndpoints{0};
+    uint64_t reservedEndpointSlots{0};
+    uint64_t liveTpBackingObjects{0};
+    uint64_t dormantTpRecords{0};
+    uint64_t tpBackingRehydrations{0};
+    uint64_t peakLiveTpBackingObjects{0};
+    uint64_t taskScopedJetties{0};
+    uint64_t reusableJetties{0};
+    uint64_t simulatorEventCount{0};
     uint64_t residentWqes{0};
     uint64_t residentOperations{0};
     uint64_t residentSegments{0};
@@ -125,6 +133,12 @@ public:
     static UbRuntimeStorageSnapshot CaptureRuntimeStorageSnapshot();
 
     static void WriteRuntimeStorageSnapshot(const std::string& outputPath);
+
+    static void NotifyTpBackingMaterialized();
+
+    static void NotifyTpBackingReleased();
+
+    static uint64_t GetPeakLiveTpBackingObjects();
 
     // MPI locality helpers used by config-driven builder/tests.
     static uint32_t ExtractMpiRank(uint32_t systemId);

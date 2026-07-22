@@ -335,6 +335,13 @@ UbFunction::GetResidentWqeCount() const
     return m_jettyManager == nullptr ? 0 : m_jettyManager->GetResidentWqeCount();
 }
 
+UbJettyStorageSnapshot
+UbFunction::GetJettyStorageSnapshot() const
+{
+    return m_jettyManager == nullptr ? UbJettyStorageSnapshot{}
+                                     : m_jettyManager->GetStorageSnapshot();
+}
+
 void
 UbFunction::RegisterJettyRtpBinding(
     uint32_t jettyNum,
@@ -641,6 +648,25 @@ UbJettyManager::GetResidentWqeCount() const
         count += record.wqes.size();
     }
     return count;
+}
+
+UbJettyStorageSnapshot
+UbJettyManager::GetStorageSnapshot() const
+{
+    UbJettyStorageSnapshot snapshot;
+    for (const auto& [jettyNum, record] : m_records)
+    {
+        (void)jettyNum;
+        if (record.lifetime == UbJettyLifetime::TASK_SCOPED)
+        {
+            ++snapshot.taskScopedJetties;
+        }
+        else
+        {
+            ++snapshot.reusableJetties;
+        }
+    }
+    return snapshot;
 }
 
 uint64_t
