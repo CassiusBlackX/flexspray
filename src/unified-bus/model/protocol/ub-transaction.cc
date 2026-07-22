@@ -210,6 +210,20 @@ void UbTransaction::TpInit(Ptr<UbTransportChannel> tp)
     m_tpRRIndex[tpn] = 0;
 }
 
+bool
+UbTransaction::ReplaceTpBacking(uint32_t tpn,
+                                Ptr<UbTransportChannel> expected,
+                                Ptr<UbTransportChannel> replacement)
+{
+    const auto transport = m_tpnMap.find(tpn);
+    if (transport == m_tpnMap.end() || transport->second != expected)
+    {
+        return false;
+    }
+    transport->second = replacement;
+    return true;
+}
+
 void UbTransaction::TpDeinit(uint32_t tpn)
 {
     const auto transport = m_tpnMap.find(tpn);
@@ -218,6 +232,21 @@ void UbTransaction::TpDeinit(uint32_t tpn)
         RetireRtpAdmissionDomain(transport->second->GetLifecycleOwner());
     }
     m_tpnMap.erase(tpn);
+    m_jettyTpgMaterializations.clear();
+    m_tpRRIndex.erase(tpn);
+    m_tpRelatedRemoteRequests.erase(tpn);
+}
+
+void
+UbTransaction::TpDeinit(uint32_t tpn, const UbLifecycleResourceIdentity& dormantIdentity)
+{
+    const auto transport = m_tpnMap.find(tpn);
+    NS_ABORT_MSG_IF(transport == m_tpnMap.end(), "Dormant TP deinit references an unknown TPN");
+    NS_ABORT_MSG_IF(transport->second != nullptr &&
+                        transport->second->GetLifecycleOwner() != dormantIdentity,
+                    "Dormant TP deinit references the wrong endpoint generation");
+    RetireRtpAdmissionDomain(dormantIdentity);
+    m_tpnMap.erase(transport);
     m_jettyTpgMaterializations.clear();
     m_tpRRIndex.erase(tpn);
     m_tpRelatedRemoteRequests.erase(tpn);
@@ -2057,6 +2086,14 @@ UbTransaction::GetTpRoundRobinIndexForTest(uint32_t tpn) const
     NS_ABORT_MSG_IF(it == m_tpRRIndex.end(),
                     "Transaction RR query references an unknown TP");
     return it->second;
+}
+
+void
+UbTransaction::SetTpRoundRobinIndexForTest(uint32_t tpn, uint32_t index)
+{
+    const auto it = m_tpRRIndex.find(tpn);
+    NS_ABORT_MSG_IF(it == m_tpRRIndex.end(), "Transaction RR update references an unknown TP");
+    it->second = index;
 }
 
 void

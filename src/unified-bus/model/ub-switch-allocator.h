@@ -35,6 +35,8 @@ public:
     void SetNodeId(uint32_t nodeId) {m_nodeId = nodeId;}
     void RegisterUbIngressQueue(Ptr<UbIngressQueue> ingressQueue, uint32_t outPort, uint32_t priority);
     void UnregisterUbIngressQueue(Ptr<UbIngressQueue> ingressQueue, uint32_t outPort, uint32_t priority);
+    Ptr<UbIngressQueue> ReplaceUbIngressQueueWithEmptyPlaceholder(Ptr<UbIngressQueue> ingressQueue);
+    bool ReplaceUbIngressQueue(Ptr<UbIngressQueue> expected, Ptr<UbIngressQueue> replacement);
     void RegisterEgressStauts(uint32_t portsNum);
     void SetEgressStatus(uint32_t portId, bool status);
     bool GetEgressStatus(uint32_t portId);

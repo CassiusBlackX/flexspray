@@ -200,7 +200,12 @@ namespace ns3 {
 
         void TpInit(Ptr<UbTransportChannel> tp);
 
+        bool ReplaceTpBacking(uint32_t tpn,
+                              Ptr<UbTransportChannel> expected,
+                              Ptr<UbTransportChannel> replacement);
+
         void TpDeinit(uint32_t tpn);
+        void TpDeinit(uint32_t tpn, const UbLifecycleResourceIdentity& dormantIdentity);
 
         // 判断wqe是否能发送
         bool IsOrderedByInitiator(uint32_t jettyNum, Ptr<UbWqe> wqe);
@@ -259,6 +264,7 @@ namespace ns3 {
                                      uint32_t wqeId,
                                      UbTransactionOperationSnapshot& snapshot) const;
         uint32_t GetTpRoundRobinIndexForTest(uint32_t tpn) const;
+        void SetTpRoundRobinIndexForTest(uint32_t tpn, uint32_t index);
 
         enum class WqeTerminalMode : uint8_t
         {

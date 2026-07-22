@@ -2,8 +2,9 @@
 #ifndef UB_TRANSPORT_CHANNEL_MANAGER_H
 #define UB_TRANSPORT_CHANNEL_MANAGER_H
 
-#include "ub-lifecycle.h"
+#include "protocol/ub-transport.h"
 #include "ub-datatype.h"
+#include "ub-lifecycle.h"
 
 #include "ns3/ipv4-address.h"
 #include "ns3/object.h"
@@ -16,7 +17,7 @@ namespace ns3
 
 class UbCongestionControl;
 class UbController;
-class UbTransportChannel;
+class UbIngressQueue;
 
 class UbTransportChannelManager : public Object
 {
@@ -40,6 +41,9 @@ class UbTransportChannelManager : public Object
                                              Ipv4Address sourceIp,
                                              Ipv4Address destinationIp,
                                              UbPriority priority);
+    bool ReclaimBackingState(uint32_t tpn);
+    Ptr<UbTransportChannel> ResolveLiveTp(uint32_t tpn,
+                                          const UbLifecycleResourceIdentity& expectedIdentity);
     UbDestroyStatus DestroyTp(uint32_t tpn,
                               UbDestroyReason reason = UbDestroyReason::EXPLICIT,
                               UbDestroyCallback callback = {});
@@ -53,19 +57,26 @@ class UbTransportChannelManager : public Object
   private:
     enum class EndpointState : uint8_t
     {
-        ACTIVE,
+        LIVE,
+        DORMANT,
         DRAINING,
     };
 
     struct EndpointRecord
     {
         Ptr<UbTransportChannel> channel;
-        EndpointState state{EndpointState::ACTIVE};
+        std::unique_ptr<UbTransportDormantState> dormantState;
+        Ptr<UbIngressQueue> allocatorPlaceholder;
+        EndpointState state{EndpointState::LIVE};
         UbDestroyReason reason{UbDestroyReason::EXPLICIT};
         std::vector<UbDestroyCallback> callbacks;
     };
 
     Ptr<UbTransportChannel> CreateReservedTpEndpointLocked(uint32_t tpn, bool drainOnly = false);
+    bool ReclaimBackingStateLocked(uint32_t tpn);
+    Ptr<UbTransportChannel> ResolveLiveTpLocked(
+        uint32_t tpn,
+        const UbLifecycleResourceIdentity& expectedIdentity);
     void BeginDrainOnlyDestroy(uint32_t tpn);
     bool CanFinalize(const EndpointRecord& record) const;
     void FinalizeDestroy(uint32_t tpn, bool force);
