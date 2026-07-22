@@ -1477,3 +1477,22 @@ and retire task-scoped Jetties; T49 Route TP use through owner-local reclaim and
 - [ ] The prototype flag and task-driven reclamation surface are removed or remain unsupported and
       fail-fast; normal case schemas, attributes, commands, trace contracts, routing, flow control,
       and dependency scheduling remain unchanged.
+
+Closeout:
+
+- Runtime storage snapshots retain schema version 1 and the existing five-column shape while adding
+  reservation, backing, dormancy, rehydration, Jetty-lifetime, peak-backing, and event-count rows.
+- Frozen `p001` local and MTP16 task-trace trees match T43 exactly. The completed `p004` tree matches
+  the prior owner-attribution run, and its process peak falls from 498,827,264 B to 283,820,032 B.
+- Peak live backing remains 2,048 from `p001` through `p004` even as logical endpoint records grow
+  from 2,048 to 8,192. The completed-run incremental RSS slope falls by 72.12 percent.
+- The candidate is not a runtime optimization: `p001` and `p004` MTP16 wall time regress, and
+  `p016` reaches the fixed 900-second wall guard before completion. It remains inconclusive, and
+  `p064` was not run.
+- Curated run artifacts, task-trace checksum lists, the comparison manifest, and a fail-closed
+  verifier are committed under `.scratch/rtp-tp-memory-production/t50-evidence/`.
+- The focused reservation/lifecycle/congestion/storage suites, generic Unified Bus suite,
+  parallel-lifecycle suite, CTP transaction suite, and CTP lifecycle suite pass serially.
+- The prototype option and task-driven cleanup surface are absent. Logical connection continuity,
+  owner-local reclaim gates, unsupported `RemoveUselessTps()`, and ordinary user case inputs remain
+  unchanged.
