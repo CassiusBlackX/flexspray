@@ -20574,6 +20574,149 @@ class UbControllerMissingTpnLookupDoesNotInsertTest : public TestCase
     }
 };
 
+class UbTpConnectionManagerPublicLookupCompatibilityTest : public TestCase
+{
+  public:
+    UbTpConnectionManagerPublicLookupCompatibilityTest()
+        : TestCase("UnifiedBus - compact TP connection indexes preserve public lookup behavior")
+    {
+    }
+
+    void DoRun() override
+    {
+        LocalTpTopology topo = BuildLocalTpTopology();
+        Ptr<TpConnectionManager> sender =
+            topo.sender->GetObject<UbController>()->GetTpConnManager();
+        Ptr<TpConnectionManager> receiver =
+            topo.receiver->GetObject<UbController>()->GetTpConnManager();
+
+        Connection first{topo.sender->GetId(),
+                         topo.sender->GetId(),
+                         11,
+                         101,
+                         topo.receiver->GetId(),
+                         21,
+                         201,
+                         3,
+                         7};
+        Connection second{topo.sender->GetId(),
+                          topo.sender->GetId(),
+                          12,
+                          102,
+                          topo.receiver->GetId(),
+                          22,
+                          202,
+                          3,
+                          5};
+        sender->AddUnilateralConnection(first, topo.sender->GetId());
+        sender->AddUnilateralConnection(second, topo.sender->GetId());
+        Connection canonicalFirst;
+        Connection canonicalSecond;
+        NS_TEST_ASSERT_MSG_EQ(
+            sender->TryGetLocalConnection(topo.sender->GetId(), first.tpn1, canonicalFirst),
+            true,
+            "Sender local TPN lookup should resolve the first path");
+        NS_TEST_ASSERT_MSG_EQ(
+            sender->TryGetLocalConnection(topo.sender->GetId(), second.tpn1, canonicalSecond),
+            true,
+            "Sender local TPN lookup should resolve the second path");
+        receiver->AddUnilateralConnection(canonicalFirst, topo.receiver->GetId());
+        receiver->AddUnilateralConnection(canonicalSecond, topo.receiver->GetId());
+
+        const auto peer = receiver->GetTpnsByPeerNode(topo.receiver->GetId(), topo.sender->GetId());
+        const auto priority =
+            receiver->GetTpnsByPeerNodePriority(topo.receiver->GetId(), topo.sender->GetId(), 3);
+        NS_TEST_ASSERT_MSG_EQ(peer.size(), 2u, "Peer lookup should preserve both paths");
+        NS_TEST_ASSERT_MSG_EQ(peer[0].first, 201u, "Peer lookup should preserve insertion order");
+        NS_TEST_ASSERT_MSG_EQ(peer[1].first, 202u, "Peer lookup should preserve insertion order");
+        NS_TEST_ASSERT_MSG_EQ(priority.size(), 2u, "Priority lookup should preserve both paths");
+        for (std::size_t index = 0; index < peer.size(); ++index)
+        {
+            NS_TEST_ASSERT_MSG_EQ(priority[index].first,
+                                  peer[index].first,
+                                  "Priority lookup should preserve the TPN");
+            NS_TEST_ASSERT_MSG_EQ(priority[index].second,
+                                  peer[index].second,
+                                  "Priority lookup should preserve the metric");
+        }
+
+        const auto localPort =
+            receiver->GetTpnsByPeerNodeLocalPort(topo.receiver->GetId(), topo.sender->GetId(), 21);
+        const auto bothPorts = receiver->GetTpnsByPeerNodeBothPorts(topo.receiver->GetId(),
+                                                                    topo.sender->GetId(),
+                                                                    21,
+                                                                    11);
+        const auto full = receiver->GetTpnsByFullCriteria(topo.receiver->GetId(),
+                                                          topo.sender->GetId(),
+                                                          21,
+                                                          11,
+                                                          3);
+        NS_TEST_ASSERT_MSG_EQ(localPort.size(), 1u, "Local-port lookup should select one path");
+        NS_TEST_ASSERT_MSG_EQ(bothPorts.size(), 1u, "Both-port lookup should select one path");
+        NS_TEST_ASSERT_MSG_EQ(full.size(), 1u, "Full-criteria lookup should select one path");
+        NS_TEST_ASSERT_MSG_EQ(localPort[0].first, 201u, "Local-port lookup should use local TPN");
+        NS_TEST_ASSERT_MSG_EQ(bothPorts[0].first, 201u, "Both-port lookup should use local TPN");
+        NS_TEST_ASSERT_MSG_EQ(full[0].first, 201u, "Full-criteria lookup should use local TPN");
+        NS_TEST_ASSERT_MSG_EQ(full[0].second, 7u, "Full-criteria lookup should preserve metrics");
+
+        const auto nodeConnections = receiver->GetNodeConnections(topo.receiver->GetId());
+        const auto allTpns = receiver->GetAllTpnsForNode(topo.receiver->GetId());
+        const auto neighbors = receiver->GetNeighborNodes(topo.receiver->GetId());
+        NS_TEST_ASSERT_MSG_EQ(nodeConnections.size(), 2u, "Node lookup should preserve both paths");
+        NS_TEST_ASSERT_MSG_EQ(nodeConnections[0].node1,
+                              topo.receiver->GetId(),
+                              "Node lookup should orient its local endpoint first");
+        NS_TEST_ASSERT_MSG_EQ(allTpns.size(), 2u, "All-TPN lookup should preserve both paths");
+        NS_TEST_ASSERT_MSG_EQ(allTpns[0], 201u, "All-TPN lookup should preserve order");
+        NS_TEST_ASSERT_MSG_EQ(neighbors.size(), 1u, "Neighbor lookup should deduplicate the peer");
+        NS_TEST_ASSERT_MSG_EQ(*neighbors.begin(),
+                              topo.sender->GetId(),
+                              "Neighbor lookup should return the remote endpoint");
+
+        const auto& allConnections = receiver->GetAllConnections();
+        NS_TEST_ASSERT_MSG_EQ(allConnections.size(), 2u, "Public list should preserve order");
+        NS_TEST_ASSERT_MSG_EQ(allConnections[0].node1,
+                              topo.sender->GetId(),
+                              "Receiver list should preserve original public orientation");
+        NS_TEST_ASSERT_MSG_EQ(allConnections[0].tpn1,
+                              101u,
+                              "Receiver list should preserve original source TPN");
+        const Connection byPeer =
+            receiver->GetConnection(201, topo.receiver->GetId(), topo.sender->GetId());
+        const Connection byPriority =
+            receiver->GetConnection(201, topo.receiver->GetId(), topo.sender->GetId(), 3);
+        NS_TEST_ASSERT_MSG_EQ(byPeer.tpn1, 201u, "Connection lookup should use local orientation");
+        NS_TEST_ASSERT_MSG_EQ(byPriority.metrics,
+                              7u,
+                              "Priority connection lookup should preserve metrics");
+        Ptr<TpConnectionManager> nodeView =
+            receiver->GetConnectionManagerByNode(topo.receiver->GetId());
+        NS_TEST_ASSERT_MSG_EQ(nodeView->GetNodeConnections(topo.receiver->GetId()).size(),
+                              2u,
+                              "Derived node manager should preserve both local views");
+        const ConnectionStorageSnapshot storage = receiver->GetConnectionStorageSnapshot();
+        NS_TEST_ASSERT_MSG_EQ(storage.authoritativeLocalViews,
+                              2u,
+                              "Each path should retain one authoritative local view");
+        NS_TEST_ASSERT_MSG_EQ(storage.secondaryIndexEntries,
+                              14u,
+                              "Each path should contribute seven compact index entries");
+
+        receiver->ClearNodeConnections(topo.receiver->GetId());
+        Connection ignored;
+        NS_TEST_ASSERT_MSG_EQ(
+            receiver->TryGetLocalConnection(topo.receiver->GetId(), first.tpn2, ignored),
+            false,
+            "Clearing a node should erase its local TPN view");
+        NS_TEST_ASSERT_MSG_EQ(receiver->GetAllConnections().empty(),
+                              true,
+                              "Clearing a node should invalidate the public list");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
 class UbTrafficDrivenReservationDoesNotRemoteCreateReceiverTpTest : public TestCase
 {
   public:
@@ -26586,6 +26729,8 @@ UbTpReservationTestSuite::UbTpReservationTestSuite()
 {
     AddTestCase(new UbCreateTpUsesPerPortIpTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbControllerMissingTpnLookupDoesNotInsertTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbTpConnectionManagerPublicLookupCompatibilityTest(),
+                TestCase::Duration::QUICK);
     AddTestCase(new UbTrafficDrivenReservationDoesNotRemoteCreateReceiverTpTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbReservedReceiverTpnMaterializesLocallyTest(), TestCase::Duration::QUICK);
@@ -28237,6 +28382,14 @@ class UbQuickExampleRuntimeStorageSnapshotSystemTest : public TestCase
         NS_TEST_ASSERT_MSG_NE(csv.find("1,runtime,canonical_connections,,2\n"),
                               std::string::npos,
                               "The maintained case should retain two canonical connections");
+        NS_TEST_ASSERT_MSG_NE(
+            csv.find("1,runtime,authoritative_local_connection_views,,4\n"),
+            std::string::npos,
+            "The maintained case should retain one authoritative view per endpoint");
+        NS_TEST_ASSERT_MSG_NE(
+            csv.find("1,runtime,secondary_connection_index_entries,,28\n"),
+            std::string::npos,
+            "The maintained case should attribute compact connection index entries");
         NS_TEST_ASSERT_MSG_NE(csv.find("1,runtime,resident_tp_endpoints,,4\n"),
                               std::string::npos,
                               "The maintained case should retain four materialized endpoints");

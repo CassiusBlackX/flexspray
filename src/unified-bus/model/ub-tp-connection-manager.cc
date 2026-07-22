@@ -50,12 +50,11 @@ void TpConnectionManager::AddConnection(const Connection& conn)
         canonical.ownerNodeId = canonical.node1;
     }
     AttachConnectionIdentityLocked(canonical);
-    // 存储连接
-    m_allConnections.push_back(canonical);
 
     // 为两个节点都建立索引
-    BuildIndexesForNode(canonical.node1, canonical);
+    m_allConnectionOrder.push_back({BuildIndexesForNode(canonical.node1, canonical), false});
     BuildIndexesForNode(canonical.node2, canonical);
+    InvalidateAllConnectionsCacheLocked();
 }
 
 // 添加单边连接
@@ -68,14 +67,13 @@ void TpConnectionManager::AddUnilateralConnection(const Connection& conn, const 
         canonical.ownerNodeId = canonical.node1;
     }
     AttachConnectionIdentityLocked(canonical);
-    // 存储连接
-    m_allConnections.push_back(canonical);
     // 如果源节点既不是conn的node1也不是node2，则判错
     if (src != canonical.node1 && src != canonical.node2) {
         NS_ASSERT_MSG(0, "conn.src != src");
     }
     // 仅为源节点建立索引
-    BuildIndexesForNode(src, canonical);
+    m_allConnectionOrder.push_back({BuildIndexesForNode(src, canonical), src != canonical.node1});
+    InvalidateAllConnectionsCacheLocked();
 }
 
 void
@@ -153,14 +151,25 @@ TpConnectionManager::MatchesCanonicalConnection(const UbLifecycleResourceIdentit
 Ptr<TpConnectionManager> TpConnectionManager::GetConnectionManagerByNode(uint32_t nodeId)
 {
     Ptr<TpConnectionManager> nodeManager = CreateObject<TpConnectionManager>();
+    std::vector<Connection> connections;
 
-    // 复制与该节点相关的连接
-    std::lock_guard<std::mutex> lock(m_stateLock);
-    auto it = m_nodeConnections.find(nodeId);
-    if (it != m_nodeConnections.end()) {
-        for (const auto& conn : it->second) {
-            nodeManager->AddUnilateralConnection(conn, nodeId);
+    {
+        std::lock_guard<std::mutex> lock(m_stateLock);
+        auto it = m_nodeConnections.find(nodeId);
+        if (it != m_nodeConnections.end())
+        {
+            for (const LocalConnectionRef& ref : it->second)
+            {
+                const Connection* connection = ResolveConnectionRefLocked(ref);
+                NS_ABORT_MSG_IF(connection == nullptr,
+                                "Node index contains a stale connection view");
+                connections.push_back(*connection);
+            }
         }
+    }
+    for (const Connection& connection : connections)
+    {
+        nodeManager->AddUnilateralConnection(connection, nodeId);
     }
 
     return nodeManager;
@@ -239,7 +248,15 @@ std::vector<Connection> TpConnectionManager::GetNodeConnections(uint32_t nodeId)
     std::lock_guard<std::mutex> lock(m_stateLock);
     auto it = m_nodeConnections.find(nodeId);
     if (it != m_nodeConnections.end()) {
-        return it->second;
+        std::vector<Connection> connections;
+        connections.reserve(it->second.size());
+        for (const LocalConnectionRef& ref : it->second)
+        {
+            const Connection* connection = ResolveConnectionRefLocked(ref);
+            NS_ABORT_MSG_IF(connection == nullptr, "Node index contains a stale connection view");
+            connections.push_back(*connection);
+        }
+        return connections;
     }
     return {};
 }
@@ -253,13 +270,12 @@ std::vector<std::pair<uint32_t, uint32_t>> TpConnectionManager::GetTpnsByPeerNod
     auto key = std::make_pair(localNodeId, peerNodeId);
     auto it = m_peerNodeIndex.find(key);
     if (it != m_peerNodeIndex.end()) {
-        for (const auto& conn : it->second) {
-            // 获取本地节点对应的TPN
-            if (conn.node1 == localNodeId) {
-                tpns.push_back(std::make_pair(conn.tpn1, conn.metrics));
-            } else if (conn.node2 == localNodeId) {
-                tpns.push_back(std::make_pair(conn.tpn2, conn.metrics));
-            }
+        for (const LocalConnectionRef& ref : it->second)
+        {
+            const Connection* connection = ResolveConnectionRefLocked(ref);
+            NS_ABORT_MSG_IF(connection == nullptr,
+                            "Peer-node index contains a stale connection view");
+            tpns.emplace_back(connection->tpn1, connection->metrics);
         }
     }
     return tpns;
@@ -274,13 +290,12 @@ std::vector<std::pair<uint32_t, uint32_t>> TpConnectionManager::GetTpnsByPeerNod
     auto key = std::make_tuple(localNodeId, peerNodeId, priority);
     auto it = m_peerNodePriorityIndex.find(key);
     if (it != m_peerNodePriorityIndex.end()) {
-        for (const auto& conn : it->second) {
-            // 获取本地节点对应的TPN
-            if (conn.node1 == localNodeId) {
-                tpns.push_back(std::make_pair(conn.tpn1, conn.metrics));
-            } else if (conn.node2 == localNodeId) {
-                tpns.push_back(std::make_pair(conn.tpn2, conn.metrics));
-            }
+        for (const LocalConnectionRef& ref : it->second)
+        {
+            const Connection* connection = ResolveConnectionRefLocked(ref);
+            NS_ABORT_MSG_IF(connection == nullptr,
+                            "Peer-node priority index contains a stale connection view");
+            tpns.emplace_back(connection->tpn1, connection->metrics);
         }
     }
     return tpns;
@@ -295,13 +310,12 @@ std::vector<std::pair<uint32_t, uint32_t>> TpConnectionManager::GetTpnsByPeerNod
     auto key = std::make_tuple(localNodeId, peerNodeId, localPort);
     auto it = m_peerNodeLocalPortIndex.find(key);
     if (it != m_peerNodeLocalPortIndex.end()) {
-        for (const auto& conn : it->second) {
-            // 获取本地节点对应的TPN
-            if (conn.node1 == localNodeId) {
-                tpns.push_back(std::make_pair(conn.tpn1, conn.metrics));
-            } else if (conn.node2 == localNodeId) {
-                tpns.push_back(std::make_pair(conn.tpn2, conn.metrics));
-            }
+        for (const LocalConnectionRef& ref : it->second)
+        {
+            const Connection* connection = ResolveConnectionRefLocked(ref);
+            NS_ABORT_MSG_IF(connection == nullptr,
+                            "Peer-node local-port index contains a stale connection view");
+            tpns.emplace_back(connection->tpn1, connection->metrics);
         }
     }
     return tpns;
@@ -316,13 +330,12 @@ std::vector<std::pair<uint32_t, uint32_t>> TpConnectionManager::GetTpnsByPeerNod
     auto key = std::make_tuple(localNodeId, peerNodeId, localPort, peerPort);
     auto it = m_bothPortsIndex.find(key);
     if (it != m_bothPortsIndex.end()) {
-        for (const auto& conn : it->second) {
-            // 获取本地节点对应的TPN
-            if (conn.node1 == localNodeId) {
-                tpns.push_back(std::make_pair(conn.tpn1, conn.metrics));
-            } else if (conn.node2 == localNodeId) {
-                tpns.push_back(std::make_pair(conn.tpn2, conn.metrics));
-            }
+        for (const LocalConnectionRef& ref : it->second)
+        {
+            const Connection* connection = ResolveConnectionRefLocked(ref);
+            NS_ABORT_MSG_IF(connection == nullptr,
+                            "Both-ports index contains a stale connection view");
+            tpns.emplace_back(connection->tpn1, connection->metrics);
         }
     }
     return tpns;
@@ -338,7 +351,11 @@ std::vector<std::pair<uint32_t, uint32_t>> TpConnectionManager::GetTpnsByFullCri
     // 遍历本节点的所有连接，找到匹配条件的
     auto it = m_nodeConnections.find(localNodeId);
     if (it != m_nodeConnections.end()) {
-        for (const auto& conn : it->second) {
+        for (const LocalConnectionRef& ref : it->second)
+        {
+            const Connection* connection = ResolveConnectionRefLocked(ref);
+            NS_ABORT_MSG_IF(connection == nullptr, "Node index contains a stale connection view");
+            const Connection& conn = *connection;
             // 检查是否匹配条件
             bool isMatch = false;
             uint32_t localTpn = 0;
@@ -374,12 +391,11 @@ std::vector<uint32_t> TpConnectionManager::GetAllTpnsForNode(uint32_t nodeId) co
     std::lock_guard<std::mutex> lock(m_stateLock);
     auto it = m_nodeConnections.find(nodeId);
     if (it != m_nodeConnections.end()) {
-        for (const auto& conn : it->second) {
-            if (conn.node1 == nodeId) {
-                tpns.push_back(conn.tpn1);
-            } else if (conn.node2 == nodeId) {
-                tpns.push_back(conn.tpn2);
-            }
+        for (const LocalConnectionRef& ref : it->second)
+        {
+            const Connection* connection = ResolveConnectionRefLocked(ref);
+            NS_ABORT_MSG_IF(connection == nullptr, "Node index contains a stale connection view");
+            tpns.push_back(connection->tpn1);
         }
     }
     return tpns;
@@ -392,12 +408,11 @@ std::set<uint32_t> TpConnectionManager::GetNeighborNodes(uint32_t nodeId) const
     std::lock_guard<std::mutex> lock(m_stateLock);
     auto it = m_nodeConnections.find(nodeId);
     if (it != m_nodeConnections.end()) {
-        for (const auto& conn : it->second) {
-            if (conn.node1 == nodeId) {
-                neighbors.insert(conn.node2);
-            } else if (conn.node2 == nodeId) {
-                neighbors.insert(conn.node1);
-            }
+        for (const LocalConnectionRef& ref : it->second)
+        {
+            const Connection* connection = ResolveConnectionRefLocked(ref);
+            NS_ABORT_MSG_IF(connection == nullptr, "Node index contains a stale connection view");
+            neighbors.insert(connection->node2);
         }
     }
     return neighbors;
@@ -412,10 +427,15 @@ Connection TpConnectionManager::GetConnection(uint32_t tpn, uint32_t src, uint32
     bool exists = false;
     Connection connection;
     NS_ASSERT_MSG(it != m_peerNodePriorityIndex.end(), "Could not find (src, dst, priority) record.");
-    for (const auto& conn : it->second) {
-        if (conn.node1 == src && conn.tpn1 == tpn) {
+    for (const LocalConnectionRef& ref : it->second)
+    {
+        const Connection* conn = ResolveConnectionRefLocked(ref);
+        NS_ABORT_MSG_IF(conn == nullptr,
+                        "Peer-node priority index contains a stale connection view");
+        if (conn->node1 == src && conn->tpn1 == tpn)
+        {
             exists = true;
-            connection = conn;
+            connection = *conn;
         }
     }
     NS_ASSERT_MSG(exists, "Could not find tpn record.");
@@ -431,10 +451,14 @@ Connection TpConnectionManager::GetConnection(uint32_t tpn, uint32_t src, uint32
     bool exists = false;
     Connection connection;
     NS_ASSERT_MSG(it != m_peerNodeIndex.end(), "Could not find (src, dst) record.");
-    for (const auto& conn : it->second) {
-        if (conn.node1 == src && conn.tpn1 == tpn) {
+    for (const LocalConnectionRef& ref : it->second)
+    {
+        const Connection* conn = ResolveConnectionRefLocked(ref);
+        NS_ABORT_MSG_IF(conn == nullptr, "Peer-node index contains a stale connection view");
+        if (conn->node1 == src && conn->tpn1 == tpn)
+        {
             exists = true;
-            connection = conn;
+            connection = *conn;
             break;
         }
     }
@@ -453,8 +477,65 @@ TpConnectionManager::TryGetLocalConnection(uint32_t localNodeId,
     {
         return false;
     }
-    connection = it->second;
+    const Connection* resolved = ResolveConnectionRefLocked(it->second);
+    if (resolved == nullptr)
+    {
+        return false;
+    }
+    connection = *resolved;
     return true;
+}
+
+const Connection*
+TpConnectionManager::ResolveConnectionRefLocked(const LocalConnectionRef& ref) const
+{
+    const auto view = m_localConnectionViews.find(ref);
+    if (view == m_localConnectionViews.end() ||
+        view->second.reservationGeneration != ref.reservationGeneration)
+    {
+        return nullptr;
+    }
+    return &view->second;
+}
+
+void
+TpConnectionManager::InvalidateAllConnectionsCacheLocked()
+{
+    m_allConnectionsCacheValid = false;
+}
+
+const std::vector<Connection>&
+TpConnectionManager::GetAllConnections() const
+{
+    std::lock_guard<std::mutex> lock(m_stateLock);
+    if (!m_allConnectionsCacheValid)
+    {
+        m_allConnectionsCache.clear();
+        m_allConnectionsCache.reserve(m_allConnectionOrder.size());
+        for (const ConnectionOrderRef& ordered : m_allConnectionOrder)
+        {
+            const Connection* resolved = ResolveConnectionRefLocked(ordered.localView);
+            NS_ABORT_MSG_IF(resolved == nullptr,
+                            "Public connection order contains a stale connection view");
+            Connection connection = *resolved;
+            if (ordered.reverseToOriginalOrientation)
+            {
+                std::swap(connection.node1, connection.node2);
+                std::swap(connection.port1, connection.port2);
+                std::swap(connection.tpn1, connection.tpn2);
+            }
+            m_allConnectionsCache.push_back(connection);
+        }
+        m_allConnectionsCacheValid = true;
+    }
+    return m_allConnectionsCache;
+}
+
+size_t
+TpConnectionManager::GetConnectionCount() const
+{
+    std::lock_guard<std::mutex> lock(m_stateLock);
+    return m_allConnectionOrder.size();
 }
 
 void
@@ -1033,7 +1114,11 @@ TpConnectionManager::EraseConnectionView(uint32_t localNodeId, uint32_t localTpn
     {
         return;
     }
-    const Connection oriented = local->second;
+    const LocalConnectionRef ref = local->second;
+    const Connection* resolved = ResolveConnectionRefLocked(ref);
+    NS_ABORT_MSG_IF(resolved == nullptr, "Local TPN index contains a stale connection view");
+    const Connection oriented = *resolved;
+    const UbLifecycleResourceIdentity identity = GetConnectionIdentity(oriented);
     const auto removeView = [&](auto& index, const auto& key) {
         auto entry = index.find(key);
         if (entry == index.end())
@@ -1041,14 +1126,7 @@ TpConnectionManager::EraseConnectionView(uint32_t localNodeId, uint32_t localTpn
             return;
         }
         auto& container = entry->second;
-        container.erase(std::remove_if(container.begin(),
-                                       container.end(),
-                                       [&](const Connection& item) {
-                                           return item.ownerNodeId == oriented.ownerNodeId &&
-                                                  item.node1 == oriented.node1 &&
-                                                  item.tpn1 == oriented.tpn1;
-                                       }),
-                        container.end());
+        container.erase(std::remove(container.begin(), container.end(), ref), container.end());
         if (container.empty())
         {
             index.erase(entry);
@@ -1065,16 +1143,16 @@ TpConnectionManager::EraseConnectionView(uint32_t localNodeId, uint32_t localTpn
     removeView(m_bothPortsIndex,
                std::make_tuple(localNodeId, oriented.node2, oriented.port1, oriented.port2));
     m_localTpnIndex.erase(local);
-    m_allConnections.erase(std::remove_if(m_allConnections.begin(),
-                                          m_allConnections.end(),
-                                          [&](const Connection& item) {
-                                              return item.ownerNodeId == oriented.ownerNodeId &&
-                                                     ((item.node1 == localNodeId &&
-                                                       item.tpn1 == localTpn) ||
-                                                      (item.node2 == localNodeId &&
-                                                       item.tpn2 == localTpn));
-                                          }),
-                           m_allConnections.end());
+    m_allConnectionOrder.erase(
+        std::remove_if(m_allConnectionOrder.begin(),
+                       m_allConnectionOrder.end(),
+                       [&](const ConnectionOrderRef& ordered) {
+                           const Connection* item = ResolveConnectionRefLocked(ordered.localView);
+                           return item == nullptr || GetConnectionIdentity(*item) == identity;
+                       }),
+        m_allConnectionOrder.end());
+    m_localConnectionViews.erase(ref);
+    InvalidateAllConnectionsCacheLocked();
     m_tpnList.erase(localTpn);
     m_reservedTpnList.erase(localTpn);
     m_destroyRequestedViews.erase({localNodeId, localTpn});
@@ -1112,28 +1190,65 @@ TpConnectionManager::GetCanonicalConnectionCount() const
     return m_canonicalConnections.size();
 }
 
+ConnectionStorageSnapshot
+TpConnectionManager::GetConnectionStorageSnapshot() const
+{
+    std::lock_guard<std::mutex> lock(m_stateLock);
+    ConnectionStorageSnapshot snapshot;
+    snapshot.canonicalRecords = m_canonicalConnections.size();
+    snapshot.authoritativeLocalViews = m_localConnectionViews.size();
+    snapshot.secondaryIndexEntries = m_allConnectionOrder.size() + m_localTpnIndex.size();
+    const auto countEntries = [&](const auto& index) {
+        for (const auto& [key, entries] : index)
+        {
+            (void)key;
+            snapshot.secondaryIndexEntries += entries.size();
+        }
+    };
+    countEntries(m_nodeConnections);
+    countEntries(m_peerNodeIndex);
+    countEntries(m_peerNodePriorityIndex);
+    countEntries(m_peerNodeLocalPortIndex);
+    countEntries(m_bothPortsIndex);
+    return snapshot;
+}
+
 // 清空指定节点的连接
 void TpConnectionManager::ClearNodeConnections(uint32_t nodeId)
 {
     std::lock_guard<std::mutex> lock(m_stateLock);
+    m_allConnectionOrder.erase(std::remove_if(m_allConnectionOrder.begin(),
+                                              m_allConnectionOrder.end(),
+                                              [&](const ConnectionOrderRef& ordered) {
+                                                  const Connection* connection =
+                                                      ResolveConnectionRefLocked(ordered.localView);
+                                                  return connection == nullptr ||
+                                                         connection->node1 == nodeId ||
+                                                         connection->node2 == nodeId;
+                                              }),
+                               m_allConnectionOrder.end());
     m_nodeConnections.erase(nodeId);
     ClearNodeFromIndexes(nodeId);
-
-    // 从allConnections_中移除相关连接
-    m_allConnections.erase(
-        std::remove_if(m_allConnections.begin(), m_allConnections.end(),
-            [nodeId](const Connection& conn) {
-                return conn.node1 == nodeId || conn.node2 == nodeId;
-            }),
-        m_allConnections.end()
-    );
+    for (auto it = m_localConnectionViews.begin(); it != m_localConnectionViews.end();)
+    {
+        if (it->first.localNodeId == nodeId)
+        {
+            it = m_localConnectionViews.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+    InvalidateAllConnectionsCacheLocked();
 }
 
 // 清空所有连接
 void TpConnectionManager::Clear()
 {
     std::lock_guard<std::mutex> lock(m_stateLock);
-    m_allConnections.clear();
+    m_allConnectionOrder.clear();
+    m_localConnectionViews.clear();
     m_nodeConnections.clear();
     m_peerNodeIndex.clear();
     m_peerNodePriorityIndex.clear();
@@ -1142,10 +1257,12 @@ void TpConnectionManager::Clear()
     m_localTpnIndex.clear();
     m_tpnList.clear();
     m_reservedTpnList.clear();
+    InvalidateAllConnectionsCacheLocked();
 }
 
 // 为指定节点建立各种索引
-void TpConnectionManager::BuildIndexesForNode(uint32_t localNodeId, Connection conn)
+TpConnectionManager::LocalConnectionRef
+TpConnectionManager::BuildIndexesForNode(uint32_t localNodeId, Connection conn)
 {
     uint32_t peerNodeId;
     uint32_t localPort;
@@ -1173,30 +1290,34 @@ void TpConnectionManager::BuildIndexesForNode(uint32_t localNodeId, Connection c
     conn.port2 = peerPort;
     conn.tpn1 = localTpn;
     conn.tpn2 = peerTpn;
+    const LocalConnectionRef ref{localNodeId, localTpn, conn.reservationGeneration};
+    m_localConnectionViews[ref] = conn;
     // 建立各种索引
 
     // 索引1: 添加到节点连接列表
-    m_nodeConnections[localNodeId].push_back(conn);
+    m_nodeConnections[localNodeId].push_back(ref);
 
     // 索引2: 对端节点
-    m_peerNodeIndex[{localNodeId, peerNodeId}].push_back(conn);
+    m_peerNodeIndex[{localNodeId, peerNodeId}].push_back(ref);
 
     // 索引3: 对端节点+优先级
-    m_peerNodePriorityIndex[{localNodeId, peerNodeId, static_cast<uint32_t>(conn.priority)}].push_back(conn);
+    m_peerNodePriorityIndex[{localNodeId, peerNodeId, static_cast<uint32_t>(conn.priority)}]
+        .push_back(ref);
 
     // 索引4: 对端节点+本端端口
-    m_peerNodeLocalPortIndex[{localNodeId, peerNodeId, localPort}].push_back(conn);
+    m_peerNodeLocalPortIndex[{localNodeId, peerNodeId, localPort}].push_back(ref);
 
     // 索引5: 对端节点+本端端口+对端端口
-    m_bothPortsIndex[{localNodeId, peerNodeId, localPort, peerPort}].push_back(conn);
+    m_bothPortsIndex[{localNodeId, peerNodeId, localPort, peerPort}].push_back(ref);
 
     // 索引6: 本地 TPN
-    m_localTpnIndex[{localNodeId, localTpn}] = conn;
+    m_localTpnIndex[{localNodeId, localTpn}] = ref;
 
     if (m_reservedTpnList.erase(localTpn) == 0) {
         NS_ASSERT_MSG(m_tpnList.find(localTpn) == m_tpnList.end(), "Tpn already exists!");
     }
     m_tpnList.insert(localTpn);
+    return ref;
 }
 
 // 从索引中清理指定节点

@@ -70,6 +70,8 @@ struct UbRuntimeStorageSnapshot
 
     uint64_t nodeCount{0};
     uint64_t canonicalConnections{0};
+    uint64_t authoritativeLocalConnectionViews{0};
+    uint64_t secondaryConnectionIndexEntries{0};
     uint64_t residentTpEndpoints{0};
     uint64_t residentWqes{0};
     uint64_t residentOperations{0};
