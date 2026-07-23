@@ -497,6 +497,10 @@ UbTransportChannelManager::NotifyStateChanged(uint32_t tpn)
     }
     if (it->second.state == EndpointState::LIVE)
     {
+        if (it->second.channel == nullptr || !it->second.channel->IsSafeForBackingReclaim())
+        {
+            return;
+        }
         ReclaimBackingState(tpn);
     }
     else if (it->second.state == EndpointState::DRAINING && CanFinalize(it->second))

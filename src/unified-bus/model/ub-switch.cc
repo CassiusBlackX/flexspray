@@ -847,7 +847,12 @@ bool UbSwitch::SinkTpDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Pars
     } else {
         targetTp->RecvDataPacket(packet);
     }
-    controller->GetTransportChannelManager()->ReclaimBackingState(dstTpn);
+    Ptr<UbTransportChannelManager> manager = controller->GetTransportChannelManager();
+    Ptr<UbTransportChannel> reclaimCandidate = manager->GetTp(dstTpn);
+    if (reclaimCandidate != nullptr && reclaimCandidate->IsSafeForBackingReclaim())
+    {
+        manager->ReclaimBackingState(dstTpn);
+    }
     return true;
 }
 
