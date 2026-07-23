@@ -1,0 +1,18 @@
+schema_version: 1
+experiment_id: next-lifecycle-ctp-rtp-complex-differential
+checkpoint_policy: continue_full_matrix
+revisions:
+  control: cf8ee683e00e5b6210661013e93cec7217d662e5
+  treatment: 824b87a0503133a6ca4f43f8bd8ce9bbe2631341
+cases:
+  - {case_id: ctp-win1, block_id: ctp-window, transport: CTP, variant: window-1}
+  - {case_id: ctp-win4, block_id: ctp-window, transport: CTP, variant: window-4}
+  - {case_id: ctp-win128, block_id: ctp-window, transport: CTP, variant: window-128}
+  - {case_id: rtp-shared-win1, block_id: rtp-shared-window, transport: RTP, variant: shared-tp-window-1}
+  - {case_id: rtp-gbn-double-drop, block_id: rtp-gbn, transport: RTP, variant: psn-1-and-3-drop-once}
+  - {case_id: rtp-tpg-gbn, block_id: rtp-tpg, transport: RTP, variant: member-0-loss-with-concurrent-wqe}
+execution:
+  roles: [next, lifecycle]
+  order: serial
+  rng_run: 1
+  total_runs: 12

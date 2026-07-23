@@ -5,6 +5,7 @@
 #include <optional>
 #include <vector>
 #include <unordered_map>
+#include "ns3/event-id.h"
 #include "ns3/object.h"
 #include "ns3/nstime.h"
 #include "ns3/node.h"
@@ -28,16 +29,22 @@ public:
     virtual ~UbSwitchAllocator();
     static TypeId GetTypeId (void);
     void TriggerAllocator(Ptr<UbPort> outPort);
+    void ScheduleTriggerAllocator(Ptr<UbPort> outPort);
     virtual void AllocateNextPacket(Ptr<UbPort> outPort);
     virtual void Init();
     void SetNodeId(uint32_t nodeId) {m_nodeId = nodeId;}
     void RegisterUbIngressQueue(Ptr<UbIngressQueue> ingressQueue, uint32_t outPort, uint32_t priority);
     void UnregisterUbIngressQueue(Ptr<UbIngressQueue> ingressQueue, uint32_t outPort, uint32_t priority);
+    Ptr<UbIngressQueue> ReplaceUbIngressQueueWithEmptyPlaceholder(Ptr<UbIngressQueue> ingressQueue);
+    bool ReplaceUbIngressQueue(Ptr<UbIngressQueue> expected, Ptr<UbIngressQueue> replacement);
     void RegisterEgressStauts(uint32_t portsNum);
     void SetEgressStatus(uint32_t portId, bool status);
     bool GetEgressStatus(uint32_t portId);
     void DoDispose() override;
     void CheckDeadlock();
+    bool HasPendingOrActiveWork(Ptr<UbIngressQueue> ingressQueue) const;
+    uint32_t GetPendingEventCountForTest() const;
+    uint32_t GetForcedEventResidueForTest() const { return m_forcedEventResidue; }
 
 protected:
     struct IngressCandidate
@@ -46,11 +53,31 @@ protected:
         uint32_t ingressQueueSlot;
     };
 
+    enum class TrackedEventKind : uint8_t
+    {
+        ALLOCATION,
+        RETRIGGER,
+        PORT_NOTIFICATION,
+        DEADLOCK
+    };
+
+    struct TrackedEvent
+    {
+        EventId event;
+        TrackedEventKind kind;
+        uint32_t outPortId;
+    };
+
     uint32_t GetIngressQueueSlotCount(uint32_t outPort, uint32_t priority) const;
     std::optional<IngressCandidate> FindNextEligibleIngressQueue(uint32_t outPort,
                                                                  uint32_t priority,
                                                                  uint32_t startIngressQueueSlot,
                                                                  Ptr<UbPort> egressPort) const;
+    void TrackEvent(EventId event, TrackedEventKind kind, uint32_t outPortId = UINT32_MAX);
+    void PruneResolvedEvents();
+    void NotifyAllocationFinish(Ptr<UbPort> outPort);
+    void SetActiveIngressQueue(Ptr<UbIngressQueue> ingressQueue);
+    void ClearActiveIngressQueue();
 
     Time m_allocationTime;
     uint32_t m_nodeId;
@@ -60,6 +87,9 @@ protected:
     std::vector<bool> m_oneMoreRound;
     uint32_t m_voqIngressSlotCount = 0;
     bool m_enableDirectAllocationCompletion = true;
+    std::vector<TrackedEvent> m_trackedEvents;
+    Ptr<UbIngressQueue> m_activeIngressQueue;
+    uint32_t m_forcedEventResidue = 0;
 };
 
 

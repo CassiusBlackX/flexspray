@@ -1,0 +1,36 @@
+{
+  "binary_sha256": "55df15a727a50736019a8f69b70eafacc4cae6191db05540c0a31f5f9a4ae81c",
+  "case_id": "p004",
+  "elapsed_seconds": 116.68199258402456,
+  "input_sha256": {
+    "experiment-spec.md": "ee8ebee63422223b1041e5d6759e517a9e39e3360fada9ce9235e182f219b5b8",
+    "generate_topology.py": "31d4fa7979b7418d5247fdd291d9b04940169e49b1b68ca5daeaa7e1e89c378f",
+    "network_attribute.txt": "00156300052d914dfb7453bee42093220e5b8b7536c39be80c68b43b61cfd226",
+    "node.csv": "0423ecf8f53625c4b7f7e245b9d5c497bd95c791d3f1694e3583db99dec1ff9c",
+    "routing_table.csv": "9a5537b27cf725f292e0ad26db59c773b05dd604267e1a361d57a7c79f3dd279",
+    "topology.csv": "b9ebfc6224761978e06da5939538a00d1e117a8af042d2045e569538b6ae9125",
+    "traffic.csv": "d87e7dfc20d65dffa16f96ae239d527a66f2466f180c578dbfe16257771c608c"
+  },
+  "input_task_count": 4096,
+  "output_bytes": 0,
+  "platform": "macOS-26.5.1-arm64-arm-64bit",
+  "return_code": 0,
+  "rss_limit_bytes": 10737418240,
+  "runlog_bytes": 13257064,
+  "runtime_mode": "mtp-16",
+  "runtime_storage_snapshot": {
+    "bytes": 3910,
+    "exists": true,
+    "path": "runtime-storage-snapshot.csv",
+    "sha256": "fae10c16b20c066b90b2bf0078410676230be184711370a1e199b7ebef2fb7e2"
+  },
+  "sampled_peak_process_tree_rss_bytes": 280002560,
+  "source_revision": "36334c02e784de1d203e0251081485b032e38aba",
+  "started_at": "2026-07-22T13:10:44.276259+00:00",
+  "stop_reason": "completed",
+  "system_seconds": 69.14,
+  "time_l_peak_rss_bytes": 283820032,
+  "time_l_wall_seconds": 116.54,
+  "user_seconds": 1051.13,
+  "wall_limit_seconds": 900
+}

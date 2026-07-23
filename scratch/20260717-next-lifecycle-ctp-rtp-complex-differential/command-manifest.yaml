@@ -1,0 +1,11 @@
+schema_version: 1
+roots:
+  next: /Users/ytxing/workspace/ns-3-ub-routing-modes
+  lifecycle: /Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode
+expected_heads:
+  next: cf8ee683e00e5b6210661013e93cec7217d662e5
+  lifecycle: 824b87a0503133a6ca4f43f8bd8ce9bbe2631341
+runner: python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path={absolute_case_dir} --rng-run=1'
+execution: serial
+overwrite_policy: only --replace may remove generated output inside this package
+comparison: python3.12 scripts/experiment.py analyze

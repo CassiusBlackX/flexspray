@@ -1,0 +1,40 @@
+{
+  "execution": "one warm-up per role and five counterbalanced pairs, strictly serial",
+  "observability": "explicit lifecycle OFF; packet, port, and per-hop trace OFF",
+  "orders": [
+    [
+      "main",
+      "current"
+    ],
+    [
+      "current",
+      "main"
+    ],
+    [
+      "main",
+      "current"
+    ],
+    [
+      "current",
+      "main"
+    ],
+    [
+      "main",
+      "current"
+    ]
+  ],
+  "pre_t32_binary_sha256": "7756e587027029b4d551f70d490659bcea4af0f31cc5fbd47ddc47a46bb45a78",
+  "pre_t32_library_sha256": "0968fced00fb34f13331e73e603c91382601d99a1f588a37517a79aa93a32878",
+  "pre_t32_revision": "db335a0 frozen pre-T32 library",
+  "retention_gate": {
+    "maximum_paired_median_wall_percent": 0.0,
+    "semantic_artifacts_exact": true
+  },
+  "schema_version": 1,
+  "sizes": [
+    16384009,
+    16384000
+  ],
+  "t32_binary_sha256": "7756e587027029b4d551f70d490659bcea4af0f31cc5fbd47ddc47a46bb45a78",
+  "t32_library_sha256": "a7163d0eb338e08a9b86b47cc14a15839d959ae5a69dd4317e231bb2e5b38bb7"
+}

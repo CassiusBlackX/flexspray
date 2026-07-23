@@ -6,6 +6,7 @@
 #include "ns3/ipv4-address.h"
 #include "ns3/object.h"
 #include "ns3/core-module.h"
+#include "ns3/ub-lifecycle.h"
 
 #include <bitset>
 #include <cstdint>
@@ -566,6 +567,16 @@ public:
         m_wqeId = wqeId;
     }
 
+    bool IsLifecycleManaged() const
+    {
+        return m_lifecycleManaged;
+    }
+
+    void MarkLifecycleManaged()
+    {
+        m_lifecycleManaged = true;
+    }
+
     // ========== 任务描述信息 ==========
     uint32_t GetSrc() const
     {
@@ -961,6 +972,7 @@ private:
     uint32_t m_resLenBytes = 0;
     uint32_t m_payloadBytes = 0;
     uint32_t m_carrierBytes = 0;
+    bool m_lifecycleManaged = false;
 
     // ========== TA层动态信息 (追踪WQE segment的完成) ==========
     uint32_t m_bytesLeft = 0; // 剩余的字节数
@@ -1227,6 +1239,11 @@ public:
         return m_bytesLeft == 0;
     }
 
+    bool HasStartedSending() const
+    {
+        return m_hasStartedSending;
+    }
+
     /**
      * @brief 更新已发送的字节数
      * @param sentBytes 本次发送的字节数
@@ -1236,6 +1253,7 @@ public:
     {
         uint64_t actualSent = std::min(sentBytes, m_bytesLeft);
         m_bytesLeft -= actualSent;
+        m_hasStartedSending = m_hasStartedSending || actualSent != 0;
         return actualSent;
     }
 
@@ -1304,6 +1322,60 @@ public:
     void SetTpn(uint32_t tpn) { m_tpn = tpn; }
 
     uint32_t GetTpn() { return m_tpn; }
+
+    void SetResolvedTpIdentity(const UbLifecycleResourceIdentity& identity)
+    {
+        m_resolvedTpIdentity = identity;
+        m_hasResolvedTpIdentity = true;
+    }
+
+    bool HasResolvedTpIdentity() const
+    {
+        return m_hasResolvedTpIdentity;
+    }
+
+    const UbLifecycleResourceIdentity& GetResolvedTpIdentity() const
+    {
+        NS_ABORT_MSG_IF(!m_hasResolvedTpIdentity, "WQE segment has no resolved TP generation");
+        return m_resolvedTpIdentity;
+    }
+
+    void SetTransactionCorrelation(const UbLifecycleResourceIdentity& operationIdentity,
+                                   const UbLifecycleResourceIdentity& segmentIdentity)
+    {
+        m_operationIdentity = operationIdentity;
+        m_segmentIdentity = segmentIdentity;
+        m_hasTransactionCorrelation = true;
+    }
+
+    void SetTransactionCorrelation(const UbTransactionCorrelationIdentity& identity)
+    {
+        SetTransactionCorrelation(identity.operation, identity.segment);
+    }
+
+    bool HasTransactionCorrelation() const
+    {
+        return m_hasTransactionCorrelation;
+    }
+
+    const UbLifecycleResourceIdentity& GetTransactionOperationIdentity() const
+    {
+        NS_ABORT_MSG_IF(!m_hasTransactionCorrelation,
+                        "WQE segment has no Transaction lifecycle correlation");
+        return m_operationIdentity;
+    }
+
+    const UbLifecycleResourceIdentity& GetTransactionSegmentIdentity() const
+    {
+        NS_ABORT_MSG_IF(!m_hasTransactionCorrelation,
+                        "WQE segment has no Transaction lifecycle correlation");
+        return m_segmentIdentity;
+    }
+
+    UbTransactionCorrelationIdentity GetTransactionCorrelation() const
+    {
+        return {GetTransactionOperationIdentity(), GetTransactionSegmentIdentity()};
+    }
 
     void SetSegmentKind(UbTransactionSegmentKind segmentKind)
     {
@@ -1430,11 +1502,17 @@ private:
     uint8_t m_dport{0};                             // 目的端口号
     TaOpcode m_type{TaOpcode::TA_OPCODE_WRITE};     // 操作类型 (READ/WRITE)
     uint32_t m_size{0};                             // 分段数据大小 (字节)
+    bool m_hasStartedSending{false};
     UbPriority m_priority{UB_PRIORITY_DEFAULT};     // 分段优先级
     uint32_t m_taskId{0};                           // 流的任务ID
     uint32_t m_wqeSize{0};                          // 所属WQE的size
     OrderType m_orderType{OrderType::ORDER_NO};     // 所属WQE的order类型
-    uint32_t m_tpn; // 当前WqeSegment由哪一个TP进行传输
+    uint32_t m_tpn{UINT32_MAX}; // 当前WqeSegment由哪一个TP进行传输
+    bool m_hasResolvedTpIdentity{false};
+    UbLifecycleResourceIdentity m_resolvedTpIdentity;
+    bool m_hasTransactionCorrelation{false};
+    UbLifecycleResourceIdentity m_operationIdentity;
+    UbLifecycleResourceIdentity m_segmentIdentity;
 
     // ========== 网络层信息 ==========
     Ipv4Address m_sip; // 源IP地址

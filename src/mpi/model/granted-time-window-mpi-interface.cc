@@ -86,6 +86,8 @@ MPI_Comm GrantedTimeWindowMpiInterface::g_communicator = MPI_COMM_WORLD;
 bool GrantedTimeWindowMpiInterface::g_freeCommunicator = false;
 ParallelCommunicationInterface::TaskCompletionHandler
     GrantedTimeWindowMpiInterface::g_taskCompletionHandler;
+ParallelCommunicationInterface::CausalControlHandler
+    GrantedTimeWindowMpiInterface::g_causalControlHandler;
 
 #ifdef NS3_MTP
 std::atomic<bool> GrantedTimeWindowMpiInterface::g_sending(false);
@@ -119,6 +121,7 @@ GrantedTimeWindowMpiInterface::Destroy()
 
     g_pendingTx.clear();
     g_taskCompletionHandler = nullptr;
+    g_causalControlHandler = nullptr;
 }
 
 uint32_t
@@ -271,12 +274,26 @@ GrantedTimeWindowMpiInterface::SetTaskCompletionHandler(TaskCompletionHandler ha
 }
 
 void
-GrantedTimeWindowMpiInterface::SendTaskCompletion(uint32_t taskId,
-                                                  const Time& completionVisibleTs,
-                                                  uint32_t rank)
+GrantedTimeWindowMpiInterface::SetCausalControlHandler(CausalControlHandler handler)
 {
-    NS_LOG_FUNCTION(this << taskId << completionVisibleTs.GetTimeStep() << rank);
+    g_causalControlHandler = std::move(handler);
+}
+
+bool
+GrantedTimeWindowMpiInterface::SupportsCausalControl() const
+{
+    return true;
+}
+
+void
+GrantedTimeWindowMpiInterface::SendFixedControl(const void* message,
+                                                std::size_t size,
+                                                uint32_t rank,
+                                                int tag)
+{
     NS_ASSERT(g_enabled);
+    NS_ABORT_MSG_IF(message == nullptr || size == 0, "Cannot send an empty MPI control record");
+    NS_ABORT_MSG_IF(rank >= g_size, "MPI control record references an unknown rank");
 
 #ifdef NS3_MTP
     while (g_sending.exchange(true, std::memory_order_acquire))
@@ -288,19 +305,15 @@ GrantedTimeWindowMpiInterface::SendTaskCompletion(uint32_t taskId,
     g_pendingTx.push_back(sendBuf);
     auto i = g_pendingTx.rbegin();
 
-    auto buffer = new uint8_t[sizeof(TaskCompletionWireMessage)];
+    auto buffer = new uint8_t[size];
     i->SetBuffer(buffer);
-    const TaskCompletionWireMessage message{
-        taskId,
-        static_cast<uint64_t>(completionVisibleTs.GetInteger()),
-    };
-    std::memcpy(buffer, &message, sizeof(message));
+    std::memcpy(buffer, message, size);
 
     MPI_Isend(reinterpret_cast<void*>(i->GetBuffer()),
-              sizeof(TaskCompletionWireMessage),
+              static_cast<int>(size),
               MPI_CHAR,
               rank,
-              TASK_COMPLETION_MPI_TAG,
+              tag,
               g_communicator,
               i->GetRequest());
     g_txCount++;
@@ -308,6 +321,30 @@ GrantedTimeWindowMpiInterface::SendTaskCompletion(uint32_t taskId,
 #ifdef NS3_MTP
     g_sending.store(false, std::memory_order_release);
 #endif
+}
+
+void
+GrantedTimeWindowMpiInterface::SendTaskCompletion(uint32_t taskId,
+                                                  const Time& completionVisibleTs,
+                                                  uint32_t rank)
+{
+    NS_LOG_FUNCTION(this << taskId << completionVisibleTs.GetTimeStep() << rank);
+    const TaskCompletionWireMessage message{
+        taskId,
+        static_cast<uint64_t>(completionVisibleTs.GetInteger()),
+    };
+    SendFixedControl(&message, sizeof(message), rank, TASK_COMPLETION_MPI_TAG);
+}
+
+void
+GrantedTimeWindowMpiInterface::SendCausalControl(const CausalControlRecord& record)
+{
+    NS_LOG_FUNCTION(this << record.targetNodeId << record.protocol << record.visibleTs
+                         << record.orderKey);
+    NS_ABORT_MSG_IF(record.targetNodeId >= NodeList::GetNNodes(),
+                    "Causal control record references an unknown target node");
+    const uint32_t rank = NodeList::GetNode(record.targetNodeId)->GetSystemId();
+    SendFixedControl(&record, sizeof(record), rank, CAUSAL_CONTROL_MPI_TAG);
 }
 
 void
@@ -394,6 +431,7 @@ GrantedTimeWindowMpiInterface::ReceiveMessages()
     }
 
     ReceiveTaskCompletionMessages();
+    ReceiveCausalControlMessages();
 }
 
 void
@@ -453,6 +491,73 @@ GrantedTimeWindowMpiInterface::DispatchTaskCompletion(uint32_t taskId)
     NS_ABORT_MSG_IF(!g_taskCompletionHandler,
                     "TaskCompletionMessage received before handler registration");
     g_taskCompletionHandler(taskId);
+}
+
+void
+GrantedTimeWindowMpiInterface::ReceiveCausalControlMessages()
+{
+    while (true)
+    {
+        int flag = 0;
+        MPI_Status status;
+        MPI_Iprobe(MPI_ANY_SOURCE, CAUSAL_CONTROL_MPI_TAG, g_communicator, &flag, &status);
+        if (!flag)
+        {
+            break;
+        }
+
+        int count = 0;
+        MPI_Get_count(&status, MPI_CHAR, &count);
+        NS_ABORT_MSG_IF(count != static_cast<int>(sizeof(CausalControlRecord)),
+                        "MPI causal control record has an invalid fixed size");
+        CausalControlRecord record{};
+        MPI_Recv(&record,
+                 sizeof(record),
+                 MPI_CHAR,
+                 status.MPI_SOURCE,
+                 CAUSAL_CONTROL_MPI_TAG,
+                 g_communicator,
+                 MPI_STATUS_IGNORE);
+        g_rxCount++;
+        ScheduleCausalControl(record);
+    }
+}
+
+void
+GrantedTimeWindowMpiInterface::ScheduleCausalControl(CausalControlRecord record)
+{
+    NS_ABORT_MSG_IF(record.targetNodeId >= NodeList::GetNNodes(),
+                    "Received causal control record references an unknown target node");
+    Ptr<Node> target = NodeList::GetNode(record.targetNodeId);
+    NS_ABORT_MSG_IF(target->GetSystemId() != g_sid,
+                    "Received causal control record was routed to the wrong MPI rank");
+    const Time visibleTs(record.visibleTs);
+
+#ifdef NS3_MTP
+    if (MtpInterface::isEnabled())
+    {
+        LogicalProcess* targetLp =
+            MtpInterface::GetSystem(MtpInterface::RequireNodeLocalLpId(record.targetNodeId));
+        targetLp->ScheduleAt(
+            record.targetNodeId,
+            Max(visibleTs, targetLp->Now()),
+            MakeEvent(&GrantedTimeWindowMpiInterface::DispatchCausalControl, record));
+        return;
+    }
+#endif
+
+    Simulator::ScheduleWithContext(record.targetNodeId,
+                                   Max(visibleTs, Simulator::Now()) - Simulator::Now(),
+                                   &GrantedTimeWindowMpiInterface::DispatchCausalControl,
+                                   record);
+}
+
+void
+GrantedTimeWindowMpiInterface::DispatchCausalControl(CausalControlRecord record)
+{
+    NS_ABORT_MSG_IF(!g_causalControlHandler,
+                    "Causal control record received before handler registration");
+    g_causalControlHandler(record);
 }
 
 void

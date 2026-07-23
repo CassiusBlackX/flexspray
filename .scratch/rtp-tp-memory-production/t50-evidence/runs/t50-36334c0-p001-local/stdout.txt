@@ -1,0 +1,21 @@
+[21:05:33] [case] Run case: /Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/.worktrees/t50-candidate-36334c0/scratch/20260721-rtp-tp-memory-probe/runtime-cases/p001-local-36334c0
+[21:05:33] [case] node.csv delay fields: allocationDelay -> AllocationTime; forwardDelay -> InPortProcessingDelay; legacy 4-column forwardDelay -> AllocationTime.
+[21:05:33] [setup] Load network_attribute.txt
+[21:05:33] [setup] Prepare runlog directory: /Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/.worktrees/t50-candidate-36334c0/scratch/20260721-rtp-tp-memory-probe/runtime-cases/p001-local-36334c0/runlog
+[21:05:33] [setup] Load node.csv
+[21:05:33] [setup] Load topology.csv
+[21:05:33] [setup] Load routing_table.csv
+[21:05:33] [setup] Skip transport_channel.csv (not found; traffic will reserve TP connections before endpoints materialize on demand).
+[INFO] Initial task start offset enabled: window=32ps, seed=1.
+[21:05:33] [traffic] Index phase dependencies from traffic.csv
+[21:05:33] [traffic] Activate clients and enqueue tasks.
+[21:05:33] [traffic] Load traffic.csv
+[21:05:33] [traffic] Scheduled local tasks: 1024
+[21:05:33] Simulation time progress: 0 us[21:05:37] Simulation time progress: 100 us
+[21:05:37] [run] Simulation finished.
+[21:05:37] [summary] Program finished.
+[21:05:37] [summary] Wall-clock:
+[21:05:37] [summary]   config : 628 us
+[21:05:37] [summary]   run    : 4.371389 s
+[21:05:37] [summary]   trace  : 0 us
+[21:05:37] [summary]   total  : 4.390105 s
