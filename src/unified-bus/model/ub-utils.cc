@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -2259,7 +2260,7 @@ UbUtils::ReadStructuredTopologyConfig(std::istream& input)
     NS_ABORT_MSG_IF(magic != "NS3_UB_STRUCTURED",
                     "invalid structured topology protocol header: " << magic);
     const uint32_t version = ReadStructuredUint32(input, "protocol version");
-    NS_ABORT_MSG_IF(version != 1 && version != 2 && version != 3,
+    NS_ABORT_MSG_IF(version != 1 && version != 2 && version != 3 && version != 4,
                     "unsupported structured topology protocol version: " << version);
 
     UbStructuredTopologyConfig config;
@@ -2290,6 +2291,20 @@ UbUtils::ReadStructuredTopologyConfig(std::istream& input)
             ReadStructuredToken(input, "link bandwidth"),
             ReadStructuredToken(input, "link delay"),
         });
+    }
+
+    if (version >= 4)
+    {
+        const std::string section = ReadStructuredToken(input, "routing fingerprint section");
+        NS_ABORT_MSG_IF(section != "ROUTING_FINGERPRINT",
+                        "structured topology expected ROUTING_FINGERPRINT, got " << section);
+        config.routingFingerprint = ReadStructuredToken(input, "routing fingerprint");
+        NS_ABORT_MSG_IF(
+            config.routingFingerprint.size() != 64 ||
+                !std::all_of(config.routingFingerprint.begin(),
+                             config.routingFingerprint.end(),
+                             [](unsigned char character) { return std::isxdigit(character); }),
+            "structured topology routing fingerprint must be a 64-character hexadecimal digest");
     }
 
     ReadStructuredSection(input, "TABLE", count);
@@ -2734,8 +2749,11 @@ void UbUtils::AddRoutingTable(const string &filename)
     std::vector<uint16_t> outports;
     std::vector<uint32_t> metrics;
     std::vector<RouteRangeCsvRow> rangeRows;
+    using MetricPorts = std::map<uint32_t, std::vector<uint16_t>>;
+    std::map<std::tuple<uint32_t, uint32_t, uint32_t>, MetricPorts> exactRows;
+    std::map<std::pair<uint32_t, uint32_t>, MetricPorts> primaryRows;
 
-    std::unordered_map<uint32_t, std::unordered_map<uint32_t, std::map<uint32_t, std::vector<uint16_t>>>> rtTable;
+    auto exactBuilder = std::make_unique<UbNextHopIndexBuilder>(NodeList::GetNNodes());
     getline(file, line);
     while (std::getline(file, line)) {
         ++rowNumber;
@@ -2768,11 +2786,9 @@ void UbUtils::AddRoutingTable(const string &filename)
         const auto routeValue = NormalizeRouteValue(outports, metrics, rowNumber);
         const bool isRangeRoute = nodeStart != nodeEnd || destStart != destEnd;
         if (!isRangeRoute) {
-            Ipv4Address ip_node = NodeIdToIp(destStart);
-            Ipv4Address ip_nodePort = NodeIdToIp(destStart, destport);
-            for (auto i = 0u; i < outports.size(); i++) {
-                rtTable[nodeStart][ip_node.Get()][metrics[i]].push_back(outports[i]);
-                rtTable[nodeStart][ip_nodePort.Get()][metrics[i]].push_back(outports[i]);
+            for (const auto& [port, routeMetric] : routeValue) {
+                exactRows[{nodeStart, destStart, destport}][routeMetric].push_back(port);
+                primaryRows[{nodeStart, destStart}][routeMetric].push_back(port);
             }
             continue;
         }
@@ -2786,6 +2802,32 @@ void UbUtils::AddRoutingTable(const string &filename)
                                              routeValue});
     }
     ValidateRouteRangeRowsNoConflicts(rangeRows);
+
+    auto classifyMetrics = [](const MetricPorts& metricPorts) {
+        UbStructuredTableRoute route{};
+        bool shortest = true;
+        for (const auto& [metric, ports] : metricPorts)
+        {
+            auto& destination = shortest ? route.shortestPorts : route.nonShortestPorts;
+            destination.insert(destination.end(), ports.begin(), ports.end());
+            shortest = false;
+        }
+        return route;
+    };
+    for (const auto& [lookup, metricPorts] : exactRows)
+    {
+        auto route = classifyMetrics(metricPorts);
+        std::tie(route.currentNodeId, route.destinationNodeId, route.destinationPortId) = lookup;
+        exactBuilder->AddRoute(route);
+    }
+    for (const auto& [lookup, metricPorts] : primaryRows)
+    {
+        const auto route = classifyMetrics(metricPorts);
+        exactBuilder->AddPrimaryRoute(lookup.first,
+                                      lookup.second,
+                                      route.shortestPorts,
+                                      route.nonShortestPorts);
+    }
 
     // The runtime keeps only the minimum-metric ports and one combined non-shortest group.
     // TODO: Preserve numeric metrics if a future routing policy needs more than these two groups.
@@ -2818,19 +2860,11 @@ void UbUtils::AddRoutingTable(const string &filename)
             }
         }
     }
-    for (auto &nodert : rtTable) {
-        auto rt = NodeList::GetNode(nodert.first)->GetObject<ns3::UbSwitch>()->GetRoutingProcess();
-        for (auto &destiprow : nodert.second) {
-            auto ip = destiprow.first;
-            int i = 0;
-            for (auto &metricrow : destiprow.second) {
-                if (i == 0) {
-                    rt->AddShortestRoute(ip, metricrow.second);
-                } else {
-                    rt->AddOtherRoute(ip, metricrow.second);
-                }
-                i++;
-            }
+    if (!exactRows.empty()) {
+        const auto nextHopIndex = exactBuilder->Build();
+        for (uint32_t nodeId = 0; nodeId < NodeList::GetNNodes(); ++nodeId) {
+            auto routing = NodeList::GetNode(nodeId)->GetObject<UbSwitch>()->GetRoutingProcess();
+            routing->SetNextHopIndex(nextHopIndex);
         }
     }
     file.close();
@@ -3126,11 +3160,15 @@ UbUtils::InstallStructuredTopology(const UbStructuredTopologyConfig& config,
             });
         }
     }
-    AddRuleRoutingTable(config.portGroups,
-                        config.routingRules,
-                        config.routingRangeRules,
-                        topologyLinks,
-                        config.topologyRules);
+    if (!config.portGroups.empty() || !config.routingRules.empty() ||
+        !config.routingRangeRules.empty() || !config.topologyRules.empty())
+    {
+        AddRuleRoutingTable(config.portGroups,
+                            config.routingRules,
+                            config.routingRangeRules,
+                            topologyLinks,
+                            config.topologyRules);
+    }
     return offsetStats;
 }
 

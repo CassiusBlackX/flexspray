@@ -106,6 +106,11 @@ class UbRuleRoutingTable
                    uint32_t destinationPortId,
                    std::vector<uint16_t>& shortestPorts,
                    std::vector<uint16_t>& nonShortestPorts) const;
+    bool TryLookupWithPrimaryFallback(uint32_t currentNodeId,
+                                      uint32_t destinationNodeId,
+                                      uint32_t destinationPortId,
+                                      std::vector<uint16_t>& shortestPorts,
+                                      std::vector<uint16_t>& nonShortestPorts) const;
 
   private:
     friend class UbTopologyNextHopIndex;
@@ -180,6 +185,10 @@ class UbRuleRoutingTable
                                         uint32_t destinationNodeId,
                                         uint32_t destinationPortId,
                                         std::vector<uint16_t>& shortestPorts) const;
+    bool TryLookupPrimary(uint32_t currentNodeId,
+                          uint32_t destinationNodeId,
+                          std::vector<uint16_t>& shortestPorts,
+                          std::vector<uint16_t>& nonShortestPorts) const;
     const UbTopologyRuleNode* FindTopologyNode(const IndexedTopologyRule& rule,
                                                uint32_t nodeId) const;
     bool AreTopologyNeighbors(const IndexedTopologyRule& rule,

@@ -12,6 +12,9 @@
 - `throughput.csv` records per-port-direction throughput with `type = Rx` or `type = Tx`.
 - `task_statistics.csv` records per-task throughput using `traffic.csv` data size plus task start and end times.
 - The current stage skills do not automatically normalize measured throughput against configured line rate.
+- `python3 scratch/ns-3-ub-tools/ub_tools.py trace parse CASE --output-dir DIR` calls the existing
+  task and port parsers directly and writes `task_statistics.csv` plus `throughput.csv` to the
+  explicit output directory. It does not start ns-3; existing outputs require `--overwrite`.
 
 ## Non-Implications
 
