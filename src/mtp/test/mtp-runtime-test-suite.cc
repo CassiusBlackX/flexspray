@@ -161,6 +161,30 @@ class MtpSameTimeAbsoluteEventSystemTestCase : public TestCase
     }
 };
 
+class MtpBootstrapEventValidationSystemTestCase : public TestCase
+{
+  public:
+    MtpBootstrapEventValidationSystemTestCase()
+        : TestCase("MTP - bootstrap node events use worker-local event IDs")
+    {
+    }
+
+    void DoRun() override
+    {
+        const std::string testFile = CreateTempDirFilename(GetName() + ".log");
+        const auto [status, output] =
+            RunMtpExample(testFile, "src/mtp/examples/mtp-bootstrap-event-validation");
+
+        NS_TEST_ASSERT_MSG_EQ(status, 0, "bootstrap node events must run: " << output);
+        NS_TEST_ASSERT_MSG_NE(
+            output.find("TEST : 0 : PASSED bootstrap=4 followup=4 pending-checks=4 "
+                        "incomplete-bootstrap=0 early-followups=0 positive=2 public=1 wrong-lp=0"),
+            std::string::npos,
+            "bootstrap events must be localized before callbacks schedule same-time follow-ups: "
+                << output);
+    }
+};
+
 class MtpManualPartitionValidationSystemTestSuite : public TestSuite
 {
   public:
@@ -201,6 +225,18 @@ class MtpOrderedGlobalEventsSystemTestSuite : public TestSuite
 };
 
 MtpOrderedGlobalEventsSystemTestSuite g_orderedGlobalEvents;
+
+class MtpBootstrapEventValidationSystemTestSuite : public TestSuite
+{
+  public:
+    MtpBootstrapEventValidationSystemTestSuite()
+        : TestSuite("mtp-bootstrap-event-validation", Type::SYSTEM)
+    {
+        AddTestCase(new MtpBootstrapEventValidationSystemTestCase(), TestCase::Duration::QUICK);
+    }
+};
+
+MtpBootstrapEventValidationSystemTestSuite g_bootstrapEventValidation;
 
 class MtpZeroDelayPartitionSystemTestCase : public TestCase
 {

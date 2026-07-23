@@ -6,6 +6,7 @@
 #include "ns3/object.h"
 #include "ns3/packet.h"
 #include "ns3/simulator.h"
+#include "ns3/ub-ingress-queue.h"
 #include "ns3/ub-small-fifo-queue.h"
 #include "ns3/nstime.h"
 #include "ub-datatype.h"
@@ -25,12 +26,6 @@ constexpr uint32_t DEFAULT_ALPHA_SHIFT             = 1;        // shared / 2
 constexpr uint32_t DEFAULT_DYNAMIC_PFC_RESUME_GAP_BYTES = 4 * 1024;
 constexpr uint32_t DEFAULT_PAPER_DYNAMIC_PFC_BETA = 8;
 constexpr uint32_t DEFAULT_PAPER_DYNAMIC_PFC_PRIORITY_COUNT = 8;
-
-enum class IngressQueueType {
-    VOQ,        // Virtual Output Queue - 转发数据包队列
-    TP,         // Transport Channel - 传输层可靠通道
-    BASE        // 基类默认值 - 不应出现在运行时
-};
 
 struct UbIngressQueueOccupancy {
     uint64_t total_bytes {0};
@@ -53,68 +48,6 @@ struct UbBufferProfileView {
     uint64_t reserve_per_queue_bytes {0};
     uint64_t shared_pool_bytes {0};
     uint64_t headroom_per_port_bytes {0};
-};
-
-/**
- * @brief port的收包缓存队列
- */
-class UbIngressQueue : public Object {
-public:
-    UbIngressQueue();
-    virtual ~UbIngressQueue();
-    static TypeId GetTypeId(void);
-    
-    virtual IngressQueueType GetIngressQueueType()
-    {
-        return IngressQueueType::BASE;
-    }
-
-    virtual bool IsEmpty();
-    virtual bool IsLimited() { return false; }
-    virtual Ptr<Packet> GetNextPacket();
-    virtual uint32_t GetNextPacketSize();
-    void SetInPortId(uint32_t inPortId) { m_inPortId = inPortId; }
-    void SetIngressPriority(uint32_t priority) { m_ingressPriority = priority; }
-    void SetOutPortId(uint32_t outPortId) { m_outPortId = outPortId; }
-    uint32_t GetInPortId() { return m_inPortId; }
-    uint32_t GetIngressPriority() { return m_ingressPriority; }
-    uint32_t GetOutPortId() { return m_outPortId; }
-    Time GetHeadArrivalTime() { return m_headArrivalTime; }
-    bool IsControlFrame();
-    bool IsForwardedDataPacket();
-    bool IsGeneratedDataPacket();
-
-protected:
-    Time m_headArrivalTime = Seconds(0);
-
-private:
-    uint32_t m_ingressPriority;
-    uint32_t m_inPortId;
-    uint32_t m_outPortId;
-};
-
-/**
- * @brief VOQ (Virtual Output Queue) implementation of ingress queue
- */
-class UbPacketQueue final : public UbIngressQueue {
-public:
-    UbPacketQueue();
-    ~UbPacketQueue() final;
-    static TypeId GetTypeId(void);
-
-    bool IsEmpty() override;
-    Ptr<Packet> GetNextPacket() override;
-    Ptr<Packet> Front();
-    void Pop();
-    void Push(Ptr<Packet> p);
-    IngressQueueType GetIngressQueueType() override;
-    uint32_t GetNextPacketSize() override;
-
-private:
-    Ptr<Packet> m_frontPacket;
-    UbSmallFifoQueue<Ptr<Packet>, 1> m_overflowQueue;
-    size_t m_packetCount = 0;
-    IngressQueueType m_ingressQueueType = IngressQueueType::VOQ;
 };
 
 /**

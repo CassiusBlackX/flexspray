@@ -3,11 +3,13 @@
 
 #include "ns3/ub-next-hop-index.h"
 #include "ns3/ub-rule-routing.h"
+#include "ub-ldst-instance.h"
 
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -20,6 +22,9 @@
 #include <sstream>
 #include <string_view>
 #include <unordered_map>
+#ifndef _WIN32
+#include <sys/resource.h>
+#endif
 #ifdef NS3_MPI
 #include "ub-remote-link.h"
 #include "ns3/mpi-interface.h"
@@ -30,6 +35,59 @@ using namespace ns3;
 
 namespace
 {
+struct RuntimeTpBackingTracker
+{
+    std::mutex mutex;
+    uint64_t current{0};
+    uint64_t peak{0};
+    bool resetWhenIdle{false};
+};
+
+RuntimeTpBackingTracker g_runtimeTpBackingTracker;
+
+const char*
+LifecycleResourceKindToString(UbLifecycleResourceKind kind)
+{
+    switch (kind)
+    {
+    case UbLifecycleResourceKind::RTP_ENDPOINT:
+        return "RTP_ENDPOINT";
+    case UbLifecycleResourceKind::WQE:
+        return "WQE";
+    case UbLifecycleResourceKind::TRANSACTION_OPERATION:
+        return "TRANSACTION_OPERATION";
+    case UbLifecycleResourceKind::TRANSACTION_SEGMENT:
+        return "TRANSACTION_SEGMENT";
+    case UbLifecycleResourceKind::JETTY:
+        return "JETTY";
+    case UbLifecycleResourceKind::RTP_TPG:
+        return "RTP_TPG";
+    case UbLifecycleResourceKind::RTP_CONNECTION:
+        return "RTP_CONNECTION";
+    case UbLifecycleResourceKind::CTP_SERVICE:
+        return "CTP_SERVICE";
+    case UbLifecycleResourceKind::LDST_INSTANCE:
+        return "LDST_INSTANCE";
+    case UbLifecycleResourceKind::LDST_SEGMENT:
+        return "LDST_SEGMENT";
+    case UbLifecycleResourceKind::DATALINK_PORT_VL:
+        return "DATALINK_PORT_VL";
+    }
+    NS_ABORT_MSG("Unknown lifecycle resource kind");
+}
+
+void
+AccumulateLifecycleKindStorage(UbLifecycleKindStorageSnapshot& aggregate,
+                               const UbLifecycleKindStorageSnapshot& value)
+{
+    aggregate.resourceCount += value.resourceCount;
+    aggregate.compactHistoryRunCount += value.compactHistoryRunCount;
+    aggregate.activeStateCount += value.activeStateCount;
+    aggregate.retainedSummaryCount += value.retainedSummaryCount;
+    aggregate.activeAttemptWordCount += value.activeAttemptWordCount;
+    aggregate.activeLeaseCount += value.activeLeaseCount;
+}
+
 struct LegacyNetworkAttributeKey
 {
     const char* legacy;
@@ -990,13 +1048,13 @@ PreloadLocalTpIfOwned(Ptr<Node> node,
 
     Ptr<UbController> ctrl = node->GetObject<UbController>();
     NS_ASSERT_MSG(ctrl != nullptr, "Preloaded TP endpoint must have UbController");
-    if (ctrl->IsTPExists(srcTpn))
+    if (ctrl->GetTransportChannelManager()->Contains(srcTpn))
     {
         return;
     }
 
     auto congestionCtrl = UbCongestionControl::Create(UB_DEVICE);
-    ctrl->CreateTp(src, dest, sport, dport, priority, srcTpn, dstTpn, congestionCtrl);
+    ctrl->GetTransportChannelManager()->CreateTp(src, dest, sport, dport, priority, srcTpn, dstTpn, congestionCtrl);
 }
 
 Ptr<UbLink>
@@ -1030,37 +1088,580 @@ namespace utils {
 UbUtils::TraceFileState&
 UbUtils::GetTraceFile(const std::string& fileName)
 {
-    namespace fs = std::filesystem;
-
+    ConfigureTraceWriter();
     std::lock_guard<std::mutex> filesGuard(files_mutex);
     auto [it, inserted] = files.try_emplace(fileName);
     if (inserted)
     {
-        std::error_code ec;
-        const fs::path parent = fs::path(fileName).parent_path();
-        if (!parent.empty())
+        it->second.fileName = fileName;
+    }
+    return it->second;
+}
+
+UbUtils::TraceSinkHandle
+UbUtils::ResolveTraceSink(const std::string& fileName)
+{
+    while (true)
+    {
+        const uint64_t epoch = trace_writer_epoch.load(std::memory_order_acquire);
+        TraceFileState* state = &GetTraceFile(fileName);
+        if (epoch == trace_writer_epoch.load(std::memory_order_acquire))
         {
-            fs::create_directories(parent, ec);
-            NS_ASSERT_MSG(!ec, "Failed to create trace parent dir: " << parent << " err=" << ec.message());
+            TraceSinkHandle handle;
+            handle.state = state;
+            handle.epoch = epoch;
+            return handle;
         }
-        it->second.stream.open(fileName.c_str(), std::ios::out | std::ios::app);
-        NS_ASSERT_MSG(it->second.stream.is_open(), "Can not open File: " << fileName);
-        it->second.pending.reserve(TRACE_FLUSH_THRESHOLD_BYTES);
+    }
+}
+
+UbUtils::TraceSinkHandle
+UbUtils::GetCachedTraceSink(const std::string& fileName)
+{
+    struct SinkCache
+    {
+        uint64_t epoch{0};
+        std::unordered_map<std::string, TraceSinkHandle> sinks;
+    };
+
+    thread_local SinkCache cache;
+
+    const uint64_t epoch = trace_writer_epoch.load(std::memory_order_acquire);
+    if (cache.epoch != epoch)
+    {
+        cache.epoch = epoch;
+        cache.sinks.clear();
+    }
+    auto it = cache.sinks.find(fileName);
+    if (it == cache.sinks.end())
+    {
+        it = cache.sinks.emplace(fileName, ResolveTraceSink(fileName)).first;
     }
     return it->second;
 }
 
 void
-UbUtils::FlushTraceFile(TraceFileState& fileState)
+UbUtils::ConfigureTraceWriter()
 {
-    std::lock_guard<std::mutex> fileGuard(fileState.mutex);
-    if (fileState.pending.empty())
+    std::lock_guard<std::mutex> guard(files_mutex);
+    if (trace_writer_configured)
     {
         return;
     }
-    fileState.stream.write(fileState.pending.data(),
-                           static_cast<std::streamsize>(fileState.pending.size()));
-    fileState.pending.clear();
+
+    UintegerValue chunkBytes;
+    UintegerValue highWaterBytes;
+    UintegerValue lowWaterBytes;
+    UintegerValue maxOpenFiles;
+    NS_ABORT_MSG_IF(!GlobalValue::GetValueByNameFailSafe("UB_TRACE_CHUNK_BYTES", chunkBytes),
+                    "Missing UB_TRACE_CHUNK_BYTES");
+    NS_ABORT_MSG_IF(
+        !GlobalValue::GetValueByNameFailSafe("UB_TRACE_OWNER_HIGH_WATER_BYTES", highWaterBytes),
+        "Missing UB_TRACE_OWNER_HIGH_WATER_BYTES");
+    NS_ABORT_MSG_IF(
+        !GlobalValue::GetValueByNameFailSafe("UB_TRACE_OWNER_LOW_WATER_BYTES", lowWaterBytes),
+        "Missing UB_TRACE_OWNER_LOW_WATER_BYTES");
+    NS_ABORT_MSG_IF(!GlobalValue::GetValueByNameFailSafe("UB_TRACE_MAX_OPEN_FILES", maxOpenFiles),
+                    "Missing UB_TRACE_MAX_OPEN_FILES");
+
+    trace_writer_config.chunkBytes = static_cast<std::size_t>(chunkBytes.Get());
+    trace_writer_config.highWaterBytes = static_cast<std::size_t>(highWaterBytes.Get());
+    trace_writer_config.lowWaterBytes = static_cast<std::size_t>(lowWaterBytes.Get());
+    trace_writer_config.maxOpenFiles = static_cast<std::size_t>(maxOpenFiles.Get());
+    NS_ABORT_MSG_IF(trace_writer_config.lowWaterBytes > trace_writer_config.highWaterBytes,
+                    "Trace owner low-water mark exceeds high-water mark");
+    NS_ABORT_MSG_IF(trace_writer_config.chunkBytes > trace_writer_config.highWaterBytes,
+                    "Trace chunk size exceeds owner high-water mark");
+
+    std::size_t platformLimit = 256;
+#ifndef _WIN32
+    constexpr std::size_t kReservedDescriptors = 128;
+    struct rlimit limit;
+    if (getrlimit(RLIMIT_NOFILE, &limit) == 0)
+    {
+        if (limit.rlim_cur == RLIM_INFINITY)
+        {
+            platformLimit = trace_writer_config.maxOpenFiles;
+        }
+        else if (limit.rlim_cur > kReservedDescriptors)
+        {
+            platformLimit = static_cast<std::size_t>(limit.rlim_cur) - kReservedDescriptors;
+        }
+        else
+        {
+            platformLimit = 1;
+        }
+    }
+#endif
+    trace_writer_config.effectiveMaxOpenFiles =
+        std::max<std::size_t>(1, std::min(trace_writer_config.maxOpenFiles, platformLimit));
+    trace_writer_configured = true;
+}
+
+UbUtils::TraceOwnerState&
+UbUtils::GetTraceOwner(uint32_t ownerId)
+{
+    struct OwnerCache
+    {
+        uint64_t epoch{0};
+        uint32_t ownerId{0};
+        TraceOwnerState* owner{nullptr};
+    };
+
+    thread_local OwnerCache cache;
+
+    const uint64_t epoch = trace_writer_epoch.load(std::memory_order_acquire);
+    if (cache.epoch == epoch && cache.owner != nullptr && cache.ownerId == ownerId)
+    {
+        return *cache.owner;
+    }
+    std::lock_guard<std::mutex> guard(files_mutex);
+    auto [it, inserted] = trace_owners.try_emplace(ownerId);
+    (void)inserted;
+    cache = {epoch, ownerId, &it->second};
+    return *cache.owner;
+}
+
+UbTraceWriterStorageSnapshot
+UbUtils::GetTraceWriterStorageSnapshot()
+{
+    UbTraceWriterStorageSnapshot snapshot;
+    std::vector<TraceOwnerState*> owners;
+    {
+        std::lock_guard<std::mutex> filesGuard(files_mutex);
+        snapshot.ownerCount = trace_owners.size();
+        snapshot.fileCount = files.size();
+        snapshot.openFileCount = trace_open_files;
+        snapshot.openCount = trace_writer_stats.openCount;
+        snapshot.writeCount = trace_writer_stats.writeCount;
+        snapshot.flushCount = trace_writer_stats.flushCount;
+        snapshot.closeCount = trace_writer_stats.closeCount;
+        snapshot.lruCloseCount = trace_writer_stats.lruCloseCount;
+        snapshot.pressureFlushCount = trace_writer_stats.pressureFlushCount;
+        snapshot.peakOpenFiles = trace_writer_stats.peakOpenFiles;
+        snapshot.peakBufferedBytes = trace_writer_stats.peakBufferedBytes;
+        owners.reserve(trace_owners.size());
+        for (auto& [ownerId, owner] : trace_owners)
+        {
+            (void)ownerId;
+            owners.push_back(&owner);
+        }
+    }
+    for (TraceOwnerState* owner : owners)
+    {
+        std::lock_guard<std::mutex> ownerGuard(owner->mutex);
+        snapshot.currentBufferedBytes += owner->bufferedBytes;
+        snapshot.maxOwnerBufferedBytes =
+            std::max<uint64_t>(snapshot.maxOwnerBufferedBytes, owner->bufferedBytes);
+    }
+    return snapshot;
+}
+
+UbRuntimeStorageSnapshot
+UbUtils::CaptureRuntimeStorageSnapshot()
+{
+    UbRuntimeStorageSnapshot snapshot;
+    snapshot.nodeCount = NodeList::GetNNodes();
+    for (auto node = NodeList::Begin(); node != NodeList::End(); ++node)
+    {
+        Ptr<UbController> controller = (*node)->GetObject<UbController>();
+        if (controller != nullptr)
+        {
+            Ptr<TpConnectionManager> connections = controller->GetTpConnManager();
+            if (connections != nullptr)
+            {
+                const ConnectionStorageSnapshot connectionStorage =
+                    connections->GetConnectionStorageSnapshot();
+                snapshot.canonicalConnections += connectionStorage.canonicalRecords;
+                snapshot.authoritativeLocalConnectionViews +=
+                    connectionStorage.authoritativeLocalViews;
+                snapshot.secondaryConnectionIndexEntries += connectionStorage.secondaryIndexEntries;
+                snapshot.reservedEndpointSlots += connectionStorage.unmaterializedEndpointSlots;
+            }
+            Ptr<UbTransportChannelManager> endpoints = controller->GetTransportChannelManager();
+            if (endpoints != nullptr)
+            {
+                snapshot.residentTpEndpoints += endpoints->GetCount();
+                const UbTransportEndpointStorageSnapshot endpointStorage =
+                    endpoints->GetStorageSnapshot();
+                snapshot.liveTpBackingObjects += endpointStorage.liveBackingObjects;
+                snapshot.dormantTpRecords += endpointStorage.dormantRecords;
+                snapshot.tpBackingRehydrations += endpointStorage.backingRehydrations;
+            }
+            Ptr<UbFunction> function = controller->GetUbFunction();
+            if (function != nullptr)
+            {
+                snapshot.residentWqes += function->GetResidentWqeCount();
+                const UbJettyStorageSnapshot jettyStorage = function->GetJettyStorageSnapshot();
+                snapshot.taskScopedJetties += jettyStorage.taskScopedJetties;
+                snapshot.reusableJetties += jettyStorage.reusableJetties;
+            }
+            Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+            if (transaction != nullptr)
+            {
+                snapshot.residentOperations += transaction->GetResidentOperationCount();
+                snapshot.residentSegments += transaction->GetResidentSegmentCount();
+            }
+        }
+
+        Ptr<UbLdstInstance> ldst = (*node)->GetObject<UbLdstInstance>();
+        if (ldst != nullptr)
+        {
+            snapshot.activeLdstTasks += ldst->GetActiveTaskCount();
+            snapshot.activeLdstSegments += ldst->GetActiveSegmentCount();
+        }
+
+        Ptr<UbLifecycleCoordinator> coordinator = (*node)->GetObject<UbLifecycleCoordinator>();
+        if (coordinator != nullptr)
+        {
+            const UbLifecycleStorageSnapshot nodeStorage = coordinator->GetStorageSnapshot();
+            AccumulateLifecycleKindStorage(snapshot.lifecycle, nodeStorage);
+            for (const auto& [kind, kindStorage] : nodeStorage.byKind)
+            {
+                AccumulateLifecycleKindStorage(snapshot.lifecycle.byKind[kind], kindStorage);
+            }
+        }
+    }
+
+    UbTrafficGen* traffic = UbTrafficGen::Get();
+    snapshot.storedTrafficTasks = traffic->GetStoredTaskCount();
+    snapshot.completedTrafficTasks = traffic->GetCompletedTaskCount();
+    snapshot.trafficDependencyReferences = traffic->GetDependencyReferenceCount();
+    snapshot.traceWriter = GetTraceWriterStorageSnapshot();
+    snapshot.peakLiveTpBackingObjects = GetPeakLiveTpBackingObjects();
+    snapshot.simulatorEventCount = Simulator::GetEventCount();
+    return snapshot;
+}
+
+void
+UbUtils::NotifyTpBackingMaterialized()
+{
+    std::lock_guard<std::mutex> guard(g_runtimeTpBackingTracker.mutex);
+    NS_ABORT_MSG_IF(g_runtimeTpBackingTracker.current == std::numeric_limits<uint64_t>::max(),
+                    "Global live TP backing count overflow");
+    ++g_runtimeTpBackingTracker.current;
+    g_runtimeTpBackingTracker.peak =
+        std::max(g_runtimeTpBackingTracker.peak, g_runtimeTpBackingTracker.current);
+}
+
+void
+UbUtils::NotifyTpBackingReleased()
+{
+    std::lock_guard<std::mutex> guard(g_runtimeTpBackingTracker.mutex);
+    NS_ABORT_MSG_IF(g_runtimeTpBackingTracker.current == 0,
+                    "Global live TP backing count underflow");
+    --g_runtimeTpBackingTracker.current;
+    if (g_runtimeTpBackingTracker.current == 0 && g_runtimeTpBackingTracker.resetWhenIdle)
+    {
+        g_runtimeTpBackingTracker.peak = 0;
+        g_runtimeTpBackingTracker.resetWhenIdle = false;
+    }
+}
+
+uint64_t
+UbUtils::GetPeakLiveTpBackingObjects()
+{
+    std::lock_guard<std::mutex> guard(g_runtimeTpBackingTracker.mutex);
+    return g_runtimeTpBackingTracker.peak;
+}
+
+void
+UbUtils::WriteRuntimeStorageSnapshot(const std::string& outputPath)
+{
+    namespace fs = std::filesystem;
+    const fs::path path(outputPath);
+    NS_ABORT_MSG_IF(path.empty(), "Runtime storage snapshot path must not be empty");
+    std::error_code ec;
+    if (!path.parent_path().empty())
+    {
+        fs::create_directories(path.parent_path(), ec);
+        NS_ABORT_MSG_IF(ec,
+                        "Failed to create runtime storage snapshot directory: "
+                            << path.parent_path() << " err=" << ec.message());
+    }
+    std::ofstream output(path, std::ios::out | std::ios::trunc);
+    NS_ABORT_MSG_IF(!output.is_open(), "Cannot open runtime storage snapshot: " << outputPath);
+
+    const UbRuntimeStorageSnapshot snapshot = CaptureRuntimeStorageSnapshot();
+    const auto write = [&](std::string_view category,
+                           std::string_view metric,
+                           std::string_view resourceKind,
+                           uint64_t value) {
+        output << UbRuntimeStorageSnapshot::SCHEMA_VERSION << ',' << category << ',' << metric
+               << ',' << resourceKind << ',' << value << '\n';
+    };
+    output << "schema_version,category,metric,resource_kind,value\n";
+    write("runtime", "node_count", "", snapshot.nodeCount);
+    write("runtime", "canonical_connections", "", snapshot.canonicalConnections);
+    write("runtime",
+          "authoritative_local_connection_views",
+          "",
+          snapshot.authoritativeLocalConnectionViews);
+    write("runtime",
+          "secondary_connection_index_entries",
+          "",
+          snapshot.secondaryConnectionIndexEntries);
+    write("runtime", "resident_tp_endpoints", "", snapshot.residentTpEndpoints);
+    write("runtime", "reserved_endpoint_slots", "", snapshot.reservedEndpointSlots);
+    write("runtime", "live_tp_backing_objects", "", snapshot.liveTpBackingObjects);
+    write("runtime", "dormant_tp_records", "", snapshot.dormantTpRecords);
+    write("runtime", "tp_backing_rehydrations", "", snapshot.tpBackingRehydrations);
+    write("runtime", "peak_live_tp_backing_objects", "", snapshot.peakLiveTpBackingObjects);
+    write("runtime", "task_scoped_jetties", "", snapshot.taskScopedJetties);
+    write("runtime", "reusable_jetties", "", snapshot.reusableJetties);
+    write("runtime", "simulator_event_count", "", snapshot.simulatorEventCount);
+    write("runtime", "resident_wqes", "", snapshot.residentWqes);
+    write("runtime", "resident_operations", "", snapshot.residentOperations);
+    write("runtime", "resident_segments", "", snapshot.residentSegments);
+    write("runtime", "active_ldst_tasks", "", snapshot.activeLdstTasks);
+    write("runtime", "active_ldst_segments", "", snapshot.activeLdstSegments);
+    write("traffic", "stored_tasks", "", snapshot.storedTrafficTasks);
+    write("traffic", "completed_tasks", "", snapshot.completedTrafficTasks);
+    write("traffic", "dependency_references", "", snapshot.trafficDependencyReferences);
+
+    const auto writeLifecycle = [&](std::string_view kind,
+                                    const UbLifecycleKindStorageSnapshot& storage) {
+        write("lifecycle", "resource_count", kind, storage.resourceCount);
+        write("lifecycle", "compact_history_run_count", kind, storage.compactHistoryRunCount);
+        write("lifecycle", "active_state_count", kind, storage.activeStateCount);
+        write("lifecycle", "retained_summary_count", kind, storage.retainedSummaryCount);
+        write("lifecycle", "active_attempt_word_count", kind, storage.activeAttemptWordCount);
+        write("lifecycle", "active_lease_count", kind, storage.activeLeaseCount);
+    };
+    writeLifecycle("", snapshot.lifecycle);
+    for (const auto& [kind, storage] : snapshot.lifecycle.byKind)
+    {
+        writeLifecycle(LifecycleResourceKindToString(kind), storage);
+    }
+
+    write("trace_writer", "owner_count", "", snapshot.traceWriter.ownerCount);
+    write("trace_writer", "file_count", "", snapshot.traceWriter.fileCount);
+    write("trace_writer", "open_file_count", "", snapshot.traceWriter.openFileCount);
+    write("trace_writer", "current_buffered_bytes", "", snapshot.traceWriter.currentBufferedBytes);
+    write("trace_writer", "max_owner_buffered_bytes", "", snapshot.traceWriter.maxOwnerBufferedBytes);
+    write("trace_writer", "open_count", "", snapshot.traceWriter.openCount);
+    write("trace_writer", "write_count", "", snapshot.traceWriter.writeCount);
+    write("trace_writer", "flush_count", "", snapshot.traceWriter.flushCount);
+    write("trace_writer", "close_count", "", snapshot.traceWriter.closeCount);
+    write("trace_writer", "lru_close_count", "", snapshot.traceWriter.lruCloseCount);
+    write("trace_writer", "pressure_flush_count", "", snapshot.traceWriter.pressureFlushCount);
+    write("trace_writer", "peak_open_files", "", snapshot.traceWriter.peakOpenFiles);
+    write("trace_writer", "peak_buffered_bytes", "", snapshot.traceWriter.peakBufferedBytes);
+    output.flush();
+    NS_ABORT_MSG_IF(output.fail(), "Failed to write runtime storage snapshot: " << outputPath);
+}
+
+void
+UbUtils::CloseTraceFile(TraceFileState& fileState, bool lruClose)
+{
+    if (!fileState.open)
+    {
+        return;
+    }
+    NS_ABORT_MSG_IF(fileState.activeWrites != 0,
+                    "Cannot close active trace file: " << fileState.fileName);
+    fileState.stream.close();
+    NS_ABORT_MSG_IF(fileState.stream.fail(), "Failed to close trace file: " << fileState.fileName);
+    fileState.open = false;
+    --trace_open_files;
+    ++trace_writer_stats.closeCount;
+    if (lruClose)
+    {
+        ++trace_writer_stats.lruCloseCount;
+    }
+}
+
+void
+UbUtils::CommitTraceChunk(TraceFileState& fileState, std::string& chunk)
+{
+    if (chunk.empty())
+    {
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> filesGuard(files_mutex);
+        if (!fileState.open)
+        {
+            while (trace_open_files >= trace_writer_config.effectiveMaxOpenFiles)
+            {
+                TraceFileState* candidate = nullptr;
+                for (auto& [name, state] : files)
+                {
+                    (void)name;
+                    if (state.open && state.activeWrites == 0 && &state != &fileState &&
+                        (candidate == nullptr || state.lastUse < candidate->lastUse))
+                    {
+                        candidate = &state;
+                    }
+                }
+                NS_ABORT_MSG_IF(candidate == nullptr,
+                                "Trace file descriptor limit reached with no closable sink");
+                CloseTraceFile(*candidate, true);
+            }
+
+            namespace fs = std::filesystem;
+            std::error_code ec;
+            const fs::path parent = fs::path(fileState.fileName).parent_path();
+            if (!parent.empty())
+            {
+                fs::create_directories(parent, ec);
+                NS_ABORT_MSG_IF(ec,
+                                "Failed to create trace parent dir: " << parent
+                                                                      << " err=" << ec.message());
+            }
+            fileState.stream.clear();
+            fileState.stream.open(fileState.fileName.c_str(), std::ios::out | std::ios::app);
+            NS_ABORT_MSG_IF(!fileState.stream.is_open(),
+                            "Cannot open trace file: " << fileState.fileName);
+            fileState.open = true;
+            ++trace_open_files;
+            ++trace_writer_stats.openCount;
+            trace_writer_stats.peakOpenFiles =
+                std::max(trace_writer_stats.peakOpenFiles, trace_open_files);
+        }
+        ++fileState.activeWrites;
+        fileState.lastUse = ++trace_lru_clock;
+    }
+
+    {
+        std::lock_guard<std::mutex> fileGuard(fileState.mutex);
+        fileState.stream.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+        NS_ABORT_MSG_IF(fileState.stream.fail(),
+                        "Failed to write trace file: " << fileState.fileName);
+        fileState.stream.flush();
+        NS_ABORT_MSG_IF(fileState.stream.fail(),
+                        "Failed to flush trace file: " << fileState.fileName);
+    }
+
+    {
+        std::lock_guard<std::mutex> filesGuard(files_mutex);
+        --fileState.activeWrites;
+        fileState.lastUse = ++trace_lru_clock;
+        ++trace_writer_stats.writeCount;
+        ++trace_writer_stats.flushCount;
+    }
+    std::string empty;
+    chunk.swap(empty);
+}
+
+void
+UbUtils::AppendTraceLine(const TraceSinkHandle& sink, std::string line)
+{
+    const uint64_t epoch = trace_writer_epoch.load(std::memory_order_acquire);
+    NS_ABORT_MSG_IF(!sink.IsValid() || sink.epoch != epoch, "Stale or invalid trace sink handle");
+    auto& fileState = *static_cast<TraceFileState*>(sink.state);
+    TraceOwnerState& owner = GetTraceOwner(Simulator::GetSystemId());
+    std::lock_guard<std::mutex> ownerGuard(owner.mutex);
+
+    line.push_back('\n');
+    const auto pressureFlush = [&](std::size_t incomingBytes) {
+        std::vector<std::pair<TraceFileState*, std::string*>> pending;
+        pending.reserve(owner.chunks.size());
+        for (auto& [state, buffered] : owner.chunks)
+        {
+            if (!buffered.empty())
+            {
+                pending.emplace_back(state, &buffered);
+            }
+        }
+        std::sort(pending.begin(), pending.end(), [](const auto& lhs, const auto& rhs) {
+            return lhs.second->size() > rhs.second->size();
+        });
+        const std::size_t target = trace_writer_config.lowWaterBytes > incomingBytes
+                                       ? trace_writer_config.lowWaterBytes - incomingBytes
+                                       : 0;
+        for (auto& [state, buffered] : pending)
+        {
+            if (owner.bufferedBytes <= target)
+            {
+                break;
+            }
+            const std::size_t bytes = buffered->size();
+            CommitTraceChunk(*state, *buffered);
+            owner.bufferedBytes -= bytes;
+        }
+        std::lock_guard<std::mutex> filesGuard(files_mutex);
+        ++trace_writer_stats.pressureFlushCount;
+    };
+
+    if (owner.bufferedBytes + line.size() >= trace_writer_config.highWaterBytes)
+    {
+        pressureFlush(line.size());
+    }
+
+    std::string& chunk = owner.chunks[&fileState];
+    if (!chunk.empty() && chunk.size() + line.size() > trace_writer_config.chunkBytes)
+    {
+        const std::size_t bytes = chunk.size();
+        CommitTraceChunk(fileState, chunk);
+        owner.bufferedBytes -= bytes;
+    }
+    if (line.size() >= trace_writer_config.chunkBytes)
+    {
+        CommitTraceChunk(fileState, line);
+        return;
+    }
+
+    chunk += line;
+    owner.bufferedBytes += line.size();
+    {
+        std::lock_guard<std::mutex> filesGuard(files_mutex);
+        trace_writer_stats.peakBufferedBytes =
+            std::max(trace_writer_stats.peakBufferedBytes, owner.bufferedBytes);
+    }
+    if (chunk.size() >= trace_writer_config.chunkBytes)
+    {
+        const std::size_t bytes = chunk.size();
+        CommitTraceChunk(fileState, chunk);
+        owner.bufferedBytes -= bytes;
+    }
+}
+
+void
+UbUtils::AppendTraceInfoNoTs(const TraceSinkHandle& sink, const std::string& info)
+{
+    AppendTraceLine(sink, info);
+}
+
+void
+UbUtils::FlushTraceFile(TraceFileState& fileState)
+{
+    std::vector<TraceOwnerState*> owners;
+    {
+        std::lock_guard<std::mutex> filesGuard(files_mutex);
+        owners.reserve(trace_owners.size());
+        for (auto& [ownerId, owner] : trace_owners)
+        {
+            (void)ownerId;
+            owners.push_back(&owner);
+        }
+    }
+    for (TraceOwnerState* owner : owners)
+    {
+        std::lock_guard<std::mutex> ownerGuard(owner->mutex);
+        auto it = owner->chunks.find(&fileState);
+        if (it != owner->chunks.end() && !it->second.empty())
+        {
+            const std::size_t bytes = it->second.size();
+            CommitTraceChunk(fileState, it->second);
+            owner->bufferedBytes -= bytes;
+        }
+    }
+}
+
+void
+UbUtils::FlushTraceOwner(TraceOwnerState& owner)
+{
+    std::lock_guard<std::mutex> ownerGuard(owner.mutex);
+    for (auto& [fileState, chunk] : owner.chunks)
+    {
+        if (!chunk.empty())
+        {
+            CommitTraceChunk(*fileState, chunk);
+        }
+    }
+    owner.bufferedBytes = 0;
 }
 
 bool
@@ -1229,20 +1830,69 @@ void UbUtils::Destroy()
     queue_sampler_events.clear();
     queue_sampler_started = false;
 
-    std::lock_guard<std::mutex> filesGuard(files_mutex);
-    for (auto& pair : files) {
-        std::lock_guard<std::mutex> fileGuard(pair.second.mutex);
-        if (!pair.second.pending.empty())
+    if (UbLifecycleTrace::GetLevel() != UbLifecycleTraceLevel::OFF)
+    {
+        for (auto node = NodeList::Begin(); node != NodeList::End(); ++node)
         {
-            pair.second.stream.write(pair.second.pending.data(),
-                                     static_cast<std::streamsize>(pair.second.pending.size()));
-            pair.second.pending.clear();
-        }
-        if (pair.second.stream.is_open()) {
-            pair.second.stream.close();
+            Ptr<UbLifecycleCoordinator> coordinator = (*node)->GetObject<UbLifecycleCoordinator>();
+            if (coordinator != nullptr)
+            {
+                coordinator->EmitLifecycleSummary();
+            }
         }
     }
-    files.clear();
+
+    for (auto& [ownerId, owner] : trace_owners)
+    {
+        (void)ownerId;
+        FlushTraceOwner(owner);
+    }
+
+    {
+        std::lock_guard<std::mutex> filesGuard(files_mutex);
+        for (auto& [fileName, fileState] : files)
+        {
+            (void)fileName;
+            CloseTraceFile(fileState, false);
+        }
+        const char* report = std::getenv("UB_TRACE_WRITER_REPORT");
+        if (report != nullptr && std::string_view(report) == "1")
+        {
+            std::cerr << "TRACE_WRITER_METRICS"
+                      << " chunkBytes=" << trace_writer_config.chunkBytes
+                      << " highWaterBytes=" << trace_writer_config.highWaterBytes
+                      << " lowWaterBytes=" << trace_writer_config.lowWaterBytes
+                      << " effectiveMaxOpenFiles=" << trace_writer_config.effectiveMaxOpenFiles
+                      << " opens=" << trace_writer_stats.openCount
+                      << " writes=" << trace_writer_stats.writeCount
+                      << " flushes=" << trace_writer_stats.flushCount
+                      << " closes=" << trace_writer_stats.closeCount
+                      << " lruCloses=" << trace_writer_stats.lruCloseCount
+                      << " pressureFlushes=" << trace_writer_stats.pressureFlushCount
+                      << " peakOpenFiles=" << trace_writer_stats.peakOpenFiles
+                      << " peakBufferedBytes=" << trace_writer_stats.peakBufferedBytes << '\n';
+        }
+        files.clear();
+        trace_owners.clear();
+        trace_writer_config = {};
+        trace_writer_stats = {};
+        trace_writer_configured = false;
+        trace_open_files = 0;
+        trace_lru_clock = 0;
+        trace_writer_epoch.fetch_add(1, std::memory_order_release);
+    }
+    UbLifecycleTrace::Reset();
+
+    std::lock_guard<std::mutex> guard(g_runtimeTpBackingTracker.mutex);
+    if (g_runtimeTpBackingTracker.current == 0)
+    {
+        g_runtimeTpBackingTracker.peak = 0;
+        g_runtimeTpBackingTracker.resetWhenIdle = false;
+    }
+    else
+    {
+        g_runtimeTpBackingTracker.resetWhenIdle = true;
+    }
 }
 
 std::string UbUtils::PrepareTraceDir(const std::string &configPath)
@@ -1295,6 +1945,53 @@ void UbUtils::CreateTraceDir()
     trace_path = PrepareTraceDir(g_config_path);
     queue_sampler_started = false;
     queue_sampler_events.clear();
+
+    BooleanValue traceEnabled;
+    g_trace_enable.GetValue(traceEnabled);
+
+    UbLifecycleTraceLevel resolvedLevel = UbLifecycleTraceLevel::OFF;
+    if (traceEnabled.Get())
+    {
+        StringValue preset;
+        StringValue lifecycleLevel;
+        g_trace_preset.GetValue(preset);
+        g_lifecycle_trace_level.GetValue(lifecycleLevel);
+        resolvedLevel = UbLifecycleTrace::ResolveLevel(preset.Get(), lifecycleLevel.Get());
+    }
+
+    if (resolvedLevel == UbLifecycleTraceLevel::OFF)
+    {
+        UbLifecycleTrace::Configure(trace_path, resolvedLevel, 1, 0, 0, false, {});
+        PrintTimestamp("[setup] Prepare runlog directory: " + trace_path + "runlog");
+        return;
+    }
+
+    UintegerValue detailStride;
+    UintegerValue detailOffset;
+    g_lifecycle_detail_sample_stride.GetValue(detailStride);
+    g_lifecycle_detail_sample_offset.GetValue(detailOffset);
+    uint32_t rank = 0;
+    bool rankScoped = false;
+#ifdef NS3_MPI
+    rankScoped = MpiInterface::IsEnabled();
+    if (rankScoped)
+    {
+        rank = MpiInterface::GetSystemId();
+    }
+#endif
+    UbLifecycleTrace::Configure(trace_path,
+                                resolvedLevel,
+                                detailStride.Get(),
+                                detailOffset.Get(),
+                                rank,
+                                rankScoped,
+                                [](const std::string& filename) {
+                                    const auto sink = UbUtils::ResolveTraceSink(filename);
+                                    return [sink](const std::string& line) {
+                                        UbUtils::AppendTraceInfoNoTs(sink, line);
+                                    };
+                                });
+    UbLifecycleTrace::EmitMetadata();
     PrintTimestamp("[setup] Prepare runlog directory: " + trace_path + "runlog");
 }
 
@@ -1401,31 +2098,16 @@ UbUtils::StartQueueSampler()
 
 void UbUtils::PrintTraceInfo(const string& fileName, const string& info)
 {
-    auto& fileState = GetTraceFile(fileName);
-    std::lock_guard<std::mutex> fileGuard(fileState.mutex);
-    fileState.pending += "[";
-    fileState.pending += std::to_string(Simulator::Now().GetSeconds() * 1e6);
-    fileState.pending += "us] ";
-    fileState.pending += info;
-    fileState.pending.push_back('\n');
-    if (fileState.pending.size() >= TRACE_FLUSH_THRESHOLD_BYTES) {
-        fileState.stream.write(fileState.pending.data(),
-                               static_cast<std::streamsize>(fileState.pending.size()));
-        fileState.pending.clear();
-    }
+    std::string line = "[";
+    line += std::to_string(Simulator::Now().GetSeconds() * 1e6);
+    line += "us] ";
+    line += info;
+    AppendTraceLine(GetCachedTraceSink(fileName), std::move(line));
 }
 
 void UbUtils::PrintTraceInfoNoTs(const string& fileName, const string& info)
 {
-    auto& fileState = GetTraceFile(fileName);
-    std::lock_guard<std::mutex> fileGuard(fileState.mutex);
-    fileState.pending += info;
-    fileState.pending.push_back('\n');
-    if (fileState.pending.size() >= TRACE_FLUSH_THRESHOLD_BYTES) {
-        fileState.stream.write(fileState.pending.data(),
-                               static_cast<std::streamsize>(fileState.pending.size()));
-        fileState.pending.clear();
-    }
+    AppendTraceInfoNoTs(GetCachedTraceSink(fileName), info);
 }
 
 inline void UbUtils::TpFirstPacketSendsNotify(
@@ -2850,9 +3532,9 @@ void UbUtils::AddRoutingTable(const string &filename)
             for (const auto& [outport, metric] : row.value) {
                 std::vector<uint16_t> outPortGroup = {outport};
                 if (metric == shortestMetric) {
-                    rt->AddShortestRouteRange(destStart, destEnd, destport, outPortGroup);
+                    rt->GetRoutingTable().AddShortestRouteRange(destStart, destEnd, destport, outPortGroup);
                 } else {
-                    rt->AddOtherRouteRange(destStart, destEnd, destport, outPortGroup);
+                    rt->GetRoutingTable().AddOtherRouteRange(destStart, destEnd, destport, outPortGroup);
                 }
             }
             if (nodeId == nodeEnd) {
@@ -3627,7 +4309,7 @@ void UbUtils::TopoTraceConnect()
 
         std::map<uint32_t, Ptr<UbTransportChannel>> tpnMap;
         if (ubCtrl) {
-            tpnMap = ubCtrl->GetTpnMap();
+            tpnMap = ubCtrl->GetTransportChannelManager()->GetTpnMap();
             for (const auto &pair : tpnMap) { // 设置 TP的trace callback
                 auto tp = pair.second;
                 if (tp) {
@@ -3730,7 +4412,7 @@ void UbUtils::SingleTpTraceConnect(uint32_t nodeId, uint32_t tpn)
 
     Ptr<Node> node = NodeList::GetNode(nodeId);
     Ptr<UbController> ubCtrl = node->GetObject<ns3::UbController>();
-    Ptr<UbTransportChannel> tp = ubCtrl->GetTpByTpn(tpn);
+    Ptr<UbTransportChannel> tp = ubCtrl->GetTransportChannelManager()->PeekLiveTp(tpn);
     if (tp) {
         if (PacketTraceEnable) {
             tp->TraceConnectWithoutContext("FirstPacketSendsNotify", MakeCallback(TpFirstPacketSendsNotify));

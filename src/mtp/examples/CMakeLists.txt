@@ -35,6 +35,13 @@ build_lib_example(
 )
 
 build_lib_example(
+  NAME mtp-bootstrap-event-validation
+  SOURCE_FILES mtp-bootstrap-event-validation.cc
+  LIBRARIES_TO_LINK
+    ${libmtp}
+)
+
+build_lib_example(
   NAME simple-mtp
   SOURCE_FILES simple-mtp.cc
   LIBRARIES_TO_LINK

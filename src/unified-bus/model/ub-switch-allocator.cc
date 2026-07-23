@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "ns3/ub-switch-allocator.h"
-#include "ns3/ub-switch.h"
-#include "ns3/ub-port.h"
+
 #include "protocol/ub-routing-process.h"
 #include "protocol/ub-transport.h"
 #include "ub-queue-manager.h"
+
+#include "ns3/ub-controller.h"
+#include "ns3/ub-port.h"
+#include "ns3/ub-switch.h"
+#include "ns3/ub-transport-channel-manager.h"
 
 #include <algorithm>
 
@@ -45,6 +49,18 @@ MakeAllocatorFlowControlEventContext(Ptr<Packet> packet,
     };
 }
 
+void
+TryReclaimReleasedTp(uint32_t nodeId, Ptr<UbIngressQueue> ingressQueue)
+{
+    Ptr<UbTransportChannel> tp = DynamicCast<UbTransportChannel>(ingressQueue);
+    Ptr<Node> node = NodeList::GetNode(nodeId);
+    Ptr<UbController> controller = node == nullptr ? nullptr : node->GetObject<UbController>();
+    if (tp != nullptr && controller != nullptr && tp->IsSafeForBackingReclaim())
+    {
+        controller->GetTransportChannelManager()->ReclaimBackingState(tp->GetTpn());
+    }
+}
+
 } // namespace
 
 TypeId UbSwitchAllocator::GetTypeId(void)
@@ -74,13 +90,88 @@ UbSwitchAllocator::~UbSwitchAllocator()
 
 void UbSwitchAllocator::DoDispose()
 {
+    PruneResolvedEvents();
+    m_forcedEventResidue =
+        GetPendingEventCountForTest() + (m_activeIngressQueue == nullptr ? 0u : 1u);
+    for (auto& tracked : m_trackedEvents) {
+        if (tracked.event.IsPending()) {
+            tracked.event.Cancel();
+        }
+    }
+    m_trackedEvents.clear();
+    m_activeIngressQueue = nullptr;
     m_ingressSources.clear();
     m_isRunning.clear();
     m_oneMoreRound.clear();
+    Object::DoDispose();
+}
+
+void
+UbSwitchAllocator::TrackEvent(EventId event, TrackedEventKind kind, uint32_t outPortId)
+{
+    m_trackedEvents.push_back({event, kind, outPortId});
+}
+
+void
+UbSwitchAllocator::PruneResolvedEvents()
+{
+    m_trackedEvents.erase(
+        std::remove_if(m_trackedEvents.begin(),
+                       m_trackedEvents.end(),
+                       [](const TrackedEvent& tracked) { return !tracked.event.IsPending(); }),
+        m_trackedEvents.end());
+}
+
+uint32_t
+UbSwitchAllocator::GetPendingEventCountForTest() const
+{
+    return static_cast<uint32_t>(
+        std::count_if(m_trackedEvents.begin(),
+                      m_trackedEvents.end(),
+                      [](const TrackedEvent& tracked) { return tracked.event.IsPending(); }));
+}
+
+bool
+UbSwitchAllocator::HasPendingOrActiveWork(Ptr<UbIngressQueue> ingressQueue) const
+{
+    if (ingressQueue == nullptr) {
+        return false;
+    }
+    if (m_activeIngressQueue == ingressQueue) {
+        return true;
+    }
+    const uint32_t outPortId = ingressQueue->GetOutPortId();
+    return std::any_of(m_trackedEvents.begin(),
+                       m_trackedEvents.end(),
+                       [outPortId](const TrackedEvent& tracked) {
+                           return tracked.event.IsPending() && tracked.outPortId == outPortId &&
+                                  (tracked.kind == TrackedEventKind::ALLOCATION ||
+                                   tracked.kind == TrackedEventKind::RETRIGGER);
+                       });
+}
+
+void
+UbSwitchAllocator::SetActiveIngressQueue(Ptr<UbIngressQueue> ingressQueue)
+{
+    m_activeIngressQueue = ingressQueue;
+}
+
+void
+UbSwitchAllocator::ClearActiveIngressQueue()
+{
+    m_activeIngressQueue = nullptr;
+}
+
+void
+UbSwitchAllocator::NotifyAllocationFinish(Ptr<UbPort> outPort)
+{
+    PruneResolvedEvents();
+    outPort->NotifyAllocationFinish();
 }
 
 void UbSwitchAllocator::TriggerAllocator(Ptr<UbPort> outPort)
 {
+    PruneResolvedEvents();
     std::string typeName = GetInstanceTypeId().GetName();
     NS_LOG_DEBUG("[" << typeName << " TriggerAllocator] portId: " << outPort->GetIfIndex());
 
@@ -101,7 +192,22 @@ void UbSwitchAllocator::TriggerAllocator(Ptr<UbPort> outPort)
         return;
     }
     m_isRunning[outPortId] = true;
-    Simulator::Schedule(m_allocationTime, &UbSwitchAllocator::AllocateNextPacket, this, outPort);
+    TrackEvent(Simulator::Schedule(m_allocationTime,
+                                   &UbSwitchAllocator::AllocateNextPacket,
+                                   this,
+                                   outPort),
+               TrackedEventKind::ALLOCATION,
+               outPortId);
+}
+
+void
+UbSwitchAllocator::ScheduleTriggerAllocator(Ptr<UbPort> outPort)
+{
+    PruneResolvedEvents();
+    const uint32_t outPortId = outPort->GetIfIndex();
+    TrackEvent(Simulator::ScheduleNow(&UbSwitchAllocator::TriggerAllocator, this, outPort),
+               TrackedEventKind::RETRIGGER,
+               outPortId);
 }
 
 void UbSwitchAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
@@ -110,7 +216,10 @@ void UbSwitchAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
 
 void UbSwitchAllocator::Init()
 {
-    Simulator::Schedule(MilliSeconds(10), &UbSwitchAllocator::CheckDeadlock, this);
+    TrackEvent(Simulator::Schedule(MilliSeconds(10),
+                                   &UbSwitchAllocator::CheckDeadlock,
+                                   this),
+               TrackedEventKind::DEADLOCK);
 }
 
 void UbSwitchAllocator::RegisterUbIngressQueue(Ptr<UbIngressQueue> ingressQueue, uint32_t outPort, uint32_t priority)
@@ -131,6 +240,43 @@ void UbSwitchAllocator::RegisterUbIngressQueue(Ptr<UbIngressQueue> ingressQueue,
         }
     }
     queues.insert(insertAt, ingressQueue);
+}
+
+Ptr<UbIngressQueue>
+UbSwitchAllocator::ReplaceUbIngressQueueWithEmptyPlaceholder(Ptr<UbIngressQueue> ingressQueue)
+{
+    if (ingressQueue == nullptr)
+    {
+        return nullptr;
+    }
+    Ptr<UbIngressQueue> placeholder = CreateObject<UbIngressQueue>();
+    placeholder->SetOutPortId(ingressQueue->GetOutPortId());
+    placeholder->SetInPortId(ingressQueue->GetInPortId());
+    placeholder->SetIngressPriority(ingressQueue->GetIngressPriority());
+    return ReplaceUbIngressQueue(ingressQueue, placeholder) ? placeholder : nullptr;
+}
+
+bool
+UbSwitchAllocator::ReplaceUbIngressQueue(Ptr<UbIngressQueue> expected,
+                                         Ptr<UbIngressQueue> replacement)
+{
+    if (expected == nullptr || replacement == nullptr || m_activeIngressQueue == expected)
+    {
+        return false;
+    }
+    for (auto& byPriority : m_ingressSources)
+    {
+        for (auto& queues : byPriority)
+        {
+            const auto queue = std::find(queues.begin(), queues.end(), expected);
+            if (queue != queues.end())
+            {
+                *queue = replacement;
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 uint32_t
@@ -196,6 +342,7 @@ UbSwitchAllocator::FindNextEligibleIngressQueue(uint32_t outPort,
 
 void UbSwitchAllocator::CheckDeadlock()
 {
+    PruneResolvedEvents();
     Time now = Simulator::Now();
     Time threshold = MilliSeconds(10);
 
@@ -218,6 +365,8 @@ void UbSwitchAllocator::CheckDeadlock()
                             } else {
                                 ss << " QueueType:TP (Cast Failed)";
                             }
+                        } else if (queue->GetIngressQueueType() == IngressQueueType::CTP) {
+                            ss << " QueueType:CTP";
                         } else {
                             ss << " QueueType:Unknown(" << (int)queue->GetIngressQueueType() << ")";
                         }
@@ -229,7 +378,10 @@ void UbSwitchAllocator::CheckDeadlock()
             }
         }
     }
-    Simulator::Schedule(MilliSeconds(10), &UbSwitchAllocator::CheckDeadlock, this);
+    TrackEvent(Simulator::Schedule(MilliSeconds(10),
+                                   &UbSwitchAllocator::CheckDeadlock,
+                                   this),
+               TrackedEventKind::DEADLOCK);
 }
 
 void UbSwitchAllocator::UnregisterUbIngressQueue(Ptr<UbIngressQueue> ingressQueue, uint32_t outPort, uint32_t priority)
@@ -288,10 +440,12 @@ void UbRoundRobinAllocator::Init()
 
 void UbRoundRobinAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
 {
+    PruneResolvedEvents();
     // 轮询调度
     NS_LOG_DEBUG("[UbRoundRobinAllocator AllocateNextPacket] portId: " << outPort->GetIfIndex());
     auto outPortId = outPort->GetIfIndex();
     auto ingressQueue = SelectNextIngressQueue(outPort);
+    SetActiveIngressQueue(ingressQueue);
     // 调度得到的ingressqueue加入egressqueue
     if (ingressQueue != nullptr) {
         const uint32_t nextPacketBytes = ingressQueue->GetNextPacketSize();
@@ -299,6 +453,8 @@ void UbRoundRobinAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
             NS_LOG_DEBUG("[UbRoundRobinAllocator AllocateNextPacket] egress queue full, keep packet in ingress queue"
                          << " outPortId=" << outPortId
                          << " bytes=" << nextPacketBytes);
+            ClearActiveIngressQueue();
+            TryReclaimReleasedTp(m_nodeId, ingressQueue);
             m_isRunning[outPortId] = false;
             return;
         }
@@ -319,6 +475,7 @@ void UbRoundRobinAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
 
         // Packet moved from VOQ to EgressQueue, notify Switch to update buffer statistics
         if (ingressQueue->GetIngressQueueType() != IngressQueueType::TP &&
+            ingressQueue->GetIngressQueueType() != IngressQueueType::CTP &&
             !ingressQueue->IsGeneratedDataPacket()) {
             // Forwarded packet (not locally generated)
             auto node = NodeList::GetNode(m_nodeId);
@@ -327,17 +484,23 @@ void UbRoundRobinAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
             inPort->GetFlowControl()->OnIngressReleased(context);
         }
     }
+    ClearActiveIngressQueue();
+    TryReclaimReleasedTp(m_nodeId, ingressQueue);
     m_isRunning[outPortId] = false;
     if (m_enableDirectAllocationCompletion) {
         if (!outPort->GetUbQueue()->IsEmpty()) {
             outPort->NotifyAllocationFinish();
         }
     } else {
-        Simulator::ScheduleNow(&UbPort::NotifyAllocationFinish, outPort);
+        TrackEvent(Simulator::ScheduleNow(&UbRoundRobinAllocator::NotifyAllocationFinish,
+                                          this,
+                                          outPort),
+                   TrackedEventKind::PORT_NOTIFICATION,
+                   outPortId);
     }
     if (m_oneMoreRound[outPortId] == true) {
         m_oneMoreRound[outPortId] = false;
-        Simulator::ScheduleNow(&UbRoundRobinAllocator::TriggerAllocator, this, outPort);
+        ScheduleTriggerAllocator(outPort);
         NS_LOG_DEBUG("[UbRoundRobinAllocator AllocateNextPacket] ReTriggerAllocator portId: " << outPort->GetIfIndex());
         return;
     }
@@ -498,6 +661,7 @@ Ptr<UbIngressQueue> UbDwrrAllocator::SelectNextIngressQueue(Ptr<UbPort> outPort)
 
 void UbDwrrAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
 {
+    PruneResolvedEvents();
     NS_LOG_DEBUG("[UbDwrrAllocator AllocateNextPacket] portId: " << outPort->GetIfIndex());
     auto outPortId = outPort->GetIfIndex();
 
@@ -505,6 +669,7 @@ void UbDwrrAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
     bool sentAny = false;
 
     auto ingressQueue = SelectNextIngressQueue(outPort);
+    SetActiveIngressQueue(ingressQueue);
     if (ingressQueue != nullptr) {
         auto priority = ingressQueue->GetIngressPriority();
         uint32_t pi = priority;
@@ -525,6 +690,12 @@ void UbDwrrAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
                     break;
                 }
                 auto q = candidate->queue;
+                Ptr<UbIngressQueue> releasedIngressQueue = m_activeIngressQueue;
+                SetActiveIngressQueue(q);
+                if (releasedIngressQueue != q)
+                {
+                    TryReclaimReleasedTp(m_nodeId, releasedIngressQueue);
+                }
                 ingressQueueSlot = candidate->ingressQueueSlot;
 
                 uint32_t pktSize = q->GetNextPacketSize();
@@ -558,6 +729,7 @@ void UbDwrrAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
 
                 // Packet moved from VOQ to EgressQueue, notify Switch to update buffer statistics
                 if (q->GetIngressQueueType() != IngressQueueType::TP &&
+                    q->GetIngressQueueType() != IngressQueueType::CTP &&
                     !q->IsGeneratedDataPacket()) {
                     // Forwarded packet (not locally generated)
                     auto node = NodeList::GetNode(m_nodeId);
@@ -598,23 +770,34 @@ void UbDwrrAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
     }
 
     if (ingressQueue != nullptr && !sentAny) {
-        Simulator::Schedule(m_allocationTime,
-                            &UbDwrrAllocator::AllocateNextPacket,
-                            this, outPort);
+        Ptr<UbIngressQueue> releasedIngressQueue = m_activeIngressQueue;
+        ClearActiveIngressQueue();
+        TryReclaimReleasedTp(m_nodeId, releasedIngressQueue);
+        TrackEvent(Simulator::Schedule(m_allocationTime,
+                                       &UbDwrrAllocator::AllocateNextPacket,
+                                       this,
+                                       outPort),
+                   TrackedEventKind::ALLOCATION,
+                   outPortId);
         return;
     }
 
+    Ptr<UbIngressQueue> releasedIngressQueue = m_activeIngressQueue;
+    ClearActiveIngressQueue();
+    TryReclaimReleasedTp(m_nodeId, releasedIngressQueue);
     m_isRunning[outPortId] = false;
     if (m_enableDirectAllocationCompletion) {
         if (!outPort->GetUbQueue()->IsEmpty()) {
             outPort->NotifyAllocationFinish();
         }
     } else {
-        Simulator::ScheduleNow(&UbPort::NotifyAllocationFinish, outPort);
+        TrackEvent(Simulator::ScheduleNow(&UbDwrrAllocator::NotifyAllocationFinish, this, outPort),
+                   TrackedEventKind::PORT_NOTIFICATION,
+                   outPortId);
     }
     if (m_oneMoreRound[outPortId]) {
         m_oneMoreRound[outPortId] = false;
-        Simulator::ScheduleNow(&UbDwrrAllocator::TriggerAllocator, this, outPort);
+        ScheduleTriggerAllocator(outPort);
         NS_LOG_DEBUG("[UbDwrrAllocator AllocateNextPacket] ReTriggerAllocator portId: "
                      << outPort->GetIfIndex());
     }

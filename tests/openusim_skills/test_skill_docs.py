@@ -52,6 +52,12 @@ class OpenUSimStageSkillDocsTest(unittest.TestCase):
         self.assertIn("network_attribute_writer.write_network_attributes", generator)
         self.assertNotIn("NETWORK_ATTRIBUTES =", generator)
 
+    def test_trace_observability_documents_lifecycle_preset_levels(self):
+        text = self.read_text(".codex/skills/openusim-references/trace-observability.md")
+        self.assertRegex(text, r"\| minimal \|.*lifecycle `OFF` \|")
+        self.assertRegex(text, r"\| balanced \|.*lifecycle `SUMMARY` \|")
+        self.assertRegex(text, r"\| detailed \|.*lifecycle `EVENT` \|")
+
     def test_stage_skill_descriptions_are_trigger_only(self):
         for path in self.skill_files():
             text = path.read_text(encoding="utf-8")

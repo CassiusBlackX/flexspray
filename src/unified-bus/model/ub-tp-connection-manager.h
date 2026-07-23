@@ -2,18 +2,24 @@
 #ifndef UB_TP_CONNECTION_MANAGER_H
 #define UB_TP_CONNECTION_MANAGER_H
 
-#include <unordered_map>
-#include <vector>
-#include <set>
-#include <map>
+#include "ub-lifecycle.h"
 #include "ub-network-address.h"
+
 #include "ns3/log.h"
 #include "ns3/random-variable-stream.h"
+
+#include <compare>
+#include <map>
+#include <memory>
 #include <mutex>
+#include <set>
+#include <unordered_map>
+#include <vector>
 
 namespace ns3
 {
 class UbController;
+class UbTransportChannelManager;
 }
 
 namespace utils {
@@ -21,6 +27,7 @@ namespace utils {
  * @brief tp-config.csv 中定义的数据结构
  */
 struct Connection {
+    uint32_t ownerNodeId{UINT32_MAX};
     uint32_t node1;
     uint32_t port1;
     uint32_t tpn1;
@@ -29,6 +36,41 @@ struct Connection {
     uint32_t tpn2;
     uint32_t priority;
     uint32_t metrics;
+    uint64_t reservationGeneration{0};
+};
+
+enum class EndpointSlotState : uint8_t
+{
+    UNMATERIALIZED,
+    ACTIVE,
+    DRAINING,
+    RETIRED
+};
+
+struct ConnectionLifecycleSnapshot
+{
+    uint32_t ownerNodeId{UINT32_MAX};
+    uint64_t generation{0};
+    uint32_t node1{0};
+    uint32_t tpn1{0};
+    uint32_t node2{0};
+    uint32_t tpn2{0};
+    EndpointSlotState slot1{EndpointSlotState::UNMATERIALIZED};
+    EndpointSlotState slot2{EndpointSlotState::UNMATERIALIZED};
+    bool destroyRequested{false};
+    UbDestroyReason reason{UbDestroyReason::EXPLICIT};
+};
+
+struct ConnectionStorageSnapshot
+{
+    uint64_t canonicalRecords{0};
+    uint64_t authoritativeLocalViews{0};
+    uint64_t secondaryIndexEntries{0};
+    uint64_t unmaterializedReservationRecords{0};
+    uint64_t unmaterializedEndpointSlots{0};
+    uint64_t activeLifecycleSidecars{0};
+    uint64_t destroyCallbackBundles{0};
+    uint64_t destroyCallbackEntries{0};
 };
 
 /**
@@ -119,16 +161,10 @@ public:
     std::set<uint32_t> GetNeighborNodes(uint32_t nodeId) const;
 
     // 获取所有连接
-    const std::vector<Connection>& GetAllConnections() const
-    {
-        return m_allConnections;
-    }
+    const std::vector<Connection>& GetAllConnections() const;
 
     // 获取连接总数
-    size_t GetConnectionCount() const
-    {
-        return m_allConnections.size();
-    }
+    size_t GetConnectionCount() const;
 
     // 获取与该tp相关的conn
     Connection GetConnection(uint32_t tpn, uint32_t src, uint32_t dst, uint32_t priority);
@@ -147,6 +183,30 @@ public:
                                uint32_t localTpn,
                                Connection& connection) const;
 
+    /** Notify the canonical owner that one reserved endpoint has materialized. */
+    void NotifyEndpointMaterialized(uint32_t localNodeId,
+                                    uint32_t localTpn,
+                                    bool draining = false);
+    bool IsConnectionDestroyRequested(uint32_t localNodeId, uint32_t localTpn) const;
+    void DestroyDrainOnlyEndpoint(uint32_t localNodeId, uint32_t localTpn);
+
+    UbDestroyStatus DestroyConnection(uint32_t localNodeId,
+                                      uint32_t localTpn,
+                                      UbDestroyReason reason = UbDestroyReason::EXPLICIT,
+                                      UbDestroyCallback callback = {});
+
+    static bool ApplyLifecycleControl(const UbLifecycleControlRecord& record);
+
+    bool GetConnectionLifecycleSnapshot(uint32_t localTpn,
+                                        ConnectionLifecycleSnapshot& snapshot) const;
+    size_t GetCanonicalConnectionCount() const;
+    size_t GetCanonicalConnectionCountForTest() const
+    {
+        return GetCanonicalConnectionCount();
+    }
+
+    ConnectionStorageSnapshot GetConnectionStorageSnapshot() const;
+
     // 清空指定节点的连接
     void ClearNodeConnections(uint32_t nodeId);
 
@@ -164,54 +224,145 @@ public:
     }
 private:
   friend class ns3::UbController;
+    friend class ns3::UbTransportChannelManager;
 
   static std::mutex g_tpConnectionControlLock;
 
-  uint32_t ReserveNextTpnLocked();
+    uint32_t ReserveNextTpnLocked();
 
-  // 为指定节点建立各种索引
-  void BuildIndexesForNode(uint32_t localNodeId, Connection conn);
+    struct DestroyCallbackBundle
+    {
+        std::vector<UbDestroyCallback> callbacks;
+        std::vector<std::pair<uint32_t, uint64_t>> remoteCallbacks;
+    };
 
-  // 从索引中清理指定节点
-  void ClearNodeFromIndexes(uint32_t nodeId);
+    struct ConnectionLifecycleSidecar
+    {
+        EndpointSlotState slot1{EndpointSlotState::UNMATERIALIZED};
+        EndpointSlotState slot2{EndpointSlotState::UNMATERIALIZED};
+        bool destroyRequested{false};
+        bool slot1Materialized{false};
+        bool slot2Materialized{false};
+        bool finalizing{false};
+        UbDestroyReason reason{UbDestroyReason::EXPLICIT};
+        uint8_t erasedViews{0};
+        std::unique_ptr<DestroyCallbackBundle> callbackBundle;
+    };
 
-  // Reserve new TP connection records and return their local TPN/metric pairs.
-  std::vector<std::pair<uint32_t, uint32_t>> ReserveNewTpConnections(uint32_t src,
-                                                                     uint32_t dst,
-                                                                     uint32_t priority,
-                                                                     bool useShortestPath);
+    struct ConnectionLifecycleRecord
+    {
+        Connection connection;
+        UbLifecycleResourceIdentity identity;
+        std::unique_ptr<ConnectionLifecycleSidecar> lifecycle;
+    };
 
-  // 重建tp对
-  std::vector<uint32_t> ReconstructTPs(std::vector<uint32_t> tpns,
-                                       uint32_t src,
-                                       uint32_t dst,
-                                       uint32_t priority,
-                                       bool useShortestPath,
-                                       bool useMultiPath);
+    void RegisterCanonicalConnectionLocked(Connection& conn);
+    void AttachConnectionIdentityLocked(Connection& conn);
+    static UbLifecycleResourceIdentity GetConnectionIdentity(const Connection& connection);
+    bool MatchesCanonicalConnection(const UbLifecycleResourceIdentity& identity) const;
+    bool NotifyEndpointMaterializedLocked(uint32_t localNodeId,
+                                          uint32_t localTpn,
+                                          EndpointSlotState state);
+    UbDestroyStatus DestroyConnectionOwned(const UbLifecycleResourceIdentity& identity,
+                                           UbDestroyReason reason,
+                                           UbDestroyCallback callback,
+                                           uint32_t callbackNodeId = UINT32_MAX,
+                                           uint64_t requestId = 0);
+    void RequestEndpointDestroy(const Connection& connection,
+                                const UbLifecycleResourceIdentity& identity,
+                                uint8_t slot,
+                                UbDestroyReason reason);
+    void RequestDestroyNotice(const Connection& connection,
+                              const UbLifecycleResourceIdentity& identity,
+                              uint8_t slot,
+                              UbDestroyReason reason,
+                              bool ownerObservedActive);
+    void OnLocalEndpointDestroyed(UbLifecycleResourceIdentity connectionIdentity,
+                                  uint8_t slot,
+                                  UbLifecycleResourceIdentity endpointIdentity,
+                                  UbDestroyStatus status);
+    void OnEndpointDestroyed(const UbLifecycleResourceIdentity& identity,
+                             uint8_t slot,
+                             UbDestroyStatus status);
+    void TryFinalizeConnection(const UbLifecycleResourceIdentity& identity);
+    void RequestEraseConnectionView(const Connection& connection,
+                                    const UbLifecycleResourceIdentity& identity,
+                                    uint8_t slot);
+    void OnConnectionViewErased(const UbLifecycleResourceIdentity& identity, uint8_t slot);
+    void CompleteFinalizeConnection(const UbLifecycleResourceIdentity& identity);
+    void CompleteRemoteDestroy(const UbLifecycleResourceIdentity& identity, uint64_t requestId);
+    void EraseConnectionView(uint32_t localNodeId, uint32_t localTpn);
 
-  uint32_t ReconstructTp(Connection conn);
+    struct LocalConnectionRef
+    {
+        uint32_t localNodeId{UINT32_MAX};
+        uint32_t localTpn{UINT32_MAX};
+        uint64_t reservationGeneration{0};
 
-private:
-    // 主存储：所有连接
-    std::vector<Connection> m_allConnections;
+        auto operator<=>(const LocalConnectionRef&) const = default;
+    };
+
+    struct ConnectionOrderRef
+    {
+        LocalConnectionRef localView;
+        bool reverseToOriginalOrientation{false};
+    };
+
+    const Connection* ResolveConnectionRefLocked(const LocalConnectionRef& ref) const;
+    void InvalidateAllConnectionsCacheLocked();
+
+    // 为指定节点建立各种索引
+    LocalConnectionRef BuildIndexesForNode(uint32_t localNodeId, Connection conn);
+
+    // 从索引中清理指定节点
+    void ClearNodeFromIndexes(uint32_t nodeId);
+
+    // Reserve new TP connection records and return their local TPN/metric pairs.
+    std::vector<std::pair<uint32_t, uint32_t>> ReserveNewTpConnections(uint32_t src,
+                                                                       uint32_t dst,
+                                                                       uint32_t priority,
+                                                                       bool useShortestPath);
+
+    // 重建tp对
+    std::vector<uint32_t> ReconstructTPs(std::vector<uint32_t> tpns,
+                                         uint32_t src,
+                                         uint32_t dst,
+                                         uint32_t priority,
+                                         bool useShortestPath,
+                                         bool useMultiPath);
+
+    uint32_t ReconstructTp(Connection conn);
+
+  private:
+    // 每个本地端点视图仅保留一个完整的定向连接值。
+    std::map<LocalConnectionRef, Connection> m_localConnectionViews;
+
+    // 公共列表顺序及其按需兼容缓存。
+    std::vector<ConnectionOrderRef> m_allConnectionOrder;
+    mutable std::vector<Connection> m_allConnectionsCache;
+    mutable bool m_allConnectionsCacheValid{false};
 
     // 每个节点的相关连接
-    std::unordered_map<uint32_t, std::vector<Connection>> m_nodeConnections;
+    std::unordered_map<uint32_t, std::vector<LocalConnectionRef>> m_nodeConnections;
 
     // 索引2: (localNodeId, peerNodeId) -> connections
-    std::map<std::pair<uint32_t, uint32_t>, std::vector<Connection>> m_peerNodeIndex;
+    std::map<std::pair<uint32_t, uint32_t>, std::vector<LocalConnectionRef>> m_peerNodeIndex;
 
     // 索引3: (localNodeId, peerNodeId, priority) -> connections
-    std::map<std::tuple<uint32_t, uint32_t, uint32_t>, std::vector<Connection>> m_peerNodePriorityIndex;
+    std::map<std::tuple<uint32_t, uint32_t, uint32_t>, std::vector<LocalConnectionRef>>
+        m_peerNodePriorityIndex;
 
     // 索引4: (localNodeId, peerNodeId, localPort) -> connections
-    std::map<std::tuple<uint32_t, uint32_t, uint32_t>, std::vector<Connection>> m_peerNodeLocalPortIndex;
+    std::map<std::tuple<uint32_t, uint32_t, uint32_t>, std::vector<LocalConnectionRef>>
+        m_peerNodeLocalPortIndex;
 
     // 索引5: (localNodeId, peerNodeId, localPort, peerPort) -> connections
-    std::map<std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>, std::vector<Connection>> m_bothPortsIndex;
+    std::map<std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>, std::vector<LocalConnectionRef>>
+        m_bothPortsIndex;
 
-    // 索引6: (localNodeId, localTpn) -> connection
-    std::map<std::pair<uint32_t, uint32_t>, Connection> m_localTpnIndex;
+    // 索引6: (localNodeId, localTpn) -> generation-aware local view reference
+    std::map<std::pair<uint32_t, uint32_t>, LocalConnectionRef> m_localTpnIndex;
+    std::set<std::pair<uint32_t, uint32_t>> m_destroyRequestedViews;
 
     std::set<uint32_t> m_tpnList;
     std::set<uint32_t> m_reservedTpnList;
@@ -223,6 +374,19 @@ private:
     bool m_removeUselessTp = false;
 
     mutable std::mutex m_stateLock;
+    uint32_t m_ownerNodeId{UINT32_MAX};
+    std::map<std::pair<uint32_t, uint32_t>, ConnectionLifecycleRecord>
+        m_canonicalConnections;
+    struct PendingRemoteDestroy
+    {
+        UbLifecycleResourceIdentity identity;
+        UbDestroyCallback callback;
+    };
+    uint64_t m_nextRemoteDestroyRequestId{0};
+    std::map<uint64_t, PendingRemoteDestroy> m_pendingRemoteDestroyCallbacks;
+
+  public:
+    void SetOwnerNodeId(uint32_t nodeId) { m_ownerNodeId = nodeId; }
 };
 
 } // namespace utils

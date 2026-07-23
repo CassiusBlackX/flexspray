@@ -10,6 +10,7 @@
 #include "ns3/ub-port.h"
 #include "ns3/ub-switch.h"
 #include "ns3/ub-controller.h"
+#include "ns3/ub-lifecycle.h"
 #include "ns3/ub-function.h"
 #include "ns3/ub-ctp.h"
 #include "ns3/ub-utils.h"
@@ -267,17 +268,37 @@ void UbSwitch::Init()
 
 void UbSwitch::DoDispose()
 {
-    for (auto& event : m_inPortProcessingEvents) {
-        if (event.IsPending()) {
-            event.Cancel();
+    PruneResolvedInPortEvents();
+    m_forcedInPortEventResidue = 0;
+    m_forcedInPortByteResidue = 0;
+    for (auto& pending : m_inPortProcessingEvents) {
+        if (pending.event.IsPending()) {
+            ++m_forcedInPortEventResidue;
+            m_forcedInPortByteResidue += pending.packetBytes;
+            pending.event.Cancel();
         }
     }
     m_inPortProcessingEvents.clear();
+    m_forcedVoqPacketResidue = 0;
+    for (const auto& group : m_voq.groups) {
+        for (const auto& entry : group) {
+            if (entry.queue != nullptr) {
+                m_forcedVoqPacketResidue += entry.queue->GetPacketCount();
+            }
+        }
+    }
+    m_forcedBufferedByteResidue = m_queueManager == nullptr
+                                      ? 0
+                                      : m_queueManager->GetSwitchBufferOccupancy().total_buffered_bytes;
+    if (m_allocator != nullptr) {
+        m_allocator->Dispose();
+    }
     m_queueManager = nullptr;
     m_congestionCtrl = nullptr;
     m_allocator = nullptr;
     m_voq.groups.clear();
     m_routingProcess = nullptr;
+    Object::DoDispose();
 }
 
 /**
@@ -319,6 +340,18 @@ void UbSwitch::RemoveTpFromAllocator(Ptr<UbIngressQueue> tp)
     uint32_t outPort = tp->GetOutPortId();
     uint32_t priority = tp->GetIngressPriority();
     m_allocator->UnregisterUbIngressQueue(tp, outPort, priority);
+}
+
+Ptr<UbIngressQueue>
+UbSwitch::ReplaceTpWithDormantPlaceholder(Ptr<UbIngressQueue> tp)
+{
+    return m_allocator->ReplaceUbIngressQueueWithEmptyPlaceholder(tp);
+}
+
+bool
+UbSwitch::ReplaceDormantTpBacking(Ptr<UbIngressQueue> expected, Ptr<UbIngressQueue> replacement)
+{
+    return m_allocator->ReplaceUbIngressQueue(expected, replacement);
 }
 
 UbSwitch::UbSwitch()
@@ -430,13 +463,18 @@ UbSwitch::ForwardDataPacketAfterAdmission(Ptr<Packet> packet,
         return;
     }
 
-    m_inPortProcessingEvents.push_back(Simulator::Schedule(m_inPortProcessingDelay,
-                                                           &UbSwitch::CompleteInPortProcessing,
-                                                           this,
-                                                           packet,
-                                                           inPort,
-                                                           outPort,
-                                                           priority));
+    m_inPortProcessingEvents.push_back(
+        {Simulator::Schedule(m_inPortProcessingDelay,
+                             &UbSwitch::CompleteInPortProcessing,
+                             this,
+                             packet,
+                             inPort,
+                             outPort,
+                             priority),
+         inPort,
+         outPort,
+         priority,
+         packet->GetSize()});
 }
 
 void
@@ -495,14 +533,82 @@ UbSwitch::CompleteInPortProcessing(Ptr<Packet> packet,
                                    uint32_t outPort,
                                    uint32_t priority)
 {
-    m_inPortProcessingEvents.erase(
-        std::remove_if(m_inPortProcessingEvents.begin(),
-                       m_inPortProcessingEvents.end(),
-                       [](const EventId& event) { return !event.IsPending(); }),
-        m_inPortProcessingEvents.end());
+    PruneResolvedInPortEvents();
 
     MoveInPortProcessingToVoq(packet, inPort, outPort, priority);
     FinalizeForwardedPacketEnqueue(packet, inPort, outPort, priority);
+}
+
+void
+UbSwitch::PruneResolvedInPortEvents()
+{
+    m_inPortProcessingEvents.erase(
+        std::remove_if(m_inPortProcessingEvents.begin(),
+                       m_inPortProcessingEvents.end(),
+                       [](const InPortProcessingEvent& pending) {
+                           return !pending.event.IsPending();
+                       }),
+        m_inPortProcessingEvents.end());
+}
+
+bool
+UbSwitch::HasPendingInPortWork(uint32_t outPort, uint32_t priority, uint32_t inPort) const
+{
+    return std::any_of(m_inPortProcessingEvents.begin(),
+                       m_inPortProcessingEvents.end(),
+                       [outPort, priority, inPort](const InPortProcessingEvent& pending) {
+                           return pending.event.IsPending() && pending.outPort == outPort &&
+                                  pending.priority == priority && pending.inPort == inPort;
+                       });
+}
+
+bool
+UbSwitch::TryDestroyEmptyVoq(uint32_t outPort, uint32_t priority, uint32_t inPort)
+{
+    if (!IsValidVoqIndices(outPort, priority, inPort, m_portsNum, m_vlNum) ||
+        m_allocator == nullptr || m_queueManager == nullptr) {
+        return false;
+    }
+
+    const auto groupKey = BuildVoqGroupKey(outPort, priority);
+    const Ptr<UbPacketQueue>* slot = FindVoqSlot(groupKey, inPort);
+    if (slot == nullptr || *slot == nullptr) {
+        return false;
+    }
+    Ptr<UbPacketQueue> queue = *slot;
+    if (queue->GetPacketCount() != 0 || HasPendingInPortWork(outPort, priority, inPort) ||
+        m_allocator->HasPendingOrActiveWork(queue)) {
+        return false;
+    }
+
+    const bool hasAccounting =
+        m_queueManager->GetQueueIngressTotalBytes(inPort, priority) != 0 ||
+        m_queueManager->GetOutPortBufferUsed(outPort, priority) != 0 ||
+        m_queueManager->GetIngressControlBytes(inPort, priority) != 0 ||
+        m_queueManager->GetOutPortControlBytes(outPort, priority) != 0;
+    if (hasAccounting) {
+        return false;
+    }
+
+    m_allocator->UnregisterUbIngressQueue(queue, outPort, priority);
+    if (queue->GetPacketCount() != 0 || HasPendingInPortWork(outPort, priority, inPort) ||
+        m_allocator->HasPendingOrActiveWork(queue) ||
+        m_queueManager->GetQueueIngressTotalBytes(inPort, priority) != 0 ||
+        m_queueManager->GetOutPortBufferUsed(outPort, priority) != 0 ||
+        m_queueManager->GetIngressControlBytes(inPort, priority) != 0 ||
+        m_queueManager->GetOutPortControlBytes(outPort, priority) != 0) {
+        m_allocator->RegisterUbIngressQueue(queue, outPort, priority);
+        return false;
+    }
+    auto& group = m_voq.groups[static_cast<size_t>(groupKey)];
+    const auto oldSize = group.size();
+    group.erase(std::remove_if(group.begin(),
+                               group.end(),
+                               [inPort, queue](const VirtualOutputQueueEntry& entry) {
+                                   return entry.inPort == inPort && entry.queue == queue;
+                               }),
+                group.end());
+    return group.size() + 1 == oldSize;
 }
 
 bool UbSwitch::IsValidVoqIndices(uint32_t outPort, uint32_t priority, uint32_t inPort, uint32_t portsNum, uint32_t vlNum)
@@ -532,6 +638,24 @@ bool UbSwitch::HasVoqForTest(uint32_t outPort, uint32_t priority, uint32_t inPor
     return slot != nullptr && *slot != nullptr;
 }
 
+bool
+UbSwitch::TryDestroyVoqForTest(uint32_t outPort, uint32_t priority, uint32_t inPort)
+{
+    PruneResolvedInPortEvents();
+    return TryDestroyEmptyVoq(outPort, priority, inPort);
+}
+
+uint32_t
+UbSwitch::GetPendingInPortProcessingEventCountForTest() const
+{
+    return static_cast<uint32_t>(
+        std::count_if(m_inPortProcessingEvents.begin(),
+                      m_inPortProcessingEvents.end(),
+                      [](const InPortProcessingEvent& pending) {
+                          return pending.event.IsPending();
+                      }));
+}
+
 UbPacketType_t UbSwitch::GetPacketType(Ptr<Packet> packet)
 {
     UbDatalinkHeader dlHeader;
@@ -541,7 +665,7 @@ UbPacketType_t UbSwitch::GetPacketType(Ptr<Packet> packet)
     if (dlHeader.IsPacketIpv4Header())
         return UB_URMA_DATA_PACKET;
     if (dlHeader.GetConfig() == static_cast<uint8_t>(UbDatalinkHeaderConfig::PACKET_CNA16)) {
-        Ptr<Packet> copy = packet->Copy();
+        Ptr<Packet> copy = CopyPacketView(packet);
         UbDatalinkPacketHeader packetHeader;
         UbCna16NetworkHeader cna16Header;
         copy->RemoveHeader(packetHeader);
@@ -552,7 +676,7 @@ UbPacketType_t UbSwitch::GetPacketType(Ptr<Packet> packet)
         return UB_LDST_DATA_PACKET;
     }
     if (dlHeader.GetConfig() == static_cast<uint8_t>(UbDatalinkHeaderConfig::PACKET_CNA24)) {
-        Ptr<Packet> copy = packet->Copy();
+        Ptr<Packet> copy = CopyPacketView(packet);
         UbDatalinkPacketHeader packetHeader;
         UbCna24NetworkHeader cna24Header;
         copy->RemoveHeader(packetHeader);
@@ -576,6 +700,8 @@ void UbSwitch::SwitchHandlePacket(Ptr<UbPort> port, Ptr<Packet> packet)
     switch (packetType) {
         case UB_CONTROL_FRAME:
             port->GetFlowControl()->OnControlFrameReceived(packet);
+            UbLifecycleCoordinator::TerminatePacket(packet,
+                                                    UbPacketTerminal::ENDPOINT_CONSUMED);
             break;
         case UB_URMA_DATA_PACKET:
             if (IsCBFCEnable() || IsCBFCSharedEnable()) {
@@ -694,7 +820,7 @@ bool UbSwitch::SinkTpDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Pars
     const uint32_t srcTpn = headers.transportHeader.GetSrcTpn();
     uint32_t dstTpn = headers.transportHeader.GetDestTpn();
     Ptr<UbController> controller = GetObject<UbController>();
-    auto targetTp = controller->ResolveInboundTp(srcTpn,
+    auto targetTp = controller->GetTransportChannelManager()->ResolveInboundTp(srcTpn,
                                                  dstTpn,
                                                  headers.ipv4Header.GetSource(),
                                                  headers.ipv4Header.GetDestination(),
@@ -720,6 +846,12 @@ bool UbSwitch::SinkTpDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Pars
         targetTp->RecvTpAck(packet);
     } else {
         targetTp->RecvDataPacket(packet);
+    }
+    Ptr<UbTransportChannelManager> manager = controller->GetTransportChannelManager();
+    Ptr<UbTransportChannel> reclaimCandidate = manager->PeekLiveTp(dstTpn);
+    if (reclaimCandidate != nullptr && reclaimCandidate->IsSafeForBackingReclaim())
+    {
+        manager->ReclaimBackingState(dstTpn);
     }
     return true;
 }
@@ -762,6 +894,7 @@ bool UbSwitch::SinkLdstDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Pa
     } else {
         NS_ASSERT_MSG(0, "packet Ta Op code is wrong!");
     }
+    UbLifecycleCoordinator::TerminatePacket(packet, UbPacketTerminal::ENDPOINT_CONSUMED);
     return true;
 }
 
@@ -790,10 +923,11 @@ bool UbSwitch::SinkCtpDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
     if (controller != nullptr) {
         Ptr<UbCtpTransportService> ctpService = controller->GetCtpTransportService();
         if (ctpService != nullptr) {
-            ctpService->HandleReceivedPacket(packet->Copy(), port->GetIfIndex());
+            ctpService->HandleReceivedPacket(CopyPacketTransfer(packet), port->GetIfIndex());
         }
     }
 
+    UbLifecycleCoordinator::TerminatePacket(packet, UbPacketTerminal::ENDPOINT_CONSUMED);
     NS_LOG_DEBUG("[UbPort recv] local CTP packet consumed");
     return true;
 }
@@ -815,6 +949,8 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
     int outPort = m_routingProcess->GetOutPort(rtKey, selectedShortestPath, port->GetIfIndex());
     if (outPort < 0) {
         utils::UbUtils::RecordRuntimePacketDrop("route cannot be found");
+        UbLifecycleCoordinator::TerminatePacket(packet,
+                                                UbPacketTerminal::ROUTE_NOT_FOUND);
         NS_LOG_WARN("The route cannot be found. Packet Dropped!");
         return;
     }
@@ -836,6 +972,8 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
         utils::UbUtils::RecordRuntimePacketDrop("ingress buffer full");
         NS_LOG_WARN("NodeId " << GetObject<Node>()->GetId() << " InPort " << inPort << " pri=" << (uint32_t)priority
                     << " buffer full. Packet Dropped!");
+        UbLifecycleCoordinator::TerminatePacket(packet,
+                                                UbPacketTerminal::INGRESS_QUEUE_FULL);
         return;
     }
 
@@ -856,6 +994,8 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
     int outPort = m_routingProcess->GetOutPort(rtKey, selectedShortestPath, port->GetIfIndex());
     if (outPort < 0) {
         utils::UbUtils::RecordRuntimePacketDrop("route cannot be found");
+        UbLifecycleCoordinator::TerminatePacket(packet,
+                                                UbPacketTerminal::ROUTE_NOT_FOUND);
         NS_LOG_WARN("The route cannot be found. Packet Dropped!");
         return;
     }
@@ -877,6 +1017,8 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
         utils::UbUtils::RecordRuntimePacketDrop("ingress buffer full");
         NS_LOG_WARN("NodeId " << GetObject<Node>()->GetId() << " InPort " << inPort << " pri=" << (uint32_t)priority
                     << " buffer full. Packet Dropped!");
+        UbLifecycleCoordinator::TerminatePacket(packet,
+                                                UbPacketTerminal::INGRESS_QUEUE_FULL);
         return;
     }
 
@@ -895,6 +1037,8 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
     int outPort = m_routingProcess->GetOutPort(rtKey, selectedShortestPath, port->GetIfIndex());
     if (outPort < 0) {
         utils::UbUtils::RecordRuntimePacketDrop("route cannot be found");
+        UbLifecycleCoordinator::TerminatePacket(packet,
+                                                UbPacketTerminal::ROUTE_NOT_FOUND);
         NS_LOG_WARN("The route cannot be found. Packet Dropped!");
         return;
     }
@@ -914,6 +1058,8 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
         utils::UbUtils::RecordRuntimePacketDrop("ingress buffer full");
         NS_LOG_WARN("NodeId " << GetObject<Node>()->GetId() << " InPort " << inPort << " pri=" << (uint32_t)priority
                     << " buffer full. Packet Dropped!");
+        UbLifecycleCoordinator::TerminatePacket(packet,
+                                                UbPacketTerminal::INGRESS_QUEUE_FULL);
         return;
     }
 
@@ -1054,11 +1200,12 @@ void UbSwitch::SendControlFrame(Ptr<Packet> packet, uint32_t portId)
     NS_ABORT_MSG_IF(GetPacketType(packet) != UB_CONTROL_FRAME,
                     "SendControlFrame expects a real UB control-credit packet");
     uint32_t priority = 0;
+    Ptr<Node> node = GetObject<Node>();
+    Ptr<UbPort> port = DynamicCast<ns3::UbPort>(node->GetDevice(portId));
+    port->RegisterDatalinkControlPacket(packet, priority);
     GetOrCreateVoq(portId, priority, portId)->Push(packet);
     m_queueManager->PushToVoq(portId, portId, priority, packet->GetSize());
 
-    Ptr<Node> node = GetObject<Node>();
-    Ptr<UbPort> port = DynamicCast<ns3::UbPort>(node->GetDevice(portId));
     port->TriggerTransmit();
 }
 
@@ -1144,7 +1291,7 @@ UbSwitch::GetVoqPacketCountForTest(uint32_t outPort, uint32_t priority, uint32_t
     if (queue == nullptr || *queue == nullptr) {
         return 0;
     }
-    return (*queue)->IsEmpty() ? 0u : 1u;
+    return static_cast<uint32_t>((*queue)->GetPacketCount());
 }
 
 }  // namespace ns3

@@ -71,6 +71,7 @@ void
 MtpInterface::Enable()
 {
     g_nodeLocalLpIdsFrozen = false;
+    g_bootstrapReceiveComplete = false;
 #ifdef NS3_MPI
     GlobalValue::Bind("SimulatorImplementationType", StringValue("ns3::HybridSimulatorImpl"));
 #else
@@ -108,6 +109,8 @@ MtpInterface::Enable(const uint32_t threadCount, const uint32_t systemCount)
     g_systemCount = systemCount;
     g_manualPartition = systemCount > 0;
     g_nodeLocalLpIdsFrozen = false;
+    g_bootstrapReceiveComplete = false;
+    g_enabled = true;
 
     // allocate systems
     g_systems = new LogicalProcess[g_systemCount + 1]; // include the public LP
@@ -203,6 +206,7 @@ MtpInterface::Disable()
     g_systemCount = 0;
     g_sortFunc = nullptr;
     g_lookAheadBound = TimeStep(0);
+    g_bootstrapReceiveComplete = false;
     g_nodeLocalLpIds.clear();
     g_nodeLocalLpIdsFrozen = false;
     g_manualPartition = false;
@@ -243,7 +247,9 @@ MtpInterface::RunBefore()
         InitializeManualNodeLocalLpIds();
     }
     FreezeNodeLocalLpIds();
+    BootstrapReceiveRound();
     CalculateLookAhead();
+    CalculateSmallestTime();
 
     // LP index for sorting & holding worker threads
     g_sortedSystemIndices = new uint32_t[g_systemCount];
@@ -258,6 +264,15 @@ MtpInterface::RunBefore()
     for (uint32_t i = 0; i < g_threadCount - 1; i++)
     {
         pthread_create(&g_threads[i], nullptr, ThreadFunc, nullptr);
+    }
+}
+
+void
+MtpInterface::BootstrapReceiveRound()
+{
+    for (uint32_t i = 1; i <= g_systemCount; i++)
+    {
+        g_systems[i].ReceiveMessages();
     }
 }
 
@@ -515,6 +530,7 @@ MtpInterface::CalculateLookAhead()
             g_systems[i].BoundLookAhead(g_lookAheadBound);
         }
     }
+    g_bootstrapReceiveComplete = true;
 }
 
 void
@@ -535,6 +551,25 @@ MtpInterface::BoundLookAhead(Time lookAhead)
     {
         g_systems[i].BoundLookAhead(lookAhead);
     }
+}
+
+Time
+MtpInterface::GetCausalDeliveryDelay(uint32_t targetNodeId)
+{
+    if (!g_bootstrapReceiveComplete)
+    {
+        return TimeStep(0);
+    }
+
+    const uint32_t targetLpId = RequireNodeLocalLpId(targetNodeId);
+    const Time lookAhead = g_systems[targetLpId].GetLookAhead();
+    const Time unconstrainedLookAhead = Time::Max() / 2 - TimeStep(1);
+    NS_ABORT_MSG_IF(!lookAhead.IsStrictlyPositive() || lookAhead >= unconstrainedLookAhead,
+                    "MTP causal delivery requires a finite positive lookahead for target node "
+                        << targetNodeId << " on worker partition " << targetLpId
+                        << "; bind a positive lookahead or register a causal topology edge before "
+                           "Run()");
+    return lookAhead;
 }
 
 void*
@@ -634,6 +669,7 @@ Time MtpInterface::g_smallestTime = TimeStep(0);
 Time MtpInterface::g_nextPublicTime = TimeStep(0);
 
 Time MtpInterface::g_lookAheadBound = TimeStep(0);
+bool MtpInterface::g_bootstrapReceiveComplete = false;
 
 std::vector<uint32_t> MtpInterface::g_nodeLocalLpIds;
 

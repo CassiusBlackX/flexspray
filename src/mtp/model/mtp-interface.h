@@ -164,6 +164,13 @@ class MtpInterface
     static void RunBefore();
 
     /**
+     * @brief Localize all pre-run worker events before worker callbacks execute.
+     *
+     * This receive-only startup round runs on the startup thread before worker threads begin.
+     */
+    static void BootstrapReceiveRound();
+
+    /**
      * @brief Process all events of all LPs in the current round.
      *
      * This method is called by MtpInterface::Run.
@@ -216,6 +223,17 @@ class MtpInterface
      * @brief Add an upper bound to every worker LP lookahead.
      */
     static void BoundLookAhead(Time lookAhead);
+
+    /**
+     * @brief Return a causally safe delivery delay for a target worker.
+     *
+     * Before worker execution starts, zero-delay delivery is safe because the bootstrap receive
+     * round localizes every queued event. During execution, the target worker's finite lookahead
+     * is the minimum safe delivery delay.
+     *
+     * @param targetNodeId Node owned by the target worker LP.
+     */
+    static Time GetCausalDeliveryDelay(uint32_t targetNodeId);
 
     /**
      * @brief Find the local MTP LP that owns a node.
@@ -514,6 +532,9 @@ class MtpInterface
     static Time g_smallestTime;
     static Time g_nextPublicTime;
     static Time g_lookAheadBound;
+    // This is a one-way transition until Disable(): worker clocks may advance after RunAfter(),
+    // so a later Run() cannot safely reopen zero-delay bootstrap delivery.
+    static bool g_bootstrapReceiveComplete;
     static std::vector<uint32_t> g_nodeLocalLpIds;
     static bool g_nodeLocalLpIdsFrozen;
     static std::atomic<bool> g_recvMsgStage;

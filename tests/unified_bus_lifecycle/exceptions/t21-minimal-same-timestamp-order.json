@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "ticket": "T21",
+  "case": "minimal-single-rtp-write",
+  "runtime": "local-single",
+  "approval": {
+    "status": "approved",
+    "source": "T05/T20 root-reviewed exception and known acceptable difference policy",
+    "date": "2026-07-16",
+    "policy_statement": "A byte difference may pass only when root review confirms an exact, evidenced, acceptable cause and every other managed artifact remains accounted for.",
+    "approved_by": "root-review",
+    "approved_cause_ids": [
+      "t05-remote-response-same-timestamp-order"
+    ]
+  },
+  "evidence": {
+    "specification": "tickets.md Task 21 requires complete runtime-matching frozen acceptance while allowing a known, evidenced, acceptable narrow difference.",
+    "reference_root": ".openusim/unified-bus-lifecycle/reference/runs/local-single/minimal-single-rtp-write/run-1/case",
+    "candidate_root": ".openusim/unified-bus-lifecycle/candidate/t21-local-single-compare/minimal-single-rtp-write/case",
+    "diagnostics_root": ".openusim/unified-bus-lifecycle/diagnostics/t21-minimal-local-single-approved",
+    "comparison_result": "expected-differences-only",
+    "managed_artifact_count": 19,
+    "affected_artifact_count": 1,
+    "unaffected_artifact_count": 18,
+    "records": [
+      {
+        "id": "t21-minimal-same-timestamp-control",
+        "kind": "milestone-acceptance",
+        "summary": "The complete managed-tree comparison isolates the known same-timestamp Sends/Completes ordering change to one TaskTrace artifact.",
+        "ticket": "T21",
+        "runtime": "local-single",
+        "reference_root": ".openusim/unified-bus-lifecycle/reference/runs/local-single/minimal-single-rtp-write/run-1/case",
+        "candidate_root": ".openusim/unified-bus-lifecycle/candidate/t21-local-single-compare/minimal-single-rtp-write/case",
+        "affected_artifacts": [
+          "runlog/TaskTrace_node_1.tr"
+        ],
+        "claims": {
+          "prior_reviewed_exception": "tests/unified_bus_lifecycle/exceptions/t20-local-single-same-timestamp-order.json",
+          "event_timestamp_ns": 114.48,
+          "event_membership_preserved": true,
+          "protocol_and_packet_artifacts_identical": true,
+          "tasks_completed": 1,
+          "focused_test_ids": [
+            "unified-bus-lifecycle",
+            "unified-bus-transaction-urma",
+            "unified-bus-transport-pipeline"
+          ]
+        }
+      }
+    ]
+  },
+  "causes": [
+    {
+      "id": "t05-remote-response-same-timestamp-order",
+      "introduced_by": "T05",
+      "cause": "Remote response admission wakes synchronously inside the existing ready-source domain, so the same-timestamp Sends record now precedes the inbound Completes record.",
+      "impact": "Both events remain at 114.480 ns with unchanged membership; task statistics, throughput, canonical events, packet traces, port traces, inputs, and every other managed artifact remain byte-identical.",
+      "evidence": {
+        "ids": [
+          "t21-minimal-same-timestamp-control"
+        ]
+      },
+      "artifacts": [
+        "runlog/TaskTrace_node_1.tr"
+      ]
+    }
+  ],
+  "affected_artifacts": [
+    {
+      "path": "runlog/TaskTrace_node_1.tr",
+      "cause_ids": [
+        "t05-remote-response-same-timestamp-order"
+      ],
+      "first_byte_offset": 25,
+      "reference_byte_hex": "43",
+      "candidate_byte_hex": "53",
+      "reference_sha256": "4587206d5c5781545c8b6080b47c10ea4b496443027e14026388ba51551df447",
+      "candidate_sha256": "d9875ece1270198d75720d86845fd2b25a3b39f16666128b0196a9ff69602a32"
+    }
+  ],
+  "unaffected_artifacts": [
+    {
+      "path": "canonical-events.rank0.txt",
+      "sha256": "10f54f22c7b3f8e935b08c87eb9ed1e8d8e6384fc8ece55c8b77b5a6e0b9dd64"
+    },
+    {
+      "path": "network_attribute.txt",
+      "sha256": "bab3bd6b97cd4a29fee5d8aaa9260cd0b303831bf2cfee012ca657f17bde4b84"
+    },
+    {
+      "path": "node.csv",
+      "sha256": "ebc3158be895c791c1ede66685498a07f42ae83cf7c6b99a46aca71a918d1de6"
+    },
+    {
+      "path": "output/task_statistics.csv",
+      "sha256": "f9e82bd87f3ae3054d2659299f2733feab2454ea936e77f509cff1a3185f5d62"
+    },
+    {
+      "path": "output/throughput.csv",
+      "sha256": "6d880c37e2c171cb8af007f5c65e5d2af0a3521585100e4038a67694d0304c51"
+    },
+    {
+      "path": "routing_table.csv",
+      "sha256": "ebac54c6bb8b6b08534c66c370ae23d57b18303a55d6686b81c7060dcc6802a6"
+    },
+    {
+      "path": "runlog/AllPacketTrace_ACK_node_0.tr",
+      "sha256": "cb57924471b31cb7321c5f6c4b378ebac4c496eb7bef3a136f45ab67f482ebf2"
+    },
+    {
+      "path": "runlog/AllPacketTrace_ACK_node_1.tr",
+      "sha256": "bc6de9b98c75672c29177baaf0a9aeb3211512c9eb32a2a8b69057ad25484160"
+    },
+    {
+      "path": "runlog/AllPacketTrace_PKT_node_0.tr",
+      "sha256": "867fed5dd0574ebb7a839a2bcb0c244779f1f6f79598867f50c14b5ba2f1e3a6"
+    },
+    {
+      "path": "runlog/AllPacketTrace_PKT_node_1.tr",
+      "sha256": "81352de5972bcb4a9b9e9c5f36fd6684b789017d959d108378bb7414ea3fdb3a"
+    },
+    {
+      "path": "runlog/PacketTrace_node_0.tr",
+      "sha256": "7ee6f9424989cd5ef2dd9217b643b1651b3d0aa7b046befb8a21f6a568679309"
+    },
+    {
+      "path": "runlog/PacketTrace_node_1.tr",
+      "sha256": "b4bd9d1d643d4e8edeed2bf0a848093eac0c7fd6e6dbc75864ac30726dac5cf2"
+    },
+    {
+      "path": "runlog/PortTrace_node_0_port_0.tr",
+      "sha256": "f1a35a1d7d9aa7ec0288f83a9b0706889e3f6b94381f6dc51f8350be802c3941"
+    },
+    {
+      "path": "runlog/PortTrace_node_1_port_0.tr",
+      "sha256": "048ef75c8abd92ec2409395eaf7b85601ae48bbd3ebb58d9c9862a8e45728ed0"
+    },
+    {
+      "path": "runlog/TaskTrace_node_0.tr",
+      "sha256": "70b0dc49edb58597e57b5244ed899973476cd6e1da722f1999f58d6984f0f462"
+    },
+    {
+      "path": "topology.csv",
+      "sha256": "de1a5b97b8df05ab3f5ca18a15d048b48c33ecbab7e934440bd4b58529c56b43"
+    },
+    {
+      "path": "traffic.csv",
+      "sha256": "8ef81e14026f1bedb6b4a944edd1bd0b632d2276ec27382b7765c262fc5b628f"
+    },
+    {
+      "path": "transport_channel.csv",
+      "sha256": "ab42edd5c1c89031c6b19b7a86e64dbff0bec1642a99082cf71a640fe89bc69b"
+    }
+  ]
+}
