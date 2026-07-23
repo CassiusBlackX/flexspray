@@ -57,7 +57,7 @@ FullMesh and connects them to a two-switch external network. Prepare a reusable 
 builder:
 
 ```bash
-python3 scratch/ns-3-ub-tools/prepare_structured_case.py \
+python3 scratch/ns-3-ub-tools/ub_tools.py topology build \
   scratch/structured_topo_example.py:build_topology \
   --case-path path/to/case
 ```
@@ -113,9 +113,21 @@ Existing users do not need to rewrite every case:
 
 - An explicit CSV case remains unchanged and continues to run through `ub-quick-example`.
 - An existing Python `NetworkSimulationGraph` builder can return the graph instead of writing topology
-  and routing CSV, then use `prepare_structured_case.py` for analysis and compilation.
-- An existing custom CSV topology can be loaded with `case_topology_loader.load_case_topology()` so
+  and routing CSV, then use `ub_tools.py topology build path.py:function` for analysis and compilation.
+- An existing custom CSV topology directory can be passed directly to `ub_tools.py topology build`;
   assigned physical ports, unused ports, and parallel links remain authoritative during analysis.
+
+The v2 tools entry point can prepare the complete directory without starting ns-3:
+
+```bash
+python3 scratch/ns-3-ub-tools/ub_tools.py traffic allreduce \
+  --host-count 4 --data-size 1MB --algorithm ring \
+  --output-dir path/to/case
+python3 scratch/ns-3-ub-tools/ub_tools.py case check path/to/case
+```
+
+For the old timestamped traffic output and old algorithm names, run
+`traffic_maker/build_traffic.py` directly. `ub_tools.py` intentionally does not accept v1 options.
 
 Automatic topology-rule recognition currently covers FullMesh; Ring, Mesh, Torus, and N-dimensional
 Dimension FullMesh; direct-switch networks; two-level switch networks with independent planes or local

@@ -47,7 +47,7 @@ its topology input or needs a manual route table.
    - Adjust bandwidth/delay if specified in Network Overrides
    - Adjust priority_list if specified in Network Overrides
 4. **For prepared structured routing**, record two commands in the manifest. First prepare:
-   `python3 scratch/ns-3-ub-tools/prepare_structured_case.py {case_dir}/generate_topology.py:build_topology --case-path {case_dir} --route-generation mixed`.
+   `python3 scratch/ns-3-ub-tools/ub_tools.py topology build {case_dir}/generate_topology.py:build_topology --case-path {case_dir} --route-generation mixed`.
    Then run: `python3 scratch/run_structured_topo_case.py --case-path {case_dir} --route-runtime-mode compressed-table-lookup`.
 5. **For CSV input**, set `graph.output_dir`, call the selected route generator plus
    `write_config(...)`, then run the script to create `node.csv`, `topology.csv`, `routing_table.csv`,
@@ -160,21 +160,22 @@ When the spec specifies different bandwidths per link layer, modify the `add_net
 
 ### Built-in collective algorithms
 
-If the spec workload is one of `ar_ring`, `ar_nhr`, `ar_rhd`, `a2a_pairwise`, `a2a_scatter`, map spec fields to CLI arguments:
+For a supported collective, map the spec to the v2 collective and algorithm names:
 
 ```
-python3 scratch/ns-3-ub-tools/traffic_maker/build_traffic.py \
-  -n {host_num} \
-  -c {comm_domain_size} \
-  -b {data_size} \
-  -a {algo} \
-  --scatter-k {scatter_k} \
-  -d {phase_delay} \
-  --rank-mapping {rank_mapping} \
-  -o {case_dir}
+python3 scratch/ns-3-ub-tools/ub_tools.py traffic {collective} \
+  --host-count {host_num} \
+  --group-size {group_size} \
+  --data-size {data_size} \
+  --algorithm {algorithm} \
+  --group-layout {group_layout} \
+  --phase-delay {phase_delay} \
+  --output-dir {case_dir}
 ```
 
-Copy the generated `traffic.csv` from the output subdirectory into the case directory.
+The command writes `{case_dir}/traffic.csv` directly. Use `--placement-file` instead of
+`--group-layout` for an explicit group/rank/node mapping. AllToAll scatter additionally accepts
+`--peers-per-phase`; AllToAllV uses `--distribution` and its related matrix/seed options.
 
 ### Reference traffic.csv
 
@@ -309,7 +310,7 @@ mechanical mapping from the confirmed profile to case attributes and route gener
 - Invalid routing-type/selector combinations are rejected during `network_attribute.txt` loading.
 - `path_source = auto-path-finder` uses a prepared structured case by default. Call
   `graph.gen_compressed_route_table(...)` only when the selected topology input is CSV table routing.
-- For a prepared structured case, `prepare_structured_case.py` calls
+- For a prepared structured case, `ub_tools.py topology build` calls
   `graph.prepare_structured_case(case_path=..., route_generation=...)`; it discovers and verifies the
   physical graph and writes `structured_topology.txt` plus `compressed_routing.bin` without
   intermediate topology or route CSV. `run_structured_topo_case.py` later launches ns-3 using only
@@ -318,9 +319,8 @@ mechanical mapping from the confirmed profile to case attributes and route gener
 - Complete verified structures emit coordinate/group topology rules. Partly recognized graphs build
   destination DAGs and exact/range rules without a complete baseline table. A custom path finder keeps
   complete baseline equivalence validation and content caching.
-- For an existing custom case with explicit endpoint ports, use
-  `case_topology_loader.load_case_topology(case_dir)` rather than repacking ports with
-  `build_graph_config()`.
+- For an existing custom case with explicit endpoint ports, pass the case directory to
+  `ub_tools.py topology build` rather than repacking ports with `build_graph_config()`.
 - `mixed` assigns each destination-port lookup to either rules or table entries; candidate sets are not
   merged. `rule` fails if any lookup still needs table routing.
 - `graph.gen_route_table(...)` is only for cases that explicitly need exact per-destination rows plus precomputed transport channels.

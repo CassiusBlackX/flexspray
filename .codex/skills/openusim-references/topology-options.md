@@ -325,10 +325,14 @@ for exhaustive baseline comparison.
 The tools CLI prepares the same case directory:
 
 ```bash
-python3 scratch/ns-3-ub-tools/prepare_structured_case.py \
+python3 scratch/ns-3-ub-tools/ub_tools.py topology build \
   path/to/topology.py:build_topology \
   --case-path path/to/case
 ```
+
+The same command accepts a JSON/YAML file or an existing CSV case directory. Use `topology check`
+for read-only validation and `topology plot --output FILE` for a plot of the same normalized physical
+graph. None of these commands starts ns-3.
 
 The repository-level runner later consumes only that directory:
 
@@ -343,7 +347,9 @@ The CLI also accepts the JSON/YAML adapter. Its four independent sections are `n
 `NetworkSimulationGraph` before discovery. Generation declarations are never accepted as routing
 proof. The top-level `version` must be `1`.
 
-For an existing custom case whose `topology.csv` already assigns physical port IDs, load it through `case_topology_loader.load_case_topology(case_dir)`. Do not rebuild it with `add_netisim_edge()` plus `build_graph_config()`: that path packs ports again and can change reserved-port and destination-port semantics. The loader preserves unused ports and parallel links, then exposes the same `get_physical_topology()` and structured-route APIs.
+For an existing custom case whose `topology.csv` already assigns physical port IDs, pass its directory
+to `ub_tools.py topology build`. The shared loader preserves unused ports and parallel links; do not
+rebuild it with `add_netisim_edge()` plus `build_graph_config()`, which can repack ports.
 
 CSV generation remains a separate supported path: call `build_graph_config()`, a table or structured
 route generator, and `write_config(...)`, then run the normal `ub-quick-example --case-path=...`
