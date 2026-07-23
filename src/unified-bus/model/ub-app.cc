@@ -399,7 +399,22 @@ void UbApp::OnTaskCompleted(uint32_t taskId, uint32_t jettyNum)
     NS_LOG_INFO("WQE Completes, jettyNum: " << jettyNum << " taskId: " << taskId);
     WqeTaskCompletesNotify(GetNode()->GetId(), jettyNum, taskId);
     NS_LOG_INFO("[APPLICATION INFO] taskId: " << taskId << ",finish time:" << Simulator::Now().GetNanoSeconds() << "ns");
+    if (m_transportMode == TransportMode::RTP)
+    {
+        Ptr<UbFunction> function = GetNode()->GetObject<UbController>()->GetUbFunction();
+        UbJettyLifetime lifetime = UbJettyLifetime::REUSABLE;
+        if (function->TryGetJettyLifetime(jettyNum, lifetime) &&
+            lifetime == UbJettyLifetime::TASK_SCOPED)
+        {
+            UbTrafficGen::Get()->OnTaskCompleted(taskId, this, jettyNum);
+            return;
+        }
+    }
     UbTrafficGen::Get()->OnTaskCompleted(taskId);
+}
+
+void UbApp::CleanupTaskScopedJetty(uint32_t taskId, uint32_t jettyNum)
+{
     if (m_transportMode == TransportMode::RTP)
     {
         // 删除无用tp

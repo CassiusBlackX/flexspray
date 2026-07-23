@@ -92,6 +92,8 @@ public:
 
     static bool IsMultiProcessRuntimeUnsupported();
 
+    static Time SelectTaskCleanupDeliveryDelay(bool partitioned, Time causalDeliveryDelay);
+
     static inline std::string GetMultiProcessUnsupportedMessage()
     {
         return "UbTrafficGen supports MPI multi-process traffic DAG usage when dependency "
@@ -156,6 +158,8 @@ public:
      */
     void OnTaskCompleted(uint32_t taskId);
 
+    void OnTaskCompleted(uint32_t taskId, Ptr<UbApp> cleanupOwner, uint32_t jettyNum);
+
     /**
      * @brief 调度下一批可执行的任务
      */
@@ -195,6 +199,13 @@ public:
         std::vector<uint32_t> dependentTasks{};
     };
 
+    struct TaskCleanupRequest
+    {
+        uint32_t ownerNodeId{0};
+        uint32_t ownerApplicationIndex{0};
+        uint32_t jettyNum{0};
+    };
+
     void RecordCanonicalEvent(const std::string& type, const RuntimeTask& task);
 
     void RecordCanonicalCompletionLocked(const RuntimeTask& task);
@@ -229,6 +240,7 @@ public:
     std::string m_canonicalOutputPath;
     uint32_t m_canonicalRank = 0;
     std::vector<CanonicalEvent> m_canonicalEvents;
+    std::unordered_map<uint32_t, TaskCleanupRequest> m_pendingTaskCleanups{};
     Time m_initialTaskStartOffsetWindow{Time(0)};
     uint32_t m_initialTaskStartOffsetSeed{1};
 
@@ -313,6 +325,14 @@ public:
     bool HasDependenciesLocked() const;
 
     Time ResolveCompletionVisibleDelayLocked() const;
+
+    void SubmitTaskCompletion(uint32_t taskId,
+                              std::optional<TaskCleanupRequest> cleanupRequest);
+
+    static void ApplyTaskCleanupOnOwner(uint32_t ownerNodeId,
+                                        uint32_t ownerApplicationIndex,
+                                        uint32_t taskId,
+                                        uint32_t jettyNum);
 
     void ScheduleTaskCompletionVisibility(uint32_t taskId, Time completionVisibleTs);
 
