@@ -10,6 +10,9 @@
 #include "ns3/config.h"
 #include "ns3/data-rate.h"
 #include "ns3/log.h"
+#ifdef NS3_MTP
+#include "ns3/mtp-interface.h"
+#endif
 #include "ns3/node-container.h"
 #include "ns3/rng-seed-manager.h"
 #include "ns3/simulator.h"
@@ -16205,8 +16208,14 @@ class UbLifecycleTaskCompletionPrecedesJettyRetirementTest : public TestCase
         InstallStaticTpPair(topo);
         Ptr<UbApp> app = CreateObject<UbApp>();
         topo.sender->AddApplication(app);
+        app->TraceConnectWithoutContext(
+            "WqeTaskStartsNotify",
+            MakeCallback(&UbLifecycleTaskCompletionPrecedesJettyRetirementTest::OnTaskStarted,
+                         this));
         Ptr<UbFunction> function = topo.sender->GetObject<UbController>()->GetUbFunction();
         constexpr uint32_t taskId = 900002;
+        constexpr uint32_t dependentTaskId = 900003;
+        constexpr uint32_t phaseId = 900002;
         constexpr uint32_t jettyNum = 104;
         function->CreateJetty(topo.sender->GetId(),
                               topo.receiver->GetId(),
@@ -16222,6 +16231,7 @@ class UbLifecycleTaskCompletionPrecedesJettyRetirementTest : public TestCase
 
         TrafficRecord record;
         record.taskId = taskId;
+        record.phaseId = phaseId;
         record.sourceNode = topo.sender->GetId();
         record.destNode = topo.receiver->GetId();
         record.dataSize = 64;
@@ -16230,6 +16240,12 @@ class UbLifecycleTaskCompletionPrecedesJettyRetirementTest : public TestCase
         record.delay = "0ns";
         UbTrafficGen* trafficGen = UbTrafficGen::Get();
         trafficGen->AddTask(record);
+
+        TrafficRecord dependent = record;
+        dependent.taskId = dependentTaskId;
+        dependent.phaseId = phaseId + 1;
+        dependent.dependOnPhases = {phaseId};
+        trafficGen->AddTask(dependent);
         trafficGen->ScheduleNextTasks();
         const uint32_t completedBefore = trafficGen->GetCompletedTaskCount();
 
@@ -16238,13 +16254,13 @@ class UbLifecycleTaskCompletionPrecedesJettyRetirementTest : public TestCase
         UbJettyLifecycleState state = UbJettyLifecycleState::ACTIVE;
         NS_TEST_ASSERT_MSG_EQ(function->TryGetJettyState(jettyNum, state),
                               true,
-                              "Pending cleanup should retain the Jetty record");
+                              "Local completion should retain the Jetty record");
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(state),
-            static_cast<uint32_t>(UbJettyLifecycleState::DRAINING),
-            "Task-scoped Jetty should begin draining after completion is visible");
+            static_cast<uint32_t>(UbJettyLifecycleState::ACTIVE),
+            "Task-scoped Jetty cleanup must not begin before completion is visible");
 
-        Simulator::Stop(NanoSeconds(0));
+        Simulator::Stop(NanoSeconds(1));
         Simulator::Run();
         NS_TEST_ASSERT_MSG_EQ(trafficGen->GetCompletedTaskCount(),
                               completedBefore + 1,
@@ -16253,6 +16269,20 @@ class UbLifecycleTaskCompletionPrecedesJettyRetirementTest : public TestCase
             function->IsJettyExists(jettyNum),
             true,
             "The held Jetty should still be draining after completion is visible");
+        NS_TEST_ASSERT_MSG_EQ(function->TryGetJettyState(jettyNum, state),
+                              true,
+                              "Visible completion cleanup should retain the draining Jetty record");
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(state),
+            static_cast<uint32_t>(UbJettyLifecycleState::DRAINING),
+            "Task-scoped Jetty should begin draining only after completion is visible");
+        const bool dependentStarted =
+            std::find(m_startedTaskIds.begin(), m_startedTaskIds.end(), dependentTaskId) !=
+            m_startedTaskIds.end();
+        NS_TEST_ASSERT_MSG_EQ(dependentStarted,
+                              true,
+                              "Visible completion should release dependent work without waiting "
+                              "for Jetty cleanup");
 
         runningEvent.Cancel();
         function->ResolveJettyEvent(jettyNum, token);
@@ -16263,8 +16293,276 @@ class UbLifecycleTaskCompletionPrecedesJettyRetirementTest : public TestCase
                               completedBefore + 1,
                               "Jetty retirement must not publish task completion again");
 
+        trafficGen->ApplyTaskCompletion(dependentTaskId);
+
         Simulator::Destroy();
         Config::Reset();
+    }
+
+  private:
+    void OnTaskStarted(uint32_t, uint32_t, uint32_t taskId)
+    {
+        m_startedTaskIds.push_back(taskId);
+    }
+
+    std::vector<uint32_t> m_startedTaskIds;
+};
+
+class UbLifecycleCtpCompletionDoesNotScheduleRtpCleanupTest : public TestCase
+{
+  public:
+    UbLifecycleCtpCompletionDoesNotScheduleRtpCleanupTest()
+        : TestCase("UnifiedBus - CTP task completion does not schedule RTP cleanup")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        Ptr<Node> node = CreateObject<Node>();
+        Ptr<UbApp> app = CreateObject<UbApp>();
+        app->SetTransportMode(TransportMode::CTP);
+        node->AddApplication(app);
+
+        TrafficRecord record;
+        record.taskId = 900004;
+        record.phaseId = 900004;
+        record.sourceNode = node->GetId();
+        record.destNode = node->GetId();
+        record.dataSize = 64;
+        record.opType = "URMA_WRITE";
+        record.priority = 1;
+        record.delay = "1s";
+        UbTrafficGen* trafficGen = UbTrafficGen::Get();
+        trafficGen->AddTask(record);
+        trafficGen->ScheduleNextTasks();
+
+        app->OnTaskCompleted(record.taskId, 0);
+        Simulator::Stop(NanoSeconds(0));
+        Simulator::Run();
+
+        const uint64_t eventsAfterVisibleCompletion = Simulator::GetEventCount();
+        Simulator::Stop(NanoSeconds(1));
+        Simulator::Run();
+
+        NS_TEST_ASSERT_MSG_EQ(Simulator::GetEventCount() - eventsAfterVisibleCompletion,
+                              2u,
+                              "CTP completion should leave no RTP cleanup event after visible "
+                              "completion");
+        const bool completionVisible = trafficGen->GetCompletedTaskCount() > 0;
+        NS_TEST_ASSERT_MSG_EQ(completionVisible,
+                              true,
+                              "CTP completion should still become visible");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbLifecycleTaskCleanupSubmissionIsExactlyOnceTest : public TestCase
+{
+  public:
+    UbLifecycleTaskCleanupSubmissionIsExactlyOnceTest()
+        : TestCase("UnifiedBus - duplicate task cleanup submission schedules exactly once")
+    {
+    }
+
+    void DoRun() override
+    {
+        const uint64_t singleSubmissionEvents = RunScenario(900005, false);
+        const uint64_t duplicateSubmissionEvents = RunScenario(900006, true);
+        NS_TEST_ASSERT_MSG_EQ(duplicateSubmissionEvents,
+                              singleSubmissionEvents,
+                              "Duplicate cleanup submission must not add completion or cleanup "
+                              "events");
+        NS_TEST_ASSERT_MSG_EQ(m_allJettiesRetired,
+                              true,
+                              "Exactly-once cleanup should retire each task-scoped Jetty");
+
+#ifndef _WIN32
+        const int conflictingStatus = RunInChildProcess([]() {
+            Config::Reset();
+            LocalTpTopology topo = BuildLocalTpTopology();
+            Ptr<UbApp> app = CreateObject<UbApp>();
+            topo.sender->AddApplication(app);
+            Ptr<UbFunction> function = topo.sender->GetObject<UbController>()->GetUbFunction();
+            function->CreateJetty(topo.sender->GetId(),
+                                  topo.receiver->GetId(),
+                                  204,
+                                  UbJettyLifetime::TASK_SCOPED);
+            function->CreateJetty(topo.sender->GetId(),
+                                  topo.receiver->GetId(),
+                                  205,
+                                  UbJettyLifetime::TASK_SCOPED);
+            PrepareRunningTask(topo, 900007);
+            app->OnTaskCompleted(900007, 204);
+            app->OnTaskCompleted(900007, 205);
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(conflictingStatus),
+                              1,
+                              "Conflicting cleanup request should abort");
+        NS_TEST_ASSERT_MSG_EQ(WTERMSIG(conflictingStatus),
+                              SIGABRT,
+                              "Conflicting cleanup request should fail with SIGABRT");
+#endif
+    }
+
+    static void PrepareRunningTaskForTest(const LocalTpTopology& topo, uint32_t taskId)
+    {
+        PrepareRunningTask(topo, taskId);
+    }
+
+  private:
+    static void PrepareRunningTask(const LocalTpTopology& topo, uint32_t taskId)
+    {
+        TrafficRecord record;
+        record.taskId = taskId;
+        record.phaseId = taskId;
+        record.sourceNode = topo.sender->GetId();
+        record.destNode = topo.receiver->GetId();
+        record.dataSize = 64;
+        record.opType = "URMA_WRITE";
+        record.priority = 1;
+        record.delay = "1s";
+        UbTrafficGen* trafficGen = UbTrafficGen::Get();
+        trafficGen->AddTask(record);
+        trafficGen->ScheduleNextTasks();
+    }
+
+    uint64_t RunScenario(uint32_t taskId, bool duplicate)
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        Ptr<UbApp> app = CreateObject<UbApp>();
+        topo.sender->AddApplication(app);
+        Ptr<UbFunction> function = topo.sender->GetObject<UbController>()->GetUbFunction();
+        constexpr uint32_t jettyNum = 204;
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              jettyNum,
+                              UbJettyLifetime::TASK_SCOPED);
+        PrepareRunningTask(topo, taskId);
+
+        app->OnTaskCompleted(taskId, jettyNum);
+        if (duplicate)
+        {
+            app->OnTaskCompleted(taskId, jettyNum);
+        }
+        Simulator::Stop(NanoSeconds(0));
+        Simulator::Run();
+
+        const uint64_t eventsAfterVisibleCompletion = Simulator::GetEventCount();
+        Simulator::Stop(NanoSeconds(1));
+        Simulator::Run();
+        const uint64_t completionTailEvents =
+            Simulator::GetEventCount() - eventsAfterVisibleCompletion;
+        m_allJettiesRetired =
+            m_allJettiesRetired && !function->IsJettyExists(jettyNum);
+
+        Simulator::Destroy();
+        Config::Reset();
+        return completionTailEvents;
+    }
+
+    bool m_allJettiesRetired{true};
+};
+
+class UbLifecyclePendingTaskCleanupDoesNotRetainAppTest : public TestCase
+{
+  public:
+    UbLifecyclePendingTaskCleanupDoesNotRetainAppTest()
+        : TestCase("UnifiedBus - pending task cleanup does not retain its app")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        Ptr<UbApp> app = CreateObject<UbApp>();
+        topo.sender->AddApplication(app);
+        Ptr<UbFunction> function = topo.sender->GetObject<UbController>()->GetUbFunction();
+        constexpr uint32_t jettyNum = 206;
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              jettyNum,
+                              UbJettyLifetime::TASK_SCOPED);
+        UbLifecycleTaskCleanupSubmissionIsExactlyOnceTest::PrepareRunningTaskForTest(
+            topo,
+            900008);
+
+        const uint32_t referencesBefore = app->GetReferenceCount();
+        app->OnTaskCompleted(900008, jettyNum);
+        NS_TEST_ASSERT_MSG_EQ(app->GetReferenceCount(),
+                              referencesBefore,
+                              "Pending cleanup metadata must not strongly retain the app");
+
+        Simulator::Stop(NanoSeconds(0));
+        Simulator::Run();
+        const bool publicDeliveryDidNotRetainApp =
+            app->GetReferenceCount() <= referencesBefore;
+        NS_TEST_ASSERT_MSG_EQ(publicDeliveryDidNotRetainApp,
+                              true,
+                              "Public completion delivery must not resolve or retain the owner app");
+
+        Simulator::Stop(NanoSeconds(1));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(function->IsJettyExists(jettyNum),
+                              false,
+                              "Owner-side cleanup thunk should resolve the app and retire the Jetty");
+
+        Simulator::Destroy();
+        Config::Reset();
+
+#ifndef _WIN32
+        const int publicDeliveryStatus = RunInChildProcess([]() {
+            Config::Reset();
+            LocalTpTopology childTopo = BuildLocalTpTopology();
+            Ptr<UbApp> childApp = CreateObject<UbApp>();
+            childTopo.sender->AddApplication(childApp);
+            Ptr<UbFunction> childFunction =
+                childTopo.sender->GetObject<UbController>()->GetUbFunction();
+            constexpr uint32_t childJettyNum = 207;
+            childFunction->CreateJetty(childTopo.sender->GetId(),
+                                       childTopo.receiver->GetId(),
+                                       childJettyNum,
+                                       UbJettyLifetime::TASK_SCOPED);
+            UbLifecycleTaskCleanupSubmissionIsExactlyOnceTest::PrepareRunningTaskForTest(
+                childTopo,
+                900009);
+            childApp->OnTaskCompleted(900009, childJettyNum);
+            childTopo.sender->Dispose();
+            Simulator::Stop(NanoSeconds(0));
+            Simulator::Run();
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFEXITED(publicDeliveryStatus),
+                              1,
+                              "Public completion delivery must not resolve the owner application");
+        NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(publicDeliveryStatus),
+                              0,
+                              "Owner application resolution must be deferred to the owner event");
+#endif
+    }
+};
+
+class UbTaskCleanupDeliveryDelaySelectionTest : public TestCase
+{
+  public:
+    UbTaskCleanupDeliveryDelaySelectionTest()
+        : TestCase("UnifiedBus - task cleanup selects causal delay only for partitioned MTP")
+    {
+    }
+
+    void DoRun() override
+    {
+        NS_TEST_ASSERT_MSG_EQ(UbTrafficGen::SelectTaskCleanupDeliveryDelay(false,
+                                                                           NanoSeconds(10)),
+                              TimeStep(0),
+                              "Non-partitioned cleanup should remain a same-time next event");
+        NS_TEST_ASSERT_MSG_EQ(UbTrafficGen::SelectTaskCleanupDeliveryDelay(true,
+                                                                           NanoSeconds(10)),
+                              NanoSeconds(10),
+                              "Partitioned cleanup should use the causal owner-delivery delay");
     }
 };
 
@@ -21768,6 +22066,30 @@ class UbDormantTpBackingReclaimsAndResolvesSameGenerationTest : public TestCase
             dormant.backingRehydrations,
             1u,
             "The earlier ordinary resolution should count one successful rehydration");
+        NS_TEST_ASSERT_MSG_EQ(manager->PeekLiveTp(tpn),
+                              nullptr,
+                              "A dormant endpoint observation should expose no live backing");
+        const auto observedTpnMap = manager->GetTpnMap();
+        const auto observedTpn = observedTpnMap.find(tpn);
+        const bool observedLogicalEndpoint = observedTpn != observedTpnMap.end();
+        NS_TEST_ASSERT_MSG_EQ(observedLogicalEndpoint,
+                              true,
+                              "A dormant endpoint should remain present in the observation map");
+        const Ptr<UbTransportChannel> observedBacking =
+            observedLogicalEndpoint ? observedTpn->second : nullptr;
+        NS_TEST_ASSERT_MSG_EQ(observedBacking,
+                              nullptr,
+                              "A dormant observation map entry should expose no live backing");
+        const UbTransportEndpointStorageSnapshot afterObservation = manager->GetStorageSnapshot();
+        NS_TEST_ASSERT_MSG_EQ(afterObservation.liveBackingObjects,
+                              dormant.liveBackingObjects,
+                              "Observation-only lookup must not materialize backing");
+        NS_TEST_ASSERT_MSG_EQ(afterObservation.dormantRecords,
+                              dormant.dormantRecords,
+                              "Observation-only lookup must retain the dormant record");
+        NS_TEST_ASSERT_MSG_EQ(afterObservation.backingRehydrations,
+                              dormant.backingRehydrations,
+                              "Observation-only lookup must not increment rehydrations");
         NS_TEST_ASSERT_MSG_EQ(first->CanAdmitWqeSegment(CreateObject<UbWqeSegment>()),
                               false,
                               "Detached dormant backing must reject stale admissions");
@@ -21793,6 +22115,12 @@ class UbDormantTpBackingReclaimsAndResolvesSameGenerationTest : public TestCase
                               nullptr,
                               "Rejected resolution must leave the record dormant");
         const UbTransportEndpointStorageSnapshot rejected = manager->GetStorageSnapshot();
+        NS_TEST_ASSERT_MSG_EQ(rejected.liveBackingObjects,
+                              dormant.liveBackingObjects,
+                              "Wrong identities must not materialize live backing");
+        NS_TEST_ASSERT_MSG_EQ(rejected.dormantRecords,
+                              dormant.dormantRecords,
+                              "Wrong identities must retain the compact endpoint record");
         NS_TEST_ASSERT_MSG_EQ(rejected.backingRehydrations,
                               dormant.backingRehydrations,
                               "Wrong identities must not increment successful rehydrations");
@@ -21904,6 +22232,245 @@ class UbDormantTpBackingReclaimsAndResolvesSameGenerationTest : public TestCase
     UbDestroyStatus m_destroyStatus{UbDestroyStatus::NOT_FOUND};
     uint32_t m_destroyCallbackCount{0};
 };
+
+#if defined(NS3_MTP) && !defined(_WIN32)
+class UbTpResolutionMtpOwnershipReadinessTest : public TestCase
+{
+  public:
+    UbTpResolutionMtpOwnershipReadinessTest()
+        : TestCase("UnifiedBus - TP resolution treats MTP ownership readiness fail closed")
+    {
+    }
+
+    void DoRun() override
+    {
+        const int prePartitionStatus = RunInChildProcess([]() {
+            const DormantEndpoint endpoint = PrepareDormantEndpoint();
+            MtpInterface::Enable();
+            Ptr<UbTransportChannel> reserved =
+                endpoint.manager->CreateReservedTpEndpoint(endpoint.tpn);
+            if (reserved == nullptr || !endpoint.manager->ReclaimBackingState(endpoint.tpn))
+            {
+                std::_Exit(2);
+            }
+            Ptr<UbTransportChannel> inbound = endpoint.manager->ResolveInboundTp(
+                endpoint.peerTpn,
+                endpoint.tpn,
+                endpoint.sourceIp,
+                endpoint.destinationIp,
+                endpoint.priority);
+            if (inbound == nullptr || !endpoint.manager->ReclaimBackingState(endpoint.tpn))
+            {
+                std::_Exit(3);
+            }
+            Ptr<UbTransportChannel> resolved =
+                endpoint.manager->ResolveLiveTp(endpoint.tpn, endpoint.identity);
+            if (resolved == nullptr)
+            {
+                std::_Exit(4);
+            }
+            const UbTransportEndpointStorageSnapshot after =
+                endpoint.manager->GetStorageSnapshot();
+            if (after.liveBackingObjects != 1 || after.dormantRecords != 0 ||
+                after.backingRehydrations != endpoint.before.backingRehydrations + 3)
+            {
+                std::_Exit(5);
+            }
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFEXITED(prePartitionStatus),
+                              1,
+                              "Pre-partition MTP resolution must not abort");
+        NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(prePartitionStatus),
+                              0,
+                              "Pre-partition MTP should preserve the normal single-thread path");
+
+        const int missingOwnerStatus = RunInChildProcess([]() {
+            const DormantEndpoint endpoint = PrepareDormantEndpoint();
+            MtpInterface::Enable(1, 1);
+            Ptr<UbTransportChannel> reserved =
+                endpoint.manager->CreateReservedTpEndpoint(endpoint.tpn);
+            Ptr<UbTransportChannel> inbound = endpoint.manager->ResolveInboundTp(
+                endpoint.peerTpn,
+                endpoint.tpn,
+                endpoint.sourceIp,
+                endpoint.destinationIp,
+                endpoint.priority);
+            Ptr<UbTransportChannel> resolved =
+                endpoint.manager->ResolveLiveTp(endpoint.tpn, endpoint.identity);
+            const bool reclaimed = endpoint.manager->ReclaimBackingState(endpoint.tpn);
+            if (reserved != nullptr || inbound != nullptr || resolved != nullptr || reclaimed)
+            {
+                std::_Exit(6);
+            }
+            const UbTransportEndpointStorageSnapshot after =
+                endpoint.manager->GetStorageSnapshot();
+            if (after.liveBackingObjects != endpoint.before.liveBackingObjects ||
+                after.dormantRecords != endpoint.before.dormantRecords ||
+                after.backingRehydrations != endpoint.before.backingRehydrations)
+            {
+                std::_Exit(7);
+            }
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFEXITED(missingOwnerStatus),
+                              1,
+                              "Missing partition ownership must fail closed without aborting");
+        NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(missingOwnerStatus),
+                              0,
+                              "Missing partition ownership must leave compact storage unchanged");
+
+        const int mappedOwnerStatus = RunInChildProcess([]() {
+            const DormantEndpoint endpoint = PrepareDormantEndpoint();
+            NodeList::GetNode(endpoint.identity.ownerNodeId)->SetSystemId(1);
+            MtpInterface::Enable(1, 2);
+            if (MtpInterface::RequireNodeLocalLpId(endpoint.identity.ownerNodeId) != 1)
+            {
+                std::_Exit(19);
+            }
+
+            MtpInterface::SetSystem(2);
+            if (endpoint.manager->ResolveLiveTp(endpoint.tpn, endpoint.identity) != nullptr)
+            {
+                std::_Exit(20);
+            }
+            UbTransportEndpointStorageSnapshot after = endpoint.manager->GetStorageSnapshot();
+            if (after.liveBackingObjects != endpoint.before.liveBackingObjects ||
+                after.dormantRecords != endpoint.before.dormantRecords ||
+                after.backingRehydrations != endpoint.before.backingRehydrations)
+            {
+                std::_Exit(21);
+            }
+
+            MtpInterface::SetSystem(0);
+            if (endpoint.manager->ResolveLiveTp(endpoint.tpn, endpoint.identity) != nullptr)
+            {
+                std::_Exit(22);
+            }
+            after = endpoint.manager->GetStorageSnapshot();
+            if (after.liveBackingObjects != endpoint.before.liveBackingObjects ||
+                after.dormantRecords != endpoint.before.dormantRecords ||
+                after.backingRehydrations != endpoint.before.backingRehydrations)
+            {
+                std::_Exit(23);
+            }
+
+            MtpInterface::SetSystem(1);
+            Ptr<UbTransportChannel> resolved =
+                endpoint.manager->ResolveLiveTp(endpoint.tpn, endpoint.identity);
+            if (resolved == nullptr || resolved->GetLifecycleOwner() != endpoint.identity)
+            {
+                std::_Exit(24);
+            }
+            after = endpoint.manager->GetStorageSnapshot();
+            if (after.liveBackingObjects != 1 || after.dormantRecords != 0 ||
+                after.backingRehydrations != endpoint.before.backingRehydrations + 1)
+            {
+                std::_Exit(25);
+            }
+
+            MtpInterface::SetSystem(2);
+            if (endpoint.manager->ReclaimBackingState(endpoint.tpn))
+            {
+                std::_Exit(26);
+            }
+            after = endpoint.manager->GetStorageSnapshot();
+            if (after.liveBackingObjects != 1 || after.dormantRecords != 0 ||
+                after.backingRehydrations != endpoint.before.backingRehydrations + 1)
+            {
+                std::_Exit(27);
+            }
+
+            MtpInterface::SetSystem(0);
+            if (endpoint.manager->ReclaimBackingState(endpoint.tpn))
+            {
+                std::_Exit(28);
+            }
+            after = endpoint.manager->GetStorageSnapshot();
+            if (after.liveBackingObjects != 1 || after.dormantRecords != 0 ||
+                after.backingRehydrations != endpoint.before.backingRehydrations + 1)
+            {
+                std::_Exit(29);
+            }
+
+            MtpInterface::SetSystem(1);
+            if (!endpoint.manager->ReclaimBackingState(endpoint.tpn))
+            {
+                std::_Exit(30);
+            }
+            after = endpoint.manager->GetStorageSnapshot();
+            if (after.liveBackingObjects != 0 || after.dormantRecords != 1 ||
+                after.backingRehydrations != endpoint.before.backingRehydrations + 1)
+            {
+                std::_Exit(31);
+            }
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFEXITED(mappedOwnerStatus),
+                              1,
+                              "Mapped MTP ownership checks must not abort");
+        NS_TEST_ASSERT_MSG_EQ(
+            WEXITSTATUS(mappedOwnerStatus),
+            0,
+            "Only the mapped worker owner may restore or reclaim exact TP backing");
+    }
+
+  private:
+    struct DormantEndpoint
+    {
+        Ptr<UbTransportChannelManager> manager;
+        uint32_t tpn{0};
+        uint32_t peerTpn{0};
+        Ipv4Address sourceIp;
+        Ipv4Address destinationIp;
+        UbPriority priority{UB_PRIORITY_DEFAULT};
+        UbLifecycleResourceIdentity identity;
+        UbTransportEndpointStorageSnapshot before;
+    };
+
+    static DormantEndpoint PrepareDormantEndpoint()
+    {
+        Config::Reset();
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(true));
+        GlobalValue::Bind("UB_CC_ALGO", StringValue("DCQCN"));
+        LocalTpTopology topo = BuildLocalTpTopology();
+        Ptr<UbController> sender = topo.sender->GetObject<UbController>();
+        Ptr<UbController> receiver = topo.receiver->GetObject<UbController>();
+        sender->GetTpConnManager()->ReserveTpnsForTraffic(true,
+                                                          topo.sender->GetId(),
+                                                          topo.receiver->GetId(),
+                                                          kUrmaWriteRegressionPriority);
+        const auto receiverTpns =
+            receiver->GetTpConnManager()->GetTpnsByPeerNodePriority(topo.receiver->GetId(),
+                                                                    topo.sender->GetId(),
+                                                                    kUrmaWriteRegressionPriority);
+        if (receiverTpns.size() != 1)
+        {
+            std::_Exit(10);
+        }
+        DormantEndpoint endpoint;
+        endpoint.manager = receiver->GetTransportChannelManager();
+        endpoint.tpn = receiverTpns[0].first;
+        Ptr<UbTransportChannel> tp = endpoint.manager->CreateReservedTpEndpoint(endpoint.tpn);
+        if (tp == nullptr)
+        {
+            std::_Exit(11);
+        }
+        endpoint.peerTpn = tp->GetDestTpn();
+        endpoint.sourceIp = tp->GetDip();
+        endpoint.destinationIp = tp->GetSip();
+        endpoint.priority = static_cast<UbPriority>(tp->GetPriority());
+        endpoint.identity = tp->GetLifecycleOwner();
+        if (!endpoint.manager->ReclaimBackingState(endpoint.tpn))
+        {
+            std::_Exit(12);
+        }
+        endpoint.before = endpoint.manager->GetStorageSnapshot();
+        if (endpoint.before.liveBackingObjects != 0 || endpoint.before.dormantRecords != 1)
+        {
+            std::_Exit(13);
+        }
+        return endpoint;
+    }
+};
+#endif
 
 class UbGlobalTpBackingPeakTracksConcurrentOwnersTest : public TestCase
 {
@@ -27560,6 +28127,9 @@ UbTpReservationTestSuite::UbTpReservationTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbDormantTpBackingReclaimsAndResolvesSameGenerationTest(),
                 TestCase::Duration::QUICK);
+#if defined(NS3_MTP) && !defined(_WIN32)
+    AddTestCase(new UbTpResolutionMtpOwnershipReadinessTest(), TestCase::Duration::QUICK);
+#endif
     AddTestCase(new UbGlobalTpBackingPeakTracksConcurrentOwnersTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDormantTpBackingPreservesCaqmStateTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDwrrReclaimsEveryReleasedTpInOneRoundTest(), TestCase::Duration::QUICK);
@@ -27746,6 +28316,12 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
     AddTestCase(new UbLifecycleAppRtpJettyLifetimeTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleTaskCompletionPrecedesJettyRetirementTest(),
                 TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleCtpCompletionDoesNotScheduleRtpCleanupTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleTaskCleanupSubmissionIsExactlyOnceTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecyclePendingTaskCleanupDoesNotRetainAppTest(),
+                TestCase::Duration::QUICK);
 #ifndef _WIN32
     AddTestCase(new UbLifecycleForceRemoveMissingUnackedFailsFastTest(),
                 TestCase::Duration::QUICK);
@@ -27884,6 +28460,7 @@ class UbParallelLifecycleFocusedTestSuite : public TestSuite
     {
         AddTestCase(new UbParallelLifecyclePacketOrderingTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbParallelConnectionLifecycleControlTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbTaskCleanupDeliveryDelaySelectionTest(), TestCase::Duration::QUICK);
     }
 };
 

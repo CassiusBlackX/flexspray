@@ -11,6 +11,9 @@
 #include "ub-utils.h"
 
 #include "ns3/log.h"
+#ifdef NS3_MTP
+#include "ns3/mtp-interface.h"
+#endif
 #include "ns3/node.h"
 #include "ns3/object-factory.h"
 
@@ -18,6 +21,33 @@
 
 namespace ns3
 {
+
+namespace
+{
+
+bool
+IsTpBackingExecutionOwner(uint32_t nodeId)
+{
+#ifdef NS3_MTP
+    if (MtpInterface::isEnabled())
+    {
+        if (!MtpInterface::isPartitioned())
+        {
+            return true;
+        }
+        const std::optional<uint32_t> ownerLp = MtpInterface::FindNodeLocalLpId(nodeId);
+        LogicalProcess* currentLp = MtpInterface::GetSystem();
+        if (!ownerLp.has_value() || currentLp == nullptr ||
+            *ownerLp != currentLp->GetSystemId())
+        {
+            return false;
+        }
+    }
+#endif
+    return UbParallelLifecycleAdapter::IsExecutionOwner(nodeId);
+}
+
+} // namespace
 
 NS_LOG_COMPONENT_DEFINE("UbTransportChannelManager");
 NS_OBJECT_ENSURE_REGISTERED(UbTransportChannelManager);
@@ -40,10 +70,16 @@ UbTransportChannelManager::Init(UbController* controller)
 }
 
 Ptr<UbTransportChannel>
-UbTransportChannelManager::GetTp(uint32_t tpn) const
+UbTransportChannelManager::PeekLiveTp(uint32_t tpn) const
 {
     const auto it = m_endpoints.find(tpn);
     return it == m_endpoints.end() ? nullptr : it->second.channel;
+}
+
+Ptr<UbTransportChannel>
+UbTransportChannelManager::GetTp(uint32_t tpn) const
+{
+    return PeekLiveTp(tpn);
 }
 
 bool
@@ -200,7 +236,7 @@ UbTransportChannelManager::CreateReservedTpEndpointLocked(uint32_t tpn, bool dra
     {
         Simulator::ScheduleNow(&UbTransportChannelManager::BeginDrainOnlyDestroy, this, tpn);
     }
-    return GetTp(tpn);
+    return PeekLiveTp(tpn);
 }
 
 void
@@ -281,6 +317,15 @@ UbTransportChannelManager::ReclaimBackingState(uint32_t tpn)
 bool
 UbTransportChannelManager::ReclaimBackingStateLocked(uint32_t tpn)
 {
+    if (m_controller == nullptr || m_controller->IsDisposing())
+    {
+        return false;
+    }
+    Ptr<Node> node = m_controller->GetObject<Node>();
+    if (node == nullptr || !IsTpBackingExecutionOwner(node->GetId()))
+    {
+        return false;
+    }
     const auto it = m_endpoints.find(tpn);
     if (it == m_endpoints.end() || it->second.state == EndpointState::DRAINING)
     {
@@ -293,8 +338,7 @@ UbTransportChannelManager::ReclaimBackingStateLocked(uint32_t tpn)
     }
 
     Ptr<UbTransportChannel> tp = record.channel;
-    Ptr<Node> node = m_controller->GetObject<Node>();
-    if (tp == nullptr || node == nullptr || tp->GetLifecycleOwner().ownerNodeId != node->GetId())
+    if (tp == nullptr || tp->GetLifecycleOwner().ownerNodeId != node->GetId())
     {
         return false;
     }
@@ -355,6 +399,16 @@ Ptr<UbTransportChannel>
 UbTransportChannelManager::ResolveLiveTpLocked(uint32_t tpn,
                                                const UbLifecycleResourceIdentity& expectedIdentity)
 {
+    if (m_controller == nullptr || m_controller->IsDisposing())
+    {
+        return nullptr;
+    }
+    Ptr<Node> node = m_controller->GetObject<Node>();
+    if (node == nullptr || expectedIdentity.ownerNodeId != node->GetId() ||
+        !IsTpBackingExecutionOwner(node->GetId()))
+    {
+        return nullptr;
+    }
     const auto it = m_endpoints.find(tpn);
     if (it == m_endpoints.end() || it->second.state == EndpointState::DRAINING)
     {
@@ -373,11 +427,6 @@ UbTransportChannelManager::ResolveLiveTpLocked(uint32_t tpn,
         return nullptr;
     }
 
-    Ptr<Node> node = m_controller->GetObject<Node>();
-    if (node == nullptr || expectedIdentity.ownerNodeId != node->GetId())
-    {
-        return nullptr;
-    }
     Ptr<UbLifecycleCoordinator> coordinator = UbLifecycleCoordinator::GetOrCreate(node);
     if (!coordinator->IsResourceActive(expectedIdentity))
     {

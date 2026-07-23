@@ -3743,7 +3743,7 @@ void UbUtils::SingleTpTraceConnect(uint32_t nodeId, uint32_t tpn)
 
     Ptr<Node> node = NodeList::GetNode(nodeId);
     Ptr<UbController> ubCtrl = node->GetObject<ns3::UbController>();
-    Ptr<UbTransportChannel> tp = ubCtrl->GetTransportChannelManager()->GetTp(tpn);
+    Ptr<UbTransportChannel> tp = ubCtrl->GetTransportChannelManager()->PeekLiveTp(tpn);
     if (tp) {
         if (PacketTraceEnable) {
             tp->TraceConnectWithoutContext("FirstPacketSendsNotify", MakeCallback(TpFirstPacketSendsNotify));

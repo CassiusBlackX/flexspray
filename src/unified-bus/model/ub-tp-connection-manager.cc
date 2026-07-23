@@ -1056,7 +1056,8 @@ TpConnectionManager::ApplyLifecycleControl(const UbLifecycleControlRecord& contr
         }
         const bool ownerObservedActive = (control.requestId & 0x100) != 0;
         const uint8_t slot = static_cast<uint8_t>(control.requestId & 0xff);
-        if (!ownerObservedActive && controller->GetTransportChannelManager()->GetTp(control.tpn) != nullptr)
+        if (!ownerObservedActive &&
+            controller->GetTransportChannelManager()->PeekLiveTp(control.tpn) != nullptr)
         {
             controller->GetTransportChannelManager()->DestroyTp(
                 control.tpn,

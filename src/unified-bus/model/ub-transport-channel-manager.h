@@ -41,6 +41,14 @@ class UbTransportChannelManager : public Object
                   uint32_t dstTpn,
                   Ptr<UbCongestionControl> congestionCtrl,
                   bool drainOnly = false);
+    /**
+     * Observe the live backing for a logical TP endpoint.
+     *
+     * This lookup never restores compact backing and returns null for missing or compact
+     * endpoints.
+     */
+    Ptr<UbTransportChannel> PeekLiveTp(uint32_t tpn) const;
+    /** Legacy source-compatible alias of PeekLiveTp(). */
     Ptr<UbTransportChannel> GetTp(uint32_t tpn) const;
     bool TryGetEndpointIdentity(uint32_t tpn, UbLifecycleResourceIdentity& identity) const;
     Ptr<UbTransportChannel> CreateReservedTpEndpoint(uint32_t tpn);
@@ -49,7 +57,13 @@ class UbTransportChannelManager : public Object
                                              Ipv4Address sourceIp,
                                              Ipv4Address destinationIp,
                                              UbPriority priority);
+    /** Release eligible backing only when called by the endpoint execution owner. */
     bool ReclaimBackingState(uint32_t tpn);
+    /**
+     * Restore or return live backing for the exact endpoint identity.
+     *
+     * Resolution fails without mutation unless called by the endpoint execution owner.
+     */
     Ptr<UbTransportChannel> ResolveLiveTp(uint32_t tpn,
                                           const UbLifecycleResourceIdentity& expectedIdentity);
     UbDestroyStatus DestroyTp(uint32_t tpn,
@@ -58,8 +72,10 @@ class UbTransportChannelManager : public Object
     void NotifyStateChanged(uint32_t tpn);
     void ForceDispose();
 
+    /** Return whether the logical endpoint record exists, including compact backing. */
     bool Contains(uint32_t tpn) const;
     uint32_t GetCount() const;
+    /** Return an observation snapshot; compact endpoint entries contain null backing. */
     std::map<uint32_t, Ptr<UbTransportChannel>> GetTpnMap() const;
     UbTransportEndpointStorageSnapshot GetStorageSnapshot() const;
 
