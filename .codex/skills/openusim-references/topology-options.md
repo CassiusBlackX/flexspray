@@ -20,7 +20,10 @@
 
 ## Core Principle
 
-**Always generate a new Python script** that calls `net_sim_builder.py` library. Do NOT copy or modify existing example scripts. Example scripts (`user_topo_*.py`) are code templates for reference only, not reusable tools.
+Use a Python script whose `build_topology()` returns `NetworkSimulationGraph`. The checked-in
+`user_topo_*.py` examples can be passed directly to the v2 CLI or copied and modified for a new
+experiment. Keep topology construction inside `build_topology()` and file-writing behavior inside
+`main()` so both structured and direct CSV paths remain available.
 
 ## Recommended choice format
 
@@ -66,7 +69,7 @@ Only offer the three most relevant template choices.
 - `col_num`: number of columns (integer)
 - Derived: `host_num = row_num * col_num`
 
-**Code template reference:** `scratch/ns-3-ub-tools/user_topo_4x4_2DFM.py` (for pattern only, do not copy)
+**Code template reference:** `scratch/ns-3-ub-tools/user_topo_4x4_2DFM.py`
 
 ### `clos-spine-leaf`
 
@@ -81,7 +84,7 @@ Only offer the three most relevant template choices.
 - Derived: `spine_sw_num = host_num // leaf_sw_num`
 - Constraint: `host_num % leaf_sw_num == 0` — **validate during planning; reject immediately if violated**
 
-**Code template reference:** `scratch/ns-3-ub-tools/user_topo_2layer_clos.py` (for pattern only, do not copy)
+**Code template reference:** `scratch/ns-3-ub-tools/user_topo_2layer_clos.py`
 
 ### `clos-fat-tree`
 
@@ -331,10 +334,17 @@ python3 scratch/ns-3-ub-tools/ub_tools.py topology build \
 ```
 
 The default Python function is `build_topology()`; append `:function` to select another one. The same
-command accepts a JSON/YAML file or an existing CSV case directory. Use `--case-format csv` for an
-explicit CSV output case. Use `topology check` for read-only validation and
+command accepts a JSON/YAML file or an existing CSV case directory. Use `--case-format csv` to
+generate the topology and full routing portion of a traditional CSV case, then add the shared runtime
+inputs before running it. CSV output rejects structured or mixed route generation; use `--export-csv`
+for a diagnostic snapshot instead. Use `topology check` for
+read-only validation and
 `topology plot --output FILE` for a plot of the same normalized physical
 graph. None of these commands starts ns-3.
+
+The original `user_topo_example.py`, `user_topo_2layer_clos.py`, and `user_topo_4x4_2DFM.py`
+scripts expose `build_topology()` and can be passed directly as v2 sources. Running those files
+directly still invokes their original full CSV generation path.
 
 The repository-level runner later consumes only that directory:
 
@@ -353,11 +363,14 @@ For an existing custom case whose `topology.csv` already assigns physical port I
 to `ub_tools.py topology build`. The shared loader preserves unused ports and parallel links; do not
 rebuild it with `add_netisim_edge()` plus `build_graph_config()`, which can repack ports.
 
-The unified CSV path is `topology build SOURCE --output-dir CASE --case-format csv`; the original
+The unified CSV path is `topology build SOURCE --output-dir CASE --case-format csv`; it materializes
+full routes for the existing CSV runner. The original
 Python scripts that call `build_graph_config()`, a route generator, and `write_config(...)` remain
 available as independent v1 entry points. Run either CSV result with
 `ub-quick-example --case-path=...`. `routing_rule_ranges.csv` is optional, but when present it is
 loaded with `routing_port_groups.csv` and `routing_rules.csv`.
+`case check` rejects a CSV case containing non-empty `routing_topology_rules.csv`, which the existing
+CSV runner does not consume.
 
 ### Common parameters
 

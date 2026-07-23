@@ -510,6 +510,22 @@ _Avoid_: utilization
 A communication pattern such as AllReduce, All-to-All, point-to-point, broadcast, incast, or permutation traffic.
 _Avoid_: application workflow
 
+**Collective operation**:
+One invocation of a workload primitive in which a communication group participates as logical ranks.
+_Avoid_: one transfer, one phase, collective algorithm
+
+**Collective data size**:
+The complete logical data object processed by one collective operation before its algorithm divides the data into blocks and phases.
+_Avoid_: one transfer size, one phase size, accumulated network traffic
+
+**Communication group**:
+The physical simulation nodes that participate as ranks in one collective operation.
+_Avoid_: UB domain, topology group
+
+**Rank placement**:
+The explicit association between a communication group rank and a physical simulation node ID.
+_Avoid_: rank mapping, topology role
+
 **Custom traffic skeleton**:
 A planned task-and-phase structure for a workload that cannot be mapped cleanly to a built-in generator.
 _Avoid_: arbitrary CSV

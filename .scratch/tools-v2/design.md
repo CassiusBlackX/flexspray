@@ -114,9 +114,10 @@ def build_topology() -> NetworkSimulationGraph:
 `--case-format` 第一版支持：
 
 - `structured`：写入结构化拓扑与路由工件，默认值；
-- `csv`：显式导出可检查的传统 CSV 快照。
+- `csv`：生成传统 CSV case 的拓扑与完整路由工件，固定使用 full 路由生成；运行前仍需补齐
+  `network_attribute.txt` 和 `traffic.csv`。
 
-CSV 是诊断或旧 case 输入格式，不是结构化编译的默认内部流转格式。
+`--export-csv` 才是诊断快照。CSV case 是旧 runner 的输入格式，不是结构化编译的默认内部流转格式。
 
 ### check 和 plot
 
