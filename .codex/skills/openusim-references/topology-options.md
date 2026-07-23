@@ -319,19 +319,21 @@ enumerates all shortest paths or materializes a complete baseline. A custom `pat
 the full baseline equivalence and content-cache path. The compiled result is atomically written to
 `structured_topology.txt` and `compressed_routing.bin`, with `structured_summary.json` recording its
 version, cache key, routing coverage, and binary dimensions. It writes no topology or routing CSV by
-default. Set `export_dir` only when a diagnostic snapshot is needed; set `verify_routes=True` only
+default. Set `--export-csv DIR` only when a diagnostic snapshot is needed; set `--verify-routes` only
 for exhaustive baseline comparison.
 
 The tools CLI prepares the same case directory:
 
 ```bash
 python3 scratch/ns-3-ub-tools/ub_tools.py topology build \
-  path/to/topology.py:build_topology \
-  --case-path path/to/case
+  path/to/topology.py \
+  --output-dir path/to/case
 ```
 
-The same command accepts a JSON/YAML file or an existing CSV case directory. Use `topology check`
-for read-only validation and `topology plot --output FILE` for a plot of the same normalized physical
+The default Python function is `build_topology()`; append `:function` to select another one. The same
+command accepts a JSON/YAML file or an existing CSV case directory. Use `--case-format csv` for an
+explicit CSV output case. Use `topology check` for read-only validation and
+`topology plot --output FILE` for a plot of the same normalized physical
 graph. None of these commands starts ns-3.
 
 The repository-level runner later consumes only that directory:
@@ -351,10 +353,11 @@ For an existing custom case whose `topology.csv` already assigns physical port I
 to `ub_tools.py topology build`. The shared loader preserves unused ports and parallel links; do not
 rebuild it with `add_netisim_edge()` plus `build_graph_config()`, which can repack ports.
 
-CSV generation remains a separate supported path: call `build_graph_config()`, a table or structured
-route generator, and `write_config(...)`, then run the normal `ub-quick-example --case-path=...`
-command. `routing_rule_ranges.csv` is optional, but when present it is loaded with
-`routing_port_groups.csv` and `routing_rules.csv`.
+The unified CSV path is `topology build SOURCE --output-dir CASE --case-format csv`; the original
+Python scripts that call `build_graph_config()`, a route generator, and `write_config(...)` remain
+available as independent v1 entry points. Run either CSV result with
+`ub-quick-example --case-path=...`. `routing_rule_ranges.csv` is optional, but when present it is
+loaded with `routing_port_groups.csv` and `routing_rules.csv`.
 
 ### Common parameters
 

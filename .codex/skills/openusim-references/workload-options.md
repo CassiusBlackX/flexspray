@@ -215,6 +215,16 @@ python3 scratch/ns-3-ub-tools/ub_tools.py traffic alltoallv \
 The old `traffic_maker/build_traffic.py` remains a separate v1 script for timestamped output, short
 options, and legacy algorithm names. v2 does not accept or proxy those options.
 
+Existing SimAI flow JSONL is imported through the same traffic command group:
+
+```bash
+python3 scratch/ns-3-ub-tools/ub_tools.py traffic convert-simai flows.jsonl \
+  --output {case_dir}/traffic.csv --host-count 8
+```
+
+This imports the existing flow DAG; it does not choose a collective algorithm. The command preserves
+an existing output unless `--overwrite` is explicitly supplied.
+
 #### Multi-collective composition
 
 To compose multiple collectives (e.g. AllReduce followed by All-to-All):
