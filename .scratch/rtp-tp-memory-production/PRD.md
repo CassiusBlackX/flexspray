@@ -1,6 +1,6 @@
 # Specification: Production RTP/TP Memory Compaction
 
-Status: ready-for-agent
+Status: complete
 
 Source baseline: `codex/unified-bus-lifecycle-implementation` at `aa2b26a`, with the
 default-off RTP/TP reclamation prototype used as feasibility evidence rather than as the

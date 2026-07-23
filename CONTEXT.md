@@ -282,21 +282,33 @@ _Avoid_: reopened TP channel, new TP generation
 One of the two lightweight endpoint positions fixed by a TP reservation, whether or not its runtime TP endpoint is materialized.
 _Avoid_: TP endpoint object, dynamically added connection child
 
-**TP runtime state reclamation**:
-A simulator-local release of reconstructible TP endpoint state while the TP reservation, TPN, endpoint identity, and current generation remain valid.
-_Avoid_: TP teardown, logical closure, endpoint destroy
+**TP backing compaction**:
+A simulator-local release of reconstructible TP endpoint backing while the TP reservation, TPN, endpoint identity, and current generation remain valid.
+_Avoid_: TP teardown, logical closure, endpoint destroy, paging
 
-**Congestion-control dormancy contract**:
-The algorithm-owned eligibility, snapshot, restore, idle-reset, and event-drain rules that permit congestion-control state to participate in TP runtime state reclamation without changing later control decisions.
+**Compact TP endpoint**:
+A logically present TP endpoint whose live backing has been replaced by the continuity state needed to restore that same endpoint generation. The implementation may call this state `DORMANT`; it is not a protocol state and does not mean that the endpoint was paged to disk.
+_Avoid_: idle TP, missing TP, closed TP, new TP generation
+
+**Live TP backing observation**:
+A non-mutating query of the currently materialized TP channel object. It may return no object for a compact TP endpoint even though the logical endpoint still exists.
+_Avoid_: TP existence query, implicit backing restoration
+
+**TP backing resolution**:
+The owner-local operation that returns live backing for an exact endpoint identity, restoring compact backing when necessary without changing its TPN, reservation, or generation.
+_Avoid_: endpoint creation, session restart, remote object borrowing
+
+**Congestion-control backing compaction contract**:
+The algorithm-owned eligibility, snapshot, restore, idle-reset, and event-drain rules that permit congestion-control state to participate in TP backing compaction without changing later control decisions. Implementation APIs may use `Dormancy` in their names.
 _Avoid_: congestion-control teardown, implicit reset, generic inactivity
 
 **TP endpoint destroy**:
 An explicit simulator-local management action that ends one local TP endpoint generation after its accepted work and packets drain, while its parent reservation may remain valid.
-_Avoid_: idle-state reclamation, connection teardown, automatic cleanup
+_Avoid_: TP backing compaction, connection teardown, automatic cleanup
 
 **TP connection teardown**:
 An explicit simulator-local management action that ends a TP reservation and session generation only after both endpoint slots and all old protocol work drain.
-_Avoid_: runtime state reclamation, task completion, idle timeout
+_Avoid_: TP backing compaction, task completion, idle timeout
 
 **Reserved TPN**:
 A TPN already assigned to a TP channel key for the local node, even if the local TP channel object has not been created yet.
@@ -535,6 +547,14 @@ _Avoid_: topology, packet trace
 **Task**:
 One application-level transfer or operation in a traffic workload.
 _Avoid_: packet, flow unless the discussion is explicitly flow-level
+
+**Local task completion (`LOCAL_COMPLETE`)**:
+The owner-side observation that the task's final transport work has completed. Transport latency and FCT evidence use this point; it does not by itself publish workload completion to other execution owners.
+_Avoid_: globally visible completion, dependency release
+
+**Visible task completion (`COMPLETE_VISIBLE`)**:
+The committed workload-state transition after which completion is canonically recorded and dependent work may be released. Task-scoped cleanup is scheduled only after this transition. It may share a simulation timestamp with local task completion, but it is ordered after it.
+_Avoid_: completion notification submission, all-worker barrier, transport FCT
 
 **Phase**:
 A workload grouping that controls which tasks can run together and which tasks wait for earlier work to finish.

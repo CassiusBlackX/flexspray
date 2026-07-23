@@ -1382,12 +1382,12 @@ store compact stable local references instead of repeated connection values.
 
 **Blocked by:** None - can start immediately.
 
-- [ ] Keep one authoritative canonical connection value and one authoritative value for each local
+- [x] Keep one authoritative canonical connection value and one authoritative value for each local
       endpoint view.
-- [ ] Preserve full-criteria, node, neighbor, local endpoint, erase, reuse, and ordered multipath
+- [x] Preserve full-criteria, node, neighbor, local endpoint, erase, reuse, and ordered multipath
       behavior through public manager APIs.
-- [ ] Do not store pointers, references, or iterators into relocatable or erasable containers.
-- [ ] Storage snapshots attribute canonical records and secondary index entries separately.
+- [x] Do not store pointers, references, or iterators into relocatable or erasable containers.
+- [x] Storage snapshots attribute canonical records and secondary index entries separately.
 
 ## Task 46: Compact unmaterialized TP reservations
 
@@ -1396,12 +1396,12 @@ materialization while avoiding active-endpoint-only allocations before a TP back
 
 **Blocked by:** T45 Deduplicate canonical connection indexes.
 
-- [ ] Preserve reservation order, both TPNs, selected ports, priority, owner, connection generation,
+- [x] Preserve reservation order, both TPNs, selected ports, priority, owner, connection generation,
       endpoint slot identity, and all local lookup views.
-- [ ] Allocate callback collections and active-endpoint-only state only when the corresponding
+- [x] Allocate callback collections and active-endpoint-only state only when the corresponding
       behavior first requires them.
-- [ ] An unmaterialized reserved endpoint remains distinguishable from an invalid or retired TPN.
-- [ ] Focused reservation, inbound validation, materialization, multipath-order, and reuse tests stay
+- [x] An unmaterialized reserved endpoint remains distinguishable from an invalid or retired TPN.
+- [x] Focused reservation, inbound validation, materialization, multipath-order, and reuse tests stay
       green without changing public case input or commands.
 
 ## Task 47: Make Jetty lifetime explicit and retire task-scoped Jetties
@@ -1411,12 +1411,12 @@ Jetties after their completion is already visible, without inferring ownership f
 
 **Blocked by:** None - can start immediately.
 
-- [ ] Creation paths classify each Jetty as `TASK_SCOPED` or `REUSABLE`; existing application
+- [x] Creation paths classify each Jetty as `TASK_SCOPED` or `REUSABLE`; existing application
       per-task creation is task-scoped while default, shared, and external paths remain reusable.
-- [ ] Task completion is published exactly once at the original timestamp before retirement starts,
+- [x] Task completion is published exactly once at the original timestamp before retirement starts,
       and cleanup is never a dependency barrier.
-- [ ] Active child work, bindings, tracked events, or lifecycle leases block Jetty destruction.
-- [ ] Reusable Jetties are not destroyed because they are temporarily idle or have a low reference
+- [x] Active child work, bindings, tracked events, or lifecycle leases block Jetty destruction.
+- [x] Reusable Jetties are not destroyed because they are temporarily idle or have a low reference
       count.
 
 ## Task 48: Add dormant TP backing records and manager seams
@@ -1427,16 +1427,16 @@ restore the same logical endpoint generation on demand through one reclaim/resol
 **Blocked by:** T44 Define congestion-control dormancy contracts; T46 Compact unmaterialized TP
 reservations.
 
-- [ ] `ReclaimBackingState` atomically checks the existing owner, generation, lease, packet, event,
+- [x] `ReclaimBackingState` atomically checks the existing owner, generation, lease, packet, event,
       queue, retransmission, pending-work, binding, and congestion-control eligibility predicates.
-- [ ] Reclamation releases only reconstructible backing state and preserves reservation, TPN,
+- [x] Reclamation releases only reconstructible backing state and preserves reservation, TPN,
       endpoint identity and generation, PSN/MSN continuity, receive and ordering state, bindings,
       and required congestion-control history.
-- [ ] Duplicate attempts are idempotent; a failed gate leaves the endpoint live and unchanged and
+- [x] Duplicate attempts are idempotent; a failed gate leaves the endpoint live and unchanged and
       does not schedule polling or a same-transition retry.
-- [ ] `ResolveLiveTp` reconstructs and restores the endpoint synchronously on its owner before work
+- [x] `ResolveLiveTp` reconstructs and restores the endpoint synchronously on its owner before work
       admission or packet consumption, without creating a new reservation or generation.
-- [ ] Focused tests cover reclaim rejection, same-generation rehydration, long-idle reuse,
+- [x] Focused tests cover reclaim rejection, same-generation rehydration, long-idle reuse,
       bidirectional traffic, retransmission, and both supported congestion-control algorithms.
 
 ## Task 49: Route TP use through owner-local reclaim and resolve
@@ -1446,15 +1446,15 @@ the unified manager seam, then reclaim eligible backing state only at an owner-l
 
 **Blocked by:** T48 Add dormant TP backing records and manager seams.
 
-- [ ] Sender, inbound, direct-TP, and TPG-member paths use one live-or-dormant resolution contract;
+- [x] Sender, inbound, direct-TP, and TPG-member paths use one live-or-dormant resolution contract;
       none treats a dormant backing object as an invalid TPN or stale same-generation binding.
-- [ ] Inbound resolution completes before packet consumption; sender, direct, and TPG resolution
+- [x] Inbound resolution completes before packet consumption; sender, direct, and TPG resolution
       completes before work admission.
-- [ ] Reclamation runs synchronously at the end of the current owner event after an owner-local idle
+- [x] Reclamation runs synchronously at the end of the current owner event after an owner-local idle
       or terminal transition, schedules no simulator event, and sends no remote lifecycle message.
-- [ ] A non-owner uses the existing owner-delivery path and never borrows a remote LP or directly
+- [x] A non-owner uses the existing owner-delivery path and never borrows a remote LP or directly
       mutates remote endpoint state.
-- [ ] A failed reclaim gate is reconsidered only after a later owner-local state transition.
+- [x] A failed reclaim gate is reconsidered only after a later owner-local state transition.
 
 ## Task 50: Prove production compaction and retire the prototype surface
 
@@ -1465,16 +1465,16 @@ RSS checkpoints, and remove the temporary prototype behavior without changing us
 connection indexes; T46 Compact unmaterialized TP reservations; T47 Make Jetty lifetime explicit
 and retire task-scoped Jetties; T49 Route TP use through owner-local reclaim and resolve.
 
-- [ ] Runtime storage evidence distinguishes reservations, canonical connections, index entries,
+- [x] Runtime storage evidence distinguishes reservations, canonical connections, index entries,
       live TP backing objects, dormant records, rehydrations, task-scoped and reusable Jetties, and
       peak live backing objects without changing existing row meanings.
-- [ ] Canonical local and MTP milestone artifacts match the admitted frozen baseline, including task
+- [x] Canonical local and MTP milestone artifacts match the admitted frozen baseline, including task
       `START` and `COMPLETE_VISIBLE` timestamps and ordering.
-- [ ] Long-idle reuse, repeated pair use, bidirectional traffic, multipath, loss/retransmission,
+- [x] Long-idle reuse, repeated pair use, bidirectional traffic, multipath, loss/retransmission,
       DCQCN, and CAQM cases pass their focused and milestone gates.
-- [ ] Guarded RSS, wall time, event count, and runtime-state counts are reported separately; RSS is
+- [x] Guarded RSS, wall time, event count, and runtime-state counts are reported separately; RSS is
       performance evidence rather than a correctness oracle.
-- [ ] The prototype flag and task-driven reclamation surface are removed or remain unsupported and
+- [x] The prototype flag and task-driven reclamation surface are removed or remain unsupported and
       fail-fast; normal case schemas, attributes, commands, trace contracts, routing, flow control,
       and dependency scheduling remain unchanged.
 

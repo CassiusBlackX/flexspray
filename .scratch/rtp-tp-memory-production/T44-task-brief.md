@@ -1,6 +1,6 @@
 # T44 Task Brief: Define Congestion-Control Dormancy Contracts
 
-Status: ready-for-agent
+Status: complete
 
 ## Authority And Scope
 
