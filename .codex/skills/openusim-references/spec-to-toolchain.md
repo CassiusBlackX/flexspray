@@ -51,7 +51,9 @@ its topology input or needs a manual route table.
    Then run: `python3 scratch/run_structured_topo_case.py --case-path {case_dir} --route-runtime-mode compressed-table-lookup`.
 5. **For CSV output**, use the same generated builder with
    `python3 scratch/ns-3-ub-tools/ub_tools.py topology build {case_dir}/generate_topology.py --output-dir {case_dir} --case-format csv`.
-   The original scripts that call `write_config(...)` remain the independent v1 path.
+   This defaults to full route generation; structured and mixed route generation require the
+   structured case format. The original scripts that call `write_config(...)` remain the independent
+   v1 path.
 6. After topology, `network_attribute.txt`, and `traffic.csv` are present, run
    `python3 scratch/ns-3-ub-tools/ub_tools.py case check {case_dir}`. The check requires those shared
    runtime inputs and also requires `routing_table.csv` for CSV cases.
