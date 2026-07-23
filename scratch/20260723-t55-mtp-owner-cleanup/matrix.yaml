@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "experiment_id": "t55-mtp-owner-cleanup",
+  "repetitions": 1,
+  "checkpoint_policy": "continue_full_matrix",
+  "manual_approval_gate": false,
+  "rows": [
+    {
+      "case_id": "t55-before",
+      "block_id": "owner-cleanup-restore",
+      "role": "control",
+      "case_dir": "cases/t55-before/input",
+      "changed_variable": "compaction_implementation_absent",
+      "fixed_controls": "t55-shared-input-and-runtime",
+      "prediction": "completes_and_produces_canonical_reference",
+      "falsification_signal": "nonzero_exit_or_guard_stop_or_incomplete_canonical",
+      "metric_checks": ["exit", "canonical"],
+      "expected_artifacts": ["run-records", "canonical-output"],
+      "parallel_group": "serial",
+      "checkpoint_ids": ["control-complete"]
+    },
+    {
+      "case_id": "t55-after",
+      "block_id": "owner-cleanup-restore",
+      "role": "treatment",
+      "case_dir": "cases/t55-after/input",
+      "changed_variable": "owner_local_tp_backing_compaction",
+      "fixed_controls": "t55-shared-input-and-runtime",
+      "prediction": "canonical_matches_and_aggregate_compaction_restore_is_observed",
+      "falsification_signal": "canonical_mismatch_or_invalid_aggregate_storage_witness",
+      "metric_checks": ["exit", "canonical", "runtime-storage-snapshot"],
+      "expected_artifacts": ["run-records", "canonical-output", "runtime-storage-snapshot"],
+      "parallel_group": "serial",
+      "checkpoint_ids": ["treatment-complete"]
+    }
+  ]
+}
