@@ -1,17 +1,32 @@
-# Issue Tracker: Local Markdown
+# 本地任务跟踪
 
-Engineering specifications and tickets for this repository are local Markdown artifacts. Do not call GitHub or GitLab issue APIs; the repository remote is GitCode and the installed engineering workflow has no native GitCode tracker adapter.
+功能设计和实施任务使用仓库内的本地 Markdown 文件，统一放在 `.scratch/`。
 
-## Conventions
+## 目录约定
 
-- One feature per directory under `.scratch/<feature-slug>/`.
-- The published specification is `.scratch/<feature-slug>/PRD.md`.
-- Triage state is recorded with a `Status:` line near the top of the artifact.
-- Comments and later decisions are appended under a `## Comments` heading when needed.
-- The installed ticket-breakdown workflow publishes an approved aggregate `tickets.md` at the repository root, in dependency order with explicit `Blocked by` edges.
+每项功能使用一个独立目录：
 
-## Operations
+```text
+.scratch/<功能名>/
+├── design.md
+├── tickets.md
+└── issues/
+    ├── 01-<任务名>.md
+    └── 02-<任务名>.md
+```
 
-- To publish a specification, create or update the feature's `PRD.md`.
-- To fetch a specification, read the referenced local Markdown file in full.
-- To publish tickets, wait for the required user approval, then write the aggregate `tickets.md`.
+- `design.md` 保存已确认的功能设计。
+- `tickets.md` 保存任务顺序和任务之间的阻塞关系。
+- `issues/` 中每个文件保存一个可以独立实施和验证的任务。
+- 每个任务在文件开头使用 `状态:` 记录当前状态。
+- 任务需要等待其他任务时，使用 `阻塞于: 01, 02` 记录前置任务编号。
+- 讨论记录追加到任务文件末尾的 `## 讨论`。
+
+## 常用操作
+
+- 新建功能：创建 `.scratch/<功能名>/` 及其设计和任务文件。
+- 获取任务：读取指定的任务文件，并确认所有前置任务已经完成。
+- 领取任务：把 `状态:` 改为 `进行中`。
+- 完成任务：记录验证结果，并把 `状态:` 改为 `已完成`。
+
+这里的任务状态与分流状态不是同一组词。分流状态用于判断任务是否已经准备好，实施状态用于记录任务是否正在执行。
