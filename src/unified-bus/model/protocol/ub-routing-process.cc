@@ -23,6 +23,22 @@ NS_LOG_COMPONENT_DEFINE("UbRoutingProcess");
 namespace
 {
 constexpr uint32_t kPrimaryRangeRoutePort = std::numeric_limits<uint32_t>::max();
+
+void
+RemoveIngressPort(uint16_t inPortId,
+                  std::vector<uint16_t>& shortestPorts,
+                  std::vector<uint16_t>& nonShortestPorts)
+{
+    if (inPortId == UINT16_MAX)
+    {
+        return;
+    }
+    auto remove = [inPortId](std::vector<uint16_t>& ports) {
+        ports.erase(std::remove(ports.begin(), ports.end(), inPortId), ports.end());
+    };
+    remove(shortestPorts);
+    remove(nonShortestPorts);
+}
 }
 
 /*-----------------------------------------UbRoutingProcess----------------------------------------------*/
@@ -268,7 +284,7 @@ void UbRoutingProcess::GetShortestOutPorts(const uint32_t destIP, std::vector<ui
 {
     outPorts.clear();
     std::vector<uint16_t> nonShortestPorts;
-    if (TryGetIndexedCandidates(destIP, UINT16_MAX, outPorts, nonShortestPorts))
+    if (TryGetIndexedCandidates(destIP, outPorts, nonShortestPorts))
     {
         return;
     }
@@ -284,7 +300,7 @@ void UbRoutingProcess::GetOtherOutPorts(const uint32_t destIP, std::vector<uint1
 {
     outPorts.clear();
     std::vector<uint16_t> shortestPorts;
-    if (TryGetIndexedCandidates(destIP, UINT16_MAX, shortestPorts, outPorts))
+    if (TryGetIndexedCandidates(destIP, shortestPorts, outPorts))
     {
         return;
     }
@@ -342,7 +358,6 @@ void UbRoutingProcess::GetNonShortestCandidates(uint32_t &dip, uint16_t inPortId
 
 bool
 UbRoutingProcess::TryGetIndexedCandidates(uint32_t dip,
-                                          uint16_t inPortId,
                                           std::vector<uint16_t>& shortestPorts,
                                           std::vector<uint16_t>& nonShortestPorts) const
 {
@@ -364,20 +379,11 @@ UbRoutingProcess::TryGetIndexedCandidates(uint32_t dip,
         return false;
     }
 
-    if (inPortId != UINT16_MAX)
-    {
-        auto removeInPort = [inPortId](std::vector<uint16_t>& ports) {
-            ports.erase(std::remove(ports.begin(), ports.end(), inPortId), ports.end());
-        };
-        removeInPort(shortestPorts);
-        removeInPort(nonShortestPorts);
-    }
     return true;
 }
 
 bool
 UbRoutingProcess::TryGetRuleCandidates(uint32_t dip,
-                                       uint16_t inPortId,
                                        std::vector<uint16_t>& shortestPorts,
                                        std::vector<uint16_t>& nonShortestPorts) const
 {
@@ -399,14 +405,33 @@ UbRoutingProcess::TryGetRuleCandidates(uint32_t dip,
         return false;
     }
 
-    if (inPortId != UINT16_MAX)
+    return true;
+}
+
+bool
+UbRoutingProcess::TryGetRuleCandidatesWithPrimaryFallback(
+    uint32_t dip,
+    uint16_t inPortId,
+    std::vector<uint16_t>& shortestPorts,
+    std::vector<uint16_t>& nonShortestPorts) const
+{
+    if (m_ruleRoutingTable == nullptr)
     {
-        auto removeInPort = [inPortId](std::vector<uint16_t>& ports) {
-            ports.erase(std::remove(ports.begin(), ports.end(), inPortId), ports.end());
-        };
-        removeInPort(shortestPorts);
-        removeInPort(nonShortestPorts);
+        return false;
     }
+    const Ipv4Address destinationIp(dip);
+    const uint32_t destinationNodeId = utils::IpToNodeId(destinationIp);
+    const uint32_t lastByte = dip & 0x000000ff;
+    const uint32_t destinationPortId = lastByte == 0 ? UbRuleDestination::ANY_PORT : lastByte - 1;
+    if (!m_ruleRoutingTable->TryLookupWithPrimaryFallback(m_nodeId,
+                                                          destinationNodeId,
+                                                          destinationPortId,
+                                                          shortestPorts,
+                                                          nonShortestPorts))
+    {
+        return false;
+    }
+    RemoveIngressPort(inPortId, shortestPorts, nonShortestPorts);
     return true;
 }
 
@@ -417,19 +442,18 @@ UbRoutingProcess::TryGetIndexedCandidatesWithPrimaryFallback(
     std::vector<uint16_t>& shortestPorts,
     std::vector<uint16_t>& nonShortestPorts) const
 {
-    const bool foundExact = TryGetIndexedCandidates(dip, inPortId, shortestPorts, nonShortestPorts);
+    const bool foundExact = TryGetIndexedCandidates(dip, shortestPorts, nonShortestPorts);
     const uint32_t primaryDip = Ipv4Address(dip).CombineMask(Ipv4Mask("255.255.255.0")).Get();
     if (primaryDip == dip || (foundExact && !shortestPorts.empty() && !nonShortestPorts.empty()))
     {
+        RemoveIngressPort(inPortId, shortestPorts, nonShortestPorts);
         return foundExact;
     }
 
     std::vector<uint16_t> primaryShortestPorts;
     std::vector<uint16_t> primaryNonShortestPorts;
-    const bool foundPrimary = TryGetIndexedCandidates(primaryDip,
-                                                      inPortId,
-                                                      primaryShortestPorts,
-                                                      primaryNonShortestPorts);
+    const bool foundPrimary =
+        TryGetIndexedCandidates(primaryDip, primaryShortestPorts, primaryNonShortestPorts);
     if (shortestPorts.empty())
     {
         shortestPorts = std::move(primaryShortestPorts);
@@ -438,6 +462,7 @@ UbRoutingProcess::TryGetIndexedCandidatesWithPrimaryFallback(
     {
         nonShortestPorts = std::move(primaryNonShortestPorts);
     }
+    RemoveIngressPort(inPortId, shortestPorts, nonShortestPorts);
     return foundExact || foundPrimary;
 }
 
@@ -445,12 +470,12 @@ const std::vector<uint16_t> UbRoutingProcess::GetAllOutPorts(const uint32_t dest
 {
     std::vector<uint16_t> res;
     std::vector<uint16_t> nonShortestPorts;
-    if (TryGetRuleCandidates(destIP, UINT16_MAX, res, nonShortestPorts))
+    if (TryGetRuleCandidates(destIP, res, nonShortestPorts))
     {
         res.insert(res.end(), nonShortestPorts.begin(), nonShortestPorts.end());
         return normalizePorts(res);
     }
-    if (TryGetIndexedCandidates(destIP, UINT16_MAX, res, nonShortestPorts))
+    if (TryGetIndexedCandidates(destIP, res, nonShortestPorts))
     {
         res.insert(res.end(), nonShortestPorts.begin(), nonShortestPorts.end());
         return normalizePorts(res);
@@ -723,7 +748,11 @@ int UbRoutingProcess::GetOutPort(RoutingKey &rtKey, bool &selectedShortestPath, 
     // 分别获取最短路径和非最短路径候选端口
     std::vector<uint16_t> shortestPorts;
     std::vector<uint16_t> nonShortestPorts;
-    const bool handledByRule = TryGetRuleCandidates(dip, inPort, shortestPorts, nonShortestPorts);
+    const bool handledByRule = TryGetRuleCandidatesWithPrimaryFallback(
+        dip,
+        inPort,
+        shortestPorts,
+        nonShortestPorts);
     const bool handledByIndex =
         !handledByRule &&
         TryGetIndexedCandidatesWithPrimaryFallback(dip, inPort, shortestPorts, nonShortestPorts);
