@@ -1,11 +1,13 @@
-# Triage Labels
+# 任务分流状态
 
-| Canonical role | Local status | Meaning |
+本地任务使用以下通俗状态。左侧是工程流程使用的固定角色，右侧是本仓库状态文字。
+
+| 固定角色 | 本仓库状态 | 含义 |
 | --- | --- | --- |
-| `needs-triage` | `needs-triage` | Maintainer evaluation is required. |
-| `needs-info` | `needs-info` | More information is required from the reporter. |
-| `ready-for-agent` | `ready-for-agent` | Fully specified and ready for an agent. |
-| `ready-for-human` | `ready-for-human` | Human implementation is required. |
-| `wontfix` | `wontfix` | The work will not be actioned. |
+| `needs-triage` | `待评估` | 需要维护者判断是否处理 |
+| `needs-info` | `待补充` | 缺少继续处理所需的信息 |
+| `ready-for-agent` | `可执行` | 信息完整，可以直接实施 |
+| `ready-for-human` | `需人工` | 需要人工完成或决定 |
+| `wontfix` | `不处理` | 已决定不继续处理 |
 
-Use the local status string exactly as shown in the right-hand column.
+工程流程提到固定角色时，使用本表右侧的状态文字。
