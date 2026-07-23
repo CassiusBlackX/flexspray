@@ -55,7 +55,7 @@ TryReclaimReleasedTp(uint32_t nodeId, Ptr<UbIngressQueue> ingressQueue)
     Ptr<UbTransportChannel> tp = DynamicCast<UbTransportChannel>(ingressQueue);
     Ptr<Node> node = NodeList::GetNode(nodeId);
     Ptr<UbController> controller = node == nullptr ? nullptr : node->GetObject<UbController>();
-    if (tp != nullptr && controller != nullptr)
+    if (tp != nullptr && controller != nullptr && tp->IsSafeForBackingReclaim())
     {
         controller->GetTransportChannelManager()->ReclaimBackingState(tp->GetTpn());
     }
