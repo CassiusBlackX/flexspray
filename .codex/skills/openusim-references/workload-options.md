@@ -195,11 +195,32 @@ taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOn
 
 Phase 1 depends on phase 0 completing first.
 
+#### Unified v2 collective CLI
+
+For new cases use `python3 scratch/ns-3-ub-tools/ub_tools.py traffic <collective>`. The command
+uses `--algorithm <name>` and defines `--data-size` as the complete logical collective object, not
+one transfer or accumulated wire bytes. Supported collectives are AllReduce, ReduceScatter,
+AllGather, AllToAll, and AllToAllV. AllToAllV supports `matrix`, `uniform`, and deterministic
+`random` distributions (`--seed` is required for random); matrix input is a square byte CSV and
+does not use `--data-size`.
+
+```bash
+python3 scratch/ns-3-ub-tools/ub_tools.py traffic allreduce \
+  --host-count 8 --data-size 1GB --algorithm ring --output-dir {case_dir}
+python3 scratch/ns-3-ub-tools/ub_tools.py traffic alltoallv \
+  --host-count 8 --data-size 1MB --algorithm pairwise --distribution uniform \
+  --output-dir {case_dir}
+```
+
+The old `traffic_maker/build_traffic.py` remains a separate v1 script for timestamped output, short
+options, and legacy algorithm names. v2 does not accept or proxy those options.
+
 #### Multi-collective composition
 
 To compose multiple collectives (e.g. AllReduce followed by All-to-All):
 
-1. Generate each collective's traffic.csv separately using `build_traffic.py` (or hand-write).
+1. Generate each collective's traffic.csv separately using `ub_tools.py traffic ...` (or the v1
+   script when old behavior is explicitly required).
 2. Merge into a single file:
    - **taskId**: renumber sequentially across the combined file (second collective continues from where first left off).
    - **phaseId**: renumber the second collective's phaseIds to not collide with the first (e.g. if first uses phases 0–5, second starts at 6).
@@ -208,7 +229,7 @@ To compose multiple collectives (e.g. AllReduce followed by All-to-All):
 
 ### `all2allv_maker.py` (experimental)
 
-`scratch/ns-3-ub-tools/traffic_maker/all2allv_maker.py` is a separate experimental tool for MoE-style non-uniform all-to-all traffic. It is **not integrated with `build_traffic.py`** and has different CLI arguments.
+`scratch/ns-3-ub-tools/traffic_maker/all2allv_maker.py` is a separate experimental tool for MoE-style non-uniform all-to-all traffic. It is **not integrated with the v1 or v2 collective CLI** and has different CLI arguments.
 
 - Algorithms: `all2allv` (all hosts send to all), `all2allv_random` (token-routing to random experts)
 - Intended for MoE dispatch patterns with shared/route experts
@@ -219,13 +240,16 @@ To compose multiple collectives (e.g. AllReduce followed by All-to-All):
 
 ## Mapping rule
 
-- Prefer the repo-native `scratch/ns-3-ub-tools/traffic_maker/build_traffic.py` path for supported collectives.
+- Prefer `scratch/ns-3-ub-tools/ub_tools.py traffic ...` for supported collectives in new cases.
 - If the user asks for `incast`, `hotspot`, or another custom pattern, do not invent a generator. Map it clearly to a supported workload if the mapping is defensible, or use `custom-traffic-skeleton` to hand-write a bounded CSV.
 - If the user has bounded but non-template workload facts, use `custom-traffic-skeleton` rather than forcing a misleading algorithm name.
 - If the user provides pseudocode or an algorithm description, follow the `custom-traffic-skeleton` decomposition steps to translate it into a concrete `traffic.csv`.
 - If the user wants to combine multiple collectives, follow the multi-collective composition rules above.
 
 ## CLI Interface
+
+The following section documents the retained v1 script. Use it only when its old names or timestamped
+directory behavior are required.
 
 Tool: `python3 scratch/ns-3-ub-tools/traffic_maker/build_traffic.py`
 
