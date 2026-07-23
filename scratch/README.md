@@ -58,8 +58,8 @@ builder:
 
 ```bash
 python3 scratch/ns-3-ub-tools/ub_tools.py topology build \
-  scratch/structured_topo_example.py:build_topology \
-  --case-path path/to/case
+  scratch/structured_topo_example.py \
+  --output-dir path/to/case
 ```
 
 The target case directory must already provide `network_attribute.txt`, `traffic.csv`, and an optional
@@ -113,7 +113,8 @@ Existing users do not need to rewrite every case:
 
 - An explicit CSV case remains unchanged and continues to run through `ub-quick-example`.
 - An existing Python `NetworkSimulationGraph` builder can return the graph instead of writing topology
-  and routing CSV, then use `ub_tools.py topology build path.py:function` for analysis and compilation.
+  and routing CSV, then use `ub_tools.py topology build path.py` for its default `build_topology()` or
+  `path.py:function` for another builder.
 - An existing custom CSV topology directory can be passed directly to `ub_tools.py topology build`;
   assigned physical ports, unused ports, and parallel links remain authoritative during analysis.
 
@@ -125,6 +126,10 @@ python3 scratch/ns-3-ub-tools/ub_tools.py traffic allreduce \
   --output-dir path/to/case
 python3 scratch/ns-3-ub-tools/ub_tools.py case check path/to/case
 ```
+
+`case show` can inspect topology artifacts while a case is still being assembled. `case check`
+validates the runnable directory and therefore requires `network_attribute.txt`, `traffic.csv`, and,
+for an explicit CSV case, `routing_table.csv`.
 
 For the old timestamped traffic output and old algorithm names, run
 `traffic_maker/build_traffic.py` directly. `ub_tools.py` intentionally does not accept v1 options.

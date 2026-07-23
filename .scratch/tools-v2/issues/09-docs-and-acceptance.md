@@ -33,8 +33,8 @@
 
 ## 验证结果
 
-- tools final commit: `e12024c fix(cli): close v2 review gaps`。
-- tools `unittest discover`: 126 tests passed; v1 representative traffic and trace fixtures pass.
+- tools final commit: `72d426b fix(cli): align v2 workflow with specification`。
+- tools `unittest discover`: 135 tests passed; v1 representative traffic and trace fixtures pass.
 - parent `tests.openusim_skills.test_skill_docs`: 19 tests passed。
 - Real prepared flow passed: `topology check` -> `topology build` -> `traffic allreduce` -> `case check`。
 - The flow uses files between tools and scratch; no stdin protocol, Python runtime import, or one-shot

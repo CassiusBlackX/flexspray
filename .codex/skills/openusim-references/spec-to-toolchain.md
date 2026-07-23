@@ -47,12 +47,14 @@ its topology input or needs a manual route table.
    - Adjust bandwidth/delay if specified in Network Overrides
    - Adjust priority_list if specified in Network Overrides
 4. **For prepared structured routing**, record two commands in the manifest. First prepare:
-   `python3 scratch/ns-3-ub-tools/ub_tools.py topology build {case_dir}/generate_topology.py:build_topology --case-path {case_dir} --route-generation mixed`.
+   `python3 scratch/ns-3-ub-tools/ub_tools.py topology build {case_dir}/generate_topology.py --output-dir {case_dir} --route-generation mixed`.
    Then run: `python3 scratch/run_structured_topo_case.py --case-path {case_dir} --route-runtime-mode compressed-table-lookup`.
-5. **For CSV input**, set `graph.output_dir`, call the selected route generator plus
-   `write_config(...)`, then run the script to create `node.csv`, `topology.csv`, `routing_table.csv`,
-   optional `routing_port_groups.csv` + `routing_rules.csv` +
-   `routing_rule_ranges.csv`, and optional `transport_channel.csv`.
+5. **For CSV output**, use the same generated builder with
+   `python3 scratch/ns-3-ub-tools/ub_tools.py topology build {case_dir}/generate_topology.py --output-dir {case_dir} --case-format csv`.
+   The original scripts that call `write_config(...)` remain the independent v1 path.
+6. After topology, `network_attribute.txt`, and `traffic.csv` are present, run
+   `python3 scratch/ns-3-ub-tools/ub_tools.py case check {case_dir}`. The check requires those shared
+   runtime inputs and also requires `routing_table.csv` for CSV cases.
 
 ### Important Rules
 
@@ -176,6 +178,11 @@ python3 scratch/ns-3-ub-tools/ub_tools.py traffic {collective} \
 The command writes `{case_dir}/traffic.csv` directly. Use `--placement-file` instead of
 `--group-layout` for an explicit group/rank/node mapping. AllToAll scatter additionally accepts
 `--peers-per-phase`; AllToAllV uses `--distribution` and its related matrix/seed options.
+
+For an existing SimAI flow export, use
+`python3 scratch/ns-3-ub-tools/ub_tools.py traffic convert-simai FLOW.jsonl --output {case_dir}/traffic.csv`.
+This is an import path rather than collective algorithm selection, and it refuses to overwrite an
+existing file unless `--overwrite` is supplied.
 
 ### Reference traffic.csv
 
