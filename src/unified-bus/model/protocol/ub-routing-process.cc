@@ -378,29 +378,33 @@ int UbRoutingProcess::SelectAdaptiveOutPort(RoutingKey &rtKey, const std::vector
     }
 
     uint64_t bestScore = std::numeric_limits<uint64_t>::max();
-    std::vector<uint16_t> bestPorts;
-    size_t bestIndex = 0;
+    std::vector<size_t> bestIndices;
     for (size_t i = 0; i < candidatePorts.size(); ++i) {
         uint16_t port = candidatePorts[i];
         uint64_t score = calcLoadScore(port);
         if (score < bestScore) {
             bestScore = score;
-            bestPorts.clear();
-            bestPorts.push_back(port);
-            bestIndex = i;
+            bestIndices.clear();
+            bestIndices.push_back(i);
         } else if (score == bestScore) {
-            bestPorts.push_back(port);
+            bestIndices.push_back(i);
         }
     }
 
-    if (bestPorts.empty()) {
+    if (bestIndices.empty()) {
         return -1;
     }
 
+    size_t selectedIndex = bestIndices.front();
+    if (bestIndices.size() > 1) {
+        const auto bytes = BuildHashBytes(rtKey);
+        const uint64_t hash = Hash64(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+        selectedIndex = bestIndices[hash % bestIndices.size()];
+    }
+
     // 通过索引判断是否选中最短路径
-    selectedShortestPath = (bestIndex < shortestPorts.size());
-    uint16_t selectedPort = bestPorts.front();
-    return selectedPort;
+    selectedShortestPath = (selectedIndex < shortestPorts.size());
+    return candidatePorts[selectedIndex];
 }
 
 std::array<uint8_t, 17>
