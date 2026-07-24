@@ -58,7 +58,15 @@ UbTransportChannelManager::GetTypeId()
     static TypeId tid = TypeId("ns3::UbTransportChannelManager")
                             .SetParent<Object>()
                             .SetGroupName("UnifiedBus")
-                            .AddConstructor<UbTransportChannelManager>();
+                            .AddConstructor<UbTransportChannelManager>()
+                            .AddAttribute(
+                                "EnableAutomaticBackingReclaim",
+                                "Release reconstructible TP backing after owner-local lifecycle "
+                                "gates pass.",
+                                BooleanValue(true),
+                                MakeBooleanAccessor(
+                                    &UbTransportChannelManager::m_enableAutomaticBackingReclaim),
+                                MakeBooleanChecker());
     return tid;
 }
 
@@ -317,6 +325,10 @@ UbTransportChannelManager::ReclaimBackingState(uint32_t tpn)
 bool
 UbTransportChannelManager::ReclaimBackingStateLocked(uint32_t tpn)
 {
+    if (!m_enableAutomaticBackingReclaim)
+    {
+        return false;
+    }
     if (m_controller == nullptr || m_controller->IsDisposing())
     {
         return false;

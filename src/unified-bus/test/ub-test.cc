@@ -21940,6 +21940,15 @@ class UbDormantTpBackingReclaimsAndResolvesSameGenerationTest : public TestCase
                               0u,
                               "Initial materialization is not a backing rehydration");
 
+        manager->SetAttribute("EnableAutomaticBackingReclaim", BooleanValue(false));
+        NS_TEST_ASSERT_MSG_EQ(manager->ReclaimBackingState(tpn),
+                              false,
+                              "Disabled automatic backing reclaim must retain live backing");
+        NS_TEST_ASSERT_MSG_EQ(manager->GetTp(tpn),
+                              first,
+                              "Disabled automatic backing reclaim must retain the original object");
+        manager->SetAttribute("EnableAutomaticBackingReclaim", BooleanValue(true));
+
         constexpr uint32_t directJettyNum = kUrmaWriteRegressionJettyNum + 101;
         Ptr<UbFunction> function = receiver->GetUbFunction();
         function->CreateJetty(topo.receiver->GetId(), topo.sender->GetId(), directJettyNum);

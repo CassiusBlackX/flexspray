@@ -504,8 +504,8 @@ class UbStructuredTopologyInstallTest : public TestCase
         std::stringstream payload;
         payload << "NS3_UB_STRUCTURED 3\n"
                 << "NODES 2\n"
-                << "0 DEVICE 1 1ns 2ns 0\n"
                 << "1 DEVICE 1 1ns 2ns 0\n"
+                << "0 DEVICE 1 1ns 2ns 0\n"
                 << "LINKS 1\n"
                 << "0 0 1 0 400Gbps 10ns\n"
                 << "TABLE 1\n"
@@ -523,6 +523,12 @@ class UbStructuredTopologyInstallTest : public TestCase
 
         const auto config = utils::UbUtils::ReadStructuredTopologyConfig(payload);
         NS_TEST_ASSERT_MSG_EQ(config.nodes.size(), 2u, "parser should retain both nodes");
+        NS_TEST_ASSERT_MSG_EQ(config.nodes[0].nodeId,
+                              0u,
+                              "parser should normalize unambiguous node record order");
+        NS_TEST_ASSERT_MSG_EQ(config.nodes[1].nodeId,
+                              1u,
+                              "parser should preserve canonical node identity after normalization");
         NS_TEST_ASSERT_MSG_EQ(config.tableRouteCount, 1u, "parser should count table routes");
         NS_TEST_ASSERT_MSG_EQ((config.tableNextHopIndex != nullptr),
                               true,
@@ -585,6 +591,17 @@ class UbStructuredTopologyRejectsInvalidInputTest : public TestCase
         });
         NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, "invalid physical port should abort");
         NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status), SIGABRT, "invalid port should use SIGABRT");
+
+        status = RunStructuredTestInChild([]() {
+            std::stringstream payload;
+            payload << "NS3_UB_STRUCTURED 1\n"
+                    << "NODES 2\n"
+                    << "0 DEVICE 1 1ns 0ns 0\n"
+                    << "0 DEVICE 1 1ns 0ns 0\n";
+            (void)utils::UbUtils::ReadStructuredTopologyConfig(payload);
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, "duplicate node IDs should abort");
+        NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status), SIGABRT, "duplicate IDs should use SIGABRT");
 
         status = RunStructuredTestInChild([]() {
             std::stringstream input(BuildCompressedRoutingFixture(true));

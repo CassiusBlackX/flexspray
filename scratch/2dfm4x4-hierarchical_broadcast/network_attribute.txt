@@ -1,6 +1,6 @@
 default ns3::UbApp::EnableMultiPath "false"
 default ns3::UbApp::RoutingType "PER_FLOW_SHORTEST_PATHS"
-default ns3::UbLink::Delay "+0ns"
+default ns3::UbLink::Delay "+10ns"
 default ns3::UbPort::UbDataRate "400Gbps"
 default ns3::UbPort::UbInterframeGap "+0ns"
 default ns3::UbPort::CbfcFlitLenByte "20"

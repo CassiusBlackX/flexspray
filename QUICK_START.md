@@ -154,7 +154,7 @@ ls scratch/2nodes_single-tp/output/
 
 - 2D FullMesh 4x4（分层广播）：
   ```bash
-  python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2dfm4x4-hierarchical_broadcast'
+  python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2dfm4x4-hierarchical_broadcast --dependency-visibility-delay=1ns'
   ```
 
 - Clos（32 hosts / 4 leafs / 8 spines, pod2pod）：
