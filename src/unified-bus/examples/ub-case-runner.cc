@@ -50,7 +50,7 @@ struct QuickExampleOptions
     std::string configPath;
     std::string structuredTopologyFile;
     std::string compressedRoutingFile;
-    std::string routeRuntimeMode = "compressed-table-lookup";
+    std::string routeRuntimeMode = "auto";
     std::string dependencyVisibilityDelay;
     std::string initialTaskStartOffsetWindow = "0ps";
     std::string linkDelayOffsetWindow = "0ps";
@@ -483,15 +483,38 @@ BuildScenarioFromConfig(const QuickExampleOptions& options, const RuntimeSelecti
                         "cannot open structured topology file: " << options.structuredTopologyFile);
         auto structuredConfig = UbUtils::ReadStructuredTopologyConfig(structuredInput);
         const bool usesPortableRoutingArtifacts = !structuredConfig.routingFingerprint.empty();
+        const bool hasStructuredRules = !structuredConfig.portGroups.empty() ||
+                                        !structuredConfig.routingRules.empty() ||
+                                        !structuredConfig.routingRangeRules.empty() ||
+                                        !structuredConfig.topologyRules.empty();
+        std::string routeRuntimeMode = options.routeRuntimeMode;
+        if (routeRuntimeMode == "auto")
+        {
+            if (usesPortableRoutingArtifacts)
+            {
+                routeRuntimeMode = !options.compressedRoutingFile.empty()
+                                       ? "compressed-table-lookup"
+                                       : "structured-rule-compute";
+                NS_ABORT_MSG_IF(routeRuntimeMode == "structured-rule-compute" &&
+                                    !hasStructuredRules,
+                                "route runtime auto mode found neither compressed routing nor "
+                                "executable rules");
+            }
+            else
+            {
+                routeRuntimeMode = hasStructuredRules ? "structured-rule-compute"
+                                                       : "compressed-table-lookup";
+            }
+        }
         if (!usesPortableRoutingArtifacts)
         {
             NS_ABORT_MSG_IF(!options.compressedRoutingFile.empty(),
                             "compressed routing artifacts require a version 4 prepared topology");
-            NS_ABORT_MSG_IF(options.routeRuntimeMode != "compressed-table-lookup" &&
-                                options.routeRuntimeMode != "structured-rule-compute",
-                            "unknown route runtime mode: " << options.routeRuntimeMode);
+            NS_ABORT_MSG_IF(routeRuntimeMode != "compressed-table-lookup" &&
+                                routeRuntimeMode != "structured-rule-compute",
+                            "unknown route runtime mode: " << routeRuntimeMode);
         }
-        else if (options.routeRuntimeMode == "compressed-table-lookup")
+        else if (routeRuntimeMode == "compressed-table-lookup")
         {
             NS_ABORT_MSG_IF(options.compressedRoutingFile.empty(),
                             "compressed-table-lookup requires --compressed-routing-file");
@@ -525,17 +548,14 @@ BuildScenarioFromConfig(const QuickExampleOptions& options, const RuntimeSelecti
             structuredConfig.routingRangeRules.clear();
             structuredConfig.topologyRules.clear();
         }
-        else if (options.routeRuntimeMode == "structured-rule-compute")
+        else if (routeRuntimeMode == "structured-rule-compute")
         {
-            NS_ABORT_MSG_IF(structuredConfig.portGroups.empty() &&
-                                structuredConfig.routingRules.empty() &&
-                                structuredConfig.routingRangeRules.empty() &&
-                                structuredConfig.topologyRules.empty(),
+            NS_ABORT_MSG_IF(!hasStructuredRules,
                             "structured-rule-compute is unavailable for this prepared case");
         }
         else
         {
-            NS_ABORT_MSG("unknown route runtime mode: " << options.routeRuntimeMode);
+            NS_ABORT_MSG("unknown route runtime mode: " << routeRuntimeMode);
         }
         offsetStats = UbUtils::Get()->InstallStructuredTopology(structuredConfig,
                                                                 linkOffsetWindow,
@@ -829,7 +849,7 @@ QuickExampleOptions ParseOptions(int argc, char* argv[])
                  "Read a prepared compressed next-hop index from this file",
                  options.compressedRoutingFile);
     cmd.AddValue("route-runtime-mode",
-                 "Runtime route lookup: compressed-table-lookup or structured-rule-compute",
+                 "Runtime route lookup: auto, compressed-table-lookup, or structured-rule-compute",
                  options.routeRuntimeMode);
     cmd.AddValue("mtp-threads",
                  "Number of MTP threads (0-1 to disable, >=2 to enable)",

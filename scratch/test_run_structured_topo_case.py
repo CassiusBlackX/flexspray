@@ -71,15 +71,27 @@ class StructuredCaseRunnerTest(unittest.TestCase):
         self.assertNotIn("--compressed-routing-file=", command[-1])
 
     @mock.patch.object(RUNNER.subprocess, "run")
-    def test_legacy_prepared_case_without_binary_is_forwarded_to_cpp(self, run):
+    def test_auto_runtime_forwards_binary_when_present(self, run):
         run.return_value.returncode = 0
-        case = self._case(None, include_compressed=False)
+        case = self._case("mixed")
 
         result = RUNNER.main(["--case-path", str(case)])
 
         self.assertEqual(result, 0)
         command = run.call_args.args[0]
-        self.assertIn("--route-runtime-mode=compressed-table-lookup", command[-1])
+        self.assertIn("--route-runtime-mode=auto", command[-1])
+        self.assertIn("--compressed-routing-file=", command[-1])
+
+    @mock.patch.object(RUNNER.subprocess, "run")
+    def test_auto_runtime_without_binary_is_forwarded_to_cpp(self, run):
+        run.return_value.returncode = 0
+        case = self._case("structured", include_compressed=False)
+
+        result = RUNNER.main(["--case-path", str(case)])
+
+        self.assertEqual(result, 0)
+        command = run.call_args.args[0]
+        self.assertIn("--route-runtime-mode=auto", command[-1])
         self.assertNotIn("--compressed-routing-file=", command[-1])
 
     @mock.patch.object(RUNNER.subprocess, "run")

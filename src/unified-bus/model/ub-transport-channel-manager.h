@@ -109,6 +109,7 @@ class UbTransportChannelManager : public Object
     void NotifyLifecycleStateChanged(UbLifecycleResourceIdentity identity);
 
     UbController* m_controller{nullptr};
+    bool m_enableAutomaticBackingReclaim{true};
     std::map<uint32_t, EndpointRecord> m_endpoints;
     uint32_t m_transportsCount{0};
     uint64_t m_backingRehydrations{0};

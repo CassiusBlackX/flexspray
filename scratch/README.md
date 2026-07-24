@@ -101,11 +101,19 @@ python3 scratch/ns-3-ub-tools/ub_tools.py trace parse \
 
 | 参数 | 行为 |
 | --- | --- |
+| `auto` | 默认值；有 `compressed_routing.bin` 时使用压缩索引，否则使用可用结构规则 |
 | `compressed-table-lookup` | 查询预先编译的 `compressed_routing.bin`，适用于三种生成方式 |
 | `structured-rule-compute` | 运行时根据结构规则计算，要求存在可用结构规则 |
 
 这些选项只改变候选端口的产生方式，不改变后续 HASH、round-robin、adaptive、packet spray
 和一次绕路行为。
+
+TP backing 生命周期：
+
+- `default ns3::UbTransportChannelManager::EnableAutomaticBackingReclaim "true"` 默认释放满足
+  owner-local 生命周期门控的可重建 backing；逻辑 TP 仍然保留。
+- 设置为 `false` 可关闭自动 backing 压缩，适合短小用例、性能 A/B 或仍依赖 live `GetTp()` 的
+  外部扩展；正常 TP/connection destroy 仍然执行。
 
 ## Case 目录
 

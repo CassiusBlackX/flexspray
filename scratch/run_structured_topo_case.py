@@ -31,9 +31,9 @@ def _parse_args(argv):
     parser.add_argument("--case-path", required=True, help="Prepared simulation case directory")
     parser.add_argument(
         "--route-runtime-mode",
-        choices=("compressed-table-lookup", "structured-rule-compute"),
-        default="compressed-table-lookup",
-        help="Runtime route lookup method (default: compressed-table-lookup)",
+        choices=("auto", "compressed-table-lookup", "structured-rule-compute"),
+        default="auto",
+        help="Runtime route lookup method (default: auto)",
     )
     args = parser.parse_args(launcher_arguments)
     args.simulator_args = simulator_arguments
@@ -72,7 +72,7 @@ def main(argv=None):
             *(
                 [f"--compressed-routing-file={compressed_routing_path}"]
                 if (
-                    args.route_runtime_mode == "compressed-table-lookup"
+                    args.route_runtime_mode in ("auto", "compressed-table-lookup")
                     and compressed_routing_path.is_file()
                 )
                 else []

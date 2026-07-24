@@ -90,10 +90,11 @@ route generation: `--case-format=csv` defaults to `--route-generation=full` and 
 `structured` or `mixed`. Use `--export-csv` only for a diagnostic snapshot; neither runner reads that
 snapshot as its case input.
 
-At runtime, `--route-runtime-mode=compressed-table-lookup|structured-rule-compute` chooses between a
+At runtime, `--route-runtime-mode=auto|compressed-table-lookup|structured-rule-compute` chooses between a
 direct lookup in `compressed_routing.bin` and evaluation of the verified rules in
-`structured_topology.txt`. The default compressed-table lookup works for all three generation
-strategies. Structured-rule compute requires a `structured` or `mixed` case with usable rules.
+`structured_topology.txt`. The default `auto` mode uses the compressed index when present and falls
+back to executable structured rules. Structured-rule compute requires a `structured` or `mixed` case
+with usable rules.
 Candidate generation changes, but the existing `GetOutPort()` path and HASH, round-robin, adaptive,
 and packet-spray selectors still choose the final physical output port.
 
@@ -249,6 +250,10 @@ Common UB attributes you’ll see (all names below come from `GetTypeId().AddAtt
   - `MultipathSelector` (`HASH64`, `CRC32`, `TOEPLITZ`, `ROUND_ROBIN`, `ADAPTIVE`, `INGRESS_PORT_STRIPE`)
 - Allocator:
   - `ns3::UbSwitchAllocator::AllocationTime` (Time)
+- TP backing lifecycle:
+  - `ns3::UbTransportChannelManager::EnableAutomaticBackingReclaim` (bool, default `true`)
+    - Keeps reconstructible TP backing live when set to `false`; logical TP lifecycle and explicit
+      destroy still run.
 - App & API LD/ST knobs:
   - `ns3::UbApp::EnableMultiPath` (bool), `ns3::UbApp::RoutingType`
   - `ns3::UbLdstApi::RoutingType`

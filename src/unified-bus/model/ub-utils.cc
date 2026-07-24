@@ -2961,6 +2961,17 @@ UbUtils::ReadStructuredTopologyConfig(std::istream& input)
         });
     }
 
+    // Normalize prepared files before table/index materialization. Node IDs remain the
+    // canonical identity; only an unambiguous record-order variation is repaired here.
+    std::sort(config.nodes.begin(), config.nodes.end(), [](const auto& left, const auto& right) {
+        return left.nodeId < right.nodeId;
+    });
+    for (uint32_t index = 0; index < config.nodes.size(); ++index)
+    {
+        NS_ABORT_MSG_IF(config.nodes[index].nodeId != index,
+                        "structured topology node IDs must be unique and contiguous from zero");
+    }
+
     ReadStructuredSection(input, "LINKS", count);
     config.links.reserve(count);
     for (uint32_t index = 0; index < count; ++index)
@@ -3010,9 +3021,6 @@ UbUtils::ReadStructuredTopologyConfig(std::istream& input)
                         "structured table route references an unknown node");
         const auto& current = config.nodes[route.currentNodeId];
         const auto& destination = config.nodes[route.destinationNodeId];
-        NS_ABORT_MSG_IF(current.nodeId != route.currentNodeId ||
-                            destination.nodeId != route.destinationNodeId,
-                        "structured table streaming requires node IDs in canonical order");
         NS_ABORT_MSG_IF(route.destinationPortId >= destination.portCount,
                         "structured table route destination port is outside the node port count");
         auto validatePorts = [&](const std::vector<uint16_t>& ports) {

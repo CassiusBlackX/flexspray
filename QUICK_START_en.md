@@ -152,7 +152,7 @@ The following are the available use case directories and corresponding run comma
 
 - 2D FullMesh 4x4 (hierarchical broadcast):
   ```bash
-  python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2dfm4x4-hierarchical_broadcast'
+  python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2dfm4x4-hierarchical_broadcast --dependency-visibility-delay=1ns'
   ```
 
 - Clos (32 hosts / 4 leafs / 8 spines, pod2pod):
