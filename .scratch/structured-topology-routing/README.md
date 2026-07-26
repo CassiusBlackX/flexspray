@@ -1,6 +1,6 @@
 # 结构化拓扑与规则路由优化总览
 
-状态：已在 `next` 落地并通过阶段验收
+状态：closure 分支已完成验收，等待合入 `next`
 更新日期：2026-07-22
 
 本文是该功能的入口文档，解释问题、设计演进、最终运行路径、正确性边界和当前性能结论。
@@ -20,6 +20,18 @@
 单纯压缩 CSV 连续范围只能减少文本重复，无法消除运行时逐目的对象。Nüwa 的可借鉴点是把
 路由视为编译问题：先验证物理图中的规则结构，再把结构和路由策略编译成共享规则。这里没有
 要求用户声明 leaf、spine、pod 等角色，也没有假设任意图都能被一种通用公式压缩。
+
+## Issue 16 覆盖范围
+
+本功能处理 Issue 16 中由拓扑与路由表示直接造成的成本：大规模路由离线生成、完整表输入、
+C++ 路由安装、路由常驻内存和候选端口查询。1024-NPU 结果证明这一部分可以从逐目的表改为
+拓扑规则或通用 packed index。
+
+它不限制同时激活的 traffic task，也不改变 AllToAll 的任务数量、报文数量或仿真语义；
+不负责压缩 RTP/Jetty/WQE、packet/event backlog 或 MTP worker 状态；也不自动关闭 trace。
+因此它是 Issue 16 的一个独立优化切片，不能单独证明 1024 x 1023 AllToAll 的 36 小时业务
+仿真和 400 GB 日志问题已经全部解决。后两项仍需要端到端 profile、任务与事件生命周期优化，
+以及按证据需要选择 trace 开关。
 
 ## 设计演进
 
@@ -91,9 +103,9 @@ prepared case 的正式交接文件是 `structured_topology.txt`。
 | 表示 | 数据来源 | 主要优势 | 主要代价 |
 | --- | --- | --- | --- |
 | 现有 CSV 表 | 逐目的或范围记录 | 行为稳定，支持手工路由 | 大规模逐目的存储和随机访问成本高 |
-| packed next-hop index | 精确 shortest/non-shortest 候选 | 不依赖拓扑类型，查找和内存都优于旧完整表 | 输入仍需包含完整 `TABLE`，解析成本仍存在 |
+| compressed next-hop index | 精确 shortest/non-shortest 候选 | 不依赖拓扑类型，查找和内存都优于旧完整表 | 比纯结构规则多占用约 69 MiB |
 | exact/range rules | 局部重复候选 | 支持部分结构和精确例外 | 压缩率依赖目的连续性 |
-| topology rules | 已验证坐标、分组和物理连接 | 不生成完整表，冷启动和内存最低 | 在线需要解释结构，当前仍慢于完整表查询 |
+| topology rules | 已验证坐标、分组和物理连接 | 不生成完整表，冷启动和内存最低 | 候选集合物化慢于压缩表 |
 | mixed | 每个查询项选择一种来源 | 任意图保持可运行，规则区域获得收益 | 需要清晰的查询归属和验证边界 |
 
 一个查询项由“当前节点、目的节点、目的 UB 端口”确定。命中一个来源后，该来源完整返回
@@ -134,51 +146,39 @@ shortest 和 non-shortest 候选；不同来源的候选集合不会合并。
 
 ### 运行时内存
 
-以下是创建真实 ns-3 节点、链路和 routing process 后，配置释放时的独立进程 RSS：
+最终 closure benchmark 创建真实 ns-3 节点、链路和 routing process，并使用同一查询语料：
 
 | 运行时表示 | RSS 中位数 | 相对旧完整表 |
 | --- | ---: | ---: |
-| 旧逐目的完整表 | 1,646.47 MiB | 基线 |
-| packed next-hop index | 400.02 MiB | -75.70% |
-| topology rules + next-hop index | 225.83 MiB | 约 -86.3% |
+| `main` 逐目的完整表 | 2,479.59 MiB | 基线 |
+| compressed table lookup | 289.52 MiB | -88.32% |
+| structured rule compute | 220.72 MiB | -91.10% |
 
-旧完整表与拓扑规则的活堆诊断分别为 874.52 MiB 和 201.05 MiB。RSS 差异大于活堆差异，
-因为 macOS allocator 在解析数百万对象后保留了地址空间。详细原始样本见
-[rss-1024-report.md](rss-1024-report.md) 和 `rss-1024-*.json`。
+对应活堆为 874.02、236.60 和 205.18 MiB。详细统一口径结果见
+[route-runtime-closure-report.md](route-runtime-closure-report.md)。旧专项报告保留为阶段历史，
+不能与本轮 current-main 数据交叉拼接。
 
 ### 冷启动
 
-不同专项进程得到两个互补结论：
-
-- 旧完整表到 packed index：解析加安装由 16.871 s 降到 4.147 s；
-- 同一 topology-rule lookup benchmark：完整表 setup 为 14.827 s，拓扑规则为 0.548 s。
-
-两组数字来自不同进程组，不能组合成精确的单项归因。它们共同证明：packed index 消除了
-逐节点安装成本，而 topology rules 进一步避免读取完整 `TABLE`。
+同一 benchmark 的三进程中位数显示：`main` 拓扑加路由加载为 6.335 s，直接二进制压缩表
+为 0.646 s，结构规则为 0.316 s。把完整结构文本再编译成同一个压缩索引需要 3.746 s，
+因此正式 prepared case 不再传递数百万条 `TABLE` 文本。
 
 ### 在线查询
 
-在线结果必须按表示分别解释。
+最终随机 corpus 覆盖全部 9,427,968 个有效查询关系，每项测量 500 万次：
 
-通用 packed index 相对旧完整表，在相同 corpus 的三进程中位数中更快：
+| 运行时表示 | candidate | HASH | ADAPTIVE |
+| --- | ---: | ---: | ---: |
+| `main` 完整表 | 241.55 ns | 380.33 ns | 504.20 ns |
+| compressed table lookup | 181.75 ns | 192.53 ns | 338.91 ns |
+| structured rule compute | 390.38 ns | 358.63 ns | 509.48 ns |
 
-| 查询分布 | packed candidate | 旧表 candidate | packed `GetOutPort` | 旧表 `GetOutPort` |
-| --- | ---: | ---: | ---: | ---: |
-| 全量顺序 | 18.08 ns | 25.30 ns | 54.83 ns | 131.98 ns |
-| 全量随机 | 76.03 ns | 170.86 ns | 206.24 ns | 601.89 ns |
-| workload endpoints | 18.47 ns | 40.74 ns | 49.72 ns | 145.39 ns |
-
-拓扑规则的 next-hop index 相对旧解释器已经明显加速，但仍慢于完整表：
-
-| 查询分布 | 完整表 candidate | topology index candidate | 完整表 `GetOutPort` | topology index `GetOutPort` |
-| --- | ---: | ---: | ---: | ---: |
-| 端口顺序 | 30.80 ns | 347.00 ns | 113.57 ns | 414.90 ns |
-| 端口随机 | 244.52 ns | 581.81 ns | 565.79 ns | 775.97 ns |
-| workload endpoints | 44.95 ns | 820.40 ns | 104.32 ns | 1,047.46 ns |
-
-因此当前结论不是“结构规则所有方面都更快”：它主要优化离线生成、输入体量、冷启动和
-常驻内存。packed index 则证明通用紧凑表可以同时改善内存和在线查找。workload corpus
-只有 endpoint 对，不包含逐包逐跳查询，不能解释成完整业务仿真的单包延迟。
+压缩表的三项速度分别为 main 的 1.33x、1.98x 和 1.49x。结构规则产生完整候选集合更慢；
+HASH 比 main 快 1.06x，ADAPTIVE 比 main 慢约 1%，但使用最低内存。压缩表和结构规则对六种
+selector 和 `selectedShortestPath` 生成的 100,000 查询签名字节一致；两者的
+candidate/HASH/ADAPTIVE common signature 也与 main 字节一致。该 microbenchmark
+隔离路由开销，不能直接解释成完整业务仿真的单包延迟。
 
 ## 行为是否改变
 
@@ -191,8 +191,14 @@ shortest 和 non-shortest 候选；不同来源的候选集合不会合并。
 - 入端口过滤、主地址回退和 CSV miss fallback 保持原边界；
 - non-shortest 被选中后，报文继续使用现有的一次绕路后强制最短语义。
 
+`mixed` 以“当前节点、目的节点”为最小来源边界：同一目的节点的各物理端口不会一部分由
+规则负责、另一部分由压缩表负责。这样 node-primary 聚合只在一个表示内完成，不会让规则
+遮蔽压缩表中的精确端口项。纯 topology-rule 查询继续走预编译拓扑索引，不扫描目的端口；
+只有包含 exact/range 的自定义路由在候选组缺失时才聚合具体目的端口。
+
 专项测试覆盖 exact/range 优先级、规则 miss 回退 CSV、packed exact port、node-primary
-聚合、重复行合并、非法协议、非法端口、真实 `GetOutPort()` 和原 routing-modes 回归。
+聚合、无手写 `ANY_PORT` 的 RR 对齐、重复行合并、非法协议、未连接端口、候选重复/重叠、
+非法 fingerprint、真实 `GetOutPort()` 和原 routing-modes 回归。
 
 ## 当前限制
 
@@ -214,6 +220,9 @@ shortest 和 non-shortest 候选；不同来源的候选集合不会合并。
 | 父仓库 `c71eb2a` | 设计稿、测试拓扑、benchmark、原始样本和阶段报告，增加 scratch runner |
 | 父仓库 `724e9fe` | `UbRuleRoutingTable`、`UbTopologyNextHopIndex`、`UbNextHopIndex` 和 C++ 安装路径 |
 | 父仓库 `71d5ad6` | prepared case 用户文档和统一领域用词 |
+| 父仓库 `0e060dd` | 优化总览、1024-NPU 结果索引和 ADR 0002 |
+| 子模块 `895335c` / 父仓库 `d530fb8` | README 改用仓库内现有组合拓扑示例 |
+| 父仓库 `3016963` | scratch 用户入口说明 CSV 与 prepared structured 两条并列路径 |
 
 ## 证据索引
 
@@ -225,5 +234,6 @@ shortest 和 non-shortest 候选；不同来源的候选集合不会合并。
 - [next-hop-index-production-report.md](next-hop-index-production-report.md)：通用 packed index 生产接入；
 - [rss-1024-report.md](rss-1024-report.md)：独立进程内存与初始化方法；
 - [lookup-1024-index-report.md](lookup-1024-index-report.md)：当前拓扑索引查询 benchmark；
+- [route-runtime-closure-report.md](route-runtime-closure-report.md)：最终统一口径的 main、压缩表、结构规则对比；
 - `*-summary.json` 和 `*-run*.json`：机器可读聚合结果与独立进程样本；
 - `benchmark_*.cc`、`benchmark_*.py`：可复核 benchmark 实现。

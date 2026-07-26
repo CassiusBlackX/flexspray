@@ -1,0 +1,15 @@
+<Test>
+  <Name>unified-bus-retrans-timer-scan</Name>
+  <Result>PASS</Result>
+  <Time real="0.004" user="0.000" system="0.000"/>
+  <Test>
+    <Name>UnifiedBus - running selective timer skips redundant outstanding scans</Name>
+    <Result>PASS</Result>
+    <Time real="0.004" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - GBN timer start and running fast path keep existing behavior</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+</Test>

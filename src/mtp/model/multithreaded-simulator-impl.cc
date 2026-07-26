@@ -430,24 +430,19 @@ MultithreadedSimulatorImpl::Partition()
         eventsToBeTransferred->Insert(next);
     }
 
-    // transfer events to new LPs
+    // Transfer node-context events through the same mailbox localization path used at runtime.
+    // Public events keep their existing UID domain and scheduler ownership.
     while (!eventsToBeTransferred->IsEmpty())
     {
         Scheduler::Event ev = eventsToBeTransferred->RemoveNext();
-        const uint32_t targetLpId = ev.key.m_context == Simulator::NO_CONTEXT
-                                        ? 0
-                                        : MtpInterface::RequireNodeLocalLpId(ev.key.m_context);
-        // invoke initialization events (at time 0) by their insertion order
-        // since changing the execution order of these events may cause error,
-        // they have to be invoked now rather than parallelly executed
-        if (ev.key.m_ts == 0)
+        if (ev.key.m_context == Simulator::NO_CONTEXT)
         {
-            MtpInterface::GetSystem(targetLpId)->InvokeNow(ev);
+            oldEvents->Insert(ev);
         }
         else
         {
-            MtpInterface::GetSystem(targetLpId)
-                ->ScheduleAt(ev.key.m_context, TimeStep(ev.key.m_ts), ev.impl);
+            const uint32_t targetLpId = MtpInterface::RequireNodeLocalLpId(ev.key.m_context);
+            MtpInterface::GetSystem(targetLpId)->EnqueueBootstrapEvent(ev);
         }
     }
 }

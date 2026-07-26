@@ -1,0 +1,1008 @@
+{
+  "automatic_tp_cleanup": "excluded",
+  "complex": {
+    "cases": {
+      "ctp-win1": {
+        "accepted": true,
+        "approved_cause": null,
+        "archived_replay_exact": {
+          "current": true,
+          "next": true
+        },
+        "changed_artifacts": [],
+        "classification": "byte-identical",
+        "current_lifecycle": {
+          "lifecycle_bytes": 1997719,
+          "lifecycle_record_count": 23408,
+          "lifecycle_unique_resource_generations": 1064
+        },
+        "task_ids": {
+          "current": [
+            "0",
+            "1",
+            "2",
+            "3"
+          ],
+          "next": [
+            "0",
+            "1",
+            "2",
+            "3"
+          ]
+        },
+        "task_observations": {
+          "current": [
+            {
+              "firstPacketSends(us)": "0.01",
+              "lastPacketACKs(us)": "930.35344",
+              "taskCompletesTime(us)": "930.35344",
+              "taskId": "0",
+              "taskThroughput(Gbps)": "9.0167"
+            },
+            {
+              "firstPacketSends(us)": "930.35344",
+              "lastPacketACKs(us)": "1846.53688",
+              "taskCompletesTime(us)": "1846.53688",
+              "taskId": "1",
+              "taskThroughput(Gbps)": "4.5429"
+            },
+            {
+              "firstPacketSends(us)": "1846.53688",
+              "lastPacketACKs(us)": "2777.35832",
+              "taskCompletesTime(us)": "2777.35832",
+              "taskId": "2",
+              "taskThroughput(Gbps)": "3.0204"
+            },
+            {
+              "firstPacketSends(us)": "2777.35832",
+              "lastPacketACKs(us)": "3667.86076",
+              "taskCompletesTime(us)": "3667.86076",
+              "taskId": "3",
+              "taskThroughput(Gbps)": "2.2871"
+            }
+          ],
+          "next": [
+            {
+              "firstPacketSends(us)": "0.01",
+              "lastPacketACKs(us)": "930.35344",
+              "taskCompletesTime(us)": "930.35344",
+              "taskId": "0",
+              "taskThroughput(Gbps)": "9.0167"
+            },
+            {
+              "firstPacketSends(us)": "930.35344",
+              "lastPacketACKs(us)": "1846.53688",
+              "taskCompletesTime(us)": "1846.53688",
+              "taskId": "1",
+              "taskThroughput(Gbps)": "4.5429"
+            },
+            {
+              "firstPacketSends(us)": "1846.53688",
+              "lastPacketACKs(us)": "2777.35832",
+              "taskCompletesTime(us)": "2777.35832",
+              "taskId": "2",
+              "taskThroughput(Gbps)": "3.0204"
+            },
+            {
+              "firstPacketSends(us)": "2777.35832",
+              "lastPacketACKs(us)": "3667.86076",
+              "taskCompletesTime(us)": "3667.86076",
+              "taskId": "3",
+              "taskThroughput(Gbps)": "2.2871"
+            }
+          ]
+        }
+      },
+      "ctp-win128": {
+        "accepted": true,
+        "approved_cause": null,
+        "archived_replay_exact": {
+          "current": true,
+          "next": true
+        },
+        "changed_artifacts": [],
+        "classification": "byte-identical",
+        "current_lifecycle": {
+          "lifecycle_bytes": 1974311,
+          "lifecycle_record_count": 23408,
+          "lifecycle_unique_resource_generations": 1064
+        },
+        "task_ids": {
+          "current": [
+            "0",
+            "1",
+            "2",
+            "3"
+          ],
+          "next": [
+            "0",
+            "1",
+            "2",
+            "3"
+          ]
+        },
+        "task_observations": {
+          "current": [
+            {
+              "firstPacketSends(us)": "0.01",
+              "lastPacketACKs(us)": "20.15192",
+              "taskCompletesTime(us)": "20.15192",
+              "taskId": "0",
+              "taskThroughput(Gbps)": "416.4751"
+            },
+            {
+              "firstPacketSends(us)": "12.39048",
+              "lastPacketACKs(us)": "36.74032",
+              "taskCompletesTime(us)": "36.74032",
+              "taskId": "1",
+              "taskThroughput(Gbps)": "228.3837"
+            },
+            {
+              "firstPacketSends(us)": "28.07424",
+              "lastPacketACKs(us)": "52.99816",
+              "taskCompletesTime(us)": "52.99816",
+              "taskId": "2",
+              "taskThroughput(Gbps)": "158.311"
+            },
+            {
+              "firstPacketSends(us)": "44.74528",
+              "lastPacketACKs(us)": "69.75184",
+              "taskCompletesTime(us)": "69.75184",
+              "taskId": "3",
+              "taskThroughput(Gbps)": "120.2809"
+            }
+          ],
+          "next": [
+            {
+              "firstPacketSends(us)": "0.01",
+              "lastPacketACKs(us)": "20.15192",
+              "taskCompletesTime(us)": "20.15192",
+              "taskId": "0",
+              "taskThroughput(Gbps)": "416.4751"
+            },
+            {
+              "firstPacketSends(us)": "12.39048",
+              "lastPacketACKs(us)": "36.74032",
+              "taskCompletesTime(us)": "36.74032",
+              "taskId": "1",
+              "taskThroughput(Gbps)": "228.3837"
+            },
+            {
+              "firstPacketSends(us)": "28.07424",
+              "lastPacketACKs(us)": "52.99816",
+              "taskCompletesTime(us)": "52.99816",
+              "taskId": "2",
+              "taskThroughput(Gbps)": "158.311"
+            },
+            {
+              "firstPacketSends(us)": "44.74528",
+              "lastPacketACKs(us)": "69.75184",
+              "taskCompletesTime(us)": "69.75184",
+              "taskId": "3",
+              "taskThroughput(Gbps)": "120.2809"
+            }
+          ]
+        }
+      },
+      "ctp-win4": {
+        "accepted": true,
+        "approved_cause": null,
+        "archived_replay_exact": {
+          "current": true,
+          "next": true
+        },
+        "changed_artifacts": [],
+        "classification": "byte-identical",
+        "current_lifecycle": {
+          "lifecycle_bytes": 1997719,
+          "lifecycle_record_count": 23408,
+          "lifecycle_unique_resource_generations": 1064
+        },
+        "task_ids": {
+          "current": [
+            "0",
+            "1",
+            "2",
+            "3"
+          ],
+          "next": [
+            "0",
+            "1",
+            "2",
+            "3"
+          ]
+        },
+        "task_observations": {
+          "current": [
+            {
+              "firstPacketSends(us)": "0.01",
+              "lastPacketACKs(us)": "331.85448",
+              "taskCompletesTime(us)": "331.85448",
+              "taskId": "0",
+              "taskThroughput(Gbps)": "25.2787"
+            },
+            {
+              "firstPacketSends(us)": "327.89348",
+              "lastPacketACKs(us)": "661.5244",
+              "taskCompletesTime(us)": "661.5244",
+              "taskId": "1",
+              "taskThroughput(Gbps)": "12.6809"
+            },
+            {
+              "firstPacketSends(us)": "656.35416",
+              "lastPacketACKs(us)": "997.48524",
+              "taskCompletesTime(us)": "997.48524",
+              "taskId": "2",
+              "taskThroughput(Gbps)": "8.4098"
+            },
+            {
+              "firstPacketSends(us)": "992.56524",
+              "lastPacketACKs(us)": "1318.99184",
+              "taskCompletesTime(us)": "1318.99184",
+              "taskId": "3",
+              "taskThroughput(Gbps)": "6.3599"
+            }
+          ],
+          "next": [
+            {
+              "firstPacketSends(us)": "0.01",
+              "lastPacketACKs(us)": "331.85448",
+              "taskCompletesTime(us)": "331.85448",
+              "taskId": "0",
+              "taskThroughput(Gbps)": "25.2787"
+            },
+            {
+              "firstPacketSends(us)": "327.89348",
+              "lastPacketACKs(us)": "661.5244",
+              "taskCompletesTime(us)": "661.5244",
+              "taskId": "1",
+              "taskThroughput(Gbps)": "12.6809"
+            },
+            {
+              "firstPacketSends(us)": "656.35416",
+              "lastPacketACKs(us)": "997.48524",
+              "taskCompletesTime(us)": "997.48524",
+              "taskId": "2",
+              "taskThroughput(Gbps)": "8.4098"
+            },
+            {
+              "firstPacketSends(us)": "992.56524",
+              "lastPacketACKs(us)": "1318.99184",
+              "taskCompletesTime(us)": "1318.99184",
+              "taskId": "3",
+              "taskThroughput(Gbps)": "6.3599"
+            }
+          ]
+        }
+      },
+      "rtp-gbn-double-drop": {
+        "accepted": true,
+        "approved_cause": "T06 cumulative-ACK descriptor-prefix retirement",
+        "archived_replay_exact": {
+          "current": true,
+          "next": true
+        },
+        "changed_artifacts": [
+          {
+            "current_sha256": "bdf853cde4b994f929149c5339deea76c0d5462b7440b96faf6b74d34e60ffbf",
+            "next_sha256": "3a428acc0242596cf0781bf2c83792a4cfd4de168426a6d998216c08a065ec14",
+            "path": "output/task_statistics.csv"
+          },
+          {
+            "current_sha256": "c40f8dedf60d2dc403469c8b40542c711ef9c2b382d7661d64aadfcd51a90eaf",
+            "next_sha256": "2d0ad3c2551dbc7f937d8e13588eeef297d958b2dbea486d124426127ab25e48",
+            "path": "output/throughput.csv"
+          },
+          {
+            "current_sha256": "bc3011ae11048ccd4beb4937f485a934e37046763077b1e0eea80ea248c8bbde",
+            "next_sha256": "53055f8d14d8c059f036ed6873f21c7643eb252ef4d60f57d3db65b8bb749481",
+            "path": "runlog/AllPacketTrace_ACK_node_0.tr"
+          },
+          {
+            "current_sha256": "d0ff1f6bdad743c0588939b0e18dc375f49d9c0ef222b36c234892a5eff4b32e",
+            "next_sha256": "c5b78e6c3a51ec0bc1a1764168e346141296a63fb5ddfe4ce7f86281ca8cee91",
+            "path": "runlog/AllPacketTrace_ACK_node_1.tr"
+          },
+          {
+            "current_sha256": "981d190ff5462214979963b295db3424914bb8478c42c76079f335d25cb72a39",
+            "next_sha256": "fec36a4435af65c9de78e30ecaeeb7bc712b70c1cbf2909eb86421ba10eb7ff1",
+            "path": "runlog/AllPacketTrace_PKT_node_0.tr"
+          },
+          {
+            "current_sha256": "705aced987587ffdcd268417dacb813684ea7719d0d67a57b53842b12c1976a8",
+            "next_sha256": "5d834cb8d547f7525647cf11712b0e9bfcaa1723775ca89193734a18f10539d5",
+            "path": "runlog/AllPacketTrace_PKT_node_1.tr"
+          },
+          {
+            "current_sha256": "8d159462da73b7eacf3bbe127e39975c121cab6aeb1b984a67fa115cfcfbf5e5",
+            "next_sha256": "44c86407873022f0d6c70c425bdf520f78db12149e1211b90eed44091e672fb0",
+            "path": "runlog/PacketTrace_node_0.tr"
+          },
+          {
+            "current_sha256": "358c1197753c4b760150cd0062510b4390029a08af0379e0f92cb873164fc050",
+            "next_sha256": "3bdca345ecd8b53359c7d100efeaa98d893415d87fa255085fd627080f3a3593",
+            "path": "runlog/PacketTrace_node_1.tr"
+          },
+          {
+            "current_sha256": "00439b3391fae69696f3ce47b5f9c64f562cab29b28521e28490084a667fbbf9",
+            "next_sha256": "a1db049c71e475b98a32e921970b4021112ad066a6a6050cf6e42c295ddd8dc0",
+            "path": "runlog/PacketTrace_node_2.tr"
+          },
+          {
+            "current_sha256": "4adfcce86c8589a39f7e99ced6f8ba0cbda644510e263a0b901f4a2441e0b2e3",
+            "next_sha256": "9cfaec6368ec3f2075dd23273ff75234239a0c6e704fe2a843364a1208bee422",
+            "path": "runlog/PortTrace_node_0_port_0.tr"
+          },
+          {
+            "current_sha256": "8f0c33d3fbdb5226c2505dbf61cecae2aaf8705e9aa5a4c611bb7a9830351079",
+            "next_sha256": "3892deaa4093a187b9d723263ca3ff4e9c13737030a172e7b7f428e7d05a0e57",
+            "path": "runlog/PortTrace_node_1_port_0.tr"
+          },
+          {
+            "current_sha256": "5592156fd09adf98f151088bc0d0c622f5d0e5a1c15cf1f8c564a5bd9fdf6488",
+            "next_sha256": "be9497e9a8093c0aa16a1d4a71d186943e974ccec776edcca157dddcfc9d6ba1",
+            "path": "runlog/PortTrace_node_2_port_0.tr"
+          },
+          {
+            "current_sha256": "996fa91e86d0c6dbf0c66e6fb73fb6aad9573ca5beace9967b1b966684f2e28b",
+            "next_sha256": "74f58e4ecf2fc490d2420da81b099ff092f979e0d9571d109c2335b371396eea",
+            "path": "runlog/PortTrace_node_2_port_1.tr"
+          },
+          {
+            "current_sha256": "21ccdfcac4d750aeebab5527c67be95103f6b63d3720a9cf38c8e3b9dcaaf7f0",
+            "next_sha256": "d007ea503eb9ef335fc3ef1325db5c025ec92504dc5ed0e62c00d280300b9913",
+            "path": "runlog/TaskTrace_node_0.tr"
+          },
+          {
+            "current_sha256": "c07288782e095f5355bc14e0c2389b0fe577337e15c5ef42f824c3f40205a3a7",
+            "next_sha256": "503ea0ea05b24e8e9ceda1381d594baa1e55d78b76044bd5437be9ff66168055",
+            "path": "runlog/TaskTrace_node_1.tr"
+          }
+        ],
+        "classification": "approved-existing-difference",
+        "current_lifecycle": {
+          "lifecycle_bytes": 56701,
+          "lifecycle_record_count": 682,
+          "lifecycle_unique_resource_generations": 31
+        },
+        "task_ids": {
+          "current": [
+            "0"
+          ],
+          "next": [
+            "0"
+          ]
+        },
+        "task_observations": {
+          "current": [
+            {
+              "firstPacketSends(us)": "0.011",
+              "lastPacketACKs(us)": "28.5851",
+              "taskCompletesTime(us)": "28.54062",
+              "taskId": "0",
+              "taskThroughput(Gbps)": "73.5053"
+            }
+          ],
+          "next": [
+            {
+              "firstPacketSends(us)": "0.011",
+              "lastPacketACKs(us)": "28.66858",
+              "taskCompletesTime(us)": "28.6241",
+              "taskId": "0",
+              "taskThroughput(Gbps)": "73.2909"
+            }
+          ]
+        }
+      },
+      "rtp-shared-win1": {
+        "accepted": true,
+        "approved_cause": "T05 same-timestamp TaskTrace order only",
+        "archived_replay_exact": {
+          "current": true,
+          "next": true
+        },
+        "changed_artifacts": [
+          {
+            "current_sha256": "b00543bbd4b54662182456f2f7bbea2ecb3c08fc1e98c04e72ae65d824c476b5",
+            "next_sha256": "20b47ff2dcc0da2b16119570b5c1d8d721651031cf16347152813bf867fe7b05",
+            "path": "runlog/TaskTrace_node_0.tr"
+          },
+          {
+            "current_sha256": "06d77e8c1d4360636e62f3b57e886322d19b40ece4371708a19afd92dcc82de6",
+            "next_sha256": "792d25c4fc2db26e1bfa29f1c67836c8eef10d6f5ba4fdd219a174c264c4eba5",
+            "path": "runlog/TaskTrace_node_1.tr"
+          }
+        ],
+        "classification": "approved-existing-difference",
+        "current_lifecycle": {
+          "lifecycle_bytes": 43426,
+          "lifecycle_record_count": 506,
+          "lifecycle_unique_resource_generations": 23
+        },
+        "task_ids": {
+          "current": [
+            "0",
+            "1",
+            "2",
+            "3"
+          ],
+          "next": [
+            "0",
+            "1",
+            "2",
+            "3"
+          ]
+        },
+        "task_observations": {
+          "current": [
+            {
+              "firstPacketSends(us)": "0.011",
+              "lastPacketACKs(us)": "5.336393",
+              "taskCompletesTime(us)": "5.226236",
+              "taskId": "0",
+              "taskThroughput(Gbps)": "100.5108"
+            },
+            {
+              "firstPacketSends(us)": "0.011",
+              "lastPacketACKs(us)": "10.002996",
+              "taskCompletesTime(us)": "9.93735",
+              "taskId": "1",
+              "taskThroughput(Gbps)": "52.8125"
+            },
+            {
+              "firstPacketSends(us)": "4.918776",
+              "lastPacketACKs(us)": "10.245086",
+              "taskCompletesTime(us)": "10.17944",
+              "taskId": "2",
+              "taskThroughput(Gbps)": "51.5552"
+            },
+            {
+              "firstPacketSends(us)": "0.25309",
+              "lastPacketACKs(us)": "10.179523",
+              "taskCompletesTime(us)": "10.069366",
+              "taskId": "3",
+              "taskThroughput(Gbps)": "52.1194"
+            }
+          ],
+          "next": [
+            {
+              "firstPacketSends(us)": "0.011",
+              "lastPacketACKs(us)": "5.336393",
+              "taskCompletesTime(us)": "5.226236",
+              "taskId": "0",
+              "taskThroughput(Gbps)": "100.5108"
+            },
+            {
+              "firstPacketSends(us)": "0.011",
+              "lastPacketACKs(us)": "10.002996",
+              "taskCompletesTime(us)": "9.93735",
+              "taskId": "1",
+              "taskThroughput(Gbps)": "52.8125"
+            },
+            {
+              "firstPacketSends(us)": "4.918776",
+              "lastPacketACKs(us)": "10.245086",
+              "taskCompletesTime(us)": "10.17944",
+              "taskId": "2",
+              "taskThroughput(Gbps)": "51.5552"
+            },
+            {
+              "firstPacketSends(us)": "0.25309",
+              "lastPacketACKs(us)": "10.179523",
+              "taskCompletesTime(us)": "10.069366",
+              "taskId": "3",
+              "taskThroughput(Gbps)": "52.1194"
+            }
+          ]
+        }
+      },
+      "rtp-tpg-gbn": {
+        "accepted": true,
+        "approved_cause": "T14 resolved-generation TPG attribution and pinning",
+        "archived_replay_exact": {
+          "current": true,
+          "next": true
+        },
+        "changed_artifacts": [
+          {
+            "current_sha256": "0b072d8319ee9e6443debacf56dc12db5b9704f92634f0ece34e1368ee0610dd",
+            "next_sha256": "06dee9b386565bf63b7e55e6e930b9e109c37ebd543a15644e0a68f0d2ad7e01",
+            "path": "output/task_statistics.csv"
+          },
+          {
+            "current_sha256": "e37efe7a6002dd1cb2c9f7670a22062c327dee9c40a20c9a2f7d87dbd659363f",
+            "next_sha256": "c30911e2f5d5242237b8958a9c9e20523255908d1f29105c276ec57c6543b0bb",
+            "path": "runlog/PacketTrace_node_0.tr"
+          },
+          {
+            "current_sha256": "a2e19bd1f40a252ae93a3eb22f60f5bba23b31561c4fe405055eac6f9015ec6c",
+            "next_sha256": "1dec27294c633103024dedd641549f8bd65d661dd9e6b8a54110e0a5f3666d07",
+            "path": "runlog/PacketTrace_node_1.tr"
+          },
+          {
+            "current_sha256": "dbe86a99473cac58a410d59f4977331372315def4c5589ea2300e19c71b88a9e",
+            "next_sha256": "99197015169ed7e82a2a697be60e334b45df8e9835d8d1ba98d2d2bccede49c0",
+            "path": "runlog/TaskTrace_node_0.tr"
+          },
+          {
+            "current_sha256": "cb32fecfa245b827a3be163761b49fa87224d92cdbfdf8c1e94d0f9694e98d67",
+            "next_sha256": "d990e4b816ec6d3fc30792e0cf7abb755f1fd04106d4082bb921d661207d3f04",
+            "path": "runlog/TaskTrace_node_1.tr"
+          }
+        ],
+        "classification": "approved-existing-difference",
+        "current_lifecycle": {
+          "lifecycle_bytes": 125128,
+          "lifecycle_record_count": 1452,
+          "lifecycle_unique_resource_generations": 66
+        },
+        "task_ids": {
+          "current": [
+            "0",
+            "1"
+          ],
+          "next": [
+            "0",
+            "1"
+          ]
+        },
+        "task_observations": {
+          "current": [
+            {
+              "firstPacketSends(us)": "0.011",
+              "lastPacketACKs(us)": "27.57628",
+              "taskCompletesTime(us)": "27.28718",
+              "taskId": "0",
+              "taskThroughput(Gbps)": "307.5321"
+            },
+            {
+              "firstPacketSends(us)": "0.011",
+              "lastPacketACKs(us)": "28.66858",
+              "taskCompletesTime(us)": "28.6241",
+              "taskId": "1",
+              "taskThroughput(Gbps)": "293.1634"
+            }
+          ],
+          "next": [
+            {
+              "firstPacketSends(us)": "0.011",
+              "lastPacketACKs(us)": "27.57628",
+              "taskCompletesTime(us)": "27.28718",
+              "taskId": "0",
+              "taskThroughput(Gbps)": "307.5321"
+            },
+            {
+              "firstPacketSends(us)": "1.2662",
+              "lastPacketACKs(us)": "28.66858",
+              "taskCompletesTime(us)": "28.6241",
+              "taskId": "1",
+              "taskThroughput(Gbps)": "293.1634"
+            }
+          ]
+        }
+      }
+    },
+    "ctp_non_degenerate_and_matched": true,
+    "ctp_window_effect": {
+      "current": {
+        "1": [
+          "930.35344",
+          "1846.53688",
+          "2777.35832",
+          "3667.86076"
+        ],
+        "128": [
+          "20.15192",
+          "36.74032",
+          "52.99816",
+          "69.75184"
+        ],
+        "4": [
+          "331.85448",
+          "661.5244",
+          "997.48524",
+          "1318.99184"
+        ]
+      },
+      "next": {
+        "1": [
+          "930.35344",
+          "1846.53688",
+          "2777.35832",
+          "3667.86076"
+        ],
+        "128": [
+          "20.15192",
+          "36.74032",
+          "52.99816",
+          "69.75184"
+        ],
+        "4": [
+          "331.85448",
+          "661.5244",
+          "997.48524",
+          "1318.99184"
+        ]
+      }
+    },
+    "status": "passed"
+  },
+  "p01": {
+    "gates": {
+      "main": {
+        "median_paired_rss_delta_percent": 14.86374896779521,
+        "median_paired_wall_delta_percent": 16.639708080779258,
+        "passed": false,
+        "rss_within_10_percent": false,
+        "wall_within_10_percent": false
+      },
+      "next": {
+        "median_paired_rss_delta_percent": 8.417770849571315,
+        "median_paired_wall_delta_percent": 7.246681101424723,
+        "passed": true,
+        "rss_within_10_percent": true,
+        "wall_within_10_percent": true
+      }
+    },
+    "paired_rounds": [
+      {
+        "current_vs_main_rss_percent": 14.66227347611202,
+        "current_vs_main_wall_percent": 16.639708080779258,
+        "current_vs_next_rss_percent": 8.326848249027229,
+        "current_vs_next_wall_percent": 7.017392760634933,
+        "round": 1
+      },
+      {
+        "current_vs_main_rss_percent": 16.915422885572127,
+        "current_vs_main_wall_percent": 18.123591205002466,
+        "current_vs_next_rss_percent": 9.557109557109555,
+        "current_vs_next_wall_percent": 9.933434156033606,
+        "round": 2
+      },
+      {
+        "current_vs_main_rss_percent": 14.747307373653683,
+        "current_vs_main_wall_percent": 18.058377304419416,
+        "current_vs_next_rss_percent": 7.614607614607616,
+        "current_vs_next_wall_percent": 10.430167917054245,
+        "round": 3
+      },
+      {
+        "current_vs_main_rss_percent": 15.89403973509933,
+        "current_vs_main_wall_percent": 16.636876596713137,
+        "current_vs_next_rss_percent": 8.780108780108776,
+        "current_vs_next_wall_percent": 5.307717109085508,
+        "round": 4
+      },
+      {
+        "current_vs_main_rss_percent": 14.86374896779521,
+        "current_vs_main_wall_percent": 4.623071773135146,
+        "current_vs_next_rss_percent": 8.417770849571315,
+        "current_vs_next_wall_percent": 7.246681101424723,
+        "round": 5
+      }
+    ],
+    "performance_passed": false,
+    "roles": {
+      "current": {
+        "median_block_input_operations": 0,
+        "median_block_output_operations": 0,
+        "median_input_transport_resource_count": 192,
+        "median_lifecycle_bytes": 0,
+        "median_lifecycle_record_count": 0,
+        "median_lifecycle_unique_resource_generations": 0,
+        "median_page_faults": 135,
+        "median_peak_rss_bytes": 22806528,
+        "median_port_trace_event_count": 512640,
+        "median_shared_trace_bytes": 46780490,
+        "median_shared_trace_line_count": 896664,
+        "median_system_seconds": 0.06,
+        "median_task_output_count": 2,
+        "median_task_trace_event_count": 8,
+        "median_time_l_wall_seconds": 1.71,
+        "median_user_seconds": 1.63,
+        "median_wall_seconds": 1.7203351249918342
+      },
+      "main": {
+        "median_block_input_operations": 0,
+        "median_block_output_operations": 0,
+        "median_input_transport_resource_count": 192,
+        "median_lifecycle_bytes": 0,
+        "median_lifecycle_record_count": 0,
+        "median_lifecycle_unique_resource_generations": 0,
+        "median_page_faults": 191,
+        "median_peak_rss_bytes": 19791872,
+        "median_port_trace_event_count": 512640,
+        "median_shared_trace_bytes": 46780490,
+        "median_shared_trace_line_count": 896664,
+        "median_system_seconds": 0.06,
+        "median_task_output_count": 2,
+        "median_task_trace_event_count": 8,
+        "median_time_l_wall_seconds": 1.47,
+        "median_user_seconds": 1.38,
+        "median_wall_seconds": 1.474949583003763
+      },
+      "next": {
+        "median_block_input_operations": 0,
+        "median_block_output_operations": 0,
+        "median_input_transport_resource_count": 192,
+        "median_lifecycle_bytes": 0,
+        "median_lifecycle_record_count": 0,
+        "median_lifecycle_unique_resource_generations": 0,
+        "median_page_faults": 135,
+        "median_peak_rss_bytes": 21086208,
+        "median_port_trace_event_count": 512640,
+        "median_shared_trace_bytes": 46780490,
+        "median_shared_trace_line_count": 896664,
+        "median_system_seconds": 0.06,
+        "median_task_output_count": 2,
+        "median_task_trace_event_count": 8,
+        "median_time_l_wall_seconds": 1.59,
+        "median_user_seconds": 1.5,
+        "median_wall_seconds": 1.599619500018889
+      }
+    },
+    "semantic": {
+      "comparison_count": 10,
+      "controlled_differences": [],
+      "left_only": [],
+      "right_only": [],
+      "unexplained_differences": []
+    },
+    "semantic_passed": true
+  },
+  "p02": {
+    "gates": {
+      "main": {
+        "median_paired_rss_delta_percent": 7.829478963499592,
+        "median_paired_wall_delta_percent": 5.456084139468631,
+        "passed": true,
+        "rss_within_10_percent": true,
+        "wall_within_10_percent": true
+      },
+      "next": {
+        "median_paired_rss_delta_percent": 5.851791085589286,
+        "median_paired_wall_delta_percent": 2.043762799902571,
+        "passed": true,
+        "rss_within_10_percent": true,
+        "wall_within_10_percent": true
+      }
+    },
+    "paired_rounds": [
+      {
+        "current_vs_main_rss_percent": 7.780256553262688,
+        "current_vs_main_wall_percent": 5.026184963027758,
+        "current_vs_next_rss_percent": 5.745554035567713,
+        "current_vs_next_wall_percent": 2.043762799902571,
+        "round": 1
+      },
+      {
+        "current_vs_main_rss_percent": 7.797270955165692,
+        "current_vs_main_wall_percent": 2.5005408427777542,
+        "current_vs_next_rss_percent": 5.707263790278527,
+        "current_vs_next_wall_percent": 1.5152351110518936,
+        "round": 2
+      },
+      {
+        "current_vs_main_rss_percent": 8.108108108108114,
+        "current_vs_main_wall_percent": 51.928005538103974,
+        "current_vs_next_rss_percent": 6.039901612462417,
+        "current_vs_next_wall_percent": 47.185258571110886,
+        "round": 3
+      },
+      {
+        "current_vs_main_rss_percent": 7.829478963499592,
+        "current_vs_main_wall_percent": 5.723556165206589,
+        "current_vs_next_rss_percent": 6.056453822965202,
+        "current_vs_next_wall_percent": 3.8551676484379183,
+        "round": 4
+      },
+      {
+        "current_vs_main_rss_percent": 7.917479788123782,
+        "current_vs_main_wall_percent": 5.456084139468631,
+        "current_vs_next_rss_percent": 5.851791085589286,
+        "current_vs_next_wall_percent": -5.105558040495383,
+        "round": 5
+      }
+    ],
+    "performance_passed": true,
+    "roles": {
+      "current": {
+        "median_block_input_operations": 0,
+        "median_block_output_operations": 0,
+        "median_input_transport_resource_count": 992,
+        "median_lifecycle_bytes": 0,
+        "median_lifecycle_record_count": 0,
+        "median_lifecycle_unique_resource_generations": 0,
+        "median_page_faults": 135,
+        "median_peak_rss_bytes": 63422464,
+        "median_port_trace_event_count": 13564,
+        "median_shared_trace_bytes": 1799131,
+        "median_shared_trace_line_count": 25676,
+        "median_system_seconds": 0.03,
+        "median_task_output_count": 8,
+        "median_task_trace_event_count": 464,
+        "median_time_l_wall_seconds": 0.16,
+        "median_user_seconds": 0.12,
+        "median_wall_seconds": 0.1683797090081498
+      },
+      "main": {
+        "median_block_input_operations": 0,
+        "median_block_output_operations": 0,
+        "median_input_transport_resource_count": 992,
+        "median_lifecycle_bytes": 0,
+        "median_lifecycle_record_count": 0,
+        "median_lifecycle_unique_resource_generations": 0,
+        "median_page_faults": 157,
+        "median_peak_rss_bytes": 58802176,
+        "median_port_trace_event_count": 13564,
+        "median_shared_trace_bytes": 1799131,
+        "median_shared_trace_line_count": 25676,
+        "median_system_seconds": 0.03,
+        "median_task_output_count": 8,
+        "median_task_trace_event_count": 464,
+        "median_time_l_wall_seconds": 0.15,
+        "median_user_seconds": 0.12,
+        "median_wall_seconds": 0.15960791701218113
+      },
+      "next": {
+        "median_block_input_operations": 0,
+        "median_block_output_operations": 0,
+        "median_input_transport_resource_count": 992,
+        "median_lifecycle_bytes": 0,
+        "median_lifecycle_record_count": 0,
+        "median_lifecycle_unique_resource_generations": 0,
+        "median_page_faults": 135,
+        "median_peak_rss_bytes": 59916288,
+        "median_port_trace_event_count": 13564,
+        "median_shared_trace_bytes": 1799131,
+        "median_shared_trace_line_count": 25676,
+        "median_system_seconds": 0.03,
+        "median_task_output_count": 8,
+        "median_task_trace_event_count": 464,
+        "median_time_l_wall_seconds": 0.16,
+        "median_user_seconds": 0.12,
+        "median_wall_seconds": 0.16362383298110217
+      }
+    },
+    "semantic": {
+      "comparison_count": 10,
+      "controlled_differences": [
+        {
+          "cause": "pure same-timestamp TaskTrace full-line reorder",
+          "left_sha256": "85568ed0ca9dc8c6b9e0c88912052b5a90b4be6a08a4513e220a0486e54577a2",
+          "path": "runlog/TaskTrace_node_16.tr",
+          "right_sha256": "9bf68916cc6d3a8e196f3928bc093d59f7b24c61167ad38de14ae3f9e1d18399"
+        },
+        {
+          "cause": "pure same-timestamp TaskTrace full-line reorder",
+          "left_sha256": "a0486c592024c0c7a30daecf60586a85d4920b0791639b226749279be61d3699",
+          "path": "runlog/TaskTrace_node_17.tr",
+          "right_sha256": "69e7b9da5155774279e62eee1ac939ce957acd1ce5a956abdf018b9e2af14b2e"
+        },
+        {
+          "cause": "pure same-timestamp TaskTrace full-line reorder",
+          "left_sha256": "239d317e939f2b2f6c6a71a6f675126dd0aea2dae563877b269ee90065bd55ec",
+          "path": "runlog/TaskTrace_node_18.tr",
+          "right_sha256": "ad731f34213d35dfa5f7a21fa84f626dd227b64acc7cf157396a6becc4f534c1"
+        },
+        {
+          "cause": "pure same-timestamp TaskTrace full-line reorder",
+          "left_sha256": "d26735bb6566e7c120496aabf12a67a4eb88e069923779cbb10fde33437351aa",
+          "path": "runlog/TaskTrace_node_19.tr",
+          "right_sha256": "c0e145f70b225af48624e9fcbf36bae7c82bc2da839d0e29cbfcf8a56bd23801"
+        },
+        {
+          "cause": "pure same-timestamp TaskTrace full-line reorder",
+          "left_sha256": "d8af66ac40216fc2803ee71f47c989435bd38d0f0f837f3f58a5177b64271b62",
+          "path": "runlog/TaskTrace_node_20.tr",
+          "right_sha256": "adb70e00e00544b5b7921a28866099eb9cbe6852ec24497336eef815e5074869"
+        },
+        {
+          "cause": "pure same-timestamp TaskTrace full-line reorder",
+          "left_sha256": "5fbbc3789ed90d98fc0eb499f8eb249ce73195788e67630727cd997dbbc0c861",
+          "path": "runlog/TaskTrace_node_21.tr",
+          "right_sha256": "80b973b876061a1af030863644b8cce125dc49ec80bceadd497cba2b59926cea"
+        },
+        {
+          "cause": "pure same-timestamp TaskTrace full-line reorder",
+          "left_sha256": "7189ffe25227561481c77d1dc1954023a9fcb1eaee75fe871dea81c17e879fed",
+          "path": "runlog/TaskTrace_node_22.tr",
+          "right_sha256": "2eda3116b6bc84a3b6c021af2bdd4f22d1408ef0b557ac806b7f61ac521d23d7"
+        },
+        {
+          "cause": "pure same-timestamp TaskTrace full-line reorder",
+          "left_sha256": "7a9ae481be24520ce062939ff07add2c70649cb5d936901c1e4eb7bf71f2be41",
+          "path": "runlog/TaskTrace_node_23.tr",
+          "right_sha256": "4a57597b0c40882977548d1d500888057949298ae88789627d68939d93611d95"
+        }
+      ],
+      "left_only": [],
+      "right_only": [],
+      "unexplained_differences": []
+    },
+    "semantic_passed": true
+  },
+  "p02_summary": {
+    "median_paired_rss_delta_percent": 1.858544140423346,
+    "median_paired_wall_delta_percent": 27.108750101250422,
+    "modes": {
+      "off": {
+        "median_block_input_operations": 0,
+        "median_block_output_operations": 0,
+        "median_input_transport_resource_count": 992,
+        "median_lifecycle_bytes": 0,
+        "median_lifecycle_record_count": 0,
+        "median_lifecycle_unique_resource_generations": 0,
+        "median_page_faults": 135,
+        "median_peak_rss_bytes": 63471616,
+        "median_port_trace_event_count": 13564,
+        "median_shared_trace_bytes": 1799131,
+        "median_shared_trace_line_count": 25676,
+        "median_system_seconds": 0.03,
+        "median_task_output_count": 8,
+        "median_task_trace_event_count": 464,
+        "median_time_l_wall_seconds": 0.16,
+        "median_user_seconds": 0.12,
+        "median_wall_seconds": 0.1663958750141319
+      },
+      "summary": {
+        "median_block_input_operations": 0,
+        "median_block_output_operations": 0,
+        "median_input_transport_resource_count": 992,
+        "median_lifecycle_bytes": 5641986,
+        "median_lifecycle_record_count": 68816,
+        "median_lifecycle_unique_resource_generations": 3128,
+        "median_page_faults": 135,
+        "median_peak_rss_bytes": 64651264,
+        "median_port_trace_event_count": 13564,
+        "median_shared_trace_bytes": 1799131,
+        "median_shared_trace_line_count": 25676,
+        "median_system_seconds": 0.03,
+        "median_task_output_count": 8,
+        "median_task_trace_event_count": 464,
+        "median_time_l_wall_seconds": 0.21,
+        "median_user_seconds": 0.16,
+        "median_wall_seconds": 0.21281937501044013
+      }
+    },
+    "paired_rounds": [
+      {
+        "round": 1,
+        "summary_vs_off_rss_percent": 2.065049044914824,
+        "summary_vs_off_wall_percent": 32.91256414458606
+      },
+      {
+        "round": 2,
+        "summary_vs_off_rss_percent": 1.9101703665462155,
+        "summary_vs_off_wall_percent": 27.108750101250422
+      },
+      {
+        "round": 3,
+        "summary_vs_off_rss_percent": 1.8078512396694224,
+        "summary_vs_off_wall_percent": 25.8168594361424
+      },
+      {
+        "round": 4,
+        "summary_vs_off_rss_percent": 1.858544140423346,
+        "summary_vs_off_wall_percent": 26.970119903220755
+      },
+      {
+        "round": 5,
+        "summary_vs_off_rss_percent": 1.6774193548387162,
+        "summary_vs_off_wall_percent": 27.228577158951637
+      }
+    ],
+    "semantic": {
+      "comparison_count": 5,
+      "controlled_differences": [],
+      "left_only": [],
+      "right_only": [],
+      "unexplained_differences": []
+    },
+    "semantic_passed": true
+  },
+  "performance_status": "failed",
+  "schema_version": 1,
+  "semantic_status": "passed",
+  "status": "failed"
+}

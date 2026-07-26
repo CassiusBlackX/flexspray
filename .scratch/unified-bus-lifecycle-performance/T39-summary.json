@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "ticket": "T39",
+  "status": "passed",
+  "pre_refactor_revision": "ccf41b58",
+  "implementation_revision": "cbc0567b1792f45c078279c19f013038de21d1cf",
+  "implementation_diff_sha256": "5ffa6286cf272f9e4fa318973f133c20d2670c8fddc5156293cfe4217be97475",
+  "unified_bus_library_sha256": "dc77c218eaa451666f9243701000630a7c793e09f66fae7f118b9e7869c348fe",
+  "behavior_changes": [],
+  "terminal_mode_mapping": {
+    "active_or_graceful": "CONTINUE_ACCEPTED",
+    "abort": "STOP_ACCEPTED",
+    "force": "FORCE_DRAIN"
+  },
+  "focused_validation": {
+    "targeted_build": "passed-after-member-pointer-compatibility-fix",
+    "unified-bus-transaction-urma": "passed",
+    "unified-bus-transport-pipeline": "passed",
+    "unified-bus-lifecycle": "passed",
+    "git_diff_check": "passed"
+  },
+  "review": {
+    "transaction_function_policy_queries_removed": true,
+    "legacy_three_argument_api_preserved": true,
+    "reentrant_cleanup_escalation_preserved": true,
+    "observable_order_changes": false
+  },
+  "frozen_byte_comparison": "not-required-owner-plumbing-only"
+}

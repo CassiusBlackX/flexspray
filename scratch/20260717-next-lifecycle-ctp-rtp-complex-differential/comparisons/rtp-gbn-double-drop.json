@@ -1,0 +1,70 @@
+{
+  "case": "rtp-gbn-double-drop",
+  "changed_shared_files": [
+    "output/task_statistics.csv",
+    "output/throughput.csv",
+    "runlog/AllPacketTrace_ACK_node_0.tr",
+    "runlog/AllPacketTrace_ACK_node_1.tr",
+    "runlog/AllPacketTrace_PKT_node_0.tr",
+    "runlog/AllPacketTrace_PKT_node_1.tr",
+    "runlog/PacketTrace_node_0.tr",
+    "runlog/PacketTrace_node_1.tr",
+    "runlog/PacketTrace_node_2.tr",
+    "runlog/PortTrace_node_0_port_0.tr",
+    "runlog/PortTrace_node_1_port_0.tr",
+    "runlog/PortTrace_node_2_port_0.tr",
+    "runlog/PortTrace_node_2_port_1.tr",
+    "runlog/TaskTrace_node_0.tr",
+    "runlog/TaskTrace_node_1.tr"
+  ],
+  "common_file_count": 25,
+  "lifecycle_only_shared_files": [],
+  "next_only_shared_files": [],
+  "status": "different",
+  "task_ids": {
+    "lifecycle": [
+      "0"
+    ],
+    "next": [
+      "0"
+    ]
+  },
+  "tasks": {
+    "lifecycle": [
+      {
+        "dataSize(Byte)": "262144",
+        "delay": "10ns",
+        "dependOnPhases": "",
+        "destNode": "1",
+        "firstPacketSends(us)": "0.011",
+        "lastPacketACKs(us)": "28.5851",
+        "opType": "URMA_WRITE",
+        "phaseId": "0",
+        "priority": "7",
+        "sourceNode": "0",
+        "taskCompletesTime(us)": "28.54062",
+        "taskId": "0",
+        "taskStartTime(us)": "0.01",
+        "taskThroughput(Gbps)": "73.5053"
+      }
+    ],
+    "next": [
+      {
+        "dataSize(Byte)": "262144",
+        "delay": "10ns",
+        "dependOnPhases": "",
+        "destNode": "1",
+        "firstPacketSends(us)": "0.011",
+        "lastPacketACKs(us)": "28.66858",
+        "opType": "URMA_WRITE",
+        "phaseId": "0",
+        "priority": "7",
+        "sourceNode": "0",
+        "taskCompletesTime(us)": "28.6241",
+        "taskId": "0",
+        "taskStartTime(us)": "0.01",
+        "taskThroughput(Gbps)": "73.2909"
+      }
+    ]
+  }
+}

@@ -91,6 +91,10 @@ protected:
     void DoDispose(void) override;
 
 private:
+    friend class UbTrafficGen;
+
+    void CleanupTaskScopedJetty(uint32_t taskId, uint32_t jettyNum);
+
     TracedCallback<uint32_t, uint32_t> m_traceMemTaskStartsNotify;
     TracedCallback<uint32_t, uint32_t> m_traceMemTaskCompletesNotify;
     TracedCallback<uint32_t, uint32_t, uint32_t> m_traceWqeTaskStartsNotify;

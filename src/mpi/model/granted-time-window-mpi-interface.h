@@ -102,6 +102,9 @@ class GrantedTimeWindowMpiInterface : public ParallelCommunicationInterface, Obj
                             const Time& completionVisibleTs,
                             uint32_t rank) override;
     void SetTaskCompletionHandler(TaskCompletionHandler handler) override;
+    void SendCausalControl(const CausalControlRecord& record) override;
+    void SetCausalControlHandler(CausalControlHandler handler) override;
+    bool SupportsCausalControl() const override;
     MPI_Comm GetCommunicator() override;
 
   private:
@@ -138,6 +141,13 @@ class GrantedTimeWindowMpiInterface : public ParallelCommunicationInterface, Obj
     };
 
     static void ReceiveTaskCompletionMessages();
+    static void ReceiveCausalControlMessages();
+    static void ScheduleCausalControl(CausalControlRecord record);
+    static void DispatchCausalControl(CausalControlRecord record);
+    static void SendFixedControl(const void* message,
+                                 std::size_t size,
+                                 uint32_t rank,
+                                 int tag);
     static void DispatchTaskCompletion(uint32_t taskId);
     static void ScheduleTaskCompletion(uint32_t taskId, Time completionVisibleTs);
 
@@ -177,7 +187,9 @@ class GrantedTimeWindowMpiInterface : public ParallelCommunicationInterface, Obj
     static bool g_freeCommunicator;
 
     static TaskCompletionHandler g_taskCompletionHandler;
+    static CausalControlHandler g_causalControlHandler;
     static constexpr int TASK_COMPLETION_MPI_TAG = 77;
+    static constexpr int CAUSAL_CONTROL_MPI_TAG = 78;
 
 #ifdef NS3_MTP
     static std::atomic<bool> g_sending;

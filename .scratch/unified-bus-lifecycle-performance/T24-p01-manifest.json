@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "implementation_commit": "83080d6",
+  "baseline_commit": "ccf41b58b0ba3b9711efea595732a2908e3e07cf",
+  "current_binary_sha256": "7756e587027029b4d551f70d490659bcea4af0f31cc5fbd47ddc47a46bb45a78",
+  "current_unified_bus_library_sha256": "4584765c8accc355e1bd79cba7e03d05e04632f99da969c5a6bd576b3235feeb",
+  "main_binary_sha256": "cf9deb34cc4efab04913dc44e43b1cfc46d6e69e20fa9dc5a3ac52ace4149740",
+  "main_unified_bus_library_sha256": "cf05dd2d999218df9c2ed723b4682927f79ff509c2daaf55d983bd9dcea8ed98",
+  "input_manifest_sha256": "7b4fc87d43879b8041373ec8d29262f8a3ad8f48932b1ff40ded21247d519711",
+  "network_attribute_sha256": "7b7aa4e0615ade5d32d58a26048e8ba0d0737fab2d8acdf707ca07198dca49c9",
+  "traffic_sha256": "1133ecd3c23b7c10bb2d41e5fb84c7f88ef1e0038cd2b313bcb24adf9c2c1521",
+  "transform": {
+    "both": "ns3::UbLdstApi::UsePacketSpray=false",
+    "current_only": "UB_LIFECYCLE_TRACE_LEVEL=OFF"
+  },
+  "orders": [
+    ["main", "current"],
+    ["current", "main"],
+    ["main", "current"],
+    ["current", "main"],
+    ["main", "current"]
+  ]
+}

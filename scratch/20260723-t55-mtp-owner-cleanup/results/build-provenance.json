@@ -1,0 +1,75 @@
+{
+  "after": {
+    "artifacts": {
+      "binary": {
+        "mtime_ns": 1784797488379265496,
+        "path": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+        "sha256": "ae9083440c4730f9abde6d832fa45cbcf970b63a4d3e3b02cd654bd2783fdd72"
+      },
+      "cmake_cache": {
+        "mtime_ns": 1784686394342583862,
+        "path": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/cmake-cache/CMakeCache.txt",
+        "sha256": "cd4d3d9c5a614a155f57e425090afd6dea38fd6c200f92ac12328e92339d7313"
+      },
+      "mtp_library": {
+        "mtime_ns": 1784783763970058347,
+        "path": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/build/lib/libns3.44-mtp.dylib",
+        "sha256": "a7e2fcd71ffcca2b927ec5259bbf57a02a4456db00aa82908c5e27f65aa4b0b7"
+      },
+      "unified_bus_library": {
+        "mtime_ns": 1784796495745808793,
+        "path": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/build/lib/libns3.44-unified-bus.dylib",
+        "sha256": "c3c08267bd27282775518139bc1fe6ad5de0e1208c459a230b592ec41d6d0b95"
+      }
+    },
+    "build_shape": {
+      "build_type": "release",
+      "generator": "Ninja",
+      "mpi": false,
+      "mtp": true
+    },
+    "source_file_count": 113,
+    "source_revision": "5965931f378430f3d4195ec7fab5487a4e01ce1d",
+    "source_tree_sha256": "71f5ce974f59f6bbd9528359592680b24ce8a27fc8a1af27d0fadaefa8c812a8",
+    "tracked_diff_sha256": "2ab878ce2e0b41ade6f4416c047e38c9d9851218a0404269990cb47bc308b3dd",
+    "tracked_status": "M CONTEXT.md\n M src/unified-bus/model/ub-app.cc\n M src/unified-bus/model/ub-app.h\n M src/unified-bus/model/ub-switch.cc\n M src/unified-bus/model/ub-tp-connection-manager.cc\n M src/unified-bus/model/ub-traffic-gen.cc\n M src/unified-bus/model/ub-traffic-gen.h\n M src/unified-bus/model/ub-transport-channel-manager.cc\n M src/unified-bus/model/ub-transport-channel-manager.h\n M src/unified-bus/model/ub-utils.cc\n M src/unified-bus/test/ub-test.cc",
+    "worktree": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode"
+  },
+  "before": {
+    "artifacts": {
+      "binary": {
+        "mtime_ns": 1784773276863081234,
+        "path": "/private/tmp/ns3ub-tp-ab-before-e3682e5/build/scratch/ns3.44-ub-quick-example",
+        "sha256": "ca90f63762b9f6baddc5f2a64967b8c9214a1f6b34e24a1ee7a4744e315915de"
+      },
+      "cmake_cache": {
+        "mtime_ns": 1784773201000682469,
+        "path": "/private/tmp/ns3ub-tp-ab-before-e3682e5/cmake-cache/CMakeCache.txt",
+        "sha256": "6a49b1a5c6ae8ddd9f98178dbbfecdd0f90e4f8b6f091e2ed1b7e359926adf76"
+      },
+      "mtp_library": {
+        "mtime_ns": 1784773275221218877,
+        "path": "/private/tmp/ns3ub-tp-ab-before-e3682e5/build/lib/libns3.44-mtp.dylib",
+        "sha256": "b182838e78d9a3a2a9db2c1eca1a9c8b1bd1c0b351b139e9ea4f8ce3a99451cd"
+      },
+      "unified_bus_library": {
+        "mtime_ns": 1784773276827706030,
+        "path": "/private/tmp/ns3ub-tp-ab-before-e3682e5/build/lib/libns3.44-unified-bus.dylib",
+        "sha256": "1192c08b3cfd63251f4accf723276ccee0f3a340cc27035c27c16bb255f2a9af"
+      }
+    },
+    "build_shape": {
+      "build_type": "release",
+      "generator": "Ninja",
+      "mpi": false,
+      "mtp": true
+    },
+    "source_file_count": 113,
+    "source_revision": "e3682e593c144ab441dd7045aff5f6312efab86d",
+    "source_tree_sha256": "d8981ecd3b7b4f7747cefcd205fb9f1c38981c869edf984c7a64590a79130f7f",
+    "tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tracked_status": "",
+    "worktree": "/private/tmp/ns3ub-tp-ab-before-e3682e5"
+  },
+  "schema_version": 1
+}

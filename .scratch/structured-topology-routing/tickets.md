@@ -41,6 +41,8 @@
 | 15 | 验证 packed next-hop index 的正确性、内存和查询延迟 | 已完成 | 11 |
 | 16 | 将通用 next-hop index 接入结构化 TABLE 运行路径 | 已完成 | 15 |
 | 17 | 分离结构化 case 准备与运行 | 已完成 | 16 |
+| 18 | 离线生成可移植压缩路由工件并拆分生成/运行模式 | 已完成 | 17 |
+| 19 | 多拓扑、多策略字节等价与 main 性能对比 | 已完成 | 18 |
 
 任务 15 是独立 prototype。它不修改生产运行路径。全量候选集合、实际 RSS 和查询延迟已经
 通过验收，结论是继续将其实现为通用运行时后端；结构规则保留为免生成完整表的快速生产者。
@@ -53,3 +55,15 @@
 
 任务 17 将一次性 Python -> stdin -> ns-3 调用改为可复用的 case 目录工件。tools 和 scratch
 runner 通过 `structured_topology.txt` 交接，仿真开始后仍不存在跨语言运行时交互。
+
+任务 18 新增 `compressed_routing.bin`，由 tools 在准备阶段直接生成。结构化文本与二进制
+工件使用同一内容指纹；仿真进程不展开逐目的文本，也不在启动或首包路径编译压缩表。
+`--route-generation=full|structured|mixed` 只决定离线候选如何产生，
+`--route-runtime-mode=compressed-table-lookup|structured-rule-compute` 只决定运行时如何取得候选。
+
+任务 19 覆盖 UBX、1DPOD、明确物理含义为 `Path(4) cartesian Path(4)` 的 UBMesh fixture、
+Torus、经典 Dragonfly、显式端口外扩和 ring-inside-Dragonfly。UBMesh 只是本测试 fixture
+名称，不声称是外部标准定义。
+正确性同时比较 shortest/non-shortest 候选、`GetOutPort()` 返回值、最短路径标记和可稳定获取
+的输出字节。性能分别报告生成时间、工件大小、加载时间、峰值/常驻 RSS、候选查询与完整
+`GetOutPort()`，并与 `main`、旧全量表、压缩表和结构规则路径区分对比。

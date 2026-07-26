@@ -1,0 +1,190 @@
+<Test>
+  <Name>unified-bus-transport-retrans</Name>
+  <Result>PASS</Result>
+  <Time real="0.006" user="0.000" system="0.000"/>
+  <Test>
+    <Name>UnifiedBus - selective retransmission mode is opt-in</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - disabled retransmission does not retain sent packets</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - transport shallow pipeline ignores unacked segments</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - disabled retransmission receive gap does not emit SACK</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - selective receiver emits TPSACK for receive gap</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - receiver unwraps RTPH PSN across 24-bit wrap</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - receiver rejected future PSN does not pollute MaxRcvPSN</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - selective receiver returns to TPACK after receive gap closes</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - selective receiver honors explicit SAETPH bitmap width</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - selective receiver represents first-packet loss without ACK underflow</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - selective receiver repeats TPSACK for duplicate packet while gap remains</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - selective receiver serializes TPSACK-CC with CETPH before SAETPH</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - sender transport safely consumes TPSACK headers</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - local sink dispatches TPSACK to transport response path</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - default GBN receiver keeps out-of-order ACK silent</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - sender records TPSACK holes without fast selective retransmission</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - sender fast selective retransmission queues missing PSNs once</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - selective retransmission trace reports sparse missing PSN</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - sender ignores TPSACK zero padding beyond MaxRcvPSN</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - sender ignores TPSACK zero padding beyond MaxRcvPSN</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - sender unwraps TPSACK wire PSNs across 24-bit wrap</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - sender ignores out-of-window TPSACK across 24-bit wrap</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - sender accepts TPSACK at current cumulative ACK base</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - sender unwraps plain TPACK across 24-bit wrap</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - GBN sender unwraps TPNAK across 24-bit wrap</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - GBN sender ignores TPNAK for retired descriptor</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - stale GBN cleanup preserves same-PSN replacement</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - stale selective cleanup preserves same-PSN replacement</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - GBN cumulative ACK retires descriptor prefix</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - final GBN ACK with pending TA response leaves timer stopped</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - sender cumulative ACK clears retained PSN state</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - selective ACKed gap state keeps state but skips retransmit</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - sender selective retransmission rebuilds missing descriptor</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - sender selective retransmission participates in TP queue contract</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - sender drops stale selective retransmission entries after ACK</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - sender queue priority keeps control responses before selective retransmission</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - selective RTO enqueues retained outstanding PSNs</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+</Test>

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "implementation_revision": "ba5d110ee3f998121d88d6d60ea323d324074323",
+  "next_revision": "cf8ee683e00e5b6210661013e93cec7217d662e5",
+  "current_binary_sha256": "7756e587027029b4d551f70d490659bcea4af0f31cc5fbd47ddc47a46bb45a78",
+  "current_unified_bus_library_sha256": "9057060feb548abc9a5428a03a648bb76906e44c047ae952edd08c8c1adcb012",
+  "next_binary_sha256": "51129796c550755d9099746fd61aece09978970cf4f25e94faab83d59e82c387",
+  "next_unified_bus_library_sha256": "5d090eef16ff7b77791d65a32feaf3d80f59c2e3035d4d3ecd396d847d14cc92",
+  "m04_input_manifest_sha256": "a5d384e5f8dc3fca441f531aaefa6ca17006c0d5cd1fb1dab37f960a4d66cdfc",
+  "execution": "strictly serial; one initial warm-up followed by three current/next pairs",
+  "current_wall_seconds": [0.08, 0.07, 0.07],
+  "next_wall_seconds": [0.09, 0.07, 0.07],
+  "current_median_wall_seconds": 0.07,
+  "next_median_wall_seconds": 0.07,
+  "current_median_rss_bytes": 16678912,
+  "next_median_rss_bytes": 16678912,
+  "shared_difference": {
+    "path": "runlog/TaskTrace_node_1.tr",
+    "cause": "T05 same-timestamp send/complete ordering",
+    "current_sha256": "995621cebc03ef9dc62dddbf6e5dba078c76b6490ea71d087df032a3e0b62d1f",
+    "next_sha256": "d3ccc8543e729a79fc44e9ff08ef1d99fac8d63ad0f7235ffbb0e1a68ae5a1a9",
+    "bytes_each": 3352,
+    "lines_each": 64,
+    "sorted_rows_sha256": "571e1008d1c85163b45316afa44730c7532b16448fb0537655f811830d94c006"
+  }
+}

@@ -23,21 +23,30 @@ simulation starts.
 1. `ns-3-ub-tools` accepts a Python/NetworkX graph or a JSON/YAML adapter input, normalizes the
    physical topology, discovers candidate structures, verifies them against the authoritative
    endpoint-port graph, and compiles table, rule, or mixed routing.
-2. The preparation step writes `structured_topology.txt` and `structured_summary.json` into the case
-   directory and exits. It does not launch ns-3.
-3. `scratch/run_structured_topo_case.py` reads the prepared case and launches the existing C++ case
+2. Route generation and runtime representation are independent choices. Preparation accepts
+   `full`, `structured`, or `mixed` generation. Runtime uses either `compressed-table-lookup` or
+   `structured-rule-compute`; `full` generation supports only the former.
+3. The preparation step writes `structured_topology.txt`, `compressed_routing.bin`, and
+   `structured_summary.json` into the case directory and exits. `structured` and `mixed` preserve
+   both runtime choices in one prepared case. It does not launch ns-3.
+4. `scratch/run_structured_topo_case.py` reads the prepared case and launches the existing C++ case
    runner. It does not import NetworkX or compile routes.
-4. Unified Bus installs one of three candidate sources in priority order: rule routing, the packed
-   next-hop index for structured table input, or the existing CSV/manual routing containers.
-5. One route lookup item is owned by exactly one source. Shortest and non-shortest candidates from
+5. In `compressed-table-lookup`, Unified Bus loads one complete `UbNextHopIndex` and does not install
+   structure rules. In `structured-rule-compute`, it installs structure rules plus only the compact
+   supplemental index required by `mixed` generation.
+6. One route lookup item is owned by exactly one source. Shortest and non-shortest candidates from
    different sources are not merged.
-6. Candidate generation may change, but `GetOutPort()`, routing-type filtering, ingress-port
+7. Candidate generation may change, but `GetOutPort()`, routing-type filtering, ingress-port
    filtering, primary-address fallback, `SelectOutPort()`, multipath selectors, and the existing
    one-detour behavior remain the protocol-semantic path.
-7. Topology rules are enabled only after exact physical validation. Unknown, incomplete, or unsafe
+8. Topology rules are enabled only after exact physical validation. Unknown, incomplete, or unsafe
    overlapping regions remain on exact/range or table routing in `mixed` mode.
-8. Existing CSV topology and routing input remains a peer supported path. Diagnostic CSV generated
+9. Existing CSV topology and routing input remains a peer supported path. Loading an old routing CSV
+   builds the same compressed in-memory index; tools may also convert it ahead of time. Diagnostic CSV generated
    by the structured compiler is optional evidence, not an intermediate runtime contract.
+10. `compressed_routing.bin` is a portable format, not a C++ object dump. Its header contains magic,
+    format version, fixed byte order, counts, content fingerprint, payload length, and checksum.
+    Missing, corrupt, stale, or unsupported artifacts fail explicitly instead of changing modes.
 
 ## Considered options
 
@@ -71,6 +80,8 @@ case from being inspected or rerun independently. Preparation and execution are 
 - Arbitrary topologies can use the generic packed next-hop index when exact candidate sets are
   available, without adding a topology-specific recognizer.
 - Mixed routing allows partial optimization without changing the behavior of unrecognized regions.
+- Structured and mixed generation can be reused with either a speed-priority compressed lookup or a
+  memory-priority structure-rule computation without rerunning topology discovery.
 - Topology-rule lookup performs more computation than a direct complete-table lookup. A compact
   topology next-hop index reduces this cost, but the primary topology-rule benefits remain offline
   generation, input size, startup, and resident memory.
@@ -88,6 +99,12 @@ scope, physical ownership of every structured link, and regression coverage of t
 port selectors. Performance claims must identify the representation, process boundary, query corpus,
 sample count, and whether a result measures offline generation, startup, memory, candidate lookup, or
 complete `GetOutPort()`.
+
+Normal preparation does not build a full verification baseline. `--verify-routes` performs exhaustive
+offline equivalence checking and is required for CI, first acceptance of a new recognizer, and the
+release benchmark corpus. Byte-level output comparisons must cover multiple multipath selectors;
+because every runtime representation feeds the same `GetOutPort()` path, identical inputs and RNG
+state must produce identical selected ports and shortest-path decisions.
 
 The implementation history, current measurements, raw samples, and reproducible benchmark sources are
 indexed by `.scratch/structured-topology-routing/README.md`.

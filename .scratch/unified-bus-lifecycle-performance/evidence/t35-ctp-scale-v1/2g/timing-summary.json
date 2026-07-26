@@ -1,0 +1,40 @@
+{
+  "ctp-normal": {
+    "case": "ctp-normal",
+    "median_paired_user_delta_seconds": 0.9100000000000001,
+    "median_paired_wall_delta_percent": 15.040292844979785,
+    "median_paired_wall_delta_seconds": 0.9248563339933753,
+    "pairs": [
+      {
+        "pair": 1,
+        "user_delta_seconds": 0.9100000000000001,
+        "wall_delta_percent": 15.040292844979785,
+        "wall_delta_seconds": 0.9248563339933753
+      },
+      {
+        "pair": 2,
+        "user_delta_seconds": 0.16999999999999993,
+        "wall_delta_percent": 2.6509029347291824,
+        "wall_delta_seconds": 0.1835577089805156
+      },
+      {
+        "pair": 3,
+        "user_delta_seconds": 0.9199999999999999,
+        "wall_delta_percent": 15.237790933365325,
+        "wall_delta_seconds": 0.9351341250003316
+      }
+    ],
+    "roles": {
+      "current": {
+        "median_peak_rss_bytes": 57655296,
+        "median_user_seconds": 6.99,
+        "median_wall_seconds": 7.074047333968338
+      },
+      "next": {
+        "median_peak_rss_bytes": 15433728,
+        "median_user_seconds": 6.08,
+        "median_wall_seconds": 6.149190999974962
+      }
+    }
+  }
+}

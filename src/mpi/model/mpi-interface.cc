@@ -157,6 +157,29 @@ MpiInterface::SetTaskCompletionHandler(
 }
 
 void
+MpiInterface::SendCausalControl(
+    const ParallelCommunicationInterface::CausalControlRecord& record)
+{
+    NS_ASSERT(g_parallelCommunicationInterface);
+    g_parallelCommunicationInterface->SendCausalControl(record);
+}
+
+void
+MpiInterface::SetCausalControlHandler(
+    ParallelCommunicationInterface::CausalControlHandler handler)
+{
+    NS_ASSERT(g_parallelCommunicationInterface);
+    g_parallelCommunicationInterface->SetCausalControlHandler(std::move(handler));
+}
+
+bool
+MpiInterface::SupportsCausalControl()
+{
+    return g_parallelCommunicationInterface != nullptr &&
+           g_parallelCommunicationInterface->SupportsCausalControl();
+}
+
+void
 MpiInterface::BoundLookAhead(Time lookAhead)
 {
     Ptr<SimulatorImpl> impl = Simulator::GetImplementation();
@@ -175,6 +198,30 @@ MpiInterface::BoundLookAhead(Time lookAhead)
     NS_ABORT_MSG_IF(IsEnabled(),
                     "attempted to bind MPI lookahead while using a non-MPI simulator implementation");
     NS_LOG_WARN("attempted to bind MPI lookahead without an enabled MPI runtime");
+}
+
+Time
+MpiInterface::GetCausalControlLookAhead()
+{
+    Ptr<SimulatorImpl> impl = Simulator::GetImplementation();
+    Time lookAhead;
+    if (Ptr<DistributedSimulatorImpl> distributed = DynamicCast<DistributedSimulatorImpl>(impl))
+    {
+        lookAhead = distributed->GetLookAhead();
+    }
+#ifdef NS3_MTP
+    else if (Ptr<HybridSimulatorImpl> hybrid = DynamicCast<HybridSimulatorImpl>(impl))
+    {
+        lookAhead = hybrid->GetLookAhead();
+    }
+#endif
+    else
+    {
+        NS_ABORT_MSG("Causal control requires a granted-time-window MPI simulator");
+    }
+    NS_ABORT_MSG_IF(!lookAhead.IsStrictlyPositive() || lookAhead == Time::Max(),
+                    "Causal control requires a finite positive MPI lookahead");
+    return lookAhead;
 }
 
 MPI_Comm

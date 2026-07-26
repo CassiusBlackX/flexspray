@@ -27,6 +27,10 @@ JSON/YAML 是同一 NetworkX 编译路径的可选声明式适配层，适合不
 - `RoutingKey` 保留现有含义，不用它命名上述归属单位。
 - 当前 metric 只区分最短候选组和合并后的非最短候选组。第一阶段验证这两个集合，不声称
   保留数值 metric 的完整语义。
+- node-primary 查询会合并同一目的节点的所有目的端口。若同一物理出端口在不同目的端口上
+  分别属于最短和非最短候选，合并后的 `selectedShortestPath` 语义不唯一。准备或加载阶段必须
+  在仿真开始前拒绝这种输入，不能任意消重；用户应调整 metric、path finder 或使用明确的目的
+  UB 端口查询。
 
 ## 输入与内部处理
 
@@ -74,10 +78,35 @@ Python 用户通过工具子模块提供的
 适配器。`scratch/run_structured_topo_case.py` 只读取已准备的 case 目录、启动
 `ub-quick-example` 并返回仿真退出码，不导入 NetworkX，也不执行结构发现或路由编译。
 
-拓扑 JSON/YAML 只描述节点、端口、链路和链路属性，不包含表、规则或混合路由选择。
-路由表示由准备命令的 `--routing-mode=table|rule|mixed` 选择，使同一拓扑输入可以准备三种
-表示的对照 case。准备命令默认使用 `mixed`；`table` 和 `rule` 需要显式指定。拓扑内容哈希
-和路由设置分别参与缓存键，不把运行选择混入拓扑身份。
+拓扑 JSON/YAML 只描述节点、端口、链路和链路属性，不包含路由生成或运行时选择。准备命令
+通过 `--route-generation=full|structured|mixed` 选择离线候选生成方法：`full` 对所有查询项
+求解，`structured` 要求结构规则完整覆盖，`mixed` 使用结构规则并只为未覆盖查询生成补充项。
+默认使用 `mixed`。旧的 `--routing-mode=table|rule|mixed` 作为兼容别名接受，但不再出现在
+用户文档中。
+
+prepared case 同时包含 `structured_topology.txt`、`compressed_routing.bin` 和
+`structured_summary.json`。前者保存物理拓扑、结构规则以及 mixed 的少量补充项；二进制文件
+保存覆盖全部查询项的压缩 route-class 索引。`structured` 和 `mixed` 一次准备即可在运行时用
+`--route-runtime-mode=compressed-table-lookup|structured-rule-compute` 切换。默认使用
+`compressed-table-lookup`；`full` 没有可执行的结构规则，只允许该模式。缺少所需工件时必须
+报错，不能静默退化。协议 v1-v3 的既有 prepared case 没有独立二进制工件，继续使用其
+`structured_topology.txt` 内嵌的 TABLE/规则；这个兼容分支不改变旧 case 的路由来源。
+
+`compressed_routing.bin` 使用固定小端字节序和显式字段编码，不直接 dump C++ struct。固定
+header 包含 magic、major/minor 版本、字节序标记、节点/行/目的/端点/候选类数量、class ID
+宽度、内容指纹、payload 字节数和 CRC32。payload 依次保存节点到行映射、节点到目的索引、
+UB 地址到端点索引、去重后的 shortest/non-shortest 端口类、端口级 packed class ID 和节点级
+packed class ID。所有长度和乘法在分配前检查溢出，校验和和输入指纹在安装前验证。
+
+协议 v4 的 `TABLE` 文本只保留 shortest/non-shortest 两组，不保留跨 destination-port 的
+原始数值 metric，因此它不能作为 node-primary 路由的无损运行时重建格式。正式 `full`
+运行也直接读取 `compressed_routing.bin`；文本 TABLE 只用于诊断和历史基准，不作为默认
+运行路径。
+
+拓扑内容、路由生成方式、path finder 内容、NetworkX 版本、compiler 版本和二进制格式版本
+共同参与缓存键。运行时选择不参与拓扑身份。正常准备不生成全量验证基准；显式
+`--verify-routes` 才逐查询项比较完整候选集合。CI、新 recognizer 首次验收和发布基准必须打开
+该参数。
 
 输入顶层必须包含 `version: 1`。该值只表示结构化拓扑文件格式版本，不表示仿真 case 或
 拓扑内容的修订号。解析器必须拒绝缺失、类型错误或不支持的版本，不能按最接近版本猜测。

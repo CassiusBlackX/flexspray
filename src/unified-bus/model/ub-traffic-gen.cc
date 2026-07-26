@@ -108,6 +108,12 @@ UbTrafficGen::IsMultiProcessRuntimeUnsupported()
     return false;
 }
 
+Time
+UbTrafficGen::SelectTaskCleanupDeliveryDelay(bool partitioned, Time causalDeliveryDelay)
+{
+    return partitioned ? causalDeliveryDelay : TimeStep(0);
+}
+
 void UbTrafficGen::AddTask(const TrafficRecord& record)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
@@ -728,6 +734,13 @@ UbTrafficGen::GetTaskCleanupInfoById(uint32_t taskId)
 
 void UbTrafficGen::MarkTaskCompleted(uint32_t taskId)
 {
+    SubmitTaskCompletion(taskId, std::nullopt);
+}
+
+void
+UbTrafficGen::SubmitTaskCompletion(uint32_t taskId,
+                                   std::optional<TaskCleanupRequest> cleanupRequest)
+{
     Time completionVisibleTs;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -735,6 +748,22 @@ void UbTrafficGen::MarkTaskCompleted(uint32_t taskId)
         TaskState* state = FindTaskStateLocked(taskId);
         if (state == nullptr || *state != TaskState::RUNNING) {
             return;
+        }
+
+        if (cleanupRequest.has_value())
+        {
+            const auto [cleanupIt, inserted] =
+                m_pendingTaskCleanups.emplace(taskId, *cleanupRequest);
+            NS_ABORT_MSG_IF(!inserted &&
+                                (cleanupIt->second.ownerNodeId != cleanupRequest->ownerNodeId ||
+                                 cleanupIt->second.ownerApplicationIndex !=
+                                     cleanupRequest->ownerApplicationIndex ||
+                                 cleanupIt->second.jettyNum != cleanupRequest->jettyNum),
+                            "Conflicting task cleanup request for task " << taskId);
+            if (!inserted)
+            {
+                return;
+            }
         }
 
         const Time delay = ResolveCompletionVisibleDelayLocked();
@@ -890,6 +919,7 @@ void
 UbTrafficGen::ApplyTaskCompletion(uint32_t taskId)
 {
     ReadyTaskBatch readyBatch;
+    std::optional<TaskCleanupRequest> cleanupRequest;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
 
@@ -942,13 +972,54 @@ UbTrafficGen::ApplyTaskCompletion(uint32_t taskId)
         }
 
         readyBatch = CollectReadyTaskBatchLocked();
+        const auto cleanupIt = m_pendingTaskCleanups.find(taskId);
+        if (cleanupIt != m_pendingTaskCleanups.end())
+        {
+            cleanupRequest = cleanupIt->second;
+            m_pendingTaskCleanups.erase(cleanupIt);
+        }
     }
 
     ScheduleTasks(readyBatch);
 
+    if (cleanupRequest.has_value())
+    {
+        Time deliveryDelay = TimeStep(0);
+#ifdef NS3_MTP
+        if (MtpInterface::isPartitioned())
+        {
+            deliveryDelay = SelectTaskCleanupDeliveryDelay(
+                true,
+                MtpInterface::GetCausalDeliveryDelay(cleanupRequest->ownerNodeId));
+        }
+#endif
+        Simulator::ScheduleWithContext(cleanupRequest->ownerNodeId,
+                                       deliveryDelay,
+                                       &UbTrafficGen::ApplyTaskCleanupOnOwner,
+                                       cleanupRequest->ownerNodeId,
+                                       cleanupRequest->ownerApplicationIndex,
+                                       taskId,
+                                       cleanupRequest->jettyNum);
+    }
+
     if (IsCompleted()) {
         NS_LOG_DEBUG("[APPLICATION INFO] All tasks completed");
     }
+}
+
+void
+UbTrafficGen::ApplyTaskCleanupOnOwner(uint32_t ownerNodeId,
+                                      uint32_t ownerApplicationIndex,
+                                      uint32_t taskId,
+                                      uint32_t jettyNum)
+{
+    Ptr<Node> ownerNode = NodeList::GetNode(ownerNodeId);
+    NS_ABORT_MSG_IF(ownerNode == nullptr || ownerApplicationIndex >= ownerNode->GetNApplications(),
+                    "Task cleanup owner is unavailable for task " << taskId);
+    Ptr<UbApp> cleanupOwner = DynamicCast<UbApp>(ownerNode->GetApplication(ownerApplicationIndex));
+    NS_ABORT_MSG_IF(cleanupOwner == nullptr,
+                    "Task cleanup owner application is not UbApp for task " << taskId);
+    cleanupOwner->CleanupTaskScopedJetty(taskId, jettyNum);
 }
 
 bool UbTrafficGen::IsCompleted() const
@@ -998,7 +1069,7 @@ uint32_t UbTrafficGen::GetCompletedTaskCount() const
 }
 
 uint64_t
-UbTrafficGen::GetDependencyReferenceCountForTesting() const
+UbTrafficGen::GetDependencyReferenceCount() const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     uint64_t referenceCount = 0;
@@ -1023,7 +1094,7 @@ UbTrafficGen::IsUsingDenseTaskStoreForTesting() const
 }
 
 uint32_t
-UbTrafficGen::GetStoredTaskCountForTesting() const
+UbTrafficGen::GetStoredTaskCount() const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (!m_useDenseTaskStore) {
@@ -1277,6 +1348,27 @@ UbTrafficGen::StartTask(Ptr<UbApp> app, RuntimeTask task)
 void UbTrafficGen::OnTaskCompleted(uint32_t taskId)
 {
     MarkTaskCompleted(taskId);
+}
+
+void
+UbTrafficGen::OnTaskCompleted(uint32_t taskId, Ptr<UbApp> cleanupOwner, uint32_t jettyNum)
+{
+    NS_ABORT_MSG_IF(cleanupOwner == nullptr, "Task cleanup owner must not be null");
+    Ptr<Node> ownerNode = cleanupOwner->GetNode();
+    NS_ABORT_MSG_IF(ownerNode == nullptr, "Task cleanup owner must belong to a node");
+    uint32_t applicationIndex = ownerNode->GetNApplications();
+    for (uint32_t index = 0; index < ownerNode->GetNApplications(); ++index)
+    {
+        if (PeekPointer(ownerNode->GetApplication(index)) == PeekPointer(cleanupOwner))
+        {
+            applicationIndex = index;
+            break;
+        }
+    }
+    NS_ABORT_MSG_IF(applicationIndex == ownerNode->GetNApplications(),
+                    "Task cleanup owner must be installed on its node");
+    SubmitTaskCompletion(taskId,
+                         TaskCleanupRequest{ownerNode->GetId(), applicationIndex, jettyNum});
 }
 
 void

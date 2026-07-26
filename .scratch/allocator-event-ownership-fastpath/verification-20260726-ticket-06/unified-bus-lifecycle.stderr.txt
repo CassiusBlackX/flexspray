@@ -1,0 +1,33 @@
+aborted. cond="!inserted && (cleanupIt->second.ownerNodeId != cleanupRequest->ownerNodeId || cleanupIt->second.ownerApplicationIndex != cleanupRequest->ownerApplicationIndex || cleanupIt->second.jettyNum != cleanupRequest->jettyNum)", msg="Conflicting task cleanup request for task 900007", +0.000000000s -1 file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/ub-traffic-gen.cc, line=762
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. cond="m_psnSndUna < segmentEnd", msg="Forced segment removal lost unacknowledged TP work", +0.000000000s -1 file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/protocol/ub-transport.cc, line=2207
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. cond="!active.activeLeases.empty()", msg="Cannot retire lifecycle generation with active leases", +0.000000000s -1 file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/ub-lifecycle.cc, line=476
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. cond="operation == m_operations.end()", msg="Transaction outcome references an unknown, duplicate, or stale operation", +0.000000000s -1 file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/protocol/ub-transaction.cc, line=2417
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. cond="wqe == record->second.wqes.end() || wqe->second != identity", msg="Transaction outcome references an unknown, duplicate, or stale WQE", +0.000000000s -1 file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/protocol/ub-function.cc, line=619
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. cond="operation != m_operations.end() && operation->second.wqe != wqe", msg="WqeFinish references a stale WQE instance", +0.000000000s -1 file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/protocol/ub-transaction.cc, line=2181
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. cond="operation == m_operations.end() && wqe->IsLifecycleManaged()", msg="WqeFinish references an unknown, duplicate, or stale direct WQE", +0.000000000s -1 file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/protocol/ub-transaction.cc, line=2183
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. cond="word == active.activeAttemptWords.end() || (word->second & attemptBit) == 0", msg="Packet lifecycle terminal would underflow the active-attempt balance", +0.000000000s -1 file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/ub-lifecycle.cc, line=1478
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. msg="Lifecycle mutation after resource retirement", +0.000000000s -1 file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/ub-lifecycle.cc, line=1251
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. cond="identity.generation != m_cachedResourceState->generation", msg="Lifecycle mutation references a stale generation", +0.000000000s -1 file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/ub-lifecycle.cc, line=1257
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. msg="Lifecycle mutation after resource retirement", +0.000000000s -1 file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/ub-lifecycle.cc, line=1251
+NS_FATAL, terminating
+libc++abi: terminating

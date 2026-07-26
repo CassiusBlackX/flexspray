@@ -1,0 +1,42 @@
+{
+  "execution": "one warm-up per role and five counterbalanced pairs, strictly serial",
+  "observability": "explicit lifecycle OFF; packet, port, and per-hop trace OFF",
+  "orders": [
+    [
+      "main",
+      "current"
+    ],
+    [
+      "current",
+      "main"
+    ],
+    [
+      "main",
+      "current"
+    ],
+    [
+      "current",
+      "main"
+    ],
+    [
+      "main",
+      "current"
+    ]
+  ],
+  "pre_t31_binary_sha256": "7756e587027029b4d551f70d490659bcea4af0f31cc5fbd47ddc47a46bb45a78",
+  "pre_t31_library_sha256": "0968fced00fb34f13331e73e603c91382601d99a1f588a37517a79aa93a32878",
+  "pre_t31_revision": "02acfbb source / db335a0 frozen library",
+  "retention_gate": {
+    "maximum_rss_regression_percent": 1.0,
+    "maximum_user_cpu_regression_percent": 1.0,
+    "minimum_non_regressing_pairs": 4,
+    "paired_median_wall_percent": -1.5
+  },
+  "schema_version": 1,
+  "sizes": [
+    16384009,
+    16384000
+  ],
+  "t31_binary_sha256": "7756e587027029b4d551f70d490659bcea4af0f31cc5fbd47ddc47a46bb45a78",
+  "t31_library_sha256": "09ee6eb73401f5928b41c4bf2f7591f9c4fe071c85533245c5649f23f22138d9"
+}

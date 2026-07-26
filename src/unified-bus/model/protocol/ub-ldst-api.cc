@@ -4,7 +4,9 @@
 
 #include "ns3/ub-datatype.h"
 #include "ns3/ub-controller.h"
+#include "ns3/ub-datalink.h"
 #include "ns3/ub-ldst-api.h"
+#include "ns3/ub-port.h"
 
 namespace ns3 {
 NS_LOG_COMPONENT_DEFINE("UbLdstApi");
@@ -82,6 +84,8 @@ void UbLdstApi::LdstProcess(Ptr<UbLdstTaskSegment> taskSegment)
 {
     // genpacket
     auto packet = GenDataPacket(taskSegment);
+    auto ldstInstance = NodeList::GetNode(m_nodeId)->GetObject<UbLdstInstance>();
+    ldstInstance->RegisterPacketBirth(packet);
     // sendpacket
     SendPacket(taskSegment, packet);
 }
@@ -102,12 +106,15 @@ void UbLdstApi::SendPacket(Ptr<UbLdstTaskSegment> taskSegment, Ptr<Packet> packe
     int outPort = sw->GetRoutingProcess()->GetOutPort(rtKey, selectedShortestPath);
     if (outPort < 0) {
         // Route failed
+        UbLifecycleCoordinator::TerminatePacket(packet, UbPacketTerminal::ROUTE_NOT_FOUND);
         NS_ASSERT_MSG(0, "The route cannot be found");
+        return;
     }
     uint16_t destPort = outPort;
     sw->PushPacketToVoq(packet, destPort, taskSegment->GetPriority(), destPort);
     Ptr<UbPort> port = DynamicCast<UbPort>(node->GetDevice(destPort));
-    Simulator::ScheduleNow(&UbPort::TriggerTransmit, port);
+    auto ldstInstance = node->GetObject<UbLdstInstance>();
+    ldstInstance->ScheduleNow(&UbPort::TriggerTransmit, port);
 }
 
 Ptr<Packet> UbLdstApi::GenDataPacket(Ptr<UbLdstTaskSegment> taskSegment)
@@ -207,6 +214,8 @@ void UbLdstApi::RecvDataPacket(Ptr<Packet> packet)
     UbDataLink::GenPacketHeader(ackp, false, true, linkPacketHeader.GetCreditTargetVL(), linkPacketHeader.GetPacketVL(),
                                 linkPacketHeader.GetRoutingType(),
                                 UbDatalinkHeaderConfig::PACKET_UB_MEM);
+    auto ldstInstance = NodeList::GetNode(m_nodeId)->GetObject<UbLdstInstance>();
+    ldstInstance->RegisterPacketBirth(ackp);
 
     RoutingKey rtKey;
     rtKey.sip = utils::Cna16ToIp(cna16NetworkHeader.GetScna()).Get();
@@ -223,7 +232,9 @@ void UbLdstApi::RecvDataPacket(Ptr<Packet> packet)
     int destPort = sw->GetRoutingProcess()->GetOutPort(rtKey, selectedShortestPath);
     if (destPort < 0) {
         // Route failed
+        UbLifecycleCoordinator::TerminatePacket(ackp, UbPacketTerminal::ROUTE_NOT_FOUND);
         NS_ASSERT_MSG(0, "The route cannot be found");
+        return;
     }
 
     sw->PushPacketToVoq(ackp, destPort, linkPacketHeader.GetPacketVL(), destPort);
@@ -269,7 +280,7 @@ void UbLdstApi::RecvResponse(Ptr<Packet> packet)
     }
     uint32_t taskSegmentId = caTaHeader.GetIniTaSsn();
     auto ldstInst = NodeList::GetNode(m_nodeId)->GetObject<UbLdstInstance>();
-    Simulator::ScheduleNow(&UbLdstInstance::OnRecvAck, ldstInst, taskSegmentId);
+    ldstInst->ScheduleNow(&UbLdstInstance::OnRecvAck, ldstInst, taskSegmentId);
 }
 
 void UbLdstApi::SetRoutingType(RoutingType routingType)

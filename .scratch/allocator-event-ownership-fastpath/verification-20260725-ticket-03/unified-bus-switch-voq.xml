@@ -1,0 +1,85 @@
+<Test>
+  <Name>unified-bus-switch-voq</Name>
+  <Result>PASS</Result>
+  <Time real="0.003" user="0.000" system="0.000"/>
+  <Test>
+    <Name>UnifiedBus - round robin allocator seeds different initial queue phases per out port</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - UbSwitch creates VOQs only when packets arrive</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - drained VOQ uses the explicit safe destruction gate</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - VOQ destruction waits for allocator and accounting gates</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - RR allocator retains multiple same-port retrigger events</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - DWRR allocator retains multiple same-port retrigger events</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - allocator callback-entry reclaim query tracks pending peer</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - allocator ignores retrigger without output-port ownership state</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - switch disposal cancels queue events and records residue</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - VOQ allocator preserves ingress queue slot phase</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - DWRR allocator preserves ingress queue slots across VLs</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - DWRR allocator keeps non-VOQ queues after VOQ slots</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - direct allocation completion starts an idle egress port</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - scheduled allocation completion remains available</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - UbPacketQueue inline storage preserves FIFO</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - UbSmallFifoQueue keeps small FIFO inline and releases heap</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+</Test>

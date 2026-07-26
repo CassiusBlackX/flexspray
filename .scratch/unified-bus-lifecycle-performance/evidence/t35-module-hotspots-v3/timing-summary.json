@@ -1,0 +1,154 @@
+{
+  "ctp-normal": {
+    "case": "ctp-normal",
+    "median_paired_user_delta_seconds": 0.22999999999999998,
+    "median_paired_wall_delta_percent": 14.726464413297835,
+    "median_paired_wall_delta_seconds": 0.2251400839886628,
+    "pairs": [
+      {
+        "pair": 1,
+        "user_delta_seconds": 0.19999999999999996,
+        "wall_delta_percent": 14.421311195559138,
+        "wall_delta_seconds": 0.22511137399123982
+      },
+      {
+        "pair": 2,
+        "user_delta_seconds": 0.22999999999999998,
+        "wall_delta_percent": 14.82381076875714,
+        "wall_delta_seconds": 0.23230283299926668
+      },
+      {
+        "pair": 3,
+        "user_delta_seconds": 0.22999999999999998,
+        "wall_delta_percent": 14.726464413297835,
+        "wall_delta_seconds": 0.2251400839886628
+      }
+    ],
+    "roles": {
+      "current": {
+        "median_peak_rss_bytes": 25919488,
+        "median_user_seconds": 1.74,
+        "median_wall_seconds": 1.7860746660153382
+      },
+      "next": {
+        "median_peak_rss_bytes": 15466496,
+        "median_user_seconds": 1.53,
+        "median_wall_seconds": 1.5609632920240983
+      }
+    }
+  },
+  "dcqcn": {
+    "case": "dcqcn",
+    "median_paired_user_delta_seconds": 0.0,
+    "median_paired_wall_delta_percent": 0.599907706264724,
+    "median_paired_wall_delta_seconds": 0.00752525101415813,
+    "pairs": [
+      {
+        "pair": 1,
+        "user_delta_seconds": -0.020000000000000018,
+        "wall_delta_percent": -1.7872028449615662,
+        "wall_delta_seconds": -0.02307258395012468
+      },
+      {
+        "pair": 2,
+        "user_delta_seconds": 0.020000000000000018,
+        "wall_delta_percent": 1.2773261238510525,
+        "wall_delta_seconds": 0.015962917008437216
+      },
+      {
+        "pair": 3,
+        "user_delta_seconds": 0.0,
+        "wall_delta_percent": 0.599907706264724,
+        "wall_delta_seconds": 0.00752525101415813
+      }
+    ],
+    "roles": {
+      "current": {
+        "median_peak_rss_bytes": 11943936,
+        "median_user_seconds": 1.25,
+        "median_wall_seconds": 1.2656764169805683
+      },
+      "next": {
+        "median_peak_rss_bytes": 11370496,
+        "median_user_seconds": 1.24,
+        "median_wall_seconds": 1.2544014580198564
+      }
+    }
+  },
+  "rtp-gbn-rto": {
+    "case": "rtp-gbn-rto",
+    "median_paired_user_delta_seconds": 0.039999999999999813,
+    "median_paired_wall_delta_percent": 2.50741555718772,
+    "median_paired_wall_delta_seconds": 0.04040829197037965,
+    "pairs": [
+      {
+        "pair": 1,
+        "user_delta_seconds": 0.039999999999999813,
+        "wall_delta_percent": 2.50741555718772,
+        "wall_delta_seconds": 0.04040829197037965
+      },
+      {
+        "pair": 2,
+        "user_delta_seconds": -0.009999999999999787,
+        "wall_delta_percent": -1.3613039918978664,
+        "wall_delta_seconds": -0.022560999961569905
+      },
+      {
+        "pair": 3,
+        "user_delta_seconds": 0.05999999999999983,
+        "wall_delta_percent": 3.2449600260318068,
+        "wall_delta_seconds": 0.052026125020347536
+      }
+    ],
+    "roles": {
+      "current": {
+        "median_peak_rss_bytes": 12664832,
+        "median_user_seconds": 1.63,
+        "median_wall_seconds": 1.6519597499864176
+      },
+      "next": {
+        "median_peak_rss_bytes": 12042240,
+        "median_user_seconds": 1.59,
+        "median_wall_seconds": 1.611551458016038
+      }
+    }
+  },
+  "rtp-normal": {
+    "case": "rtp-normal",
+    "median_paired_user_delta_seconds": 0.030000000000000027,
+    "median_paired_wall_delta_percent": 1.647345253352217,
+    "median_paired_wall_delta_seconds": 0.02491287502925843,
+    "pairs": [
+      {
+        "pair": 1,
+        "user_delta_seconds": -0.06000000000000005,
+        "wall_delta_percent": -6.941838758165398,
+        "wall_delta_seconds": -0.11629220796748996
+      },
+      {
+        "pair": 2,
+        "user_delta_seconds": 0.030000000000000027,
+        "wall_delta_percent": 1.647345253352217,
+        "wall_delta_seconds": 0.02491287502925843
+      },
+      {
+        "pair": 3,
+        "user_delta_seconds": 0.030000000000000027,
+        "wall_delta_percent": 2.3816353141383306,
+        "wall_delta_seconds": 0.035982957982923836
+      }
+    ],
+    "roles": {
+      "current": {
+        "median_peak_rss_bytes": 53166080,
+        "median_user_seconds": 1.52,
+        "median_wall_seconds": 1.546833832981065
+      },
+      "next": {
+        "median_peak_rss_bytes": 49905664,
+        "median_user_seconds": 1.49,
+        "median_wall_seconds": 1.5123044169740751
+      }
+    }
+  }
+}

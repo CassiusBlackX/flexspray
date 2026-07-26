@@ -1,0 +1,86 @@
+{
+  "artifact_sha256": {
+    "canonical-output.csv": "480a58051753e964ea369e87aa4984c7850e3b65e6c7d663d679f1cd1d75668a",
+    "canonical.rank0.txt": "febfb4f8d16142bc6c7f2204dd0b6b20b0724b4a81953c31b53969034fe63a98",
+    "command.json": "1a10153f7c83d32dc22ed71f6f7386f6b8e63250208a865a0c7507f47f5a4fa1",
+    "exit-code.txt": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "rss-samples.csv": "7c382d993c1051ad5a5868e976e87fc3c3c1d13c82c6fb989a7dfdc38c14001e",
+    "runtime-storage-snapshot.csv": "faebdf650554e12045fceb474087c253649e8011ce07d2343929b294717187f0",
+    "stderr.txt": "510cba9555898e1dae42ca00ee84991c53dd487eb11e0a95ec5da44431261562",
+    "stdout.txt": "f6e64e852f82ccaa4e7553ef2068cc7d36cdf40c6fb861aafbe4129b59fb5011",
+    "time-l.txt": "a90c327881f43ff553f0ac32872b32d1965da69c00086bcc931e358e51ac2f1d"
+  },
+  "build_artifacts": {
+    "binary": {
+      "mtime_ns": 1784797488379265496,
+      "path": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+      "sha256": "ae9083440c4730f9abde6d832fa45cbcf970b63a4d3e3b02cd654bd2783fdd72"
+    },
+    "cmake_cache": {
+      "mtime_ns": 1784686394342583862,
+      "path": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/cmake-cache/CMakeCache.txt",
+      "sha256": "cd4d3d9c5a614a155f57e425090afd6dea38fd6c200f92ac12328e92339d7313"
+    },
+    "mtp_library": {
+      "mtime_ns": 1784783763970058347,
+      "path": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/build/lib/libns3.44-mtp.dylib",
+      "sha256": "a7e2fcd71ffcca2b927ec5259bbf57a02a4456db00aa82908c5e27f65aa4b0b7"
+    },
+    "unified_bus_library": {
+      "mtime_ns": 1784796495745808793,
+      "path": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/build/lib/libns3.44-unified-bus.dylib",
+      "sha256": "c3c08267bd27282775518139bc1fe6ad5de0e1208c459a230b592ec41d6d0b95"
+    }
+  },
+  "canonical_sha256": "480a58051753e964ea369e87aa4984c7850e3b65e6c7d663d679f1cd1d75668a",
+  "command": [
+    "/usr/bin/time",
+    "-l",
+    "-o",
+    "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260723-t55-mtp-owner-cleanup/results/t55-after/time-l.txt",
+    "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+    "--case-path=/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260723-t55-mtp-owner-cleanup/results/t55-after/case",
+    "--rng-run=1",
+    "--dependency-visibility-delay=10ns",
+    "--initial-task-start-offset-window=32ps",
+    "--timing-offset-seed=1",
+    "--canonical-output=/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260723-t55-mtp-owner-cleanup/results/t55-after/canonical",
+    "--runtime-storage-snapshot=/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260723-t55-mtp-owner-cleanup/results/t55-after/runtime-storage-snapshot.csv",
+    "--mtp-threads=16"
+  ],
+  "elapsed_seconds": 1.6830196250230074,
+  "expected_canonical_sha256": "480a58051753e964ea369e87aa4984c7850e3b65e6c7d663d679f1cd1d75668a",
+  "failure": null,
+  "input_sha256": {
+    "network_attribute.txt": "00156300052d914dfb7453bee42093220e5b8b7536c39be80c68b43b61cfd226",
+    "node.csv": "785eae4f88a74b1e2b47c6769ed9b7df4733696276019e78fe899b5ad5d1ac97",
+    "routing_table.csv": "2a8cf559f9688dca9bfdc3cf83100b7c05ab0007542b91d3c9f8a8817c4fc5c4",
+    "topology.csv": "c0aa128bd34c2787f7c06f963930a4216c92087a754b5254cc69d93f2cfffc2d",
+    "traffic.csv": "05549ffb3652c7ce19420f71f565699deea43e9132849f30432218405cd09ca3"
+  },
+  "platform": "macOS-26.5.1-arm64-arm-64bit",
+  "return_code": 0,
+  "rss_limit_bytes": 2147483648,
+  "run_id": "t55-after",
+  "runtime": {
+    "dependency_visibility_delay": "10ns",
+    "initial_task_start_offset_window": "32ps",
+    "mtp_threads": 16,
+    "rng_run": 1,
+    "timing_offset_seed": 1
+  },
+  "sample_interval_seconds": 0.25,
+  "sampled_peak_process_group_rss_bytes": 17170432,
+  "schema_version": 1,
+  "source_revision": "5965931f378430f3d4195ec7fab5487a4e01ce1d",
+  "source_tree_sha256": "71f5ce974f59f6bbd9528359592680b24ce8a27fc8a1af27d0fadaefa8c812a8",
+  "started_at": "2026-07-23T09:15:11.850656+00:00",
+  "stop_reason": "completed",
+  "termination": "not_requested",
+  "time_l_peak_rss_bytes": 16515072,
+  "time_l_wall_seconds": 1.2,
+  "tracked_diff_sha256": "2ab878ce2e0b41ade6f4416c047e38c9d9851218a0404269990cb47bc308b3dd",
+  "variant": "after",
+  "wait_completed": true,
+  "wall_limit_seconds": 120
+}
