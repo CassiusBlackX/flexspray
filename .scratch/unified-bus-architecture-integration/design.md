@@ -4,8 +4,9 @@
 
 Maintain one `next`-based validation branch for the structured topology/routing,
 allocator direct completion, Unified Bus lifecycle, and TP backing compaction changes.
-The branch preserves component history and remains a Draft until combined large-scale
-correctness and performance evidence is complete.
+The branch preserves component history and enters `next` after representative correctness,
+compatibility, performance, and independent-review gates pass. Exhaustive performance research
+continues on `next` and is not a prerequisite for entering the validation branch.
 
 ## Included lines
 
@@ -37,12 +38,22 @@ outside this integration.
 - Reject corrupt structured artifacts and invalid owner operations without semantic fallback.
 - Preserve ordinary CSV case, CLI, and trace compatibility.
 
-## Validation boundary
+## Merge gates for `next`
 
-Focused builds, unit suites, and a legacy smoke establish integration readiness only. The
-branch still requires structured/compressed runtime smokes, allocator on/off controls,
-local/MTP lifecycle controls, fault/retransmission coverage, and 1024-scale route/RSS/event
-and runtime measurements before it can leave Draft.
+- Focused Unified Bus, lifecycle, structured-routing, TP-reservation, allocator, and compatibility
+  suites pass.
+- Representative compatibility evidence covers the legacy CSV example, portable compressed
+  next-hop artifact, and prepared structured-rule protocol.
+- Allocator on/off, direct/scheduled completion, local/MTP owner cleanup, forced stop, dependency
+  release, fault, congestion-control, and retransmission controls pass.
+- One representative 1024-device/64-switch PR-vs-main comparison records canonical output,
+  retired instructions, runtime, cycles, events, and RSS. The gate requires measured and explained
+  differences, not performance equality with `main`.
+- Independent review finds no blocking correctness or compatibility issue.
+
+The full routing/workload cross-product, repeated 1024-scale sweeps, complete attribution of the
+remaining PR/main CPU gap, and optimization of other liveness ledgers are non-blocking follow-up
+work on `next`.
 
 ## Allocator performance closure
 
@@ -51,5 +62,5 @@ under `.scratch/allocator-event-ownership-fastpath/`. This subplan is part of th
 not a post-merge follow-up. Its allocator correctness and performance gates must pass before the
 reclaim-assessment refactor begins, and both must complete before final compatibility review.
 
-Other liveness ledgers are profiled in that subplan, but production changes outside allocator
-ownership and TP reclaim assessment require separate evidence-backed tasks.
+Other liveness ledgers remain separate evidence-backed follow-up tasks. They do not block this PR
+because no additional ledger optimization is part of its production diff.

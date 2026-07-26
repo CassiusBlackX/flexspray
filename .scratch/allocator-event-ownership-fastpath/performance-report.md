@@ -1,6 +1,6 @@
 # Allocator ownership and TP lifecycle performance report
 
-状态: 待补充
+状态: 已完成（剩余性能归因为非阻塞 follow-up）
 
 ## 结论
 
@@ -68,12 +68,12 @@ peak RSS 降低 `43.682422%`。因此当前结论是“内存目标显著达成�
 已有的实验包保留完整 plan、matrix、ledger 和 summary；位于 `/private/tmp` 的最终快速实验不
 作为永久工件，因此其关键结果和摘要哈希已固化到矩阵。
 
-当前仍有两项未完成：
+当前仍有两项非阻塞 follow-up：
 
 - Ticket 07 尚未逐项完成 switch in-port events、`UbTrackedEventSet` owner scans 和 transaction
   TP reference scans 的放大与消融；这些格子保持 `inconclusive`。
 - 最终 PR 相对 main 的 `7.862581%` instruction 差距只完成部分归因。现有证据不能保证速度
   与 main 相同，也不能把全部剩余差距归到某一个 ledger。
 
-因此父级任务的性能文档已补齐，但 architecture integration PR 仍应保持 Draft，直到 Ticket
-07/08 或明确的范围裁剪决定完成。
+因此父级任务的性能文档和独立 review 已补齐，architecture integration PR 可进入 `next`。
+这些 follow-up 必须保持可见，但不再阻止架构验证分支接收该 PR。

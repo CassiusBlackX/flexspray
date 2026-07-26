@@ -1,6 +1,6 @@
 # Allocator event ownership fastpath and reclaim assessment
 
-状态: 待补充
+状态: 已完成
 阻塞于: 02
 
 ## Scope
@@ -17,7 +17,7 @@ change is not sufficient.
 
 ## Current status
 
-Allocator ownership、typed TP assessment、reclaim-disabled fast return、focused correctness 和
-最终 PR/main 结果已归档在
-`.scratch/allocator-event-ownership-fastpath/performance-report.md`。Ticket 07 的其他 ledger
-归因和依赖它的 Ticket 08 交接尚未完成，因此父任务保持待补充。
+Allocator ownership、typed TP assessment、reclaim-disabled fast return、focused correctness、
+最终 PR/main 结果和独立 review 已归档在
+`.scratch/allocator-event-ownership-fastpath/performance-report.md`。生产交付范围完成。
+Ticket 07 的其他 ledger 归因改为非阻塞 follow-up，不扩张本 PR 的生产范围。
