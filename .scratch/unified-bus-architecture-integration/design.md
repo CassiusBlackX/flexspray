@@ -43,3 +43,13 @@ Focused builds, unit suites, and a legacy smoke establish integration readiness 
 branch still requires structured/compressed runtime smokes, allocator on/off controls,
 local/MTP lifecycle controls, fault/retransmission coverage, and 1024-scale route/RSS/event
 and runtime measurements before it can leave Draft.
+
+## Allocator performance closure
+
+The allocator event-ownership regression and the required typed TP reclaim assessment are planned
+under `.scratch/allocator-event-ownership-fastpath/`. This subplan is part of the current Draft PR,
+not a post-merge follow-up. Its allocator correctness and performance gates must pass before the
+reclaim-assessment refactor begins, and both must complete before final compatibility review.
+
+Other liveness ledgers are profiled in that subplan, but production changes outside allocator
+ownership and TP reclaim assessment require separate evidence-backed tasks.

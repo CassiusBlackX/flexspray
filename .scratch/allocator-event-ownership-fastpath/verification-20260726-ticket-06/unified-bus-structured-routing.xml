@@ -1,0 +1,35 @@
+<Test>
+  <Name>unified-bus-structured-routing</Name>
+  <Result>PASS</Result>
+  <Time real="0.176" user="0.000" system="0.000"/>
+  <Test>
+    <Name>Structured rule routing preserves exact and range precedence</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>Packed next-hop index preserves complete table candidates</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>CSV routing preserves global node and exact-port metric groups</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>Portable compressed next-hop artifact loads without rebuilding routes</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>Prepared structured protocol installs topology and routing</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>Prepared structured protocol rejects invalid input</Name>
+    <Result>PASS</Result>
+    <Time real="0.174" user="0.000" system="0.000"/>
+  </Test>
+</Test>

@@ -1,0 +1,70 @@
+<Test>
+  <Name>unified-bus-ctp-lifecycle</Name>
+  <Result>PASS</Result>
+  <Time real="0.014" user="0.000" system="0.000"/>
+  <Test>
+    <Name>UnifiedBus - CTP congestion contexts aggregate by destination and VL</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - CTP data packet builds reference compact CTP header stack</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - CTP TAACK response uses compact ACK transaction header</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - CTP TAACK inherits packet-spray routing policy</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - CTP compact queue carries local generation metadata</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - CTP SendSegment selects outPort, registers queue, and triggers allocator</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - CTP backpressure preserves packet and allocator registration</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - CTP DATA and ACK drain packet and Transaction lifecycle</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - CTP route loss drains packet but keeps unresolved Transaction</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - delayed CTP TAACK tracks event and retires finite state</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - CTP dispose cancels delayed TAACK without completing work</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - compact channel prioritizes CNP then ACK then data</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - compact channel rejects null packets at enqueue</Name>
+    <Result>PASS</Result>
+    <Time real="0.013" user="0.000" system="0.000"/>
+  </Test>
+</Test>

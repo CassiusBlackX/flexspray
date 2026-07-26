@@ -322,56 +322,253 @@ UbTransportChannelManager::ReclaimBackingState(uint32_t tpn)
     return ReclaimBackingStateLocked(tpn);
 }
 
+UbTpQuiescenceAssessment
+UbTransportChannelManager::AssessTpQuiescence(uint32_t tpn, UbTeardownIntent intent) const
+{
+    std::lock_guard<std::mutex> lock(TpConnectionManager::g_tpConnectionControlLock);
+    const auto it = m_endpoints.find(tpn);
+    if (it == m_endpoints.end())
+    {
+        UbTpQuiescenceAssessment assessment;
+        assessment.tpn = tpn;
+        assessment.intent = intent;
+        assessment.AddBlocker(UbTpQuiescenceBlocker::ENDPOINT_MISSING);
+        return assessment;
+    }
+    return AssessTpQuiescenceLocked(tpn, it->second, intent);
+}
+
+UbTpQuiescenceAssessment
+UbTransportChannelManager::AssessTpQuiescenceLocked(uint32_t tpn,
+                                                    const EndpointRecord& endpoint,
+                                                    UbTeardownIntent intent) const
+{
+    static_assert(static_cast<uint8_t>(UbTpQuiescenceBlocker::COUNT) <= 64);
+
+    UbTpQuiescenceAssessment assessment;
+    assessment.tpn = tpn;
+    assessment.intent = intent;
+
+    if (intent == UbTeardownIntent::BACKING_RECLAIM && !m_enableAutomaticBackingReclaim)
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::AUTOMATIC_RECLAIM_DISABLED);
+        return assessment;
+    }
+    if (m_controller == nullptr)
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::CONTROLLER_UNAVAILABLE);
+        return assessment;
+    }
+    if (m_controller->IsDisposing())
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::CONTROLLER_DISPOSING);
+        return assessment;
+    }
+
+    Ptr<Node> node = m_controller->GetObject<Node>();
+    if (node == nullptr)
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::NODE_UNAVAILABLE);
+        return assessment;
+    }
+    if (!IsTpBackingExecutionOwner(node->GetId()))
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::WRONG_EXECUTION_OWNER);
+        return assessment;
+    }
+
+    if (endpoint.state == EndpointState::DORMANT)
+    {
+        if (endpoint.dormantState == nullptr || endpoint.allocatorPlaceholder == nullptr)
+        {
+            assessment.AddBlocker(UbTpQuiescenceBlocker::BACKING_UNAVAILABLE);
+            return assessment;
+        }
+        assessment.identity = endpoint.dormantState->lifecycleIdentity;
+        return assessment;
+    }
+    if (intent == UbTeardownIntent::BACKING_RECLAIM && endpoint.state == EndpointState::DRAINING)
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::ENDPOINT_DRAINING);
+        return assessment;
+    }
+    if (intent == UbTeardownIntent::EXPLICIT_DESTROY && endpoint.state != EndpointState::DRAINING)
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::ENDPOINT_NOT_DRAINING);
+    }
+
+    const Ptr<UbTransportChannel>& tp = endpoint.channel;
+    if (tp == nullptr)
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::BACKING_UNAVAILABLE);
+        return assessment;
+    }
+    assessment.identity = tp->GetLifecycleOwner();
+    if (assessment.identity.ownerNodeId != node->GetId())
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::LIFECYCLE_OWNER_MISMATCH);
+        return assessment;
+    }
+
+    Ptr<UbLifecycleCoordinator> coordinator = node->GetObject<UbLifecycleCoordinator>();
+    if (coordinator == nullptr)
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::LIFECYCLE_UNAVAILABLE);
+        return assessment;
+    }
+    if (!coordinator->IsResourceActive(assessment.identity))
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::LIFECYCLE_INACTIVE);
+        return assessment;
+    }
+    assessment.diagnostics.lifecycle = coordinator->GetSnapshot(assessment.identity);
+    const UbLifecycleResourceSnapshot& lifecycle = assessment.diagnostics.lifecycle;
+    if (lifecycle.inFlightPackets != 0)
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::IN_FLIGHT_PACKETS);
+    }
+    if (lifecycle.activeWorkLeases != 0)
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::ACTIVE_WORK_LEASE);
+    }
+    if (lifecycle.activeChildLeases != 0)
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::ACTIVE_CHILD_LEASE);
+    }
+    if (lifecycle.activeTransportUseLeases != 0)
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::ACTIVE_TRANSPORT_USE_LEASE);
+    }
+    if (lifecycle.activeBindingLeases != 0)
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::ACTIVE_BINDING_LEASE);
+    }
+    if (lifecycle.activeTrackedEventLeases != 0)
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::ACTIVE_TRACKED_EVENT_LEASE);
+    }
+    if (lifecycle.activeTransportWorkLeases != 0)
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::ACTIVE_TRANSPORT_WORK_LEASE);
+    }
+
+    Ptr<UbTransaction> transaction = m_controller->GetUbTransaction();
+    if (transaction == nullptr)
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::TRANSACTION_UNAVAILABLE);
+    }
+    else
+    {
+        assessment.diagnostics.transactionReferenced = transaction->IsTpInUse(tpn);
+        assessment.diagnostics.pendingTransportWork = transaction->HasPendingTransportWork(tpn);
+        if (assessment.diagnostics.transactionReferenced)
+        {
+            assessment.AddBlocker(UbTpQuiescenceBlocker::TRANSACTION_REFERENCE);
+        }
+        if (assessment.diagnostics.pendingTransportWork)
+        {
+            assessment.AddBlocker(UbTpQuiescenceBlocker::PENDING_TRANSPORT_WORK);
+        }
+    }
+
+    if (intent == UbTeardownIntent::BACKING_RECLAIM)
+    {
+        Ptr<UbSwitch> sw = node->GetObject<UbSwitch>();
+        if (sw == nullptr)
+        {
+            assessment.AddBlocker(UbTpQuiescenceBlocker::SWITCH_UNAVAILABLE);
+        }
+        else if (sw->GetAllocator() == nullptr)
+        {
+            assessment.AddBlocker(UbTpQuiescenceBlocker::ALLOCATOR_UNAVAILABLE);
+        }
+        else
+        {
+            assessment.diagnostics.allocatorWork = sw->GetAllocator()->HasPendingOrActiveWork(tp);
+            if (assessment.diagnostics.allocatorWork)
+            {
+                assessment.AddBlocker(UbTpQuiescenceBlocker::ALLOCATOR_WORK);
+            }
+        }
+    }
+
+    assessment.diagnostics.transport = tp->GetQuiescenceSnapshot();
+    const UbTransportQuiescenceSnapshot& transport = assessment.diagnostics.transport;
+    if (transport.pendingAckPackets != 0)
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::ACK_QUEUE);
+    }
+    if (transport.pendingCnpPackets != 0)
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::CNP_QUEUE);
+    }
+    if (transport.pendingWqeSegments != 0)
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::WQE_SEGMENT_QUEUE);
+    }
+    if (transport.pendingRemoteRequests != 0)
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::REMOTE_REQUEST);
+    }
+    if (transport.pendingInboundTaUnits != 0)
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::INBOUND_WORK);
+    }
+    if (transport.bufferedInboundPackets != 0)
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::BUFFERED_INBOUND_PACKET);
+    }
+    if (transport.hasUnacknowledgedPsn)
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::UNACKNOWLEDGED_PSN);
+    }
+    if (transport.retransmissionTimerRunning)
+    {
+        assessment.AddBlocker(UbTpQuiescenceBlocker::RETRANSMISSION_TIMER);
+    }
+    if (intent == UbTeardownIntent::BACKING_RECLAIM)
+    {
+        if (transport.outstandingRetransmissionState)
+        {
+            assessment.AddBlocker(UbTpQuiescenceBlocker::OUTSTANDING_RETRANSMISSION);
+        }
+        if (!transport.congestionControlPresent)
+        {
+            assessment.AddBlocker(UbTpQuiescenceBlocker::CONGESTION_CONTROL_UNAVAILABLE);
+        }
+        else if (transport.congestionControlDormancyEligibility !=
+                 UbCongestionControlDormancyEligibility::ELIGIBLE)
+        {
+            assessment.AddBlocker(UbTpQuiescenceBlocker::CONGESTION_CONTROL_INELIGIBLE);
+        }
+    }
+    return assessment;
+}
+
 bool
 UbTransportChannelManager::ReclaimBackingStateLocked(uint32_t tpn)
 {
-    if (!m_enableAutomaticBackingReclaim)
-    {
-        return false;
-    }
-    if (m_controller == nullptr || m_controller->IsDisposing())
-    {
-        return false;
-    }
-    Ptr<Node> node = m_controller->GetObject<Node>();
-    if (node == nullptr || !IsTpBackingExecutionOwner(node->GetId()))
-    {
-        return false;
-    }
     const auto it = m_endpoints.find(tpn);
-    if (it == m_endpoints.end() || it->second.state == EndpointState::DRAINING)
+    if (it == m_endpoints.end())
     {
         return false;
     }
     EndpointRecord& record = it->second;
+    const UbTpQuiescenceAssessment assessment =
+        AssessTpQuiescenceLocked(tpn, record, UbTeardownIntent::BACKING_RECLAIM);
+    if (!assessment.IsAllowed())
+    {
+        return false;
+    }
     if (record.state == EndpointState::DORMANT)
     {
         return true;
     }
 
+    Ptr<Node> node = m_controller->GetObject<Node>();
     Ptr<UbTransportChannel> tp = record.channel;
-    if (tp == nullptr || tp->GetLifecycleOwner().ownerNodeId != node->GetId())
-    {
-        return false;
-    }
-    Ptr<UbLifecycleCoordinator> coordinator = UbLifecycleCoordinator::GetOrCreate(node);
-    if (!coordinator->IsResourceActive(tp->GetLifecycleOwner()))
-    {
-        return false;
-    }
-    const UbLifecycleResourceSnapshot lifecycle = coordinator->GetSnapshot(tp->GetLifecycleOwner());
-    const bool lifecycleIdle =
-        lifecycle.inFlightPackets == 0 && lifecycle.activeWorkLeases == 0 &&
-        lifecycle.activeChildLeases == 0 && lifecycle.activeTransportUseLeases == 0 &&
-        lifecycle.activeBindingLeases == 0 && lifecycle.activeTrackedEventLeases == 0 &&
-        lifecycle.activeTransportWorkLeases == 0;
     Ptr<UbTransaction> transaction = m_controller->GetUbTransaction();
     Ptr<UbSwitch> sw = node->GetObject<UbSwitch>();
-    if (!lifecycleIdle || transaction == nullptr || sw == nullptr || transaction->IsTpInUse(tpn) ||
-        transaction->HasPendingTransportWork(tpn) || sw->GetAllocator()->HasPendingOrActiveWork(tp))
-    {
-        return false;
-    }
 
     std::unique_ptr<UbTransportDormantState> dormantState = tp->SnapshotDormantState();
     if (dormantState == nullptr)
@@ -532,20 +729,10 @@ UbTransportChannelManager::DestroyTp(uint32_t tpn,
 bool
 UbTransportChannelManager::CanFinalize(const EndpointRecord& record) const
 {
-    const Ptr<UbTransportChannel>& tp = record.channel;
-    const UbLifecycleResourceSnapshot snapshot =
-        UbLifecycleCoordinator::GetOrCreate(m_controller->GetObject<Node>())
-            ->GetSnapshot(tp->GetLifecycleOwner());
-    const bool lifecycleIdle = snapshot.inFlightPackets == 0 && snapshot.activeWorkLeases == 0 &&
-                               snapshot.activeChildLeases == 0 &&
-                               snapshot.activeTransportUseLeases == 0 &&
-                               snapshot.activeBindingLeases == 0 &&
-                               snapshot.activeTrackedEventLeases == 0 &&
-                               snapshot.activeTransportWorkLeases == 0;
-    Ptr<UbTransaction> transaction = m_controller->GetUbTransaction();
-    return lifecycleIdle && tp->IsSafeForExplicitDestroy() &&
-           !transaction->IsTpInUse(tp->GetTpn()) &&
-           !transaction->HasPendingTransportWork(tp->GetTpn());
+    return record.channel != nullptr && AssessTpQuiescenceLocked(record.channel->GetTpn(),
+                                                                 record,
+                                                                 UbTeardownIntent::EXPLICIT_DESTROY)
+                                            .IsAllowed();
 }
 
 void
