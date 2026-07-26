@@ -3,8 +3,9 @@
 #define UB_UBSWITCH_ALLOCATOR_H
 
 #include <optional>
-#include <vector>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 #include "ns3/event-id.h"
 #include "ns3/object.h"
 #include "ns3/nstime.h"
@@ -15,6 +16,7 @@ namespace ns3 {
 class UbSwitch;
 class UbIngressQueue;
 class UbPort;
+class UbTransportChannelManager;
 
 // outport, priority, voq/TpChannel/ctrlq
 typedef std::vector<std::vector<std::vector<Ptr<UbIngressQueue> > > > IngressSource_t;
@@ -53,19 +55,14 @@ protected:
         uint32_t ingressQueueSlot;
     };
 
-    enum class TrackedEventKind : uint8_t
+    struct PortEventState
     {
-        ALLOCATION,
-        RETRIGGER,
-        PORT_NOTIFICATION,
-        DEADLOCK
-    };
-
-    struct TrackedEvent
-    {
-        EventId event;
-        TrackedEventKind kind;
-        uint32_t outPortId;
+        EventId allocation;
+        bool allocationPending{false};
+        std::vector<std::pair<uint64_t, EventId>> retriggers;
+        std::unordered_map<uint64_t, EventId> notifications;
+        uint32_t schedulingWorkCount{0};
+        Ptr<UbIngressQueue> activeIngressQueue;
     };
 
     uint32_t GetIngressQueueSlotCount(uint32_t outPort, uint32_t priority) const;
@@ -73,11 +70,20 @@ protected:
                                                                  uint32_t priority,
                                                                  uint32_t startIngressQueueSlot,
                                                                  Ptr<UbPort> egressPort) const;
-    void TrackEvent(EventId event, TrackedEventKind kind, uint32_t outPortId = UINT32_MAX);
-    void PruneResolvedEvents();
+    void InitializePortEventState(uint32_t portsNum);
+    void ScheduleAllocation(Ptr<UbPort> outPort);
+    void ScheduleOwnedRetrigger(uint32_t outPortId, Ptr<UbPort> outPort);
+    void SchedulePortNotification(Ptr<UbPort> outPort);
+    void ScheduleDeadlockCheck();
+    void RunAllocation(Ptr<UbPort> outPort);
+    void RunOwnedRetrigger(uint32_t outPortId, uint64_t token, Ptr<UbPort> outPort);
+    void RunPortNotification(uint32_t outPortId, uint64_t token, Ptr<UbPort> outPort);
+    void RunDeadlockCheck();
+    void FinalizeDisposeStorage();
     void NotifyAllocationFinish(Ptr<UbPort> outPort);
+    void TryReclaimReleasedTp(Ptr<UbIngressQueue> ingressQueue);
     void SetActiveIngressQueue(Ptr<UbIngressQueue> ingressQueue);
-    void ClearActiveIngressQueue();
+    void ClearActiveIngressQueue(uint32_t outPortId);
 
     Time m_allocationTime;
     uint32_t m_nodeId;
@@ -87,9 +93,15 @@ protected:
     std::vector<bool> m_oneMoreRound;
     uint32_t m_voqIngressSlotCount = 0;
     bool m_enableDirectAllocationCompletion = true;
-    std::vector<TrackedEvent> m_trackedEvents;
-    Ptr<UbIngressQueue> m_activeIngressQueue;
+    std::vector<PortEventState> m_portEventState;
+    EventId m_deadlockEvent;
+    bool m_deadlockPending{false};
+    uint64_t m_nextEventToken{0};
     uint32_t m_forcedEventResidue = 0;
+    uint32_t m_runningAllocationCallbacks{0};
+    bool m_disposed{false};
+    bool m_deferredDisposeCleanup{false};
+    Ptr<UbTransportChannelManager> m_transportChannelManager;
 };
 
 

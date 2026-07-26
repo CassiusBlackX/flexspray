@@ -9,6 +9,7 @@
 #include "ns3/ipv4-address.h"
 #include "ns3/object.h"
 
+#include <cstdint>
 #include <map>
 #include <vector>
 
@@ -24,6 +25,91 @@ struct UbTransportEndpointStorageSnapshot
     uint64_t liveBackingObjects{0};
     uint64_t dormantRecords{0};
     uint64_t backingRehydrations{0};
+};
+
+enum class UbTeardownIntent : uint8_t
+{
+    BACKING_RECLAIM,
+    EXPLICIT_DESTROY,
+};
+
+enum class UbTpQuiescenceBlocker : uint8_t
+{
+    AUTOMATIC_RECLAIM_DISABLED,
+    CONTROLLER_UNAVAILABLE,
+    CONTROLLER_DISPOSING,
+    NODE_UNAVAILABLE,
+    WRONG_EXECUTION_OWNER,
+    ENDPOINT_MISSING,
+    ENDPOINT_DRAINING,
+    ENDPOINT_NOT_DRAINING,
+    BACKING_UNAVAILABLE,
+    LIFECYCLE_OWNER_MISMATCH,
+    LIFECYCLE_UNAVAILABLE,
+    LIFECYCLE_INACTIVE,
+    IN_FLIGHT_PACKETS,
+    ACTIVE_WORK_LEASE,
+    ACTIVE_CHILD_LEASE,
+    ACTIVE_TRANSPORT_USE_LEASE,
+    ACTIVE_BINDING_LEASE,
+    ACTIVE_TRACKED_EVENT_LEASE,
+    ACTIVE_TRANSPORT_WORK_LEASE,
+    TRANSACTION_UNAVAILABLE,
+    TRANSACTION_REFERENCE,
+    PENDING_TRANSPORT_WORK,
+    SWITCH_UNAVAILABLE,
+    ALLOCATOR_UNAVAILABLE,
+    ALLOCATOR_WORK,
+    ACK_QUEUE,
+    CNP_QUEUE,
+    WQE_SEGMENT_QUEUE,
+    REMOTE_REQUEST,
+    INBOUND_WORK,
+    BUFFERED_INBOUND_PACKET,
+    UNACKNOWLEDGED_PSN,
+    RETRANSMISSION_TIMER,
+    OUTSTANDING_RETRANSMISSION,
+    CONGESTION_CONTROL_UNAVAILABLE,
+    CONGESTION_CONTROL_INELIGIBLE,
+    COUNT,
+};
+
+struct UbTpQuiescenceDiagnostics
+{
+    UbLifecycleResourceSnapshot lifecycle;
+    UbTransportQuiescenceSnapshot transport;
+    bool transactionReferenced{false};
+    bool pendingTransportWork{false};
+    bool allocatorWork{false};
+};
+
+class UbTpQuiescenceAssessment
+{
+  public:
+    bool IsAllowed() const
+    {
+        return m_blockers == 0;
+    }
+
+    bool HasBlocker(UbTpQuiescenceBlocker blocker) const
+    {
+        return (m_blockers & (uint64_t{1} << static_cast<uint8_t>(blocker))) != 0;
+    }
+
+    uint32_t tpn{0};
+    UbTeardownIntent intent{UbTeardownIntent::BACKING_RECLAIM};
+    UbLifecycleResourceIdentity identity;
+    UbTpQuiescenceDiagnostics diagnostics;
+
+  private:
+    friend class UbTransportChannelManager;
+
+    void AddBlocker(UbTpQuiescenceBlocker blocker)
+    {
+        m_blockers |= uint64_t{1} << static_cast<uint8_t>(blocker);
+    }
+
+    uint64_t m_blockers{0};
 };
 
 class UbTransportChannelManager : public Object
@@ -59,6 +145,13 @@ class UbTransportChannelManager : public Object
                                              UbPriority priority);
     /** Release eligible backing only when called by the endpoint execution owner. */
     bool ReclaimBackingState(uint32_t tpn);
+    /** Return whether allocator-driven automatic backing reclaim is enabled. */
+    bool IsAutomaticBackingReclaimEnabled() const
+    {
+        return m_enableAutomaticBackingReclaim;
+    }
+    /** Assess owner-local TP quiescence without mutating endpoint or owner state. */
+    UbTpQuiescenceAssessment AssessTpQuiescence(uint32_t tpn, UbTeardownIntent intent) const;
     /**
      * Restore or return live backing for the exact endpoint identity.
      *
@@ -99,6 +192,9 @@ class UbTransportChannelManager : public Object
 
     Ptr<UbTransportChannel> CreateReservedTpEndpointLocked(uint32_t tpn, bool drainOnly = false);
     bool ReclaimBackingStateLocked(uint32_t tpn);
+    UbTpQuiescenceAssessment AssessTpQuiescenceLocked(uint32_t tpn,
+                                                      const EndpointRecord& endpoint,
+                                                      UbTeardownIntent intent) const;
     Ptr<UbTransportChannel> ResolveLiveTpLocked(
         uint32_t tpn,
         const UbLifecycleResourceIdentity& expectedIdentity);

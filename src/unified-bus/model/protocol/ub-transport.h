@@ -84,6 +84,22 @@ struct UbTransportDormantState
     bool selectiveMarkPsnEnabled{false};
 };
 
+struct UbTransportQuiescenceSnapshot
+{
+    uint64_t pendingAckPackets{0};
+    uint64_t pendingCnpPackets{0};
+    uint64_t pendingWqeSegments{0};
+    uint64_t pendingRemoteRequests{0};
+    uint64_t pendingInboundTaUnits{0};
+    uint64_t bufferedInboundPackets{0};
+    bool hasUnacknowledgedPsn{false};
+    bool retransmissionTimerRunning{false};
+    bool outstandingRetransmissionState{false};
+    bool congestionControlPresent{false};
+    UbCongestionControlDormancyEligibility congestionControlDormancyEligibility{
+        UbCongestionControlDormancyEligibility::INELIGIBLE};
+};
+
 enum class UbTpgMemberMutationStatus : uint8_t
 {
     REMOVED = 0,
@@ -185,6 +201,7 @@ public:
     bool IsLimited() override;
     bool IsSafeForExplicitDestroy() const;
     bool IsSafeForBackingReclaim() const;
+    UbTransportQuiescenceSnapshot GetQuiescenceSnapshot() const;
     std::unique_ptr<UbTransportDormantState> SnapshotDormantState() const;
     bool RestoreDormantState(const UbTransportDormantState& state,
                              Ptr<UbCongestionControl> congestionCtrl);
@@ -394,6 +411,14 @@ public:
     void SetCongestionControlForTest(Ptr<UbCongestionControl> cc) { m_congestionCtrl = cc; }
     void EnqueueAckForTest(Ptr<Packet> p) { m_ackQ.push(p); }
     void EnqueueCnpForTest(Ptr<Packet> p) { m_cnpQ.push(p); }
+    void ClearCnpForTest() { while (!m_cnpQ.empty()) { m_cnpQ.pop(); } }
+    void ClearWqeSegmentsForTest() { m_wqeSegmentVector.clear(); }
+    void AddRemoteRequestForTest(Ptr<UbWqeSegment> segment) { m_remoteRequest.push_back(segment); }
+    void ClearRemoteRequestsForTest() { m_remoteRequest.clear(); }
+    void AddInboundTaUnitForTest(uint32_t srcTpn, uint64_t msn);
+    void ClearInboundTaUnitsForTest() { m_inboundTaUnits.clear(); }
+    void AddBufferedInboundPacketForTest(uint64_t psn);
+    void ClearBufferedInboundPacketsForTest() { m_bufferedInboundPackets.clear(); }
     Ptr<Packet> GetNextPacketForTest() { return GetNextPacket(); }
     uint32_t GetPendingAckCountForTest() const { return static_cast<uint32_t>(m_ackQ.size()); }
     Ptr<Packet> PopAckForTest() { return GetNextPacket(); }
@@ -450,6 +475,7 @@ public:
     uint64_t GetGbnRetransmissionCursorForTest() const;
     void RetainGbnDescriptorForTest(uint64_t psn);
     bool IsRetransTimerRunningForTest() const;
+    void StartRetransTimerForTest() { m_retrans->StartTimerIfNeeded(); }
     uint64_t GetSegmentBytesLeftForTest(uint32_t taskId) const;
 
     void SetBaseRto(Time rto);

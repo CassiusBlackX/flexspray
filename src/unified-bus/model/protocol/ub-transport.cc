@@ -2353,6 +2353,40 @@ UbTransportChannel::IsSafeForBackingReclaim() const
            (m_retrans == nullptr || !m_retrans->HasOutstandingRetransmissionState());
 }
 
+UbTransportQuiescenceSnapshot
+UbTransportChannel::GetQuiescenceSnapshot() const
+{
+    UbTransportQuiescenceSnapshot snapshot;
+    snapshot.pendingAckPackets = m_ackQ.size();
+    snapshot.pendingCnpPackets = m_cnpQ.size();
+    snapshot.pendingWqeSegments = m_wqeSegmentVector.size();
+    snapshot.pendingRemoteRequests = m_remoteRequest.size();
+    snapshot.pendingInboundTaUnits = m_inboundTaUnits.size();
+    snapshot.bufferedInboundPackets = m_bufferedInboundPackets.size();
+    snapshot.hasUnacknowledgedPsn = m_psnSndUna != m_psnSndNxt;
+    snapshot.retransmissionTimerRunning = m_retrans != nullptr && m_retrans->HasTimerRunning();
+    snapshot.outstandingRetransmissionState =
+        m_retrans != nullptr && m_retrans->HasOutstandingRetransmissionState();
+    snapshot.congestionControlPresent = m_congestionCtrl != nullptr;
+    if (m_congestionCtrl != nullptr)
+    {
+        snapshot.congestionControlDormancyEligibility = m_congestionCtrl->GetDormancyEligibility();
+    }
+    return snapshot;
+}
+
+void
+UbTransportChannel::AddInboundTaUnitForTest(uint32_t srcTpn, uint64_t msn)
+{
+    m_inboundTaUnits.emplace(std::make_pair(srcTpn, msn), InboundTaUnitState{});
+}
+
+void
+UbTransportChannel::AddBufferedInboundPacketForTest(uint64_t psn)
+{
+    m_bufferedInboundPackets.emplace(psn, BufferedInboundPacket{});
+}
+
 std::unique_ptr<UbTransportDormantState>
 UbTransportChannel::SnapshotDormantState() const
 {
