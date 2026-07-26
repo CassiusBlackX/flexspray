@@ -40,3 +40,6 @@ destroy 的判定，删除重复的 lifecycle-idle 拼装，同时保留各 owne
 - 性能包 `scratch/20260726-tp-quiescence-assessment-performance`：回收关闭 instructions
   `+0.113751%`、RSS `-0.402299%`；自动回收 instructions `-0.172316%`、RSS
   `-1.592154%`；8 个 run canonical 全部一致，无 safety stop。
+- 后续保留的 production fast return 在 `EnableAutomaticBackingReclaim=false` 时绕过完整
+  assessment，相对逐包资格探测减少 instructions `2.951547%`、wall `1.746073%`、RSS
+  `0.609919%`，12,288 个 canonical event identity/timestamp 完全一致。

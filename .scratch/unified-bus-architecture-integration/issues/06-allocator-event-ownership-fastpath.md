@@ -1,6 +1,6 @@
 # Allocator event ownership fastpath and reclaim assessment
 
-状态: 可执行
+状态: 待补充
 阻塞于: 02
 
 ## Scope
@@ -14,3 +14,10 @@ typed TP reclaim assessment, other-ledger attribution, and independent review.
 This parent ticket is complete only when subticket 08 in the detailed package is complete. A
 diagnostic ownership-disable treatment, allocator-only performance result, or assessment-only code
 change is not sufficient.
+
+## Current status
+
+Allocator ownership、typed TP assessment、reclaim-disabled fast return、focused correctness 和
+最终 PR/main 结果已归档在
+`.scratch/allocator-event-ownership-fastpath/performance-report.md`。Ticket 07 的其他 ledger
+归因和依赖它的 Ticket 08 交接尚未完成，因此父任务保持待补充。

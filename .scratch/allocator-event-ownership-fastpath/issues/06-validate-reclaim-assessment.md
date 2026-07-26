@@ -1,4 +1,4 @@
-状态: 可执行
+状态: 已完成
 阻塞于: 05
 
 # 验证统一回收判定与兼容边界
@@ -23,3 +23,12 @@
 - 成功 reclaim/destroy 的 identity、generation、dormant snapshot 与恢复行为不变。
 - ordinary CSV/case/CLI/trace 和 MTP owner routing 不变。
 - 独立 code review 未发现 P1/P2 correctness 问题。
+
+## 完成记录
+
+- focused TP reservation、switch VOQ、lifecycle、CTP lifecycle/transaction、transport
+  retransmission、retransmission timer、runtime storage 和 examples compatibility suites 通过。
+- blocker reason、successful reclaim/destroy、snapshot fail-closed、automatic reclaim on/off、
+  ordinary CLI/case 与 owner routing 均有回归覆盖。
+- 两个性能控制共 8 个 measured run，canonical 全部一致，无 safety stop 或残留进程。
+- 结果见 `../performance-report.md` 和 `../result-matrix.yaml`。

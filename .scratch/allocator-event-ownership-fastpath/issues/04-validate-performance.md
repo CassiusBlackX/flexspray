@@ -50,3 +50,8 @@
 - coupled 结果：`scratch/20260726-allocator-contiguous-storage-coupled-control/results/summary.json`。
 - 独立 review 未发现生产实现 P1/P2；实验包 provenance P2 已通过冻结 control provenance、
   完整 treatment diff 和 CMake cache 的 build 前后 gate 修复。
+- 最终保留候选相对 main：instructions `+7.862581%`、Simulator time `+18.598110%`、wall
+  `+18.560432%`、cycles `+18.524308%`、RSS `-43.682422%`。12,288 个 canonical identity
+  完全一致，299 个 timestamp 变化位于 `-2 ns` 到 `+3 ns`。
+- 集中报告和结果矩阵见 `../performance-report.md` 与 `../result-matrix.yaml`。剩余 PR/main
+  instruction 差距仅部分归因，不宣称与 main 等速。

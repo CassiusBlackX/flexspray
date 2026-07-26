@@ -1,0 +1,205 @@
+schema_version: 1
+generated_at: 2026-07-26
+comparison_rule:
+  primary_metric: retired_instructions
+  supporting_metrics: [simulator_run_seconds, wall_seconds, cycles_elapsed]
+  memory_guard: peak_rss_bytes
+  delta_sign: treatment_minus_control
+  evidence_type: measured_simulation_runtime
+
+results:
+  - id: allocator_port_local_contiguous_storage
+    name_zh: 按输出端口连续存储事件所有权
+    role: retained_production
+    control: 当前PR完整allocator事件所有权
+    treatment: 按输出端口连续存储
+    workload: allocator密集型主用例
+    repeats: 3
+    status: matched
+    metrics_percent:
+      retired_instructions: -2.595037
+      wall_seconds: 0.478469
+      peak_rss_bytes: -0.057438
+    ownership_gap_recovery_percent: 90.110087
+    canonical:
+      match: true
+    source:
+      path: scratch/20260726-allocator-retrigger-contiguous-storage-ablation/results/summary.json
+      sha256: bfd5f291c44fd496ed384b664e25e0ebf8947d710ffcfdd1507f7bb1978abb7e
+
+  - id: allocator_port_local_contiguous_storage_coupled
+    name_zh: 自动回收耦合下的端口本地事件所有权
+    role: retained_production_control
+    control: 当前PR完整allocator事件所有权
+    treatment: 按输出端口连续存储
+    workload: 自动回收耦合控制用例
+    repeats: 3
+    status: matched
+    metrics_percent:
+      retired_instructions: -21.875321
+      wall_seconds: -61.536926
+      peak_rss_bytes: 0.990481
+    ownership_gap_recovery_percent: 97.431004
+    canonical:
+      match: true
+    source:
+      path: scratch/20260726-allocator-contiguous-storage-coupled-control/results/summary.json
+      sha256: 33a338e7b626f40c962574a01a04257213997db447a81e4e45316741b62fc635
+    limitation: wall-time control来自历史完整ownership基线，仅作为支持指标
+
+  - id: typed_tp_quiescence_assessment_reclaim_disabled
+    name_zh: 回收关闭下的统一TP静默判定
+    role: retained_production
+    control: 端口本地事件所有权候选
+    treatment: 增加typed TP quiescence assessment
+    workload: allocator密集型主用例
+    repeats: 3
+    status: matched
+    metrics_percent:
+      retired_instructions: 0.113751
+      wall_seconds: -2.380952
+      peak_rss_bytes: -0.402299
+    canonical:
+      match: true
+    source:
+      path: scratch/20260726-tp-quiescence-assessment-performance/results/summary.json
+      sha256: 6001e2db3ac1df3ba86c9254a3b7b1718cfacc14510f718750d3c0b2edefda54
+
+  - id: typed_tp_quiescence_assessment_reclaim_enabled
+    name_zh: 自动回收下的统一TP静默判定
+    role: retained_production
+    control: 端口本地事件所有权候选
+    treatment: 增加typed TP quiescence assessment
+    workload: 自动回收耦合控制用例
+    repeats: 3
+    status: matched
+    metrics_percent:
+      retired_instructions: -0.172316
+      wall_seconds: 12.973534
+      peak_rss_bytes: -1.592154
+    canonical:
+      match: true
+    source:
+      path: scratch/20260726-tp-quiescence-assessment-performance/results/summary.json
+      sha256: 6001e2db3ac1df3ba86c9254a3b7b1718cfacc14510f718750d3c0b2edefda54
+    limitation: wall-time方向与instructions不一致，按预注册规则不覆盖稳定instruction结论
+
+  - id: reclaim_disabled_fast_return
+    name_zh: 回收关闭快速返回
+    role: retained_production
+    control: 逐包完整回收资格探测
+    treatment: 自动回收关闭时提前返回
+    workload: 大规模主分支基线用例
+    repeats: 2
+    status: matched
+    metrics_percent:
+      retired_instructions: -2.951547
+      simulator_run_seconds: -1.743854
+      wall_seconds: -1.746073
+      cycles_elapsed: -1.890694
+      peak_rss_bytes: -0.609919
+    canonical:
+      event_count: 12288
+      identity_multiset_equal: true
+      changed_timestamp_count: 0
+    source:
+      original_path: /private/tmp/ns3-ub-production-reclaim-fast-return-20260726T093949Z/summary.json
+      sha256: 5344c7070ef2f7818b97c64b2755af9958614ba4f4f0824177380615091307b2
+
+  - id: retrigger_single_pending_coalescing
+    name_zh: 保留allocation round的单pending retrigger合并
+    role: rejected_candidate
+    control: 当前生产候选
+    treatment: 保留语义的单pending retrigger合并
+    workload: 大规模主分支基线用例
+    repeats: 2
+    status: mismatched
+    metrics_percent:
+      retired_instructions: 0.014732
+      wall_seconds: -4.481541
+      peak_rss_bytes: -0.468981
+    canonical:
+      event_count: 12288
+      identity_multiset_equal: true
+      changed_timestamp_count: 0
+    disposition: 撤销；instruction无稳定收益，wall两轮方向相反
+    source:
+      original_path: /private/tmp/ns3-ub-production-single-pending-retrigger-20260726T095453Z/summary.json
+      sha256: 735aa8344b15cd913ff4882f904464535f7703d890bbbee60190c5c259ffba9f
+
+  - id: retrigger_coalescing_semantics_losing_prototype
+    name_zh: 删除额外allocation round的retrigger合并原型
+    role: diagnostic_only
+    control: 当前生产候选
+    treatment: 删除额外allocation round的原型
+    workload: 大规模主分支基线用例
+    repeats: 4
+    status: mismatched
+    metrics_percent:
+      retired_instructions: -2.178021
+      wall_seconds: -2.069296
+      peak_rss_bytes: -0.689362
+    canonical:
+      event_count: 12288
+      identity_multiset_equal: true
+      changed_timestamp_count: 1260
+    disposition: 撤销；收益来自删除既有allocation round，语义不可接受
+    source:
+      original_path: /private/tmp/ns3-ub-allocator-retrigger-coalesce-fast-prototype-20260726T074410Z/summary.json
+      sha256: d9dce50329657a861d87f3aed01e6202cc1932326ba3a5b22f589b120c9538f0
+
+  - id: lifecycle_attempt_word_cache
+    name_zh: lifecycle attempt-word缓存
+    role: rejected_candidate
+    control: 当前生产候选
+    treatment: lifecycle attempt-word缓存
+    workload: 大规模主分支基线用例
+    repeats: 2
+    status: mismatched
+    metrics_percent:
+      retired_instructions: 0.143388
+      simulator_run_seconds: 1.448452
+      wall_seconds: 1.449186
+      cycles_elapsed: 1.275140
+      peak_rss_bytes: 0.781231
+    canonical:
+      event_count: 12288
+      identity_multiset_equal: true
+      changed_timestamp_count: 0
+    disposition: 撤销；instructions、wall、cycles和RSS均回归
+    source:
+      original_path: /private/tmp/ns3-ub-production-lifecycle-word-cache-20260726T101538Z/summary.json
+      sha256: 121b7105d559463ff8115c2e6c11c637c29c9bf8f5e8204656110f1ab358220e
+
+  - id: final_pr_vs_main
+    name_zh: 最终保留候选对当前主分支
+    role: final_comparison
+    control: 当前主分支
+    treatment: 当前PR最终保留候选
+    workload: 大规模主分支基线用例
+    repeats: 2
+    status: partially_matched
+    metrics_percent:
+      retired_instructions: 7.862581
+      simulator_run_seconds: 18.598110
+      wall_seconds: 18.560432
+      cycles_elapsed: 18.524308
+      peak_rss_bytes: -43.682422
+    canonical:
+      event_count_each: 12288
+      identity_multiset_equal: true
+      changed_timestamp_count: 299
+      timestamp_delta_range_ns: [-2, 3]
+    interpretation: 内存目标显著改善；速度仍低于main，剩余成本没有完全归因
+    source:
+      original_path: /private/tmp/ns3-ub-final-retained-candidate-vs-main-20260726T102430Z/summary.json
+      sha256: 14b761f51c9a2b7558c2c15dc6e23a3c77e3b0e8ea3458a5e043a81fe858966c
+
+open_items:
+  - id: other_liveness_ledgers
+    status: inconclusive
+    scope: [switch_in_port_events, UbTrackedEventSet_owner_scans, transaction_tp_reference_scans]
+    reason: 未按Ticket 07矩阵完成逐项放大、消融与处置结论
+  - id: remaining_pr_main_cpu_gap
+    status: inconclusive
+    reason: 最终PR相对main的7.862581% instructions差距仅部分归因
