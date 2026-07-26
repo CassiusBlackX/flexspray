@@ -4,6 +4,7 @@
 #include "ns3/node.h"
 #include "ns3/udp-header.h"
 #include "ns3/ub-header.h"
+#include "ns3/ub-lifecycle.h"
 
 #include <cctype>
 #include <stdexcept>
@@ -528,7 +529,7 @@ UbFault::TryGetRetransFaultPacketInfo(Ptr<Packet> packet,
                                       uint32_t taskId,
                                       RetransFaultPacketInfo &info)
 {
-    Ptr<Packet> copy = packet->Copy();
+    Ptr<Packet> copy = CopyPacketView(packet);
     UbDatalinkPacketHeader dataLinkHeader;
     if (copy->GetSize() < dataLinkHeader.GetSerializedSize()) {
         return false;
@@ -705,6 +706,7 @@ int UbFault::FaultCallback(Ptr<Packet> packet, uint32_t nodeId, uint32_t portId,
         Simulator::Schedule(delay, &UbPort::TransmitPacketDetached, ubPort, packet);
     } else {
         Simulator::Schedule(Time(0), &UbPort::TransmitComplete, ubPort);
+        UbLifecycleCoordinator::TerminatePacket(packet, UbPacketTerminal::FAULT_DROP);
     }
     return 0;
 }

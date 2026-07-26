@@ -1,0 +1,596 @@
+{
+  "schema_version": 1,
+  "ticket": "T20",
+  "case": "medium-ctp-entity-vl-pressure",
+  "runtime": "local-single",
+  "approval": {
+    "status": "approved",
+    "source": "T14 user-approved strict-RR behavior and known acceptable difference policy",
+    "date": "2026-07-16",
+    "policy_statement": "A byte difference may pass only when root review confirms an exact, evidenced, acceptable cause and every managed artifact remains accounted for.",
+    "approved_by": "root-review",
+    "approved_cause_ids": [
+      "t14-strict-rr-removes-hash-start"
+    ]
+  },
+  "evidence": {
+    "specification": "tickets.md Task 20 requires frozen-byte acceptance with narrow approved exceptions; Task 14 explicitly records the user-approved packet-spray strict-RR output change.",
+    "reference_root": ".openusim/unified-bus-lifecycle/reference/runs/local-single/medium-ctp-entity-vl-pressure/run-1/case",
+    "candidate_root": ".openusim/unified-bus-lifecycle/candidate/t20/medium-ctp-entity-vl-pressure/case",
+    "diagnostics_root": ".openusim/unified-bus-lifecycle/diagnostics/t20-ctp-approved",
+    "comparison_result": "expected-differences-only",
+    "managed_artifact_count": 44,
+    "affected_artifact_count": 39,
+    "unaffected_artifact_count": 5,
+    "records": [
+      {
+        "id": "t20-local-ctp-strict-rr-milestone",
+        "kind": "milestone-acceptance",
+        "summary": "The frozen CTP case enables packet spray; T14 removes the flow-hash starting offset so path distribution and derived timing/throughput traces change while the complete input set remains identical.",
+        "ticket": "T20",
+        "runtime": "local-single",
+        "reference_root": ".openusim/unified-bus-lifecycle/reference/runs/local-single/medium-ctp-entity-vl-pressure/run-1/case",
+        "candidate_root": ".openusim/unified-bus-lifecycle/candidate/t20/medium-ctp-entity-vl-pressure/case",
+        "affected_artifacts": [
+          "canonical-events.rank0.txt",
+          "output/task_statistics.csv",
+          "output/throughput.csv",
+          "runlog/PacketTrace_node_0.tr",
+          "runlog/PacketTrace_node_1.tr",
+          "runlog/PortTrace_node_0_port_0.tr",
+          "runlog/PortTrace_node_1_port_0.tr",
+          "runlog/PortTrace_node_2_port_0.tr",
+          "runlog/PortTrace_node_2_port_1.tr",
+          "runlog/PortTrace_node_2_port_2.tr",
+          "runlog/PortTrace_node_2_port_3.tr",
+          "runlog/PortTrace_node_3_port_0.tr",
+          "runlog/PortTrace_node_3_port_1.tr",
+          "runlog/PortTrace_node_3_port_2.tr",
+          "runlog/PortTrace_node_3_port_3.tr",
+          "runlog/PortTrace_node_4_port_0.tr",
+          "runlog/PortTrace_node_4_port_1.tr",
+          "runlog/PortTrace_node_5_port_0.tr",
+          "runlog/PortTrace_node_5_port_1.tr",
+          "runlog/PortTrace_node_6_port_0.tr",
+          "runlog/PortTrace_node_6_port_1.tr",
+          "runlog/QueueTrace_node_0_port_0.tr",
+          "runlog/QueueTrace_node_1_port_0.tr",
+          "runlog/QueueTrace_node_2_port_0.tr",
+          "runlog/QueueTrace_node_2_port_1.tr",
+          "runlog/QueueTrace_node_2_port_2.tr",
+          "runlog/QueueTrace_node_2_port_3.tr",
+          "runlog/QueueTrace_node_3_port_0.tr",
+          "runlog/QueueTrace_node_3_port_1.tr",
+          "runlog/QueueTrace_node_3_port_2.tr",
+          "runlog/QueueTrace_node_3_port_3.tr",
+          "runlog/QueueTrace_node_4_port_0.tr",
+          "runlog/QueueTrace_node_4_port_1.tr",
+          "runlog/QueueTrace_node_5_port_0.tr",
+          "runlog/QueueTrace_node_5_port_1.tr",
+          "runlog/QueueTrace_node_6_port_0.tr",
+          "runlog/QueueTrace_node_6_port_1.tr",
+          "runlog/TaskTrace_node_0.tr",
+          "runlog/TaskTrace_node_1.tr"
+        ],
+        "claims": {
+          "introduced_by_commit": "e638c4d",
+          "packet_spray_enabled": true,
+          "old_selection": "flowHashBase + incrementing CTP LB salt",
+          "new_selection": "incrementing CTP LB salt as strict RR step",
+          "task_membership_preserved": true,
+          "tasks_completed": 4,
+          "pre_t19_control_tree_matches_candidate": true,
+          "pre_t19_control_canonical_sha256": "707481a8531935073e169aabb38756b397a3801832b7537321a76689784dd6c3",
+          "focused_test_id": "unified-bus-routing strict RR characterization"
+        }
+      }
+    ]
+  },
+  "causes": [
+    {
+      "id": "t14-strict-rr-removes-hash-start",
+      "introduced_by": "e638c4d",
+      "cause": "Packet spray now selects candidate[key.sport % count] instead of starting at a flow-hashed offset and then adding the incrementing CTP load-balance salt.",
+      "impact": "The approved routing policy redistributes packets across equal-cost ports, which changes port/queue traces, ACK completion order, task timing and derived throughput. All four tasks complete, managed file membership is unchanged, and all five case inputs remain byte-identical. A pre-T19 binary produces the exact T19 candidate tree, excluding the trace writer as the cause.",
+      "evidence": {
+        "ids": [
+          "t20-local-ctp-strict-rr-milestone"
+        ]
+      },
+      "artifacts": [
+        "canonical-events.rank0.txt",
+        "output/task_statistics.csv",
+        "output/throughput.csv",
+        "runlog/PacketTrace_node_0.tr",
+        "runlog/PacketTrace_node_1.tr",
+        "runlog/PortTrace_node_0_port_0.tr",
+        "runlog/PortTrace_node_1_port_0.tr",
+        "runlog/PortTrace_node_2_port_0.tr",
+        "runlog/PortTrace_node_2_port_1.tr",
+        "runlog/PortTrace_node_2_port_2.tr",
+        "runlog/PortTrace_node_2_port_3.tr",
+        "runlog/PortTrace_node_3_port_0.tr",
+        "runlog/PortTrace_node_3_port_1.tr",
+        "runlog/PortTrace_node_3_port_2.tr",
+        "runlog/PortTrace_node_3_port_3.tr",
+        "runlog/PortTrace_node_4_port_0.tr",
+        "runlog/PortTrace_node_4_port_1.tr",
+        "runlog/PortTrace_node_5_port_0.tr",
+        "runlog/PortTrace_node_5_port_1.tr",
+        "runlog/PortTrace_node_6_port_0.tr",
+        "runlog/PortTrace_node_6_port_1.tr",
+        "runlog/QueueTrace_node_0_port_0.tr",
+        "runlog/QueueTrace_node_1_port_0.tr",
+        "runlog/QueueTrace_node_2_port_0.tr",
+        "runlog/QueueTrace_node_2_port_1.tr",
+        "runlog/QueueTrace_node_2_port_2.tr",
+        "runlog/QueueTrace_node_2_port_3.tr",
+        "runlog/QueueTrace_node_3_port_0.tr",
+        "runlog/QueueTrace_node_3_port_1.tr",
+        "runlog/QueueTrace_node_3_port_2.tr",
+        "runlog/QueueTrace_node_3_port_3.tr",
+        "runlog/QueueTrace_node_4_port_0.tr",
+        "runlog/QueueTrace_node_4_port_1.tr",
+        "runlog/QueueTrace_node_5_port_0.tr",
+        "runlog/QueueTrace_node_5_port_1.tr",
+        "runlog/QueueTrace_node_6_port_0.tr",
+        "runlog/QueueTrace_node_6_port_1.tr",
+        "runlog/TaskTrace_node_0.tr",
+        "runlog/TaskTrace_node_1.tr"
+      ]
+    }
+  ],
+  "affected_artifacts": [
+    {
+      "path": "canonical-events.rank0.txt",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 62,
+      "reference_byte_hex": "37",
+      "candidate_byte_hex": "34",
+      "reference_sha256": "a6ada98a62a3ddf5ec6a3691d4e0455c45e8a20475b4a6f6fb57f0572e9efd07",
+      "candidate_sha256": "707481a8531935073e169aabb38756b397a3801832b7537321a76689784dd6c3"
+    },
+    {
+      "path": "output/task_statistics.csv",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 258,
+      "reference_byte_hex": "37",
+      "candidate_byte_hex": "34",
+      "reference_sha256": "fb2e344822be06a8b8e8963581819d417d810bafa03b35b77023682c965e2c05",
+      "candidate_sha256": "45e2a3c5951455b3e65d1f4cdef945874f3e4ccb01d88c77e075203645478700"
+    },
+    {
+      "path": "output/throughput.csv",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 109,
+      "reference_byte_hex": "39",
+      "candidate_byte_hex": "38",
+      "reference_sha256": "2313543a0419a50ca424e843f173bd228f2ca9888015315aff3accb25c18a183",
+      "candidate_sha256": "000f70b26d025ab2b69ecec344e56419042873f097673d7ed8a9593fd49e4ced"
+    },
+    {
+      "path": "runlog/PacketTrace_node_0.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 5679,
+      "reference_byte_hex": "35",
+      "candidate_byte_hex": "34",
+      "reference_sha256": "061c4e0e2f53321511736012fad68b8af7162597d38f7b5a4c812cdf2409fc73",
+      "candidate_sha256": "2d31467b66012b58bfcef3ab93ad204e0e2325a3f297fb837540f7960cfa9fd3"
+    },
+    {
+      "path": "runlog/PacketTrace_node_1.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 5631,
+      "reference_byte_hex": "35",
+      "candidate_byte_hex": "34",
+      "reference_sha256": "cd9d7c90117344533aa73617c8e3b3a31e762e1faf2a34739028956abc6a214b",
+      "candidate_sha256": "fa6a53d7a7dbe0705fae6fa1fc436663bc7af4587619fa713d9d1fe347788b92"
+    },
+    {
+      "path": "runlog/PortTrace_node_0_port_0.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 1572,
+      "reference_byte_hex": "39",
+      "candidate_byte_hex": "38",
+      "reference_sha256": "fec8369b298e73bb14677c90b5fb2950515d058668110361c8d33137185d2429",
+      "candidate_sha256": "ce58d2e1dd591fc28c15eef326882fc17667f3d801653cce129b9a3c3547bc45"
+    },
+    {
+      "path": "runlog/PortTrace_node_1_port_0.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 1618,
+      "reference_byte_hex": "38",
+      "candidate_byte_hex": "36",
+      "reference_sha256": "cae76eabc38b6258a16e8ab684978cf107a6f96cff74bf2fda6fcbaf26b365a4",
+      "candidate_sha256": "3f152636e63e0e9a89d6cf0676c2abe94e728e44e0d1d9f755f4d07e400a4d03"
+    },
+    {
+      "path": "runlog/PortTrace_node_2_port_0.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 1422,
+      "reference_byte_hex": "36",
+      "candidate_byte_hex": "33",
+      "reference_sha256": "0b6e1705a9064a7c820e716e30859dbf08cc0835670239c026f6fde9701b6ff0",
+      "candidate_sha256": "0da5c8f0be3f3582c4775bf20cb65b9a11e90c49c85dfbf7a37b5e9c38b2b4e8"
+    },
+    {
+      "path": "runlog/PortTrace_node_2_port_1.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 4,
+      "reference_byte_hex": "37",
+      "candidate_byte_hex": "35",
+      "reference_sha256": "52b1d5dc354046a5c9a285aea12ce33d297dc3dcafb363561d4d846b69ca9e2b",
+      "candidate_sha256": "31284af195b8b99a687e8384bfebb8870b0ddc07d469ef5bc578239517a52143"
+    },
+    {
+      "path": "runlog/PortTrace_node_2_port_2.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 4,
+      "reference_byte_hex": "35",
+      "candidate_byte_hex": "37",
+      "reference_sha256": "287782c6cabb01cfd9faf669ba1667e3630c9e317bc17fd9c8dd283ac15b2434",
+      "candidate_sha256": "34b2da5c1d59270e536f855bf28d009555bf1f5ab75d4e3183df828df5329d99"
+    },
+    {
+      "path": "runlog/PortTrace_node_2_port_3.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 5,
+      "reference_byte_hex": "34",
+      "candidate_byte_hex": "36",
+      "reference_sha256": "92cef0488817cbe1dfa23a5c199f719fc6ad79a3a3c0cbf7158cb70b7cc5f139",
+      "candidate_sha256": "94f6b13359d9d0df8a99967a8155ef04b097c8965360a5592d54414893b1ddf8"
+    },
+    {
+      "path": "runlog/PortTrace_node_3_port_0.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 1323,
+      "reference_byte_hex": "32",
+      "candidate_byte_hex": "31",
+      "reference_sha256": "ab88e561ffee93063bf5e147ae0a2649c1987873c252a65dcd18f6b7c8b1ee92",
+      "candidate_sha256": "579ee07c1dd7ae7e333633f3473c798c85f21df75730231e00c12e7432f90cce"
+    },
+    {
+      "path": "runlog/PortTrace_node_3_port_1.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 5,
+      "reference_byte_hex": "33",
+      "candidate_byte_hex": "32",
+      "reference_sha256": "9b6f8cdc4097a3fbb5f0e94b0147c1c71c3c21abb5929fcd379d1bd7c8127a82",
+      "candidate_sha256": "1907e817ecf42707ee30b894574c3f6b26c25dc617bfef31b695f1e6a588cecd"
+    },
+    {
+      "path": "runlog/PortTrace_node_3_port_2.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 5,
+      "reference_byte_hex": "34",
+      "candidate_byte_hex": "33",
+      "reference_sha256": "48719becb5f3403a17e61364f1d7440dc61f26e6b99481647a59395d19d96bb5",
+      "candidate_sha256": "1508415a64dd81cb9e8c48be094bf043f6e03389d6ed5d3bb597430b583fd6d7"
+    },
+    {
+      "path": "runlog/PortTrace_node_3_port_3.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 5,
+      "reference_byte_hex": "32",
+      "candidate_byte_hex": "34",
+      "reference_sha256": "4e69e6cd8e2917ddf9e3458c5100577be2d0b4cc61e10eca80147ab4f12be20d",
+      "candidate_sha256": "c30d7100131402329f30b909c408a5464b75f486070a66ae8d7da22f30e13b20"
+    },
+    {
+      "path": "runlog/PortTrace_node_4_port_0.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 5,
+      "reference_byte_hex": "34",
+      "candidate_byte_hex": "33",
+      "reference_sha256": "8a8cfc79476f2d62a080fa88e0bf88c6a00a292b7c3e43e9ee89c3647abe2053",
+      "candidate_sha256": "8142aa3e05da9e7e4cbd79b2372196008fe434253e3f659ca52414bfd4b7d069"
+    },
+    {
+      "path": "runlog/PortTrace_node_4_port_1.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 5,
+      "reference_byte_hex": "33",
+      "candidate_byte_hex": "32",
+      "reference_sha256": "c2c2874135b7a7970ae594d47cec6fa23a409382808cdbb3f654109dcdf7bab9",
+      "candidate_sha256": "35ffb892aa948bf4000fa0809d536129f6130daa4975c18960861b31fe2e647b"
+    },
+    {
+      "path": "runlog/PortTrace_node_5_port_0.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 5,
+      "reference_byte_hex": "35",
+      "candidate_byte_hex": "34",
+      "reference_sha256": "431076b189b97ffdf7b4f921486a32239f7ffd240f64284b34153d6dcc86e936",
+      "candidate_sha256": "ba182f3c1766dbce6ee8f44b824b4937927467c0035db74525392a88c688cb13"
+    },
+    {
+      "path": "runlog/PortTrace_node_5_port_1.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 5,
+      "reference_byte_hex": "34",
+      "candidate_byte_hex": "33",
+      "reference_sha256": "9fbc45fa6266c0dcbac01415edd138e3c24a0182267e6c1e5da61d236f1f598a",
+      "candidate_sha256": "f9625db51d60c5059db850f9ce4dab0e13796f19ab0ea170b4c5c31ae5e5aaf9"
+    },
+    {
+      "path": "runlog/PortTrace_node_6_port_0.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 5,
+      "reference_byte_hex": "33",
+      "candidate_byte_hex": "35",
+      "reference_sha256": "99b4ce4123166f512d8a4641b009b9448dca0b87e170e9d0f1f10d93d3a85b48",
+      "candidate_sha256": "809a284453673aa6e2953f0e25e49f0c273a3da1e55ac8e684dc481589e251b4"
+    },
+    {
+      "path": "runlog/PortTrace_node_6_port_1.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 5,
+      "reference_byte_hex": "32",
+      "candidate_byte_hex": "34",
+      "reference_sha256": "2421f7735afde3d31768d5d11be1179bd9266380aa54aedb8cea54961c2b8a95",
+      "candidate_sha256": "994b90a1e5ea92717488ef73a907d19806215ebb13e87b3fbfe33a35b602cf8e"
+    },
+    {
+      "path": "runlog/QueueTrace_node_0_port_0.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 17941,
+      "reference_byte_hex": "36",
+      "candidate_byte_hex": "37",
+      "reference_sha256": "da91b72b8614fe3a0b6eae62d7e24c29f6cf0773f4b58a6071e41d4477ecc8ad",
+      "candidate_sha256": "4e9ac8b41488a2fe5b04ef0218f49ce68a6a7fe46ec444603b2b896b784c4565"
+    },
+    {
+      "path": "runlog/QueueTrace_node_1_port_0.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 9830,
+      "reference_byte_hex": "34",
+      "candidate_byte_hex": "32",
+      "reference_sha256": "365c1475590f364d12c0f0ddf9895d4dd1d5efa8f7954f2f8d40fa2bbd5aeaae",
+      "candidate_sha256": "79b827fd8f42349800d13177f6315766fded22deea3125b0a3ecc2b75bc0e891"
+    },
+    {
+      "path": "runlog/QueueTrace_node_2_port_0.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 1172,
+      "reference_byte_hex": "45",
+      "candidate_byte_hex": "56",
+      "reference_sha256": "78c3eb0cda73f5200056a588c50250c6cbcc6f7faf80a75eda2cc3ab620332e1",
+      "candidate_sha256": "05de30eff83f3bb81a2100a4614852a4ddf9decf2f26e9b913a8a9284e0c5ac6"
+    },
+    {
+      "path": "runlog/QueueTrace_node_2_port_1.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 419,
+      "reference_byte_hex": "36",
+      "candidate_byte_hex": "35",
+      "reference_sha256": "6b5ac6341eee4cee64e6007e2ff6e7cb020772d251ac92675c6eb1d99b64585a",
+      "candidate_sha256": "99587e7f3bcca22a17b6382c20e56c336ab90ed09b1a70f65b095899b35358b2"
+    },
+    {
+      "path": "runlog/QueueTrace_node_2_port_2.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 419,
+      "reference_byte_hex": "35",
+      "candidate_byte_hex": "36",
+      "reference_sha256": "9036fd3a00ecbbbeba475e354333f353a4418c868feae2746a25851ea61809d7",
+      "candidate_sha256": "04b0f6e77f6e42ae5b7e6ea9fa049f0394d8edd153eaf2b6991e714efe219b45"
+    },
+    {
+      "path": "runlog/QueueTrace_node_2_port_3.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 586,
+      "reference_byte_hex": "34",
+      "candidate_byte_hex": "36",
+      "reference_sha256": "eab55a78c737de4db632b196844db468ff2ebfc43917740f5a11570edd77788b",
+      "candidate_sha256": "d7e80f29d3b1c57b21bfff6060666838d621b309d37484a66f5115a3d55025f4"
+    },
+    {
+      "path": "runlog/QueueTrace_node_3_port_0.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 1079,
+      "reference_byte_hex": "35",
+      "candidate_byte_hex": "34",
+      "reference_sha256": "b98db94c530740d74c7b5b2ff350a44b0dd481695428a39248dacc97150a6ce4",
+      "candidate_sha256": "b74aab4dd6b7e65093a49046c2883ad37b6e135f49db95b063497659ac00205d"
+    },
+    {
+      "path": "runlog/QueueTrace_node_3_port_1.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 254,
+      "reference_byte_hex": "32",
+      "candidate_byte_hex": "31",
+      "reference_sha256": "1f13562e4305f87fc1e9ad7b82afab0791ae65a2d4da985ccfb9d7e99b6bf9f0",
+      "candidate_sha256": "eec80125e157aa2bc4359ffd614ad17197fb92aa1c8e0acdede6bce989a0d0fb"
+    },
+    {
+      "path": "runlog/QueueTrace_node_3_port_2.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 254,
+      "reference_byte_hex": "33",
+      "candidate_byte_hex": "32",
+      "reference_sha256": "ba827bce51b4fa7619f89fa28bdf6768da9d622e780eb3eb034f5a8ffc20d647",
+      "candidate_sha256": "644db9e5f21d2f810b2881f857a1e73fbd8d7d7c3abc38f80a8b1a8b6900a3bb"
+    },
+    {
+      "path": "runlog/QueueTrace_node_3_port_3.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 254,
+      "reference_byte_hex": "31",
+      "candidate_byte_hex": "33",
+      "reference_sha256": "eef3d6dca4caa9a6c0945070490cb8b8af117c35d78d3d58dae018a23941d0df",
+      "candidate_sha256": "46089f2dd7f10a9150fe4de9877a75c50be8a00588980dbbfa299d5dfa4b3198"
+    },
+    {
+      "path": "runlog/QueueTrace_node_4_port_0.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 420,
+      "reference_byte_hex": "33",
+      "candidate_byte_hex": "32",
+      "reference_sha256": "607a66295be98355a33f44966c7ab3f7ff4236be10d4c56d223fbea388115c61",
+      "candidate_sha256": "ca346b71605c69f29604c892349878cafbaa252e29492d3e8f99a27e8a41b30b"
+    },
+    {
+      "path": "runlog/QueueTrace_node_4_port_1.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 420,
+      "reference_byte_hex": "33",
+      "candidate_byte_hex": "32",
+      "reference_sha256": "e3caf9c49d5c54d9ea2ff6bf1997d37cc74fab6928d00f37550356e37b314cf0",
+      "candidate_sha256": "a334473c95f51f7941c45999ef14de4fd2e2db9bfaf3dc1493f19374dceb2c59"
+    },
+    {
+      "path": "runlog/QueueTrace_node_5_port_0.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 420,
+      "reference_byte_hex": "34",
+      "candidate_byte_hex": "33",
+      "reference_sha256": "1cb103528e18333ebcf89c625b961efcf042e144c50462a086bb3a69f318aa6e",
+      "candidate_sha256": "678dae6a3c18a7176ec0c83f3ae2d74c89a608d1fc5097dacc12272b2fc44109"
+    },
+    {
+      "path": "runlog/QueueTrace_node_5_port_1.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 420,
+      "reference_byte_hex": "34",
+      "candidate_byte_hex": "33",
+      "reference_sha256": "d12eb213c82ac110e383fac218ea2223ff354699c5ccdbff3850fbedf4486ae0",
+      "candidate_sha256": "d6aad843c2a7fd9ca300cb22092279c1e09d1405c6a2f83f2aad928258bea1ad"
+    },
+    {
+      "path": "runlog/QueueTrace_node_6_port_0.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 420,
+      "reference_byte_hex": "32",
+      "candidate_byte_hex": "34",
+      "reference_sha256": "641bc73366698e96016959168db388d1dc82ff84d6cfd64bb7b891f674047a00",
+      "candidate_sha256": "80ccf90d60826c945163ce32fcba0414bba78b3a3d81c2e8c8581f18acd2409a"
+    },
+    {
+      "path": "runlog/QueueTrace_node_6_port_1.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 420,
+      "reference_byte_hex": "32",
+      "candidate_byte_hex": "34",
+      "reference_sha256": "fa21277cec3a83737275ac48cc0e0cfb8c473ab16bf11451c54bdfc5f90bf664",
+      "candidate_sha256": "445ebc33bc956070fb75cb580ac948b41d96cd1862734eb9dc5e9698879433f5"
+    },
+    {
+      "path": "runlog/TaskTrace_node_0.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 98,
+      "reference_byte_hex": "37",
+      "candidate_byte_hex": "34",
+      "reference_sha256": "a285e73a279a55bb83a1eb459fb6bb4b0747d01c229dd2bfc01aeb8bdf542be1",
+      "candidate_sha256": "7574679fae875691015e1c8b0399b7f5073821f8085d0aaf4239cab1daa6d86e"
+    },
+    {
+      "path": "runlog/TaskTrace_node_1.tr",
+      "cause_ids": [
+        "t14-strict-rr-removes-hash-start"
+      ],
+      "first_byte_offset": 97,
+      "reference_byte_hex": "33",
+      "candidate_byte_hex": "32",
+      "reference_sha256": "b3ec1ea8a461974376b536788f795d758848b32a5c42549e4f5288ecd03c6fde",
+      "candidate_sha256": "1a4f6e8055ef9d95b95aeb85c488345ecc2d180307027da98ba40ee420c4200a"
+    }
+  ],
+  "unaffected_artifacts": [
+    {
+      "path": "network_attribute.txt",
+      "sha256": "dda32a47620127385c1d29776aa12124b6382337589722ae7abda7b3eccc02f0"
+    },
+    {
+      "path": "node.csv",
+      "sha256": "cd06746eacfe49c5727adeaf3110c60931df1063211d397dcc1f06367b559f60"
+    },
+    {
+      "path": "routing_table.csv",
+      "sha256": "d0b8280fece127140e7396393e6d61f1b357a07500d23104be4f78b704cae515"
+    },
+    {
+      "path": "topology.csv",
+      "sha256": "3733e8323d0d63f7cc86ccbc05e52282ff8e103a1cae828f0046668a2332defb"
+    },
+    {
+      "path": "traffic.csv",
+      "sha256": "e067f51d6e648e3e0b911e7666c84b3d5658703a5b4beb4ca64c78a353cb0b38"
+    }
+  ]
+}

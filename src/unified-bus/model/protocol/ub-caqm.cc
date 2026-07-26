@@ -94,6 +94,26 @@ static const uint32_t DATA_BYTE_RECVD_RESET_NUM = 0x80000000; // 2 ^ 31
 
 NS_OBJECT_ENSURE_REGISTERED(UbHostCaqm);
 
+struct UbHostCaqm::DormancyState final : public UbCongestionControlDormancyState
+{
+    CongestionState congestionState{SLOW_START};
+    uint32_t dataByteSent{0};
+    uint32_t dataByteRecvd{0};
+    uint32_t inFlight{0};
+    uint32_t cwnd{0};
+    uint32_t lastSequence{0};
+    std::unordered_map<uint64_t, uint32_t> recvdPsnPacketSizeMap;
+    std::unordered_map<uint64_t, uint16_t> recvdPsnHintMap;
+    std::unordered_map<uint64_t, uint8_t> recvdPsnCMap;
+    std::unordered_map<uint64_t, uint8_t> recvdPsnIMap;
+    std::unordered_map<uint32_t, Time> psnSendTimeMap;
+    Time rtt{NanoSeconds(0)};
+    uint16_t hintE{0};
+    uint8_t ce{0};
+    uint8_t ie{0};
+    double accumulateHint{0};
+};
+
 TypeId UbHostCaqm::GetTypeId(void)
 {
     static TypeId tid =
@@ -148,6 +168,71 @@ void UbHostCaqm::UpdateRttEstimate(Time sample)
 void UbHostCaqm::ApplyRttSampleForTest(Time sample)
 {
     UpdateRttEstimate(sample);
+}
+
+UbCongestionControlDormancyEligibility
+UbHostCaqm::GetDormancyEligibility() const
+{
+    return m_congestionStateResetEvent.IsPending()
+               ? UbCongestionControlDormancyEligibility::INELIGIBLE
+               : UbCongestionControlDormancyEligibility::ELIGIBLE;
+}
+
+std::unique_ptr<UbCongestionControlDormancyState>
+UbHostCaqm::SnapshotDormancyState() const
+{
+    if (GetDormancyEligibility() != UbCongestionControlDormancyEligibility::ELIGIBLE)
+    {
+        return nullptr;
+    }
+
+    auto state = std::make_unique<DormancyState>();
+    state->congestionState = m_congestionState;
+    state->dataByteSent = m_dataByteSent;
+    state->dataByteRecvd = m_dataByteRecvd;
+    state->inFlight = m_inFlight;
+    state->cwnd = m_cwnd;
+    state->lastSequence = m_lastSequence;
+    state->recvdPsnPacketSizeMap = m_recvdPsnPacketSizeMap;
+    state->recvdPsnHintMap = m_recvdPsnHintMap;
+    state->recvdPsnCMap = m_recvdPsnCMap;
+    state->recvdPsnIMap = m_recvdPsnIMap;
+    state->psnSendTimeMap = m_psnSendTimeMap;
+    state->rtt = m_rtt;
+    state->hintE = m_HintE;
+    state->ce = m_CE;
+    state->ie = m_IE;
+    state->accumulateHint = m_accumulateHint;
+    return state;
+}
+
+bool
+UbHostCaqm::RestoreDormancyState(const UbCongestionControlDormancyState& state)
+{
+    const auto* caqmState = dynamic_cast<const DormancyState*>(&state);
+    if (caqmState == nullptr ||
+        GetDormancyEligibility() != UbCongestionControlDormancyEligibility::ELIGIBLE)
+    {
+        return false;
+    }
+
+    m_congestionState = caqmState->congestionState;
+    m_dataByteSent = caqmState->dataByteSent;
+    m_dataByteRecvd = caqmState->dataByteRecvd;
+    m_inFlight = caqmState->inFlight;
+    m_cwnd = caqmState->cwnd;
+    m_lastSequence = caqmState->lastSequence;
+    m_recvdPsnPacketSizeMap = caqmState->recvdPsnPacketSizeMap;
+    m_recvdPsnHintMap = caqmState->recvdPsnHintMap;
+    m_recvdPsnCMap = caqmState->recvdPsnCMap;
+    m_recvdPsnIMap = caqmState->recvdPsnIMap;
+    m_psnSendTimeMap = caqmState->psnSendTimeMap;
+    m_rtt = caqmState->rtt;
+    m_HintE = caqmState->hintE;
+    m_CE = caqmState->ce;
+    m_IE = caqmState->ie;
+    m_accumulateHint = caqmState->accumulateHint;
+    return true;
 }
 
 // 获取剩余窗口

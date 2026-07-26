@@ -29,11 +29,14 @@ build_lib(
 	model/ub-traffic-gen.cc
 	model/ub-app.cc
     model/ub-controller.cc
+	model/ub-transport-channel-manager.cc
 	model/protocol/ub-datalink.cc
 	model/ub-datatype.cc
 	model/protocol/ub-header.cc
 	model/protocol/ub-ctp.cc
 	model/ub-link.cc
+	model/ub-lifecycle.cc
+	model/ub-lifecycle-trace.cc
 	model/ub-port.cc
 	model/ub-tag.cc
 	model/ub-switch.cc
@@ -41,9 +44,11 @@ build_lib(
 	model/protocol/ub-function.cc
 	model/protocol/ub-transport.cc
 	model/protocol/ub-retrans.cc
+	model/protocol/ub-routing-policy.cc
 	model/protocol/ub-routing-process.cc
 	model/protocol/ub-next-hop-index.cc
 	model/protocol/ub-rule-routing.cc
+	model/protocol/ub-routing-table.cc
 	model/ub-switch-allocator.cc
 	model/ub-utils.cc
 	model/protocol/ub-ldst-api.cc
@@ -53,6 +58,9 @@ build_lib(
 	model/protocol/ub-caqm.cc
 	model/protocol/ub-dcqcn.cc
 	model/protocol/ub-flow-control.cc
+	model/protocol/ub-cbfc.cc
+	model/protocol/ub-pfc.cc
+	model/ub-ingress-queue.cc
 	model/ub-queue-manager.cc
 	model/ub-fault.cc
 	model/ub-tp-connection-manager.cc
@@ -62,11 +70,14 @@ build_lib(
 	model/ub-traffic-gen.h
 	model/ub-app.h
     model/ub-controller.h
+	model/ub-transport-channel-manager.h
 	model/protocol/ub-datalink.h
 	model/ub-datatype.h
 	model/protocol/ub-header.h
 	model/protocol/ub-ctp.h
 	model/ub-link.h
+	model/ub-lifecycle.h
+	model/ub-lifecycle-trace.h
 	model/ub-modulo-sequence.h
 	model/ub-port.h
 	model/ub-small-fifo-queue.h
@@ -76,9 +87,11 @@ build_lib(
 	model/protocol/ub-function.h
 	model/protocol/ub-transport.h
 	model/protocol/ub-retrans.h
+	model/protocol/ub-routing-policy.h
 	model/protocol/ub-routing-process.h
 	model/protocol/ub-next-hop-index.h
 	model/protocol/ub-rule-routing.h
+	model/protocol/ub-routing-table.h
 	model/ub-switch-allocator.h
 	model/ub-utils.h
 	model/ub-network-address.h
@@ -90,6 +103,9 @@ build_lib(
 	model/protocol/ub-caqm.h
 	model/protocol/ub-dcqcn.h
 	model/protocol/ub-flow-control.h
+	model/protocol/ub-cbfc.h
+	model/protocol/ub-pfc.h
+	model/ub-ingress-queue.h
 	model/ub-queue-manager.h
 	model/ub-tag.h
 	model/ub-fault.h

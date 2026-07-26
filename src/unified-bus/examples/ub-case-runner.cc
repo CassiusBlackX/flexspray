@@ -6,6 +6,7 @@
 #include "ns3/node-list.h"
 #include "ns3/ub-app.h"
 #include "ns3/ub-link.h"
+#include "ns3/ub-next-hop-index.h"
 #include "ns3/ub-port.h"
 #include "ns3/ub-traffic-gen.h"
 #include "ns3/ub-transport.h"
@@ -48,11 +49,14 @@ struct QuickExampleOptions
     uint32_t rngRun = 10;
     std::string configPath;
     std::string structuredTopologyFile;
+    std::string compressedRoutingFile;
+    std::string routeRuntimeMode = "auto";
     std::string dependencyVisibilityDelay;
     std::string initialTaskStartOffsetWindow = "0ps";
     std::string linkDelayOffsetWindow = "0ps";
     uint32_t timingOffsetSeed = 1;
     std::string canonicalOutputPath;
+    std::string runtimeStorageSnapshotPath;
 };
 
 struct DropAbortState
@@ -477,7 +481,82 @@ BuildScenarioFromConfig(const QuickExampleOptions& options, const RuntimeSelecti
         std::ifstream structuredInput(options.structuredTopologyFile);
         NS_ABORT_MSG_IF(!structuredInput.is_open(),
                         "cannot open structured topology file: " << options.structuredTopologyFile);
-        const auto structuredConfig = UbUtils::ReadStructuredTopologyConfig(structuredInput);
+        auto structuredConfig = UbUtils::ReadStructuredTopologyConfig(structuredInput);
+        const bool usesPortableRoutingArtifacts = !structuredConfig.routingFingerprint.empty();
+        const bool hasStructuredRules = !structuredConfig.portGroups.empty() ||
+                                        !structuredConfig.routingRules.empty() ||
+                                        !structuredConfig.routingRangeRules.empty() ||
+                                        !structuredConfig.topologyRules.empty();
+        std::string routeRuntimeMode = options.routeRuntimeMode;
+        if (routeRuntimeMode == "auto")
+        {
+            if (usesPortableRoutingArtifacts)
+            {
+                routeRuntimeMode = !options.compressedRoutingFile.empty()
+                                       ? "compressed-table-lookup"
+                                       : "structured-rule-compute";
+                NS_ABORT_MSG_IF(routeRuntimeMode == "structured-rule-compute" &&
+                                    !hasStructuredRules,
+                                "route runtime auto mode found neither compressed routing nor "
+                                "executable rules");
+            }
+            else
+            {
+                routeRuntimeMode = hasStructuredRules ? "structured-rule-compute"
+                                                       : "compressed-table-lookup";
+            }
+        }
+        if (!usesPortableRoutingArtifacts)
+        {
+            NS_ABORT_MSG_IF(!options.compressedRoutingFile.empty(),
+                            "compressed routing artifacts require a version 4 prepared topology");
+            NS_ABORT_MSG_IF(routeRuntimeMode != "compressed-table-lookup" &&
+                                routeRuntimeMode != "structured-rule-compute",
+                            "unknown route runtime mode: " << routeRuntimeMode);
+        }
+        else if (routeRuntimeMode == "compressed-table-lookup")
+        {
+            NS_ABORT_MSG_IF(options.compressedRoutingFile.empty(),
+                            "compressed-table-lookup requires --compressed-routing-file");
+            std::ifstream compressedInput(options.compressedRoutingFile, std::ios::binary);
+            NS_ABORT_MSG_IF(
+                !compressedInput.is_open(),
+                "cannot open compressed routing file: " << options.compressedRoutingFile);
+            std::vector<std::vector<bool>> connectedPorts(structuredConfig.nodes.size());
+            for (const auto& node : structuredConfig.nodes)
+            {
+                NS_ABORT_MSG_IF(node.nodeId >= connectedPorts.size(),
+                                "prepared topology node ID is outside the node count");
+                connectedPorts[node.nodeId].resize(node.portCount);
+            }
+            for (const auto& link : structuredConfig.links)
+            {
+                NS_ABORT_MSG_IF(link.node1 >= connectedPorts.size() ||
+                                    link.port1 >= connectedPorts[link.node1].size() ||
+                                    link.node2 >= connectedPorts.size() ||
+                                    link.port2 >= connectedPorts[link.node2].size(),
+                                "prepared topology link references an invalid node or port");
+                connectedPorts[link.node1][link.port1] = true;
+                connectedPorts[link.node2][link.port2] = true;
+            }
+            structuredConfig.tableNextHopIndex =
+                UbNextHopIndex::Read(compressedInput,
+                                     connectedPorts,
+                                     structuredConfig.routingFingerprint);
+            structuredConfig.portGroups.clear();
+            structuredConfig.routingRules.clear();
+            structuredConfig.routingRangeRules.clear();
+            structuredConfig.topologyRules.clear();
+        }
+        else if (routeRuntimeMode == "structured-rule-compute")
+        {
+            NS_ABORT_MSG_IF(!hasStructuredRules,
+                            "structured-rule-compute is unavailable for this prepared case");
+        }
+        else
+        {
+            NS_ABORT_MSG("unknown route runtime mode: " << routeRuntimeMode);
+        }
         offsetStats = UbUtils::Get()->InstallStructuredTopology(structuredConfig,
                                                                 linkOffsetWindow,
                                                                 options.timingOffsetSeed);
@@ -594,6 +673,21 @@ void ConfigureCanonicalOutput(const QuickExampleOptions& options, const RuntimeS
     {
         UbTrafficGen::Get()->EnableCanonicalOutput(options.canonicalOutputPath, runtime.mpiRank);
     }
+}
+
+std::string
+ResolveRuntimeStorageSnapshotPath(const QuickExampleOptions& options,
+                                  const RuntimeSelection& runtime)
+{
+    if (options.runtimeStorageSnapshotPath.empty() || !runtime.enableMpi)
+    {
+        return options.runtimeStorageSnapshotPath;
+    }
+    const std::filesystem::path path(options.runtimeStorageSnapshotPath);
+    const std::string extension = path.extension().string();
+    return (path.parent_path() /
+            (path.stem().string() + ".rank" + std::to_string(runtime.mpiRank) + extension))
+        .string();
 }
 
 void
@@ -751,6 +845,12 @@ QuickExampleOptions ParseOptions(int argc, char* argv[])
     cmd.AddValue("structured-topology-file",
                  "Read prepared topology and compiled routing from this file",
                  options.structuredTopologyFile);
+    cmd.AddValue("compressed-routing-file",
+                 "Read a prepared compressed next-hop index from this file",
+                 options.compressedRoutingFile);
+    cmd.AddValue("route-runtime-mode",
+                 "Runtime route lookup: auto, compressed-table-lookup, or structured-rule-compute",
+                 options.routeRuntimeMode);
     cmd.AddValue("mtp-threads",
                  "Number of MTP threads (0-1 to disable, >=2 to enable)",
                  options.mtpThreads);
@@ -778,6 +878,9 @@ QuickExampleOptions ParseOptions(int argc, char* argv[])
     cmd.AddValue("canonical-output",
                  "Write deterministic UbTrafficGen canonical events to this output basename",
                  options.canonicalOutputPath);
+    cmd.AddValue("runtime-storage-snapshot",
+                 "Write a versioned case-end runtime storage attribution CSV to this path",
+                 options.runtimeStorageSnapshotPath);
     cmd.AddNonOption("casePath",
                      "Required unified-bus case directory when --case-path is omitted",
                      positionalCasePath);
@@ -928,6 +1031,13 @@ PhaseTiming RunScenario(const QuickExampleOptions& options,
     }
     Simulator::Run();
     timing.simulationEnd = std::chrono::high_resolution_clock::now();
+
+    const std::string runtimeStorageSnapshotPath =
+        ResolveRuntimeStorageSnapshotPath(options, runtime);
+    if (!runtimeStorageSnapshotPath.empty())
+    {
+        UbUtils::WriteRuntimeStorageSnapshot(runtimeStorageSnapshotPath);
+    }
 
     UbUtils::Get()->Destroy();
     UbTrafficGen::Get()->WriteCanonicalOutput();

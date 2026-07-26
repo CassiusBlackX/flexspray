@@ -142,6 +142,7 @@ class DistributedSimulatorImpl : public SimulatorImpl
      * @param [in] lookAhead The maximum lookahead; must be > 0.
      */
     virtual void BoundLookAhead(const Time lookAhead);
+    Time GetLookAhead() const;
 
   private:
     // Inherited from Object

@@ -2,6 +2,7 @@
 #include "ns3/log.h"
 #include "ns3/simulator.h"
 #include "ns3/ub-controller.h"
+#include "ns3/ub-lifecycle.h"
 #include "ns3/ub-transaction.h"
 #include "ns3/ub-caqm.h"
 #include "ns3/ub-dcqcn.h"
@@ -590,6 +591,7 @@ UbTransportChannel::PopQueuedPacket(std::queue<Ptr<Packet>>& packetQ)
     if (HasPendingTransmitWork()) {
         m_headArrivalTime = Simulator::Now();
     }
+    NotifyLifecycleStateChanged();
     return packet;
 }
 
@@ -673,31 +675,53 @@ UbTransportChannel::BuildNextDataSendContext(NewDataSendContext& ctx)
     return false;
 }
 
-void
-UbTransportChannel::NotifyNewDataPacketSent(const NewDataSendContext& ctx,
-                                            Ptr<Packet> packet)
+UbGbnPacketDescriptor
+UbTransportChannel::BuildGbnPacketDescriptor(const NewDataSendContext& ctx,
+                                             uint64_t logicalPsn) const
 {
-    // TODO: Keep Notify* helpers as logging/trace notifications only. Retransmission
-    // and congestion-control state updates should live at the actual send trigger.
-    if (IsRetransEnabled()) {
-        m_retrans->OnNewDataPacketSent(m_psnSndNxt,
-                                       packet,
-                                       ctx.payloadBytes);
+    NS_ABORT_MSG_IF(ctx.segment == nullptr, "RTP DATA descriptor requires an exact segment");
+    UbGbnPacketDescriptor descriptor;
+    descriptor.logicalPsn = logicalPsn;
+    descriptor.packetOffsetBytes = static_cast<uint32_t>(ctx.segment->GetSize() -
+                                                         ctx.segment->GetBytesLeft());
+    descriptor.progressBytes = ctx.progressBytes;
+    descriptor.payloadBytes = ctx.payloadBytes;
+    descriptor.wireLengthBytes = ctx.wireLengthBytes;
+    descriptor.taskId = ctx.segment->GetTaskId();
+    descriptor.wqeSize = ctx.segment->GetWqeSize();
+    descriptor.taOpcode = ctx.segment->GetType();
+    descriptor.segmentKind = ctx.segment->GetSegmentKind();
+    descriptor.taSsn = ctx.segment->GetTaSsn();
+    descriptor.requestTaSsn = ctx.segment->GetRequestTassn();
+    descriptor.order = ctx.segment->GetOrderType();
+    descriptor.originJettyNum = ctx.segment->GetOriginJettyNum();
+    descriptor.tpMsn = ctx.segment->GetTpMsn();
+    descriptor.firstPacket = ctx.segment->GetBytesLeft() == ctx.totalProgressBytes;
+    descriptor.lastPacket = ctx.segment->GetBytesLeft() == ctx.progressBytes;
+    descriptor.hasCorrelation = ctx.segment->HasTransactionCorrelation();
+    if (descriptor.hasCorrelation) {
+        descriptor.correlation = ctx.segment->GetTransactionCorrelation();
     }
+    return descriptor;
+}
 
-    m_congestionCtrl->OnSenderDataPacketSent(UbTpPsnSequence::ToWire(m_psnSndNxt),
-                                             ctx.progressBytes);
+void
+UbTransportChannel::NotifyDataPacketSent(const UbGbnPacketDescriptor& descriptor,
+                                         Ptr<Packet> packet)
+{
+    m_congestionCtrl->OnSenderDataPacketSent(UbTpPsnSequence::ToWire(descriptor.logicalPsn),
+                                             descriptor.progressBytes);
 
-    if (ctx.segment->GetBytesLeft() == ctx.totalProgressBytes) {
-        FirstPacketSendsNotify(m_nodeId, ctx.segment->GetTaskId(), m_tpn, m_dstTpn,
-                               UbTpMsnSequence::ToWire(ctx.segment->GetTpMsn()),
-                               UbTpPsnSequence::ToWire(m_psnSndNxt),
+    if (descriptor.firstPacket) {
+        FirstPacketSendsNotify(m_nodeId, descriptor.taskId, m_tpn, m_dstTpn,
+                               UbTpMsnSequence::ToWire(descriptor.tpMsn),
+                               UbTpPsnSequence::ToWire(descriptor.logicalPsn),
                                m_sport);
     }
-    if (ctx.segment->GetBytesLeft() == ctx.progressBytes) {
-        LastPacketSendsNotify(m_nodeId, ctx.segment->GetTaskId(), m_tpn, m_dstTpn,
-                              UbTpMsnSequence::ToWire(ctx.segment->GetTpMsn()),
-                              UbTpPsnSequence::ToWire(m_psnSndNxt),
+    if (descriptor.lastPacket) {
+        LastPacketSendsNotify(m_nodeId, descriptor.taskId, m_tpn, m_dstTpn,
+                              UbTpMsnSequence::ToWire(descriptor.tpMsn),
+                              UbTpPsnSequence::ToWire(descriptor.logicalPsn),
                               m_sport);
     }
 
@@ -705,12 +729,12 @@ UbTransportChannel::NotifyNewDataPacketSent(const NewDataSendContext& ctx,
               << " PacketUid: " << packet->GetUid()
               << " Tpn: " << m_tpn
               << " DstTpn: " << m_dstTpn
-              << " Psn: " << m_psnSndNxt
+              << " Psn: " << descriptor.logicalPsn
               << " PacketType: Packet"
               << " Src: " << m_src
               << " Dst: " << m_dest
               << " PacketSize: " << packet->GetSize()
-              << " TaskId: " << ctx.segment->GetTaskId());
+              << " TaskId: " << descriptor.taskId);
 }
 
 void
@@ -747,12 +771,35 @@ UbTransportChannel::AdvanceNewDataSendState(const NewDataSendContext& ctx,
 Ptr<Packet>
 UbTransportChannel::SendNewDataPacket(const NewDataSendContext& ctx)
 {
-    Ptr<Packet> packet = GenDataPacket(ctx.segment,
-                                       ctx.payloadBytes,
-                                       ctx.wireLengthBytes,
-                                       ctx.progressBytes);
-    NotifyNewDataPacketSent(ctx, packet);
+    UbGbnPacketDescriptor descriptor = BuildGbnPacketDescriptor(ctx, m_psnSndNxt);
+    Ptr<Packet> packet = BuildRtpDataPacket(descriptor);
+    descriptor.serializedSizeBytes = packet->GetSize();
+    if (IsRetransEnabled()) {
+        m_retrans->OnNewDataPacketSent(descriptor);
+    }
+    NotifyDataPacketSent(descriptor, packet);
     AdvanceNewDataSendState(ctx, packet);
+    return packet;
+}
+
+Ptr<Packet>
+UbTransportChannel::SendGbnRetransmission(const UbGbnPacketDescriptor& descriptor)
+{
+    if (m_congestionCtrl->IsCcLimited(descriptor.progressBytes)) {
+        m_sendWindowLimited = true;
+        return nullptr;
+    }
+    Ptr<Packet> packet = BuildRtpDataPacket(descriptor);
+    NotifyDataPacketSent(descriptor, packet);
+    m_retrans->StartTimerIfNeeded();
+    return packet;
+}
+
+Ptr<Packet>
+UbTransportChannel::SendSelectiveRetransmission(const UbGbnPacketDescriptor& descriptor)
+{
+    Ptr<Packet> packet = BuildRtpDataPacket(descriptor);
+    OnSelectiveRetransmissionPacketSent(descriptor.logicalPsn, descriptor.payloadBytes);
     return packet;
 }
 
@@ -791,6 +838,9 @@ Ptr<Packet> UbTransportChannel::GetNextPacket()
             }
             return packet;
         }
+        if (m_retrans->HasPendingGbnRetransmission()) {
+            return nullptr;
+        }
         if (HasPendingSelectiveRetransmissionWork()) {
             return nullptr;
         }
@@ -819,6 +869,8 @@ UbTransportChannel::EnqueueDcqcnCnp(uint8_t ecn, bool location)
                                 m_routingType,
                                 UbDatalinkHeaderConfig::PACKET_IPV4);
 
+    UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId))
+        ->RegisterPacketAttempt(m_packetLifecycleOwner, cnp);
     if (m_cnpQ.empty() && m_ackQ.empty() && m_wqeSegmentVector.empty()) {
         m_headArrivalTime = Simulator::Now();
     }
@@ -881,6 +933,9 @@ uint32_t UbTransportChannel::GetNextPacketSize()
     if (!m_ackQ.empty()) {
         return m_ackQ.front()->GetSize();
     }
+    if (m_retrans->HasPendingGbnRetransmission()) {
+        return m_retrans->GetNextGbnRetransmissionPayloadBytes() + headerSize;
+    }
     const uint32_t selectiveRetransmissionSize =
         HasPendingSelectiveRetransmissionWork()
             ? m_retrans->GetNextSelectiveRetransmissionSize()
@@ -905,45 +960,59 @@ Ptr<Packet> UbTransportChannel::GenDataPacket(Ptr<UbWqeSegment> wqeSegment,
                                               uint32_t wireLengthBytes,
                                               uint32_t progressBytes)
 {
-    Ptr<Packet> p = Create<Packet>(payloadSize);
-    UbFlowTag flowTag(wqeSegment->GetTaskId(), wqeSegment->GetWqeSize());
+    NewDataSendContext ctx;
+    ctx.segment = wqeSegment;
+    ctx.progressBytes = progressBytes;
+    ctx.payloadBytes = payloadSize;
+    ctx.wireLengthBytes = wireLengthBytes;
+    ctx.totalProgressBytes = GetTotalProgressBytes(wqeSegment);
+    return BuildRtpDataPacket(BuildGbnPacketDescriptor(ctx, m_psnSndNxt));
+}
+
+Ptr<Packet>
+UbTransportChannel::BuildRtpDataPacket(const UbGbnPacketDescriptor& descriptor)
+{
+    Ptr<Packet> p = Create<Packet>(descriptor.payloadBytes);
+    UbFlowTag flowTag(descriptor.taskId, descriptor.wqeSize);
     p->AddPacketTag(flowTag);
+    if (descriptor.hasCorrelation)
+    {
+        UbTransactionCorrelationTag correlationTag;
+        correlationTag.SetIdentity(descriptor.correlation);
+        p->AddPacketTag(correlationTag);
+    }
     // add UbMAExtTah
     UbMAExtTah MAExtTaHeader;
-    MAExtTaHeader.SetLength(wireLengthBytes);
+    MAExtTaHeader.SetLength(descriptor.wireLengthBytes);
     p->AddHeader(MAExtTaHeader);
     // add TaHeader
     UbTransactionHeader TaHeader;
-    TaHeader.SetTaOpcode(wqeSegment->GetType());
+    TaHeader.SetTaOpcode(descriptor.taOpcode);
     const uint16_t wireIniTaSsn =
-        wqeSegment->GetSegmentKind() == UbTransactionSegmentKind::RESPONSE
-            ? UbTaSsnSequence::ToWire(wqeSegment->GetRequestTassn())
-            : UbTaSsnSequence::ToWire(wqeSegment->GetTaSsn());
+        descriptor.segmentKind == UbTransactionSegmentKind::RESPONSE
+            ? UbTaSsnSequence::ToWire(descriptor.requestTaSsn)
+            : UbTaSsnSequence::ToWire(descriptor.taSsn);
     TaHeader.SetIniTaSsn(wireIniTaSsn);
-    TaHeader.SetOrder(wqeSegment->GetOrderType());
+    TaHeader.SetOrder(descriptor.order);
     TaHeader.SetIniRcType(0x01);
-    TaHeader.SetIniRcId(wqeSegment->GetOriginJettyNum());
+    TaHeader.SetIniRcId(descriptor.originJettyNum);
     p->AddHeader(TaHeader);
     // add TpHeader
     UbTransportHeader TpHeader;
-    if (wqeSegment->GetBytesLeft() == progressBytes) {
-        TpHeader.SetLastPacket(true); // last packet
-    } else {
-        TpHeader.SetLastPacket(false); // not last packet
-    }
+    TpHeader.SetLastPacket(descriptor.lastPacket);
     TpHeader.SetTPOpcode(0x1);
     TpHeader.SetNLP(0x0);
     TpHeader.SetSrcTpn(m_tpn);
     TpHeader.SetDestTpn(m_dstTpn);
     TpHeader.SetAckRequest(1);
     TpHeader.SetErrorFlag(0);
-    TpHeader.SetPsn(UbTpPsnSequence::ToWire(m_psnSndNxt));
-    TpHeader.SetTpMsn(UbTpMsnSequence::ToWire(wqeSegment->GetTpMsn()));
+    TpHeader.SetPsn(UbTpPsnSequence::ToWire(descriptor.logicalPsn));
+    TpHeader.SetTpMsn(UbTpMsnSequence::ToWire(descriptor.tpMsn));
     p->AddHeader(TpHeader);
     // Packet-spray hashing must be derived from packet identity, not from the order in which
     // worker threads happen to call this function.
     m_lbHashSalt = RoutingTypeIsPerPacket(m_routingType)
-                       ? UbTpPsnSequence::ToWire(m_psnSndNxt)
+                       ? UbTpPsnSequence::ToWire(descriptor.logicalPsn)
                        : 0;
     UbPort::AddUdpHeader(p, this);
     // add ipv4 header
@@ -960,6 +1029,9 @@ Ptr<Packet> UbTransportChannel::GenDataPacket(Ptr<UbWqeSegment> wqeSegment,
                                 m_priority,
                                 m_routingType,
                                 UbDatalinkHeaderConfig::PACKET_IPV4);
+    Ptr<UbLifecycleCoordinator> coordinator =
+        UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId));
+    coordinator->RegisterPacketAttempt(m_packetLifecycleOwner, p);
     return p;
 }
 
@@ -967,7 +1039,9 @@ Ptr<UbWqeSegment> UbTransportChannel::TrackInboundTaPacket(const UbTransportHead
                                                            const UbTransactionHeader& taHeader,
                                                            uint32_t resLenBytes,
                                                            uint32_t payloadBytes,
-                                                           uint32_t taskId)
+                                                           uint32_t taskId,
+                                                           bool hasTransactionCorrelation,
+                                                           const UbTransactionCorrelationIdentity& correlation)
 {
     const uint32_t srcTpn = tpHeader.GetSrcTpn();
     uint64_t& tpMsnReference = m_inboundTpMsnReferences[srcTpn];
@@ -995,8 +1069,16 @@ Ptr<UbWqeSegment> UbTransportChannel::TrackInboundTaPacket(const UbTransportHead
         state.segment->SetTaSsn(logicalTaSsn);
         state.segment->SetOriginJettyNum(taHeader.GetIniRcId());
         state.segment->SetRequestTassn(logicalTaSsn);
+        state.segment->SetResolvedTpIdentity(m_packetLifecycleOwner);
         state.segment->SetTpMsn(logicalTpMsn);
         state.segment->SetTpn(m_tpn);
+    }
+    if (hasTransactionCorrelation)
+    {
+        NS_ABORT_MSG_IF(state.segment->HasTransactionCorrelation() &&
+                            state.segment->GetTransactionCorrelation() != correlation,
+                        "Packets for one inbound Transaction unit have different correlations");
+        state.segment->SetTransactionCorrelation(correlation);
     }
 
     const auto taOpcode = static_cast<TaOpcode>(taHeader.GetTaOpcode());
@@ -1137,14 +1219,12 @@ UbTransportChannel::GetResponseOpcodeForRetrans(bool selectiveAck) const
 void
 UbTransportChannel::RetainSentPsnForTest(uint64_t psn, uint32_t payloadBytes)
 {
-    Ptr<Packet> packet = Create<Packet>(payloadBytes);
-    UbTransportHeader tpHeader;
-    tpHeader.SetTPOpcode(TpOpcode::TP_OPCODE_RELIABLE_TA);
-    tpHeader.SetSrcTpn(m_tpn);
-    tpHeader.SetDestTpn(m_dstTpn);
-    tpHeader.SetPsn(UbTpPsnSequence::ToWire(psn));
-    packet->AddHeader(tpHeader);
-    m_retrans->OnNewDataPacketSent(psn, packet, payloadBytes);
+    UbGbnPacketDescriptor descriptor;
+    descriptor.logicalPsn = psn;
+    descriptor.payloadBytes = payloadBytes;
+    descriptor.wireLengthBytes = payloadBytes;
+    descriptor.serializedSizeBytes = payloadBytes + UbTransportHeader().GetSerializedSize();
+    m_retrans->OnNewDataPacketSent(descriptor);
     m_psnSndNxt = std::max(m_psnSndNxt, psn + 1);
 }
 
@@ -1176,6 +1256,52 @@ uint32_t
 UbTransportChannel::GetPsnRetransmitCountForTest(uint64_t psn) const
 {
     return m_retrans->GetPsnRetransmitCountForTest(psn);
+}
+
+uint32_t
+UbTransportChannel::GetGbnDescriptorCountForTest() const
+{
+    return m_retrans->GetGbnDescriptorCountForTest();
+}
+
+bool
+UbTransportChannel::HasGbnDescriptorForTest(uint64_t psn) const
+{
+    return m_retrans->HasGbnDescriptorForTest(psn);
+}
+
+uint64_t
+UbTransportChannel::GetGbnRetransmissionCursorForTest() const
+{
+    return m_retrans->GetGbnRetransmissionCursorForTest();
+}
+
+void
+UbTransportChannel::RetainGbnDescriptorForTest(uint64_t psn)
+{
+    UbGbnPacketDescriptor descriptor;
+    descriptor.logicalPsn = psn;
+    m_retrans->RetainGbnDescriptorForTest(descriptor);
+}
+
+bool
+UbTransportChannel::IsRetransTimerRunningForTest() const
+{
+    return m_retrans->HasTimerRunning();
+}
+
+uint64_t
+UbTransportChannel::GetSegmentBytesLeftForTest(uint32_t taskId) const
+{
+    const auto segment = std::find_if(m_wqeSegmentVector.begin(),
+                                      m_wqeSegmentVector.end(),
+                                      [taskId](const Ptr<UbWqeSegment>& candidate) {
+                                          return candidate != nullptr &&
+                                                 candidate->GetTaskId() == taskId;
+                                      });
+    NS_ABORT_MSG_IF(segment == m_wqeSegmentVector.end(),
+                    "Segment progress query references an unknown task");
+    return (*segment)->GetBytesLeft();
 }
 
 bool
@@ -1492,24 +1618,35 @@ void UbTransportChannel::RecvTpAck(Ptr<Packet> p)
 {
     TransportResponseContext ctx;
     if (!ParseTransportResponsePacket(p, ctx)) {
+        UbLifecycleCoordinator::TerminatePacket(p,
+                                                UbPacketTerminal::MALFORMED_PACKET);
         return;
     }
 
     if (HandleReceivedCnp(ctx)) {
+        UbLifecycleCoordinator::TerminatePacket(p,
+                                                UbPacketTerminal::ENDPOINT_CONSUMED);
         return;
     }
 
     if (HandleReceivedTpNak(ctx)) {
+        UbLifecycleCoordinator::TerminatePacket(p,
+                                                UbPacketTerminal::ENDPOINT_CONSUMED);
         return;
     }
 
     const uint64_t previousSndUna = m_psnSndUna;
     UbRetransAckResult ackResult;
     if (!HandleReceivedAckOrSack(ctx, previousSndUna, ackResult)) {
+        UbLifecycleCoordinator::TerminatePacket(p,
+                                                UbPacketTerminal::ENDPOINT_CONSUMED);
         return;
     }
 
     FinalizeTransportAckProgress(ctx, previousSndUna);
+    UbLifecycleCoordinator::TerminatePacket(p,
+                                            UbPacketTerminal::ENDPOINT_CONSUMED);
+    NotifyLifecycleStateChanged();
 }
 
 
@@ -1537,6 +1674,9 @@ void UbTransportChannel::SetUbTransport(uint32_t nodeId,
     m_dest = dest;
     m_tpn = srcTpn;
     m_dstTpn = dstTpn;
+    m_packetLifecycleOwner =
+        UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId))
+            ->OpenPacketOwner(UbLifecycleResourceKind::RTP_ENDPOINT, m_tpn);
     m_size = size;
     m_priority = priority;
     m_sport = sport;
@@ -1572,6 +1712,12 @@ UbTransportChannel::ParseReceivedDataPacket(Ptr<Packet> packet,
     ctx.resLenBytes = ctx.maExtHeader.GetLength();
     ctx.psn = UbTpPsnSequence::Unwrap(ctx.transportHeader.GetPsn(), m_psnRecvNxt);
     packet->PeekPacketTag(ctx.flowTag);
+    UbTransactionCorrelationTag correlationTag;
+    ctx.hasTransactionCorrelation = packet->PeekPacketTag(correlationTag);
+    if (ctx.hasTransactionCorrelation)
+    {
+        ctx.transactionCorrelation = correlationTag.GetIdentity();
+    }
     return true;
 }
 
@@ -1601,6 +1747,12 @@ UbTransportChannel::BuildTransportResponsePacket(const ReceivedDataPacketContext
 {
     Ptr<Packet> responsePacket = Create<Packet>(0);
     responsePacket->AddPacketTag(ctx.flowTag);
+    if (ctx.hasTransactionCorrelation)
+    {
+        UbTransactionCorrelationTag correlationTag;
+        correlationTag.SetIdentity(ctx.transactionCorrelation);
+        responsePacket->AddPacketTag(correlationTag);
+    }
 
     UbAckTransactionHeader ackTaHeader;
     ackTaHeader.SetTaOpcode(TaOpcode::TA_OPCODE_TRANSACTION_ACK);
@@ -1645,6 +1797,8 @@ UbTransportChannel::EnqueueTransportResponse(Ptr<Packet> response,
                                              const char* logType,
                                              uint64_t psn)
 {
+    UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId))
+        ->RegisterPacketAttempt(m_packetLifecycleOwner, response);
     if (m_ackQ.empty()) {
         m_headArrivalTime = Simulator::Now();
     }
@@ -1766,7 +1920,9 @@ UbTransportChannel::UpdateReceiveWindowAndCollectCompletedTa(
                                          ctx.transactionHeader,
                                          ctx.resLenBytes,
                                          ctx.payloadBytes,
-                                         flowTag.GetFlowId()};
+                                         flowTag.GetFlowId(),
+                                         ctx.hasTransactionCorrelation,
+                                         ctx.transactionCorrelation};
     if (outOfOrderPacket) {
         NS_LOG_DEBUG("Out-of-Order Packet,tpn:{" << m_tpn << "} psn:{"
                      << ctx.psn << "} expectedPsn:{" << m_psnRecvNxt << "}");
@@ -1796,7 +1952,9 @@ UbTransportChannel::UpdateReceiveWindowAndCollectCompletedTa(
                                  bufferedIt->second.taHeader,
                                  bufferedIt->second.resLenBytes,
                                  bufferedIt->second.payloadBytes,
-                                 bufferedIt->second.taskId);
+                                 bufferedIt->second.taskId,
+                                 bufferedIt->second.hasTransactionCorrelation,
+                                 bufferedIt->second.transactionCorrelation);
         if (completedTaUnit != nullptr) {
             completedTaUnits.push_back(completedTaUnit);
         }
@@ -1877,6 +2035,9 @@ void UbTransportChannel::RecvDataPacket(Ptr<Packet> p)
         return;
     }
 
+    UbLifecycleCoordinator::TerminatePacket(ctx.packet,
+                                            UbPacketTerminal::ENDPOINT_CONSUMED);
+
     TraceReceivedDataPacket(ctx);
     UbRetransReceiveDecision receiveDecision;
     if (IsRetransEnabled()) {
@@ -1911,27 +2072,6 @@ void UbTransportChannel::RecvDataPacket(Ptr<Packet> p)
     CompleteInboundTaUnits(completedTaUnits);
 }
 
-void
-UbTransportChannel::ResetSegmentSendProgressFromPsn(uint64_t psn)
-{
-    for (size_t i = 0; i < m_wqeSegmentVector.size(); ++i) {
-        Ptr<UbWqeSegment> currentSegment = m_wqeSegmentVector[i];
-        const uint64_t segmentStart = currentSegment->GetPsnStart();
-        const uint64_t segmentEnd = segmentStart + currentSegment->GetPsnSize();
-        if (segmentEnd <= psn) {
-            continue;
-        }
-        if (segmentStart <= psn) {
-            const uint32_t resetSentBytes = (psn - segmentStart) * UB_MTU_BYTE;
-            currentSegment->ResetSentBytes(resetSentBytes);
-        } else {
-            currentSegment->ResetSentBytes();
-        }
-        NS_LOG_INFO("GBN fast retransmit,taskId: " << currentSegment->GetTaskId()
-                    << " psn: " << m_psnSndNxt);
-    }
-}
-
 void UbTransportChannel::ReTxTimeout()
 {
     const UbRetransTimeoutResult timeoutResult = m_retrans->OnTimeout();
@@ -1947,6 +2087,138 @@ void UbTransportChannel::ReTxTimeout()
 uint32_t UbTransportChannel::GetCurrentSqSize() const
 {
     return m_wqeSegmentVector.size();
+}
+
+bool
+UbTransportChannel::TryAdmitWqeSegment(Ptr<UbWqeSegment> segment)
+{
+    if (!CanAdmitWqeSegment(segment))
+    {
+        return false;
+    }
+
+    segment->SetTpn(m_tpn);
+    segment->SetResolvedTpIdentity(m_packetLifecycleOwner);
+    segment->SetTpMsn(GetMsnCnt());
+    segment->SetPsnStart(GetPsnCnt());
+    UpdatePsnCnt(segment->GetPsnSize());
+    UpDateMsnCnt(1);
+    PushWqeSegment(segment);
+    return true;
+}
+
+bool
+UbTransportChannel::CanAdmitWqeSegment(Ptr<const UbWqeSegment> segment) const
+{
+    return m_isActive && segment != nullptr && !IsWqeSegmentLimited() &&
+           CanScheduleAnotherSegment();
+}
+
+UbWqeSegmentTerminalDisposition
+UbTransportChannel::TryCancelUnsentWqeSegment(
+    Ptr<UbWqeSegment> segment,
+    const UbTransactionCorrelationIdentity& expectedCorrelation,
+    const UbLifecycleResourceIdentity& expectedTpIdentity)
+{
+    NS_ABORT_MSG_IF(segment == nullptr, "Cannot cancel a null admitted segment");
+    NS_ABORT_MSG_IF(expectedTpIdentity != m_packetLifecycleOwner ||
+                        !segment->HasResolvedTpIdentity() ||
+                        segment->GetResolvedTpIdentity() != expectedTpIdentity,
+                    "Admitted segment cancellation references the wrong TP generation");
+    NS_ABORT_MSG_IF(!segment->HasTransactionCorrelation() ||
+                        segment->GetTransactionCorrelation() != expectedCorrelation,
+                    "Admitted segment cancellation references the wrong Transaction generation");
+
+    const auto retained = std::find(m_wqeSegmentVector.begin(),
+                                    m_wqeSegmentVector.end(),
+                                    segment);
+    if (retained == m_wqeSegmentVector.end())
+    {
+        const uint64_t segmentEnd = segment->GetPsnStart() + segment->GetPsnSize();
+        NS_ABORT_MSG_IF(m_psnSndUna < segmentEnd,
+                        "Admitted segment disappeared before exact TP ACK cleanup");
+        return UbWqeSegmentTerminalDisposition::TRANSPORT_CLEANED;
+    }
+
+    if (segment->HasStartedSending() || m_psnSndNxt > segment->GetPsnStart())
+    {
+        if (IsRetransEnabled()) {
+            m_retrans->RetireSegmentDescriptors(
+                expectedCorrelation,
+                segment->GetPsnStart(),
+                segment->GetPsnStart() + segment->GetPsnSize());
+        }
+        return UbWqeSegmentTerminalDisposition::RETAINED;
+    }
+
+    uint64_t expectedPsnStart = segment->GetPsnStart();
+    uint64_t expectedTpMsn = segment->GetTpMsn();
+    for (auto suffix = retained; suffix != m_wqeSegmentVector.end(); ++suffix)
+    {
+        const Ptr<UbWqeSegment>& retainedSegment = *suffix;
+        if (retainedSegment == nullptr || retainedSegment->HasStartedSending() ||
+            retainedSegment->GetPsnStart() != expectedPsnStart ||
+            retainedSegment->GetTpMsn() != expectedTpMsn)
+        {
+            return UbWqeSegmentTerminalDisposition::RETAINED;
+        }
+        expectedPsnStart += retainedSegment->GetPsnSize();
+        ++expectedTpMsn;
+    }
+    if (expectedPsnStart != m_tpPsnCnt || expectedTpMsn != m_tpMsnCnt)
+    {
+        return UbWqeSegmentTerminalDisposition::RETAINED;
+    }
+
+    const uint32_t canceledPsnSize = segment->GetPsnSize();
+    for (auto suffix = std::next(retained); suffix != m_wqeSegmentVector.end(); ++suffix)
+    {
+        (*suffix)->SetPsnStart((*suffix)->GetPsnStart() - canceledPsnSize);
+        (*suffix)->SetTpMsn((*suffix)->GetTpMsn() - 1);
+    }
+    m_wqeSegmentVector.erase(retained);
+    m_tpPsnCnt -= canceledPsnSize;
+    --m_tpMsnCnt;
+    return UbWqeSegmentTerminalDisposition::CANCELED_UNSENT;
+}
+
+UbWqeSegmentTerminalDisposition
+UbTransportChannel::ForceRemoveRetainedWqeSegment(
+    Ptr<UbWqeSegment> segment,
+    const UbTransactionCorrelationIdentity& expectedCorrelation,
+    const UbLifecycleResourceIdentity& expectedTpIdentity)
+{
+    NS_ABORT_MSG_IF(segment == nullptr, "Cannot force-remove a null admitted segment");
+    NS_ABORT_MSG_IF(expectedTpIdentity != m_packetLifecycleOwner ||
+                        !segment->HasResolvedTpIdentity() ||
+                        segment->GetResolvedTpIdentity() != expectedTpIdentity,
+                    "Forced admitted-segment removal references the wrong TP generation");
+    NS_ABORT_MSG_IF(!segment->HasTransactionCorrelation() ||
+                        segment->GetTransactionCorrelation() != expectedCorrelation,
+                    "Forced admitted-segment removal references the wrong Transaction generation");
+
+    const auto retained = std::find(m_wqeSegmentVector.begin(),
+                                    m_wqeSegmentVector.end(),
+                                    segment);
+    if (retained == m_wqeSegmentVector.end())
+    {
+        const uint64_t segmentEnd = segment->GetPsnStart() + segment->GetPsnSize();
+        NS_ABORT_MSG_IF(m_psnSndUna < segmentEnd,
+                        "Forced segment removal lost unacknowledged TP work");
+        return UbWqeSegmentTerminalDisposition::TRANSPORT_CLEANED;
+    }
+    if (IsRetransEnabled()) {
+        m_retrans->RetireSegmentDescriptors(expectedCorrelation,
+                                            segment->GetPsnStart(),
+                                            segment->GetPsnStart() + segment->GetPsnSize());
+    }
+    m_wqeSegmentVector.erase(retained);
+    if (m_wqeSegmentVector.empty() && m_retrans != nullptr)
+    {
+        m_retrans->CancelTimer();
+        m_retrans->ClearRetainedState();
+    }
+    return UbWqeSegmentTerminalDisposition::FORCE_REMOVED;
 }
 
 uint32_t UbTransportChannel::GetActiveSendSegmentCount() const
@@ -2042,12 +2314,251 @@ Ptr<UbTransaction> UbTransportChannel::GetTransaction()
 
 void UbTransportChannel::ApplyNextWqeSegment()
 {
-    GetTransaction()->ApplyScheduleWqeSegment(this);
+    if (m_ownerControllerDisposing)
+    {
+        return;
+    }
+    Ptr<Node> node = NodeList::GetNode(m_nodeId);
+    NS_ABORT_MSG_IF(node == nullptr, "TP capacity wake requires its owning Node");
+    Ptr<UbController> controller = node->GetObject<UbController>();
+    NS_ABORT_MSG_IF(controller == nullptr, "TP capacity wake requires its owning Controller");
+    if (controller->IsDisposing())
+    {
+        return;
+    }
+    Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+    NS_ABORT_MSG_IF(transaction == nullptr,
+                    "TP capacity wake requires the Controller Transaction facade");
+    transaction->ApplyScheduleWqeSegment(this);
 }
 
 bool UbTransportChannel::IsEmpty()
 {
     return !HasPendingTransmitWork();
+}
+
+bool
+UbTransportChannel::IsSafeForExplicitDestroy() const
+{
+    return m_ackQ.empty() && m_cnpQ.empty() && m_wqeSegmentVector.empty() &&
+           m_remoteRequest.empty() && m_inboundTaUnits.empty() &&
+           m_bufferedInboundPackets.empty() && m_psnSndUna == m_psnSndNxt &&
+           (m_retrans == nullptr || !m_retrans->HasTimerRunning());
+}
+
+bool
+UbTransportChannel::IsSafeForBackingReclaim() const
+{
+    return IsSafeForExplicitDestroy() &&
+           (m_retrans == nullptr || !m_retrans->HasOutstandingRetransmissionState());
+}
+
+UbTransportQuiescenceSnapshot
+UbTransportChannel::GetQuiescenceSnapshot() const
+{
+    UbTransportQuiescenceSnapshot snapshot;
+    snapshot.pendingAckPackets = m_ackQ.size();
+    snapshot.pendingCnpPackets = m_cnpQ.size();
+    snapshot.pendingWqeSegments = m_wqeSegmentVector.size();
+    snapshot.pendingRemoteRequests = m_remoteRequest.size();
+    snapshot.pendingInboundTaUnits = m_inboundTaUnits.size();
+    snapshot.bufferedInboundPackets = m_bufferedInboundPackets.size();
+    snapshot.hasUnacknowledgedPsn = m_psnSndUna != m_psnSndNxt;
+    snapshot.retransmissionTimerRunning = m_retrans != nullptr && m_retrans->HasTimerRunning();
+    snapshot.outstandingRetransmissionState =
+        m_retrans != nullptr && m_retrans->HasOutstandingRetransmissionState();
+    snapshot.congestionControlPresent = m_congestionCtrl != nullptr;
+    if (m_congestionCtrl != nullptr)
+    {
+        snapshot.congestionControlDormancyEligibility = m_congestionCtrl->GetDormancyEligibility();
+    }
+    return snapshot;
+}
+
+void
+UbTransportChannel::AddInboundTaUnitForTest(uint32_t srcTpn, uint64_t msn)
+{
+    m_inboundTaUnits.emplace(std::make_pair(srcTpn, msn), InboundTaUnitState{});
+}
+
+void
+UbTransportChannel::AddBufferedInboundPacketForTest(uint64_t psn)
+{
+    m_bufferedInboundPackets.emplace(psn, BufferedInboundPacket{});
+}
+
+std::unique_ptr<UbTransportDormantState>
+UbTransportChannel::SnapshotDormantState() const
+{
+    if (!IsSafeForBackingReclaim() || m_congestionCtrl == nullptr ||
+        m_congestionCtrl->GetDormancyEligibility() !=
+            UbCongestionControlDormancyEligibility::ELIGIBLE)
+    {
+        return nullptr;
+    }
+    std::unique_ptr<UbCongestionControlDormancyState> congestionControlState =
+        m_congestionCtrl->SnapshotDormancyState();
+    if (congestionControlState == nullptr)
+    {
+        return nullptr;
+    }
+
+    auto state = std::make_unique<UbTransportDormantState>();
+    state->nodeId = m_nodeId;
+    state->src = m_src;
+    state->dest = m_dest;
+    state->tpn = m_tpn;
+    state->dstTpn = m_dstTpn;
+    state->lifecycleIdentity = m_packetLifecycleOwner;
+    state->size = m_size;
+    state->priority = m_priority;
+    state->sport = m_sport;
+    state->dport = m_dport;
+    state->sip = m_sip;
+    state->dip = m_dip;
+    state->congestionControlType = m_congestionCtrl->GetInstanceTypeId();
+    state->congestionControlState = std::move(congestionControlState);
+    state->psnSndNxt = m_psnSndNxt;
+    state->psnSndUna = m_psnSndUna;
+    state->psnRecvNxt = m_psnRecvNxt;
+    state->maxRcvPsn = m_maxRcvPsn;
+    state->hasReceivedAnyPsn = m_hasReceivedAnyPsn;
+    state->tpMsnCnt = m_tpMsnCnt;
+    state->tpPsnCnt = m_tpPsnCnt;
+    state->psnOooThreshold = m_psnOooThreshold;
+    state->recvPsnWindowBase = m_recvPsnWindow.GetBase();
+    state->recvPsnWindowSize = m_recvPsnWindow.GetWindowSize();
+    state->recvPsnWindowMarkedSequences = m_recvPsnWindow.GetMarkedSequences();
+    state->inboundTpMsnReferences = m_inboundTpMsnReferences;
+    state->inboundTaSsnReferences = m_inboundTaSsnReferences;
+    state->tpFullFlag = m_tpFullFlag;
+    state->sendWindowLimited = m_sendWindowLimited;
+    state->defaultMaxWqeSegNum = m_defaultMaxWqeSegNum;
+    state->defaultMaxInflightPacketSize = m_defaultMaxInflightPacketSize;
+    state->routingType = m_routingType;
+    state->lbHashSalt = m_lbHashSalt;
+    state->retransEnabled = GetRetransEnable();
+    state->baseRto = GetBaseRto();
+    state->maxRetransAttempts = GetMaxRetransAttempts();
+    state->retransExponentFactor = GetRetransExponentFactor();
+    state->retransTimeoutMode = GetRetransTimeoutMode();
+    state->retransmissionMode = GetRetransmissionMode();
+    state->selectiveAckBitmapBits = GetSelectiveAckBitmapBitsConfig();
+    state->fastRetransEnabled = GetFastRetransEnable();
+    state->selectiveMarkPsnEnabled = GetSelectiveMarkPsnEnable();
+    return state;
+}
+
+bool
+UbTransportChannel::RestoreDormantState(const UbTransportDormantState& state,
+                                        Ptr<UbCongestionControl> congestionCtrl)
+{
+    Ptr<Node> node = NodeList::GetNode(state.nodeId);
+    if (node == nullptr || congestionCtrl == nullptr || state.congestionControlState == nullptr ||
+        !UbLifecycleCoordinator::GetOrCreate(node)->IsResourceActive(state.lifecycleIdentity))
+    {
+        return false;
+    }
+
+    m_nodeId = state.nodeId;
+    m_src = state.src;
+    m_dest = state.dest;
+    m_tpn = state.tpn;
+    m_dstTpn = state.dstTpn;
+    m_packetLifecycleOwner = state.lifecycleIdentity;
+    m_size = state.size;
+    m_priority = state.priority;
+    m_sport = state.sport;
+    m_dport = state.dport;
+    SetOutPortId(state.sport);
+    SetInPortId(state.sport);
+    SetIngressPriority(state.priority);
+    m_sip = state.sip;
+    m_dip = state.dip;
+    m_psnSndNxt = state.psnSndNxt;
+    m_psnSndUna = state.psnSndUna;
+    m_psnRecvNxt = state.psnRecvNxt;
+    m_maxRcvPsn = state.maxRcvPsn;
+    m_hasReceivedAnyPsn = state.hasReceivedAnyPsn;
+    m_tpMsnCnt = state.tpMsnCnt;
+    m_tpPsnCnt = state.tpPsnCnt;
+    m_psnOooThreshold = state.psnOooThreshold;
+    m_recvPsnWindow.Resize(state.recvPsnWindowSize);
+    m_recvPsnWindow.Reset(state.recvPsnWindowBase);
+    for (uint64_t sequence : state.recvPsnWindowMarkedSequences)
+    {
+        if (!m_recvPsnWindow.Mark(sequence))
+        {
+            return false;
+        }
+    }
+    m_inboundTpMsnReferences = state.inboundTpMsnReferences;
+    m_inboundTaSsnReferences = state.inboundTaSsnReferences;
+    m_tpFullFlag = state.tpFullFlag;
+    m_sendWindowLimited = state.sendWindowLimited;
+    m_defaultMaxWqeSegNum = state.defaultMaxWqeSegNum;
+    m_defaultMaxInflightPacketSize = state.defaultMaxInflightPacketSize;
+    m_maxQueueSize = m_defaultMaxWqeSegNum;
+    m_maxInflightPacketSize = m_defaultMaxInflightPacketSize;
+    m_routingType = state.routingType;
+    m_lbHashSalt = state.lbHashSalt;
+    SetRetransEnable(state.retransEnabled);
+    SetBaseRto(state.baseRto);
+    SetMaxRetransAttempts(state.maxRetransAttempts);
+    SetRetransExponentFactor(state.retransExponentFactor);
+    SetRetransTimeoutMode(state.retransTimeoutMode);
+    SetRetransmissionMode(state.retransmissionMode);
+    SetSelectiveAckBitmapBits(state.selectiveAckBitmapBits);
+    SetFastRetransEnable(state.fastRetransEnabled);
+    SetSelectiveMarkPsnEnable(state.selectiveMarkPsnEnabled);
+    m_congestionCtrl = congestionCtrl;
+    m_congestionCtrl->OnTpAttached(this);
+    if (!m_congestionCtrl->RestoreDormancyState(*state.congestionControlState))
+    {
+        m_congestionCtrl = nullptr;
+        return false;
+    }
+    return true;
+}
+
+void
+UbTransportChannel::ReleaseBackingForDormancy()
+{
+    NS_ABORT_MSG_IF(!IsSafeForBackingReclaim(), "Cannot release busy TP backing for dormancy");
+    m_isActive = false;
+    m_lifecycleStateChangedCallback = {};
+    Dispose();
+}
+
+void
+UbTransportChannel::FreezeNewWork()
+{
+    m_isActive = false;
+    if (m_congestionCtrl != nullptr)
+    {
+        m_congestionCtrl->OnTpDestroyRequested();
+    }
+}
+
+void
+UbTransportChannel::PrepareForExplicitDestroy()
+{
+    m_lifecycleStateChangedCallback = {};
+}
+
+void
+UbTransportChannel::SetLifecycleStateChangedCallback(Callback<void, uint32_t> callback)
+{
+    m_lifecycleStateChangedCallback = callback;
+}
+
+void
+UbTransportChannel::NotifyLifecycleStateChanged()
+{
+    if (!m_lifecycleStateChangedCallback.IsNull())
+    {
+        m_lifecycleStateChangedCallback(m_tpn);
+    }
 }
 
 bool UbTransportChannel::HasPendingTransmitWork()
@@ -2056,6 +2567,9 @@ bool UbTransportChannel::HasPendingTransmitWork()
         return true;
     }
     if (!m_ackQ.empty()) {
+        return true;
+    }
+    if (IsRetransEnabled() && m_retrans->HasPendingGbnRetransmission()) {
         return true;
     }
     if (HasPendingSelectiveRetransmissionWork()) {
@@ -2073,6 +2587,14 @@ bool UbTransportChannel::IsLimited()
         return false;
     }
     if (!m_ackQ.empty()) {
+        return false;
+    }
+    if (IsRetransEnabled() && m_retrans->HasPendingGbnRetransmission()) {
+        if (m_congestionCtrl->IsCcLimited(
+                m_retrans->GetNextGbnRetransmissionProgressBytes())) {
+            m_sendWindowLimited = true;
+            return true;
+        }
         return false;
     }
     if (HasPendingSelectiveRetransmissionWork()) {
@@ -2161,6 +2683,220 @@ UbTransportGroup::UbTransportGroup()
 
 UbTransportGroup::~UbTransportGroup()
 {
+}
+
+void
+UbTransportGroup::Init(const UbLifecycleResourceIdentity& identity,
+                       const std::vector<UbTransportGroupMember>& members,
+                       uint32_t initialSelectionCursor)
+{
+    NS_ABORT_MSG_IF(identity.kind != UbLifecycleResourceKind::RTP_TPG || identity.generation == 0,
+                    "TPG requires a live lifecycle identity");
+    NS_ABORT_MSG_IF(members.empty(), "TPG requires at least one member");
+    m_identity = identity;
+    m_members = members;
+    m_selectionCursor = initialSelectionCursor % m_members.size();
+}
+
+const UbLifecycleResourceIdentity&
+UbTransportGroup::GetLifecycleIdentity() const
+{
+    return m_identity;
+}
+
+uint64_t
+UbTransportGroup::GetMembershipVersion() const
+{
+    return m_membershipVersion;
+}
+
+uint32_t
+UbTransportGroup::GetMemberCount() const
+{
+    return static_cast<uint32_t>(m_members.size());
+}
+
+uint32_t
+UbTransportGroup::GetSelectionCursor() const
+{
+    return m_selectionCursor;
+}
+
+uint32_t
+UbTransportGroup::GetMemberIndexAtOffset(uint32_t offset) const
+{
+    NS_ABORT_MSG_IF(m_members.empty(), "Cannot select from an empty TPG");
+    NS_ABORT_MSG_IF(offset >= m_members.size(), "TPG selection offset is out of range");
+    return (m_selectionCursor + offset) % m_members.size();
+}
+
+const UbTransportGroupMember&
+UbTransportGroup::GetMember(uint32_t index) const
+{
+    NS_ABORT_MSG_IF(index >= m_members.size(), "TPG member index is out of range");
+    return m_members[index];
+}
+
+bool
+UbTransportGroup::IsMemberSelectable(uint32_t index) const
+{
+    return GetMember(index).state == UbTransportGroupMemberState::ACTIVE;
+}
+
+int32_t
+UbTransportGroup::FindMemberIndex(const UbLifecycleResourceIdentity& tpIdentity) const
+{
+    for (uint32_t index = 0; index < m_members.size(); ++index)
+    {
+        if (m_members[index].tpIdentity == tpIdentity)
+        {
+            return static_cast<int32_t>(index);
+        }
+    }
+    return -1;
+}
+
+void
+UbTransportGroup::AddMember(const UbTransportGroupMember& member)
+{
+    NS_ABORT_MSG_IF(FindMemberIndex(member.tpIdentity) >= 0,
+                    "Cannot add the same TPG member twice");
+    m_members.push_back(member);
+    ++m_membershipVersion;
+}
+
+void
+UbTransportGroup::MarkMemberRetiring(uint32_t index)
+{
+    NS_ABORT_MSG_IF(index >= m_members.size(), "Cannot retire an unknown TPG member");
+    m_members[index].state = UbTransportGroupMemberState::RETIRING;
+    ++m_membershipVersion;
+}
+
+UbTransportGroupMember
+UbTransportGroup::RemoveMember(uint32_t index)
+{
+    NS_ABORT_MSG_IF(index >= m_members.size(), "Cannot remove an unknown TPG member");
+    UbTransportGroupMember removed = m_members[index];
+    m_members.erase(m_members.begin() + index);
+    if (m_members.empty())
+    {
+        m_selectionCursor = 0;
+    }
+    else if (index < m_selectionCursor)
+    {
+        --m_selectionCursor;
+    }
+    else if (m_selectionCursor >= m_members.size())
+    {
+        m_selectionCursor = 0;
+    }
+    ++m_membershipVersion;
+    return removed;
+}
+
+void
+UbTransportGroup::CommitSelection(uint32_t selectedIndex)
+{
+    NS_ABORT_MSG_IF(selectedIndex >= m_members.size(), "Cannot commit an unknown TPG member");
+    m_selectionCursor = (selectedIndex + 1) % m_members.size();
+}
+
+bool
+UbTransportGroup::IsAcceptingNewOperations() const
+{
+    return m_acceptingNewOperations;
+}
+
+void
+UbTransportGroup::FreezeNewOperations()
+{
+    if (m_acceptingNewOperations)
+    {
+        m_acceptingNewOperations = false;
+        ++m_membershipVersion;
+    }
+}
+
+void
+UbTransportGroup::ResumeNewOperations()
+{
+    if (!m_acceptingNewOperations)
+    {
+        m_acceptingNewOperations = true;
+        ++m_membershipVersion;
+    }
+}
+
+void
+UbTransportGroup::SetPendingLastMemberRemoval(
+    const UbLifecycleResourceIdentity& tpIdentity)
+{
+    NS_ABORT_MSG_IF(m_pendingLastMemberRemoval.has_value(),
+                    "TPG already has a pending last-member removal");
+    m_pendingLastMemberRemoval = tpIdentity;
+}
+
+bool
+UbTransportGroup::HasPendingLastMemberRemoval() const
+{
+    return m_pendingLastMemberRemoval.has_value();
+}
+
+const UbLifecycleResourceIdentity&
+UbTransportGroup::GetPendingLastMemberRemoval() const
+{
+    NS_ABORT_MSG_IF(!m_pendingLastMemberRemoval.has_value(),
+                    "TPG has no pending last-member removal");
+    return *m_pendingLastMemberRemoval;
+}
+
+void
+UbTransportGroup::ClearPendingLastMemberRemoval()
+{
+    m_pendingLastMemberRemoval.reset();
+}
+
+void
+UbTransportGroup::RequestDestroy(UbTpgCleanupMode mode)
+{
+    const bool changed = !m_destroyPending ||
+                         static_cast<uint8_t>(mode) > static_cast<uint8_t>(m_cleanupMode);
+    m_destroyPending = true;
+    if (static_cast<uint8_t>(mode) > static_cast<uint8_t>(m_cleanupMode))
+    {
+        m_cleanupMode = mode;
+    }
+    if (changed)
+    {
+        ++m_membershipVersion;
+    }
+}
+
+bool
+UbTransportGroup::IsDestroyPending() const
+{
+    return m_destroyPending;
+}
+
+UbTpgCleanupMode
+UbTransportGroup::GetCleanupMode() const
+{
+    return m_cleanupMode;
+}
+
+bool
+UbTransportGroup::AreBindingLeasesReleased() const
+{
+    return m_bindingLeasesReleased;
+}
+
+void
+UbTransportGroup::MarkBindingLeasesReleased()
+{
+    NS_ABORT_MSG_IF(m_bindingLeasesReleased,
+                    "TPG binding leases were already released");
+    m_bindingLeasesReleased = true;
 }
 
 } // namespace ns3

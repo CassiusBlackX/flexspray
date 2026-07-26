@@ -13,6 +13,7 @@
 #include "ns3/point-to-point-net-device.h"
 #include "ns3/ub-transport.h"
 #include "ns3/ub-link.h"
+#include "ns3/ub-lifecycle.h"
 #include "ns3/packet.h"
 #include "ns3/boolean.h"
 #include "ns3/uinteger.h"
@@ -51,9 +52,11 @@ public:
 
     uint64_t m_maxEgressBytes;     // Max bytes accepted by egress queue
     uint64_t m_currentBytes = 0;   // Current bytes in egress queue (用于拥塞控制等)
+    uint32_t m_ownerNodeId{Simulator::NO_CONTEXT};
 
     static TypeId GetTypeId(void);
     explicit UbEgressQueue();
+    void SetOwnerNodeId(uint32_t nodeId) { m_ownerNodeId = nodeId; }
 
     bool DoEnqueue(PacketEntry packetEntry);  // 向端口eq塞入包
     bool CanEnqueue(uint32_t packetBytes) const;
@@ -146,6 +149,9 @@ public:
     {
         return m_flowControl;
     }
+
+    void RegisterDatalinkControlPacket(Ptr<Packet> packet, uint32_t vlId);
+    const UbLifecycleResourceIdentity& GetDatalinkPacketOwnerForTest(uint32_t vlId) const;
 
     static const uint32_t qCnt = 16;
 
@@ -246,6 +252,8 @@ private:
     // pfc
     int32_t m_pfcUpThld;
     int32_t m_pfcLowThld;
+
+    std::map<uint32_t, UbLifecycleResourceIdentity> m_datalinkPacketOwners;
 
     bool m_pktTraceEnabled = false;
 };
