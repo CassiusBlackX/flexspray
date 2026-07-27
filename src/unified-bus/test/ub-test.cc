@@ -558,8 +558,10 @@ BuildInboundTpPacket(const LocalTpTopology& topo,
 struct DecodedReceiverAck
 {
     UbTransportHeader tpHeader;
+    UbCongestionExtTph congestionHeader;
     UbSelectiveAckExtTph selectiveAckHeader;
     UbAckTransactionHeader taAckHeader;
+    bool hasCongestionHeader{false};
     bool hasSelectiveAck{false};
 };
 
@@ -579,15 +581,20 @@ DecodeReceiverAck(Ptr<Packet> ack)
     ack->RemoveHeader(decoded.tpHeader);
 
     const uint8_t opcode = decoded.tpHeader.GetTPOpcode();
-    if (opcode == static_cast<uint8_t>(TpOpcode::TP_OPCODE_SACK_WITHOUT_CETPH))
+    if (opcode == static_cast<uint8_t>(TpOpcode::TP_OPCODE_ACK_WITH_CETPH))
+    {
+        decoded.hasCongestionHeader = true;
+        ack->RemoveHeader(decoded.congestionHeader);
+    }
+    else if (opcode == static_cast<uint8_t>(TpOpcode::TP_OPCODE_SACK_WITHOUT_CETPH))
     {
         decoded.hasSelectiveAck = true;
         ack->RemoveHeader(decoded.selectiveAckHeader);
     }
     else if (opcode == static_cast<uint8_t>(TpOpcode::TP_OPCODE_SACK_WITH_CETPH))
     {
-        UbCongestionExtTph cetph;
-        ack->RemoveHeader(cetph);
+        decoded.hasCongestionHeader = true;
+        ack->RemoveHeader(decoded.congestionHeader);
         decoded.hasSelectiveAck = true;
         ack->RemoveHeader(decoded.selectiveAckHeader);
     }
@@ -687,7 +694,7 @@ BuildTpackForSender(uint32_t ackPsn)
 }
 
 Ptr<Packet>
-BuildTpnakForSender(uint32_t nakPsn)
+BuildTpnakForSender(uint32_t nakPsn, bool withCetph = false, uint32_t ackSequence = 0)
 {
     Ptr<Packet> packet = Create<Packet>(0);
 
@@ -695,8 +702,17 @@ BuildTpnakForSender(uint32_t nakPsn)
     taAck.SetTaOpcode(TaOpcode::TA_OPCODE_TRANSACTION_ACK);
     packet->AddHeader(taAck);
 
+    if (withCetph)
+    {
+        UbCongestionExtTph cetph;
+        cetph.SetAckSequence(ackSequence);
+        packet->AddHeader(cetph);
+    }
+
     UbTransportHeader tpHeader;
-    tpHeader.SetTPOpcode(TpOpcode::TP_OPCODE_NAK_WITHOUT_CETPH);
+    tpHeader.SetTPOpcode(withCetph ? TpOpcode::TP_OPCODE_ACK_WITH_CETPH
+                                   : TpOpcode::TP_OPCODE_ACK_WITHOUT_CETPH);
+    tpHeader.SetRspSt(3);
     tpHeader.SetSrcTpn(kUrmaWriteRegressionReceiverTpn);
     tpHeader.SetDestTpn(kUrmaWriteRegressionSenderTpn);
     tpHeader.SetPsn(nakPsn);
@@ -790,6 +806,59 @@ class RecordingGbnHeaderCc : public UbCongestionControl
 
     uint8_t hint{0};
     uint32_t prepareCount{0};
+};
+
+class RecordingTpnakCc : public UbCongestionControl
+{
+  public:
+    static TypeId GetTypeId()
+    {
+        static TypeId tid = TypeId("ns3::RecordingTpnakCc")
+                                .SetParent<UbCongestionControl>()
+                                .SetGroupName("UnifiedBus")
+                                .AddConstructor<RecordingTpnakCc>();
+        return tid;
+    }
+
+    TpOpcode GetAckOpcode() const override
+    {
+        return TpOpcode::TP_OPCODE_ACK_WITH_CETPH;
+    }
+
+    UbCongestionExtTph OnReceiverPrepareAckCongestionHeader(uint64_t, uint64_t) override
+    {
+        ++prepareCount;
+        UbCongestionExtTph header;
+        header.SetAckSequence(ackSequence);
+        return header;
+    }
+
+    void OnSenderCongestionNotification(TpOpcode opcode,
+                                        uint32_t psn,
+                                        UbCongestionExtTph header) override
+    {
+        ++notificationCount;
+        lastOpcode = opcode;
+        lastPsn = psn;
+        lastAckSequence = header.GetAckSequence();
+    }
+
+    void OnSenderCongestionNotification(TpOpcode opcode,
+                                        uint32_t psn,
+                                        UbCongestionExtTph header,
+                                        uint32_t retransmitBytes) override
+    {
+        OnSenderCongestionNotification(opcode, psn, header);
+        lastRetransmitBytes = retransmitBytes;
+    }
+
+    uint32_t ackSequence{17};
+    uint32_t prepareCount{0};
+    uint32_t notificationCount{0};
+    TpOpcode lastOpcode{TpOpcode::TP_OPCODE_ACK_WITHOUT_CETPH};
+    uint32_t lastPsn{0};
+    uint32_t lastAckSequence{0};
+    uint32_t lastRetransmitBytes{0};
 };
 
 uint8_t
@@ -3007,19 +3076,81 @@ public:
 
     void DoRun() override
     {
-        UbTransportHeader header;
-        header.SetTPOpcode(TpOpcode::TP_OPCODE_SACK_WITHOUT_CETPH);
-        header.SetRspSt(0);
-        header.SetRspInfo(0);
+        const auto verifyResponse = [this](TpOpcode opcode, uint8_t rspSt, const std::string& name) {
+            UbTransportHeader header;
+            header.SetTPOpcode(opcode);
+            header.SetRspSt(rspSt);
+            header.SetRspInfo(0);
+            Ptr<Packet> packet = Create<Packet>(0);
+            packet->AddHeader(header);
+            UbTransportHeader decoded;
+            packet->RemoveHeader(decoded);
+            NS_TEST_ASSERT_MSG_EQ(decoded.GetTPOpcode(), static_cast<uint8_t>(opcode), name + " opcode");
+            NS_TEST_ASSERT_MSG_EQ(decoded.GetRspSt(), rspSt, name + " RSPST");
+            NS_TEST_ASSERT_MSG_EQ(decoded.GetRspInfo(), 0u, name + " RSPINFO");
+        };
 
-        Ptr<Packet> packet = Create<Packet>(0);
-        packet->AddHeader(header);
+        verifyResponse(TpOpcode::TP_OPCODE_ACK_WITHOUT_CETPH, 0, "TPACK");
+        verifyResponse(TpOpcode::TP_OPCODE_ACK_WITHOUT_CETPH, 3, "TPNAK");
+        verifyResponse(TpOpcode::TP_OPCODE_ACK_WITH_CETPH, 0, "TPACK-CC");
+        verifyResponse(TpOpcode::TP_OPCODE_ACK_WITH_CETPH, 3, "TPNAK-CC");
+        verifyResponse(TpOpcode::TP_OPCODE_SACK_WITHOUT_CETPH, 0, "TPSACK");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint8_t>(TpOpcode::TP_OPCODE_RESERVED1),
+                              0x4u,
+                              "TPOpcode 0x4 should remain reserved");
+        UbTransportHeader reserved;
+        reserved.SetTPOpcode(TpOpcode::TP_OPCODE_RESERVED1);
+        NS_TEST_ASSERT_MSG_EQ(reserved.IsValidOpcode(),
+                              false,
+                              "TPOpcode 0x4 should fail transport header validation");
+    }
+};
 
-        UbTransportHeader decoded;
-        packet->RemoveHeader(decoded);
+class UbFaultClassifiesTransportResponseStatusTest : public TestCase
+{
+public:
+    UbFaultClassifiesTransportResponseStatusTest()
+        : TestCase("UnifiedBus - fault classification uses transport response RSPST")
+    {
+    }
 
-        NS_TEST_ASSERT_MSG_EQ(decoded.GetRspSt(), 0u, "TPSACK RSPST should be zero");
-        NS_TEST_ASSERT_MSG_EQ(decoded.GetRspInfo(), 0u, "TPSACK RSPINFO should be zero");
+    void DoRun() override
+    {
+        const auto buildPacket = [](TpOpcode opcode, uint8_t rspSt) {
+            Ptr<Packet> packet = Create<Packet>(0);
+            UbTransportHeader transportHeader;
+            transportHeader.SetTPOpcode(opcode);
+            transportHeader.SetRspSt(rspSt);
+            packet->AddHeader(transportHeader);
+            packet->AddHeader(UdpHeader());
+            UbPort::AddIpv4Header(packet, NodeIdToIp(0), NodeIdToIp(1));
+            packet->AddHeader(UbIpBasedNetworkHeader());
+            UbDataLink::GenPacketHeader(packet, false, true, UB_PRIORITY_DEFAULT,
+                                        UB_PRIORITY_DEFAULT, RoutingType::PER_FLOW_SHORTEST_PATHS,
+                                        UbDatalinkHeaderConfig::PACKET_IPV4);
+            return packet;
+        };
+        const auto verifyType = [this, &buildPacket](TpOpcode opcode, uint8_t rspSt,
+                                                     RetransFaultPacketType expected,
+                                                     const std::string& name) {
+            RetransFaultPacketInfo info;
+            NS_TEST_ASSERT_MSG_EQ(CreateObject<UbFault>()->TryGetRetransFaultPacketInfo(
+                                      buildPacket(opcode, rspSt), 2, 1, 9001, info),
+                                  true, name + " should decode");
+            NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(info.packetType),
+                                  static_cast<uint32_t>(expected), name + " classification");
+        };
+
+        verifyType(TpOpcode::TP_OPCODE_ACK_WITHOUT_CETPH, 0,
+                   RetransFaultPacketType::TPACK, "TPACK");
+        verifyType(TpOpcode::TP_OPCODE_ACK_WITHOUT_CETPH, 3,
+                   RetransFaultPacketType::TPNAK, "TPNAK");
+        verifyType(TpOpcode::TP_OPCODE_ACK_WITH_CETPH, 3,
+                   RetransFaultPacketType::TPNAK, "TPNAK-CC");
+        RetransFaultPacketInfo info;
+        NS_TEST_ASSERT_MSG_EQ(CreateObject<UbFault>()->TryGetRetransFaultPacketInfo(
+                                  buildPacket(TpOpcode::TP_OPCODE_RESERVED1, 3), 2, 1, 9001, info),
+                              false, "reserved TPOpcode 0x4 must not classify as TPNAK");
     }
 };
 
@@ -3746,6 +3877,65 @@ public:
     }
 };
 
+class UbSwitchRejectsReservedTpOpcodeTest : public TestCase
+{
+public:
+    UbSwitchRejectsReservedTpOpcodeTest()
+        : TestCase("UnifiedBus - local sink rejects reserved transport opcode")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(false));
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbTransportChannel> responseOwnerTp = topo.receiver->GetObject<UbController>()
+                                                            ->GetTransportChannelManager()
+                                                            ->GetTp(kUrmaWriteRegressionReceiverTpn);
+
+        Ptr<Packet> packet = Create<Packet>(0);
+        UbAckTransactionHeader taAck;
+        taAck.SetTaOpcode(TaOpcode::TA_OPCODE_TRANSACTION_ACK);
+        packet->AddHeader(taAck);
+        UbTransportHeader tpHeader;
+        tpHeader.SetTPOpcode(TpOpcode::TP_OPCODE_RESERVED1);
+        tpHeader.SetRspSt(3);
+        tpHeader.SetSrcTpn(kUrmaWriteRegressionReceiverTpn);
+        tpHeader.SetDestTpn(kUrmaWriteRegressionSenderTpn);
+        packet->AddHeader(tpHeader);
+        packet->AddHeader(UdpHeader());
+        UbPort::AddIpv4Header(packet,
+                              NodeIdToIp(topo.receiver->GetId(), topo.receiverPort->GetIfIndex()),
+                              NodeIdToIp(topo.sender->GetId(), topo.senderPort->GetIfIndex()));
+        packet->AddHeader(UbIpBasedNetworkHeader());
+        UbDataLink::GenPacketHeader(packet,
+                                    false,
+                                    true,
+                                    kUrmaWriteRegressionPriority,
+                                    kUrmaWriteRegressionPriority,
+                                    RoutingType::PER_FLOW_SHORTEST_PATHS,
+                                    UbDatalinkHeaderConfig::PACKET_IPV4);
+
+        Ptr<UbLifecycleCoordinator> coordinator = UbLifecycleCoordinator::GetOrCreate(topo.receiver);
+        coordinator->RegisterPacketAttempt(responseOwnerTp->GetLifecycleOwner(), packet);
+        const UbLifecycleResourceSnapshot before =
+            coordinator->GetSnapshot(responseOwnerTp->GetLifecycleOwner());
+        topo.sender->GetObject<UbSwitch>()->SwitchHandlePacket(topo.senderPort, packet);
+        const UbLifecycleResourceSnapshot after =
+            coordinator->GetSnapshot(responseOwnerTp->GetLifecycleOwner());
+        NS_TEST_ASSERT_MSG_EQ(after.malformedPacketDrops,
+                              before.malformedPacketDrops + 1,
+                              "reserved TPOpcode should terminate as malformed");
+        NS_TEST_ASSERT_MSG_EQ(after.inFlightPackets,
+                              before.inFlightPackets - 1,
+                              "reserved TPOpcode should leave no lifecycle packet in flight");
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
 class UbGbnReceiverKeepsOutOfOrderAckSilentTest : public TestCase
 {
 public:
@@ -3773,6 +3963,104 @@ public:
                               0u,
                               "default GBN mode should keep existing silent out-of-order behavior");
 
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbGbnReceiverEmitsSpecTpnakWireFormatTest : public TestCase
+{
+public:
+    UbGbnReceiverEmitsSpecTpnakWireFormatTest()
+        : TestCase("UnifiedBus - GBN receiver emits TPNAK as TPACK opcode with RSPST 3")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(false));
+        Config::SetDefault("ns3::UbTransportChannel::EnableRetrans", BooleanValue(true));
+        Config::SetDefault("ns3::UbTransportChannel::EnableFastRetrans", BooleanValue(true));
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbTransportChannel> rxTp = topo.receiver->GetObject<UbController>()
+                                               ->GetTransportChannelManager()
+                                               ->GetTp(kUrmaWriteRegressionReceiverTpn);
+
+        rxTp->RecvDataPacket(BuildReceiverDataPacket(topo, 0, false));
+        rxTp->PopAckForTest();
+        rxTp->RecvDataPacket(BuildReceiverDataPacket(topo, 2, true));
+        NS_TEST_ASSERT_MSG_EQ(rxTp->GetPendingAckCountForTest(), 1u,
+                              "out-of-order GBN data should produce one TPNAK");
+        DecodedReceiverAck response = DecodeReceiverAck(rxTp->PopAckForTest());
+        NS_TEST_ASSERT_MSG_EQ(response.tpHeader.GetTPOpcode(),
+                              static_cast<uint8_t>(TpOpcode::TP_OPCODE_ACK_WITHOUT_CETPH),
+                              "ordinary TPNAK should share TPOpcode 0x2 with TPACK");
+        NS_TEST_ASSERT_MSG_EQ(response.tpHeader.GetRspSt(), 3u,
+                              "ordinary TPNAK should carry RSPST 3");
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbGbnTpnakCcWireAndConsumptionTest : public TestCase
+{
+public:
+    UbGbnTpnakCcWireAndConsumptionTest()
+        : TestCase("UnifiedBus - GBN TPNAK-CC carries and consumes CETPH")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        Config::SetDefault("ns3::UbTransportChannel::EnableRetrans", BooleanValue(true));
+        Config::SetDefault("ns3::UbTransportChannel::EnableFastRetrans", BooleanValue(true));
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbTransportChannel> rxTp = topo.receiver->GetObject<UbController>()
+                                               ->GetTransportChannelManager()
+                                               ->GetTp(kUrmaWriteRegressionReceiverTpn);
+        Ptr<RecordingTpnakCc> receiverCc = CreateObject<RecordingTpnakCc>();
+        rxTp->SetCongestionControlForTest(receiverCc);
+
+        rxTp->RecvDataPacket(BuildReceiverDataPacket(topo, 0, false));
+        rxTp->PopAckForTest();
+        rxTp->RecvDataPacket(BuildReceiverDataPacket(topo, 2, true));
+        DecodedReceiverAck response = DecodeReceiverAck(rxTp->PopAckForTest());
+        NS_TEST_ASSERT_MSG_EQ(response.tpHeader.GetTPOpcode(),
+                              static_cast<uint8_t>(TpOpcode::TP_OPCODE_ACK_WITH_CETPH),
+                              "TPNAK-CC should use TPOpcode 0x3");
+        NS_TEST_ASSERT_MSG_EQ(response.tpHeader.GetRspSt(), 3u,
+                              "TPNAK-CC should carry RSPST 3");
+        NS_TEST_ASSERT_MSG_EQ(response.hasCongestionHeader, true,
+                              "TPNAK-CC should carry CETPH before TAACK");
+        NS_TEST_ASSERT_MSG_EQ(response.congestionHeader.GetAckSequence(), 17u,
+                              "TPNAK-CC should preserve CETPH Ack_seq");
+        NS_TEST_ASSERT_MSG_EQ(receiverCc->prepareCount, 2u,
+                              "receiver CC should prepare TPACK-CC and TPNAK-CC headers");
+
+        Ptr<UbTransportChannel> txTp = topo.sender->GetObject<UbController>()
+                                               ->GetTransportChannelManager()
+                                               ->GetTp(kUrmaWriteRegressionSenderTpn);
+        Ptr<RecordingTpnakCc> senderCc = CreateObject<RecordingTpnakCc>();
+        txTp->SetCongestionControlForTest(senderCc);
+        txTp->RetainSentPsnForTest(7, 100);
+        txTp->RetainSentPsnForTest(8, 200);
+        txTp->SetPsnSndUnaForTest(7);
+        txTp->RecvTpAck(BuildTpnakForSender(7, true, 23));
+        NS_TEST_ASSERT_MSG_EQ(senderCc->notificationCount, 1u,
+                              "sender CC should consume TPNAK-CC feedback");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint8_t>(senderCc->lastOpcode),
+                              static_cast<uint8_t>(TpOpcode::TP_OPCODE_ACK_WITH_CETPH),
+                              "sender CC should receive the shared ACK-with-CETPH opcode");
+        NS_TEST_ASSERT_MSG_EQ(senderCc->lastPsn, 7u,
+                              "sender CC should receive the TPNAK PSN");
+        NS_TEST_ASSERT_MSG_EQ(senderCc->lastAckSequence, 23u,
+                              "sender CC should receive TPNAK-CC Ack_seq");
+        NS_TEST_ASSERT_MSG_EQ(senderCc->lastRetransmitBytes, 300u,
+                              "sender CC should retire the full GBN retransmission range once");
         Simulator::Destroy();
         Config::Reset();
     }
@@ -29337,6 +29625,7 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbSelectiveAckExtTphReservedEncodingRejectTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbSelectiveAckExtTphWireBitOrderTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTransportResponseStatusFieldsTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbFaultClassifiesTransportResponseStatusTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTransportRetransmissionModeDefaultsTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbRetransDisabledDoesNotRetainSentPacketsTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTransportShallowPipelineIgnoresUnackedSegmentsTest(),
@@ -29354,7 +29643,10 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbSelectiveReceiverTpsackWithCetphOrderTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTransportRecvTpsackDoesNotMisparseSaetphTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbSwitchDispatchesTpsackAsTransportResponseTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbSwitchRejectsReservedTpOpcodeTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbGbnReceiverKeepsOutOfOrderAckSilentTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbGbnReceiverEmitsSpecTpnakWireFormatTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbGbnTpnakCcWireAndConsumptionTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbSelectiveSenderRecordsMissingWithoutFastRetransmitTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbSelectiveSenderFastRetransmitQueuesMissingOnceTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbSelectiveRetransmitTraceReportsSparsePsnTest(), TestCase::Duration::QUICK);
@@ -29992,6 +30284,7 @@ UbWireFormatTestSuite::UbWireFormatTestSuite()
     AddTestCase(new UbSelectiveAckExtTphReservedEncodingRejectTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbSelectiveAckExtTphWireBitOrderTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTransportResponseStatusFieldsTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbFaultClassifiesTransportResponseStatusTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbAckWithoutCetphCarriesNoCetphHeaderTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnCnpOpcodeIsValidTransportOpcodeTest(), TestCase::Duration::QUICK);
 #ifndef _WIN32
@@ -30020,7 +30313,10 @@ UbTransportRetransTestSuite::UbTransportRetransTestSuite()
     AddTestCase(new UbSelectiveReceiverTpsackWithCetphOrderTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTransportRecvTpsackDoesNotMisparseSaetphTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbSwitchDispatchesTpsackAsTransportResponseTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbSwitchRejectsReservedTpOpcodeTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbGbnReceiverKeepsOutOfOrderAckSilentTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbGbnReceiverEmitsSpecTpnakWireFormatTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbGbnTpnakCcWireAndConsumptionTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbSelectiveSenderRecordsMissingWithoutFastRetransmitTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbSelectiveSenderFastRetransmitQueuesMissingOnceTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbSelectiveRetransmitTraceReportsSparsePsnTest(), TestCase::Duration::QUICK);
