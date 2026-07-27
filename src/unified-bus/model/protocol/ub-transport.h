@@ -556,6 +556,7 @@ private:
     struct AckResponseContext
     {
         TpOpcode opcode{TpOpcode::TP_OPCODE_ACK_WITHOUT_CETPH};
+        uint8_t rspSt{0};
         uint64_t psn{0};
         bool selectiveAck{false};
         std::optional<UbSelectiveAckExtTph> selectiveAckHeader;

@@ -29,6 +29,7 @@ struct UbRetransAckResult
     uint64_t previousSndUna{0};
     uint64_t newSndUna{0};
     bool triggerTransmit{false};
+    uint32_t retransmitBytes{0};
 };
 
 struct UbRetransReceiveDecision
@@ -100,6 +101,7 @@ public:
     uint32_t GetNextRetransmissionSize() const;
     uint32_t GetNextRetransmissionProgressBytes() const;
     uint32_t GetNextRetransmissionPayloadBytes() const;
+    uint32_t GetRetransmissionPayloadBytesFrom(uint64_t psn) const;
     bool HasOutstandingDescriptors() const;
     void AcknowledgePrefix(uint64_t newSndUna);
     void RetireSegment(const UbTransactionCorrelationIdentity& correlation,

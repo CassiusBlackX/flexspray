@@ -340,7 +340,6 @@ UbTransportChannel::IsTransportResponseOpcode(uint8_t opcode)
 {
     return opcode == static_cast<uint8_t>(TpOpcode::TP_OPCODE_ACK_WITHOUT_CETPH) ||
            opcode == static_cast<uint8_t>(TpOpcode::TP_OPCODE_ACK_WITH_CETPH) ||
-           opcode == static_cast<uint8_t>(TpOpcode::TP_OPCODE_NAK_WITHOUT_CETPH) ||
            opcode == static_cast<uint8_t>(TpOpcode::TP_OPCODE_SACK_WITHOUT_CETPH) ||
            opcode == static_cast<uint8_t>(TpOpcode::TP_OPCODE_SACK_WITH_CETPH) ||
            opcode == static_cast<uint8_t>(TpOpcode::TP_OPCODE_CNP);
@@ -1321,7 +1320,9 @@ UbTransportChannel::ParseTransportResponsePacket(Ptr<Packet> packet,
                    ctx.opcode == TpOpcode::TP_OPCODE_SACK_WITH_CETPH;
     ctx.hasSaetph = ctx.opcode == TpOpcode::TP_OPCODE_SACK_WITHOUT_CETPH ||
                     ctx.opcode == TpOpcode::TP_OPCODE_SACK_WITH_CETPH;
-    ctx.isTpnak = ctx.opcode == TpOpcode::TP_OPCODE_NAK_WITHOUT_CETPH;
+    ctx.isTpnak = (ctx.opcode == TpOpcode::TP_OPCODE_ACK_WITHOUT_CETPH ||
+                   ctx.opcode == TpOpcode::TP_OPCODE_ACK_WITH_CETPH) &&
+                  ctx.transportHeader.GetRspSt() == 3;
 
     if (ctx.isCnp) {
         packet->RemoveHeader(ctx.cnpHeader);
@@ -1396,10 +1397,27 @@ UbTransportChannel::HandleReceivedTpNak(const TransportResponseContext& ctx)
     }
 
     if (!IsRetransEnabled()) {
+        if (ctx.hasCetph) {
+            m_congestionCtrl->OnSenderCongestionNotification(TpOpcode::TP_OPCODE_ACK_WITH_CETPH,
+                                                             UbTpPsnSequence::ToWire(nakPsn),
+                                                             ctx.congestionHeader);
+        }
         return true;
     }
 
     const UbRetransAckResult ackResult = m_retrans->OnTransportNak(ctx.transportHeader);
+    if (ctx.hasCetph) {
+        if (ackResult.triggerTransmit) {
+            m_congestionCtrl->OnSenderCongestionNotification(TpOpcode::TP_OPCODE_ACK_WITH_CETPH,
+                                                             UbTpPsnSequence::ToWire(nakPsn),
+                                                             ctx.congestionHeader,
+                                                             ackResult.retransmitBytes);
+        } else {
+            m_congestionCtrl->OnSenderCongestionNotification(TpOpcode::TP_OPCODE_ACK_WITH_CETPH,
+                                                             UbTpPsnSequence::ToWire(nakPsn),
+                                                             ctx.congestionHeader);
+        }
+    }
     if (ackResult.triggerTransmit) {
         TriggerTransportTransmit();
     }
@@ -1761,7 +1779,7 @@ UbTransportChannel::BuildTransportResponsePacket(const ReceivedDataPacketContext
 
     UbTransportHeader tpHeader = ctx.transportHeader;
     tpHeader.SetTPOpcode(response.opcode);
-    tpHeader.SetRspSt(0);
+    tpHeader.SetRspSt(response.rspSt);
     tpHeader.SetRspInfo(0);
     tpHeader.SetPsn(UbTpPsnSequence::ToWire(response.psn));
     tpHeader.SetSrcTpn(m_tpn);
@@ -1837,7 +1855,12 @@ UbTransportChannel::HandleImmediateRetransReceiveDecision(
 
     AckResponseContext response;
     response.opcode = decision.responseOpcode;
+    response.rspSt = 3;
     response.psn = decision.responsePsn;
+    if (response.opcode == TpOpcode::TP_OPCODE_ACK_WITH_CETPH) {
+        response.congestionHeader =
+            m_congestionCtrl->OnReceiverPrepareAckCongestionHeader(0, 0);
+    }
     Ptr<Packet> responsePacket = BuildTransportResponsePacket(ctx, response);
     EnqueueTransportResponse(responsePacket, "tpnak", response.psn);
     return true;

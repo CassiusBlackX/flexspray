@@ -126,6 +126,19 @@ UbGbnRetransStrategy::GetNextRetransmissionPayloadBytes() const
     return m_descriptors.at(*m_retransmitCursor).payloadBytes;
 }
 
+uint32_t
+UbGbnRetransStrategy::GetRetransmissionPayloadBytesFrom(uint64_t psn) const
+{
+    uint32_t payloadBytes = 0;
+    for (auto descriptor = m_descriptors.lower_bound(psn);
+         descriptor != m_descriptors.end() &&
+         descriptor->first < m_controller.GetTransport().GetPsnSndNxt();
+         ++descriptor) {
+        payloadBytes += descriptor->second.payloadBytes;
+    }
+    return payloadBytes;
+}
+
 bool
 UbGbnRetransStrategy::HasOutstandingDescriptors() const
 {
@@ -214,7 +227,7 @@ UbGbnRetransStrategy::OnDataPacketReceived(uint64_t psn)
     m_lastNakPsn = nakPsn;
     decision.shouldNak = true;
     decision.responsePsn = nakPsn;
-    decision.responseOpcode = TpOpcode::TP_OPCODE_NAK_WITHOUT_CETPH;
+    decision.responseOpcode = m_controller.GetTransport().GetResponseOpcodeForRetrans(false);
     return decision;
 }
 
@@ -1238,6 +1251,9 @@ UbRetransController::OnTransportNak(const UbTransportHeader& tph)
             return result;
         }
         result.triggerTransmit = m_gbn->HandleTpNak(*logicalNakPsn);
+        if (result.triggerTransmit) {
+            result.retransmitBytes = m_gbn->GetRetransmissionPayloadBytesFrom(*logicalNakPsn);
+        }
     }
     return result;
 }
