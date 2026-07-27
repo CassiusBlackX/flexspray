@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include "ub-datatype.h"
 #include "ns3/callback.h"
+#include "ns3/ub-port.h"
 #include "ns3/ub-switch-allocator.h"
 #include "protocol/ub-function.h"
 #include "protocol/ub-ctp.h"

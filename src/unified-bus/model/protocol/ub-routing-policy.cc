@@ -11,6 +11,8 @@
 
 #include <limits>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace ns3 {
 
@@ -139,8 +141,7 @@ UbRoutingPolicy::SelectAdaptive(const RoutingKey& key,
     };
 
     uint64_t bestScore = std::numeric_limits<uint64_t>::max();
-    int bestPort = -1;
-    bool bestIsShortest = false;
+    std::vector<std::pair<uint16_t, bool>> bestCandidates;
     auto consider = [&](std::span<const uint16_t> ports, bool isShortest) {
         for (uint16_t port : ports)
         {
@@ -152,19 +153,30 @@ UbRoutingPolicy::SelectAdaptive(const RoutingKey& key,
             if (score < bestScore)
             {
                 bestScore = score;
-                bestPort = port;
-                bestIsShortest = isShortest;
+                bestCandidates.clear();
+                bestCandidates.emplace_back(port, isShortest);
+            }
+            else if (score == bestScore)
+            {
+                bestCandidates.emplace_back(port, isShortest);
             }
         }
     };
 
     consider(candidates.shortest, true);
     consider(candidates.nonShortest, false);
-    if (bestPort >= 0)
+    if (bestCandidates.empty())
     {
-        selectedShortestPath = bestIsShortest;
+        return -1;
     }
-    return bestPort;
+
+    const uint32_t salt = utils::NodeIdToIp(nodeId).Get();
+    const uint64_t selection =
+        CalcHash(key.sip, key.dip, key.sport, key.dport, key.priority, salt);
+    const auto [selectedPort, isShortest] =
+        bestCandidates[static_cast<size_t>(selection % bestCandidates.size())];
+    selectedShortestPath = isShortest;
+    return selectedPort;
 }
 
 } // namespace ns3

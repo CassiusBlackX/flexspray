@@ -24988,11 +24988,11 @@ class UbMultipathSelectorRoutingTypeMatrixTest : public TestCase
     }
 };
 
-class UbAdaptiveMultipathSelectorUsesExistingLoadSelectionTest : public TestCase
+class UbAdaptiveMultipathSelectorHashesEqualLoadCandidatesTest : public TestCase
 {
   public:
-    UbAdaptiveMultipathSelectorUsesExistingLoadSelectionTest()
-        : TestCase("UnifiedBus - adaptive multipath selector uses queue load selection")
+    UbAdaptiveMultipathSelectorHashesEqualLoadCandidatesTest()
+        : TestCase("UnifiedBus - adaptive multipath selector hashes equal-load candidates")
     {
     }
 
@@ -25004,17 +25004,60 @@ class UbAdaptiveMultipathSelectorUsesExistingLoadSelectionTest : public TestCase
         routing->SetAttribute("MultipathSelector", EnumValue(MultipathSelector::ADAPTIVE));
 
         RoutingKey rtKey{};
+        rtKey.sip = NodeIdToIp(1).Get();
+        rtKey.dip = NodeIdToIp(42).Get();
+        rtKey.dport = 4792;
         rtKey.routingType = RoutingType::PER_PACKET_ALL_PATHS;
         rtKey.priority = 2;
-        bool selectedShortestPath = false;
-        const int actual = routing->SelectOutPort(rtKey, {0, 1}, {2, 3}, selectedShortestPath);
 
-        NS_TEST_ASSERT_MSG_EQ(actual,
-                              0,
-                              "equal-load adaptive selection must preserve the existing first-port tie break");
-        NS_TEST_ASSERT_MSG_EQ(selectedShortestPath,
-                              true,
-                              "the first equal-load candidate belongs to shortest paths");
+        std::set<uint16_t> selectedPorts;
+        for (uint16_t loadBalance = 0; loadBalance < 256; ++loadBalance)
+        {
+            rtKey.sport = loadBalance;
+            bool firstSelectedShortestPath = false;
+            const int first = routing->SelectOutPort(rtKey,
+                                                     {0, 1},
+                                                     {2, 3},
+                                                     firstSelectedShortestPath);
+            bool secondSelectedShortestPath = false;
+            const int second = routing->SelectOutPort(rtKey,
+                                                      {0, 1},
+                                                      {2, 3},
+                                                      secondSelectedShortestPath);
+
+            NS_TEST_ASSERT_MSG_EQ(first,
+                                  second,
+                                  "equal-load adaptive selection must be stable for the same routing key");
+            NS_TEST_ASSERT_MSG_EQ(firstSelectedShortestPath,
+                                  secondSelectedShortestPath,
+                                  "stable adaptive selection must preserve the route class");
+            const bool expectedShortestPath = first < 2;
+            NS_TEST_ASSERT_MSG_EQ(firstSelectedShortestPath,
+                                  expectedShortestPath,
+                                  "adaptive route class must match the selected candidate");
+            selectedPorts.insert(static_cast<uint16_t>(first));
+        }
+        NS_TEST_ASSERT_MSG_GT(selectedPorts.size(),
+                              1u,
+                              "changing the existing sport/Lb field must spread equal-load candidates");
+
+        Ptr<UbQueueManager> queueManager = node->GetObject<UbSwitch>()->GetQueueManager();
+        queueManager->PushToVoq(0, 1, rtKey.priority, 64);
+        queueManager->PushToVoq(0, 2, rtKey.priority, 64);
+        queueManager->PushToVoq(0, 3, rtKey.priority, 64);
+        for (uint16_t loadBalance = 0; loadBalance < 256; ++loadBalance)
+        {
+            rtKey.sport = loadBalance;
+            bool selectedShortestPath = false;
+            const int actual =
+                routing->SelectOutPort(rtKey, {0, 1}, {2, 3}, selectedShortestPath);
+            NS_TEST_ASSERT_MSG_EQ(actual,
+                                  0,
+                                  "adaptive selection must not hash outside the minimum-load set");
+            NS_TEST_ASSERT_MSG_EQ(selectedShortestPath,
+                                  true,
+                                  "the unique minimum-load candidate belongs to shortest paths");
+        }
         Simulator::Destroy();
         Config::Reset();
     }
@@ -25344,7 +25387,7 @@ class UbRoutingModesTestSuite : public TestSuite
         AddTestCase(new UbIngressPortStripeUsesHash64ForLocalInjectionTest(),
                     TestCase::Duration::QUICK);
         AddTestCase(new UbMultipathSelectorRoutingTypeMatrixTest(), TestCase::Duration::QUICK);
-        AddTestCase(new UbAdaptiveMultipathSelectorUsesExistingLoadSelectionTest(),
+        AddTestCase(new UbAdaptiveMultipathSelectorHashesEqualLoadCandidatesTest(),
                     TestCase::Duration::QUICK);
         AddTestCase(new UbRoutingKeyUsesRoutingTypeForCandidateScopeTest(),
                     TestCase::Duration::QUICK);
