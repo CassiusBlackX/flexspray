@@ -104,6 +104,9 @@ void UbLdstApi::SendPacket(Ptr<UbLdstTaskSegment> taskSegment, Ptr<Packet> packe
     auto sw = node->GetObject<UbSwitch>();
     bool selectedShortestPath = false;
     int outPort = sw->GetRoutingProcess()->GetOutPort(rtKey, selectedShortestPath);
+    // TODO: Source injection currently ignores selectedShortestPath. If this lookup selects a
+    // non-shortest port, mark the packet shortest-only before enqueueing it so a downstream
+    // switch cannot consume the UB one-detour allowance again.
     if (outPort < 0) {
         // Route failed
         UbLifecycleCoordinator::TerminatePacket(packet, UbPacketTerminal::ROUTE_NOT_FOUND);
@@ -230,6 +233,9 @@ void UbLdstApi::RecvDataPacket(Ptr<Packet> packet)
 
     bool selectedShortestPath = false;
     int destPort = sw->GetRoutingProcess()->GetOutPort(rtKey, selectedShortestPath);
+    // TODO: Source injection currently ignores selectedShortestPath. If this lookup selects a
+    // non-shortest port, mark the ACK shortest-only before enqueueing it so a downstream switch
+    // cannot consume the UB one-detour allowance again.
     if (destPort < 0) {
         // Route failed
         UbLifecycleCoordinator::TerminatePacket(ackp, UbPacketTerminal::ROUTE_NOT_FOUND);
