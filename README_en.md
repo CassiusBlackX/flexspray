@@ -1,12 +1,15 @@
 <h1 align="center">ns-3-UB</h1>
 
-<h3 align="center">UnifiedBus Network Simulation Framework</h3>
+<p align="center">
+  <strong>UnifiedBus Network Simulation Framework</strong><br>
+  An ns-3 simulation module based on the UnifiedBus (UB) Base Specification
+</p>
 
 <p align="center">
-  <a href="https://gitcode.com/open-usim/ns-3-ub">GitCode</a> |
-  <a href="QUICK_START_en.md">Quick Start</a> |
-  <a href="scratch/README.md">Case Guide</a> |
-  <a href="RELEASE_NOTES_UB_en.md#release-130">Release Notes</a> |
+  <a href="https://gitcode.com/open-usim/ns-3-ub">GitCode</a> ·
+  <a href="QUICK_START_en.md">Quick Start</a> ·
+  <a href="scratch/README.md">Case Guide</a> ·
+  <a href="RELEASE_NOTES_UB_en.md#release-130">Release Notes</a> ·
   <a href="README.md">中文</a>
 </p>
 
@@ -15,9 +18,7 @@
   <a href="https://www.unifiedbus.com"><img src="https://img.shields.io/static/v1?label=spec&message=UnifiedBus&color=111827" alt="UnifiedBus specification"></a>
   <a href="RELEASE_NOTES_UB_en.md#release-130"><img src="https://img.shields.io/static/v1?label=release&message=1.3.0&color=6F42C1" alt="Release 1.3.0"></a>
   <a href="LICENSE"><img src="https://img.shields.io/static/v1?label=license&message=GPL-2.0&color=97CA00" alt="GPL-2.0 license"></a>
-</p>
-
-<p align="center">
+  <br>
   <a href="src/unified-bus"><img src="https://img.shields.io/static/v1?label=language&message=C%2B%2B20&color=00599C&logo=cplusplus&logoColor=white" alt="C++20"></a>
   <a href="scratch/ns-3-ub-tools"><img src="https://img.shields.io/static/v1?label=tools&message=Python&color=3776AB&logo=python&logoColor=white" alt="Python tools"></a>
   <a href="https://www.nsnam.org/releases/ns-3-44/"><img src="https://img.shields.io/static/v1?label=ns-3&message=3.44&color=00A0E9" alt="ns-3.44"></a>
@@ -31,9 +32,9 @@
   <a href="RELEASE_NOTES_UB_en.md#release-130">Full release notes →</a>
 </p>
 
-**Quick Start**: [QUICK_START_en.md](QUICK_START_en.md)
+---
 
-**Case Entry**: [scratch/README.md](scratch/README.md)
+**Contents**: [Project Overview](#-project-overview) · [Project Architecture](#-project-architecture) · [Key Components](#-key-components) · [OpenUSim Skills](#4-openusim-skills-repository-bundled) · [License](#-license) · [Citation](#-citation)
 
 ## Project Overview
 
@@ -42,18 +43,18 @@
 > **Note**: The English version of the UB specification is currently in "Coming Soon" status. Every effort has been made to align with the UB Base Specification, but differences may still exist. Please refer to the UB Base Specification as the authoritative guide.
 
 `ns-3-UB` can be used to study:
+
 - Topology designs targeting traffic affinity, low cost, and high reliability.
 - Collective communication operators and traffic engineering algorithms.
 - Transaction layer ordering and reliability in bus-coherent memory transaction networks.
 - Memory-semantic transport in SuperPoD networks.
 - Adaptive routing, load balancing, congestion control, and QoS optimization.
 
-
 > This project provides pluggable "reference implementations" for policies/algorithms not specified in the UB Base Specification (such as switch modeling, route selection, congestion marking, buffering, and arbitration, etc.). These reference implementations are not part of the UB Base Specification and serve solely as examples and baselines; users may replace or disable them as needed.
 >
 > Functions not implemented in this project include, but are not limited to: detailed modeling for hardware internals, physical layer, performance parameters, control plane behavior (such as initialization behavior, error and exception event handling, etc.), memory management, security policies, etc.
 
-The **typical simulation functionalities** supported by this project are shown in the following table.
+### Typical Simulation Functionalities
 
 <table>
   <thead>
@@ -161,20 +162,20 @@ The **typical simulation functionalities** supported by this project are shown i
 ## Project Architecture
 
 ```
-├── README.md                   # Project documentation
-├── scratch/                    # Simulation examples and test cases
-│   ├── ub-quick-example.cc     # Main simulation program
-│   ├── 2nodes*/             	# simple 2-node topology test cases
-│   ├── clos*/                  # CLOS topology test cases
-│   └── 2dfm4x4*/               # 2D FullMesh 4x4 test case set
+├── README.md                    # Project documentation
+├── scratch/                     # Simulation examples and test cases
+│   ├── ub-quick-example.cc      # Main simulation program
+│   ├── 2nodes*/                 # Simple 2-node topology test cases
+│   ├── clos*/                   # CLOS topology test cases
+│   └── 2dfm4x4*/                # 2D FullMesh 4x4 test case set
 │
-└── src/unified-bus/            # UB Base Specification-based simulation components
-    ├── model/                  
+└── src/unified-bus/             # UB Base Specification-based simulation components
+    ├── model/
     │   ├── protocol/
-    │   │   └── ub-*            # Protocol stack related modeling components
-    │   └── ub-*                # Network element and algorithm components
-    ├── test/                   # Unit tests
-    └── doc/                    # Documentation and diagrams
+    │   │   └── ub-*             # Protocol stack related modeling components
+    │   └── ub-*                 # Network element and algorithm components
+    ├── test/                    # Unit tests
+    └── doc/                     # Documentation and diagrams
 ```
 
 ## Key Components
@@ -184,10 +185,11 @@ The **typical simulation functionalities** supported by this project are shown i
 The UB module is a simulation component implemented based on the UB Base Specification:
 
 #### Modeling Components for Network Elements
+
 <p align="center">
 <img src="src/unified-bus/doc/figures/arch2-light.D3-LpLKH.png" alt="UB Domain System Architecture" width="85%">
 <br>
-<em>UB Domain system architecture diagram.</em><em> Source: www.unifiedbus.com</em><br>
+<em>UB Domain system architecture diagram. Source: www.unifiedbus.com</em>
 </p>
 
 - **UB Controller** (`ub-controller.*`) - Key component for executing the UB protocol stack, providing user interfaces
@@ -196,6 +198,7 @@ The UB module is a simulation component implemented based on the UB Base Specifi
 - **UB Link** (`ub-link.*`) - Point-to-point connections between nodes
 
 #### Protocol Stack Components
+
 - **Programming Interface Instances** (`ub-ldst-instance*`, `ub-ldst-thread*`, `ub-ldst-api*`) - Load/Store programming interface instances, interfacing with the programming models defined in the function layer
 - **UB Function** (`ub-function.*`) - Function layer protocol framework implementation, supporting Load/Store and URMA programming models
 - **UB Transaction** (`ub-transaction.*`) - Transaction layer protocol framework implementation
@@ -204,6 +207,7 @@ The UB module is a simulation component implemented based on the UB Base Specifi
 - **UB Datalink** (`ub-datalink.*`) - Data link layer protocol framework implementation
 
 #### Network Algorithm Components
+
 - **Traffic Injection Component** (`ub-traffic-gen.*`) - Reads user traffic configuration and injects traffic for simulation nodes according to specified serial and parallel relationships
 - **TP Connection Manager** (`ub-tp-connection-manager.h`) - TP Channel manager, facilitating user's lookup of TP Channel information for each node
 - **Switch Allocator** (`ub-allocator.*`) - Modelling the whole process of output port lookup for packets in a switch
@@ -215,6 +219,7 @@ The UB module is a simulation component implemented based on the UB Base Specifi
 - **Fault Injection Module** (`ub-fault.*`) - Applies fault-related parameters (e.g., packet loss rate, high latency, congestion levels, packet errors, transient disconnections, lane reduction) to specific traffic flows
 
 #### Data Types and Tools
+
 - **Datatype** (`ub-datatype.*`) - UB data type definitions
 - **Header** (`ub-header.*`) - UB protocol header definition and parsing
 - **Network Address** (`ub-network-address.h`) - Network address related utility functions, including address translation, mask matching and other functionalities
@@ -222,17 +227,20 @@ The UB module is a simulation component implemented based on the UB Base Specifi
 ### 2. Core Simulation Features
 
 #### Topology and Traffic Support
+
 - **Arbitrary Topology**: Supports simulation and modeling of arbitrary topologies. Users can quickly build topologies and routing tables using UB toolsets
 - **Arbitrary Traffic**: Supports configuration of arbitrary simulation traffic. Users can quickly build collective communications and communication operator graphs using UB toolsets in conjunction with UbClientDag
 - **Performance Monitoring**: Comprehensive performance metric collection and analysis
 
 #### Protocol Stack Modeling
+
 - **UB Protocol Stack**: Supports protocol stack modeling across the data link, network, transport, transaction, and function layers
 - **Memory Semantics**: Implements Load/Store-based memory semantic behavior modeling
 - **Message Semantics**: Implements URMA-based message semantic behavior modeling
 - **Native Multipathing**: Implements native multipath support through TP/TP Group protocol mechanisms
 
 #### Protocol Algorithm Support
+
 - **Flow Control**: Implements credit-based flow control (CBFC exclusive / shared-credit) and priority-based flow control (PFC fixed / dynamic thresholds)
 - **Congestion Control**: Implements the framework of the well-known congestion control loop, including network-side marking, receiver response, sender response, and congestion control algorithms; supports C-AQM and DCQCN
 - **Routing Policies**: Supports shortest-path routing and bypass strategies; supports packet spraying, ECMP, and other load balancing mechanisms
@@ -266,9 +274,10 @@ These skills depend on this repository and the `ns-3-ub-tools` submodule, so the
 
 ## License
 
-This project follows the ns-3 license agreement, GPL v2. See the `LICENSE` file for details.
+This project follows the ns-3 license agreement, GPL v2. See the [`LICENSE`](LICENSE) file for details.
 
 ## Citation
+
 ```bibtex
 @software{UBNetworkSimulator,
   month = {10},
@@ -278,3 +287,9 @@ This project follows the ns-3 license agreement, GPL v2. See the `LICENSE` file 
   year = {2026}
 }
 ```
+
+---
+
+<p align="center">
+  <sub>Built on the <a href="https://www.unifiedbus.com/zh">UnifiedBus Base Specification</a> · Based on <a href="https://www.nsnam.org/releases/ns-3-44/">ns-3.44</a> · GPL-2.0 License</sub>
+</p>
