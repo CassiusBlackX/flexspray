@@ -1389,6 +1389,9 @@ UbCtpTransportService::SelectOutPort(UbCtpEntityState& state,
 
     bool selectedShortestPath = false;
     const int outPort = routing->GetOutPort(rtKey, selectedShortestPath);
+    // TODO: Source routing currently ignores selectedShortestPath. Propagate a non-shortest
+    // selection into the transmit routing policy before building the packet header so a
+    // downstream switch cannot consume the UB one-detour allowance again.
     NS_ABORT_MSG_IF(outPort < 0,
                     "CTP send requires a source port hint or a route to destination node");
     NS_ABORT_MSG_IF(static_cast<uint32_t>(outPort) >= m_node->GetNDevices(),
