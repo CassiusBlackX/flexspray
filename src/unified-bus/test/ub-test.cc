@@ -67,6 +67,25 @@
 #include <unistd.h>
 #endif
 
+namespace ns3
+{
+
+class UbTpnAllocationBoundaryAccessor
+{
+  public:
+    static void SetNextTpn(Ptr<TpConnectionManager> manager, uint32_t nextTpn)
+    {
+        manager->m_nextTpn = nextTpn;
+    }
+
+    static void OccupyTpn(Ptr<TpConnectionManager> manager, uint32_t tpn)
+    {
+        manager->m_tpnList.insert(tpn);
+    }
+};
+
+} // namespace ns3
+
 using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE("UbTest");
@@ -22986,13 +23005,14 @@ class UbTpResolutionMtpOwnershipReadinessTest : public TestCase
             {
                 std::_Exit(2);
             }
-            Ptr<UbTransportChannel> inbound = endpoint.manager->ResolveInboundTp(
-                endpoint.peerTpn,
-                endpoint.tpn,
-                endpoint.sourceIp,
-                endpoint.destinationIp,
-                endpoint.priority);
-            if (inbound == nullptr || !endpoint.manager->ReclaimBackingState(endpoint.tpn))
+            const UbInboundTpResolution inbound =
+                endpoint.manager->ResolveInboundTp(endpoint.peerTpn,
+                                                   endpoint.tpn,
+                                                   endpoint.sourceIp,
+                                                   endpoint.destinationIp,
+                                                   endpoint.priority);
+            if (inbound.state != UbInboundTpState::LIVE || inbound.endpoint == nullptr ||
+                !endpoint.manager->ReclaimBackingState(endpoint.tpn))
             {
                 std::_Exit(3);
             }
@@ -23022,16 +23042,17 @@ class UbTpResolutionMtpOwnershipReadinessTest : public TestCase
             MtpInterface::Enable(1, 1);
             Ptr<UbTransportChannel> reserved =
                 endpoint.manager->CreateReservedTpEndpoint(endpoint.tpn);
-            Ptr<UbTransportChannel> inbound = endpoint.manager->ResolveInboundTp(
-                endpoint.peerTpn,
-                endpoint.tpn,
-                endpoint.sourceIp,
-                endpoint.destinationIp,
-                endpoint.priority);
+            const UbInboundTpResolution inbound =
+                endpoint.manager->ResolveInboundTp(endpoint.peerTpn,
+                                                   endpoint.tpn,
+                                                   endpoint.sourceIp,
+                                                   endpoint.destinationIp,
+                                                   endpoint.priority);
             Ptr<UbTransportChannel> resolved =
                 endpoint.manager->ResolveLiveTp(endpoint.tpn, endpoint.identity);
             const bool reclaimed = endpoint.manager->ReclaimBackingState(endpoint.tpn);
-            if (reserved != nullptr || inbound != nullptr || resolved != nullptr || reclaimed)
+            if (reserved != nullptr || inbound.state != UbInboundTpState::INVALID ||
+                inbound.endpoint != nullptr || resolved != nullptr || reclaimed)
             {
                 std::_Exit(6);
             }
@@ -23152,6 +23173,99 @@ class UbTpResolutionMtpOwnershipReadinessTest : public TestCase
             WEXITSTATUS(mappedOwnerStatus),
             0,
             "Only the mapped worker owner may restore or reclaim exact TP backing");
+
+        const int reservedWrongOwnerStatus = RunInChildProcess([]() {
+            Config::Reset();
+            LocalTpTopology topo = BuildLocalTpTopology();
+            Ptr<UbController> sender = topo.sender->GetObject<UbController>();
+            Ptr<UbController> receiver = topo.receiver->GetObject<UbController>();
+            sender->GetTpConnManager()->ReserveTpnsForTraffic(true,
+                                                              topo.sender->GetId(),
+                                                              topo.receiver->GetId(),
+                                                              kUrmaWriteRegressionPriority);
+            const auto receiverTpns = receiver->GetTpConnManager()->GetTpnsByPeerNodePriority(
+                topo.receiver->GetId(),
+                topo.sender->GetId(),
+                kUrmaWriteRegressionPriority);
+            if (receiverTpns.size() != 1)
+            {
+                std::_Exit(40);
+            }
+            Connection connection;
+            if (!receiver->GetTpConnManager()->TryGetLocalConnection(topo.receiver->GetId(),
+                                                                     receiverTpns[0].first,
+                                                                     connection))
+            {
+                std::_Exit(41);
+            }
+
+            topo.receiver->SetSystemId(1);
+            MtpInterface::Enable(1, 2);
+            MtpInterface::SetSystem(2);
+            const UbInboundTpResolution inbound =
+                receiver->GetTransportChannelManager()->ResolveInboundTp(
+                    connection.tpn2,
+                    connection.tpn1,
+                    NodeIdToIp(connection.node2, connection.port2),
+                    NodeIdToIp(connection.node1, connection.port1),
+                    static_cast<UbPriority>(connection.priority));
+            if (inbound.state != UbInboundTpState::INVALID || inbound.endpoint != nullptr ||
+                receiver->GetTransportChannelManager()->GetTp(connection.tpn1) != nullptr)
+            {
+                std::_Exit(42);
+            }
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFEXITED(reservedWrongOwnerStatus),
+                              1,
+                              "Wrong-owner reserved ingress must not abort");
+        NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(reservedWrongOwnerStatus),
+                              0,
+                              "Wrong-owner reserved ingress must not materialize TP backing");
+
+        const int drainingWrongOwnerStatus = RunInChildProcess([]() {
+            const DormantEndpoint endpoint = PrepareDormantEndpoint();
+            Ptr<UbTransportChannel> tp =
+                endpoint.manager->ResolveLiveTp(endpoint.tpn, endpoint.identity);
+            if (tp == nullptr)
+            {
+                std::_Exit(50);
+            }
+            NodeList::GetNode(endpoint.identity.ownerNodeId)->SetSystemId(1);
+            MtpInterface::Enable(1, 2);
+            MtpInterface::SetSystem(1);
+            const UbLifecycleLeaseIdentity lease =
+                UbLifecycleCoordinator::GetOrCreate(
+                    NodeList::GetNode(endpoint.identity.ownerNodeId))
+                    ->AcquireLease(endpoint.identity,
+                                   UbLifecycleLeaseKind::TRANSPORT_WORK,
+                                   endpoint.identity);
+            if (endpoint.manager->DestroyTp(endpoint.tpn) != UbDestroyStatus::PENDING)
+            {
+                std::_Exit(51);
+            }
+
+            MtpInterface::SetSystem(2);
+            const UbInboundTpResolution inbound =
+                endpoint.manager->ResolveInboundTp(endpoint.peerTpn,
+                                                   endpoint.tpn,
+                                                   endpoint.sourceIp,
+                                                   endpoint.destinationIp,
+                                                   endpoint.priority);
+            if (inbound.state != UbInboundTpState::INVALID || inbound.endpoint != nullptr)
+            {
+                std::_Exit(52);
+            }
+
+            MtpInterface::SetSystem(1);
+            UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(endpoint.identity.ownerNodeId))
+                ->ReleaseLease(lease);
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFEXITED(drainingWrongOwnerStatus),
+                              1,
+                              "Wrong-owner draining ingress must not abort");
+        NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(drainingWrongOwnerStatus),
+                              0,
+                              "Wrong-owner draining ingress must not expose live backing");
     }
 
   private:
@@ -23213,6 +23327,60 @@ class UbTpResolutionMtpOwnershipReadinessTest : public TestCase
     }
 };
 #endif
+
+class UbTpnAllocationBoundaryTest : public TestCase
+{
+  public:
+    UbTpnAllocationBoundaryTest()
+        : TestCase("UnifiedBus - TPN allocation stops at the 24-bit wire boundary")
+    {
+    }
+
+    void DoRun() override
+    {
+        Ptr<TpConnectionManager> manager = CreateObject<TpConnectionManager>();
+        UbTpnAllocationBoundaryAccessor::SetNextTpn(manager, 0xFFFFFE);
+        NS_TEST_ASSERT_MSG_EQ(manager->GetNextTpn(),
+                              0xFFFFFEu,
+                              "The penultimate wire TPN should remain allocatable");
+        NS_TEST_ASSERT_MSG_EQ(manager->GetNextTpn(),
+                              0xFFFFFFu,
+                              "The final 24-bit wire TPN should remain allocatable");
+
+#ifndef _WIN32
+        const int exhaustedStatus = RunInChildProcess([]() {
+            Ptr<TpConnectionManager> exhausted = CreateObject<TpConnectionManager>();
+            UbTpnAllocationBoundaryAccessor::SetNextTpn(exhausted, 0xFFFFFF);
+            if (exhausted->GetNextTpn() != 0xFFFFFFu)
+            {
+                std::_Exit(60);
+            }
+            exhausted->GetNextTpn();
+            std::_Exit(61);
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(exhaustedStatus),
+                              1,
+                              "Allocation after the final wire TPN must abort before wraparound");
+        NS_TEST_ASSERT_MSG_EQ(WTERMSIG(exhaustedStatus),
+                              SIGABRT,
+                              "Allocation after the final wire TPN must fail with SIGABRT");
+
+        const int occupiedFinalStatus = RunInChildProcess([]() {
+            Ptr<TpConnectionManager> exhausted = CreateObject<TpConnectionManager>();
+            UbTpnAllocationBoundaryAccessor::SetNextTpn(exhausted, 0xFFFFFF);
+            UbTpnAllocationBoundaryAccessor::OccupyTpn(exhausted, 0xFFFFFF);
+            exhausted->GetNextTpn();
+            std::_Exit(62);
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(occupiedFinalStatus),
+                              1,
+                              "An occupied final wire TPN must abort before incrementing");
+        NS_TEST_ASSERT_MSG_EQ(WTERMSIG(occupiedFinalStatus),
+                              SIGABRT,
+                              "An occupied final wire TPN must fail with SIGABRT");
+#endif
+    }
+};
 
 class UbGlobalTpBackingPeakTracksConcurrentOwnersTest : public TestCase
 {
@@ -23558,30 +23726,66 @@ class UbExplicitConnectionDestroyAggregatesBothEndpointsTest : public TestCase
                               0u,
                               "Owner record should erase after both slots retire");
 
-        const std::vector<uint32_t> reusedTpns = m_senderManager->GetTpns(
-            utils::GetTpnRuleT::BY_PEERNODE_PRIORITY,
-            true,
-            false,
-            topo.sender->GetId(),
-            topo.receiver->GetId(),
-            UINT32_MAX,
-            UINT32_MAX,
-            kUrmaWriteRegressionPriority);
-        NS_TEST_ASSERT_MSG_EQ(reusedTpns.size(), 1u, "Expected one replacement reservation");
-        NS_TEST_ASSERT_MSG_EQ(reusedTpns[0],
-                              m_connection.tpn1,
-                              "Released source TPN should be reusable");
+        const Connection retiredConnection = m_connection;
+        const Ipv4Address retiredSourceIp =
+            NodeIdToIp(topo.sender->GetId(), topo.senderPort->GetIfIndex());
+        const Ipv4Address retiredDestinationIp =
+            NodeIdToIp(topo.receiver->GetId(), topo.receiverPort->GetIfIndex());
+        const UbInboundTpResolution retired =
+            m_receiverController->GetTransportChannelManager()->ResolveInboundTp(
+                retiredConnection.tpn1,
+                retiredConnection.tpn2,
+                retiredSourceIp,
+                retiredDestinationIp,
+                kUrmaWriteRegressionPriority);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(retired.state),
+                              static_cast<uint32_t>(UbInboundTpState::RETIRED_EXACT),
+                              "Exact retired wire key should resolve as stale quarantine");
+        NS_TEST_ASSERT_MSG_EQ(retired.endpoint,
+                              nullptr,
+                              "Retired quarantine must not retain TP backing");
+        const UbInboundTpResolution retiredMismatch =
+            m_receiverController->GetTransportChannelManager()->ResolveInboundTp(
+                retiredConnection.tpn1 + 1,
+                retiredConnection.tpn2,
+                retiredSourceIp,
+                retiredDestinationIp,
+                kUrmaWriteRegressionPriority);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(retiredMismatch.state),
+                              static_cast<uint32_t>(UbInboundTpState::INVALID),
+                              "A mismatched key sharing a retired TPN must remain invalid");
+
+        Ptr<Packet> stalePacket = BuildInboundTpPacket(topo,
+                                                       retiredConnection.tpn1,
+                                                       retiredConnection.tpn2,
+                                                       retiredSourceIp,
+                                                       retiredDestinationIp,
+                                                       kUrmaWriteRegressionPriority);
+        topo.receiver->GetObject<UbSwitch>()->SwitchHandlePacket(topo.receiverPort, stalePacket);
+
+        const std::vector<uint32_t> replacementTpns =
+            m_senderManager->GetTpns(utils::GetTpnRuleT::BY_PEERNODE_PRIORITY,
+                                     true,
+                                     false,
+                                     topo.sender->GetId(),
+                                     topo.receiver->GetId(),
+                                     UINT32_MAX,
+                                     UINT32_MAX,
+                                     kUrmaWriteRegressionPriority);
+        NS_TEST_ASSERT_MSG_EQ(replacementTpns.size(), 1u, "Expected one replacement reservation");
+        NS_TEST_ASSERT_MSG_NE(replacementTpns[0],
+                              retiredConnection.tpn1,
+                              "Retired source TPN must never be reused without a wire generation");
         ConnectionLifecycleSnapshot after;
-        NS_TEST_ASSERT_MSG_EQ(m_senderManager->GetConnectionLifecycleSnapshot(reusedTpns[0], after),
-                              true,
-                              "Replacement reservation should create a canonical record");
-        NS_TEST_ASSERT_MSG_GT(after.generation,
-                              before.generation,
-                              "Replacement reservation should have a new connection generation");
+        NS_TEST_ASSERT_MSG_EQ(
+            m_senderManager->GetConnectionLifecycleSnapshot(replacementTpns[0], after),
+            true,
+            "Replacement reservation should create a canonical record");
 
         Connection replacement;
-        NS_TEST_ASSERT_MSG_EQ(m_senderManager->TryGetLocalConnection(
-                                  topo.sender->GetId(), reusedTpns[0], replacement),
+        NS_TEST_ASSERT_MSG_EQ(m_senderManager->TryGetLocalConnection(topo.sender->GetId(),
+                                                                     replacementTpns[0],
+                                                                     replacement),
                               true,
                               "Expected replacement source reservation");
         m_connection = replacement;
@@ -23605,12 +23809,17 @@ class UbExplicitConnectionDestroyAggregatesBothEndpointsTest : public TestCase
                               nullptr,
                               "Closing connection should reject new application materialization");
 
-        Ptr<UbTransportChannel> drainOnly = m_receiverController->GetTransportChannelManager()->ResolveInboundTp(
-            replacement.tpn1,
-            replacement.tpn2,
-            NodeIdToIp(topo.sender->GetId(), topo.senderPort->GetIfIndex()),
-            NodeIdToIp(topo.receiver->GetId(), topo.receiverPort->GetIfIndex()),
-            kUrmaWriteRegressionPriority);
+        const UbInboundTpResolution drainOnlyResolution =
+            m_receiverController->GetTransportChannelManager()->ResolveInboundTp(
+                replacement.tpn1,
+                replacement.tpn2,
+                NodeIdToIp(topo.sender->GetId(), topo.senderPort->GetIfIndex()),
+                NodeIdToIp(topo.receiver->GetId(), topo.receiverPort->GetIfIndex()),
+                kUrmaWriteRegressionPriority);
+        Ptr<UbTransportChannel> drainOnly = drainOnlyResolution.endpoint;
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(drainOnlyResolution.state),
+                              static_cast<uint32_t>(UbInboundTpState::LIVE),
+                              "Validated old inbound work should remain a live closing target");
         NS_TEST_ASSERT_MSG_NE(drainOnly,
                               nullptr,
                               "Validated old inbound work should materialize a drain-only endpoint");
@@ -30016,6 +30225,7 @@ UbTpReservationTestSuite::UbTpReservationTestSuite()
 #if defined(NS3_MTP) && !defined(_WIN32)
     AddTestCase(new UbTpResolutionMtpOwnershipReadinessTest(), TestCase::Duration::QUICK);
 #endif
+    AddTestCase(new UbTpnAllocationBoundaryTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbGlobalTpBackingPeakTracksConcurrentOwnersTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDormantTpBackingPreservesCaqmStateTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDwrrReclaimsEveryReleasedTpInOneRoundTest(), TestCase::Duration::QUICK);

@@ -257,23 +257,32 @@ UbTransportChannelManager::BeginDrainOnlyDestroy(uint32_t tpn)
     }
 }
 
-Ptr<UbTransportChannel>
+UbInboundTpResolution
 UbTransportChannelManager::ResolveInboundTp(uint32_t srcTpn,
                                             uint32_t dstTpn,
                                             Ipv4Address sourceIp,
                                             Ipv4Address destinationIp,
                                             UbPriority priority)
 {
-    std::lock_guard<std::mutex> lock(TpConnectionManager::g_tpConnectionControlLock);
+    if (m_controller == nullptr || m_controller->IsDisposing())
+    {
+        return {};
+    }
+    Ptr<Node> currentNode = m_controller->GetObject<Node>();
+    NS_ASSERT_MSG(currentNode != nullptr, "Inbound TP resolution requires an attached node");
+    if (!IsTpBackingExecutionOwner(currentNode->GetId()))
+    {
+        return {};
+    }
+
     const auto endpoint = m_endpoints.find(dstTpn);
     if (endpoint != m_endpoints.end())
     {
         const EndpointRecord& record = endpoint->second;
         const UbTransportDormantState* dormant = record.dormantState.get();
-        if (record.state == EndpointState::DRAINING ||
-            (record.channel == nullptr && dormant == nullptr))
+        if (record.channel == nullptr && dormant == nullptr)
         {
-            return nullptr;
+            return {};
         }
         const uint32_t expectedSrcTpn =
             record.channel != nullptr ? record.channel->GetDestTpn() : dormant->dstTpn;
@@ -286,33 +295,44 @@ UbTransportChannelManager::ResolveInboundTp(uint32_t srcTpn,
         if (srcTpn != expectedSrcTpn || sourceIp != expectedSourceIp ||
             destinationIp != expectedDestinationIp || priority != expectedPriority)
         {
-            return nullptr;
+            return {};
+        }
+        if (record.state == EndpointState::DRAINING)
+        {
+            return {UbInboundTpState::LIVE, record.channel};
         }
         UbLifecycleResourceIdentity identity;
-        return TryGetEndpointIdentityLocked(dstTpn, identity)
-                   ? ResolveLiveTpLocked(dstTpn, identity)
-                   : nullptr;
+        Ptr<UbTransportChannel> resolved =
+            TryGetEndpointIdentityLocked(dstTpn, identity)
+                ? ResolveLiveTpForOwnerLocked(dstTpn, identity, currentNode)
+                : nullptr;
+        return resolved == nullptr ? UbInboundTpResolution{}
+                                   : UbInboundTpResolution{UbInboundTpState::LIVE, resolved};
     }
 
-    Ptr<Node> currentNode = m_controller->GetObject<Node>();
-    NS_ASSERT_MSG(currentNode != nullptr, "Inbound TP resolution requires an attached node");
     Connection conn;
-    if (!m_controller->GetTpConnManager()->TryGetLocalConnection(currentNode->GetId(),
-                                                                 dstTpn,
-                                                                 conn))
+    const TpConnectionManager::InboundConnectionState connectionState =
+        m_controller->GetTpConnManager()->ResolveInboundConnection(currentNode->GetId(),
+                                                                   srcTpn,
+                                                                   dstTpn,
+                                                                   sourceIp,
+                                                                   destinationIp,
+                                                                   priority,
+                                                                   conn);
+    if (connectionState == TpConnectionManager::InboundConnectionState::RETIRED_EXACT)
     {
-        return nullptr;
+        return {UbInboundTpState::RETIRED_EXACT, nullptr};
     }
-    if (srcTpn != conn.tpn2 || sourceIp != NodeIdToIp(conn.node2, conn.port2) ||
-        destinationIp != NodeIdToIp(conn.node1, conn.port1) ||
-        priority != static_cast<UbPriority>(conn.priority))
+    if (connectionState != TpConnectionManager::InboundConnectionState::LIVE)
     {
-        return nullptr;
+        return {};
     }
     const bool drainOnly =
         m_controller->GetTpConnManager()->IsConnectionDestroyRequested(currentNode->GetId(),
                                                                        dstTpn);
-    return CreateReservedTpEndpointLocked(dstTpn, drainOnly);
+    Ptr<UbTransportChannel> resolved = CreateReservedTpEndpointLocked(dstTpn, drainOnly);
+    return resolved == nullptr ? UbInboundTpResolution{}
+                               : UbInboundTpResolution{UbInboundTpState::LIVE, resolved};
 }
 
 bool
@@ -618,6 +638,19 @@ UbTransportChannelManager::ResolveLiveTpLocked(uint32_t tpn,
     {
         return nullptr;
     }
+    return ResolveLiveTpForOwnerLocked(tpn, expectedIdentity, node);
+}
+
+Ptr<UbTransportChannel>
+UbTransportChannelManager::ResolveLiveTpForOwnerLocked(
+    uint32_t tpn,
+    const UbLifecycleResourceIdentity& expectedIdentity,
+    Ptr<Node> ownerNode)
+{
+    if (ownerNode == nullptr || expectedIdentity.ownerNodeId != ownerNode->GetId())
+    {
+        return nullptr;
+    }
     const auto it = m_endpoints.find(tpn);
     if (it == m_endpoints.end() || it->second.state == EndpointState::DRAINING)
     {
@@ -636,7 +669,7 @@ UbTransportChannelManager::ResolveLiveTpLocked(uint32_t tpn,
         return nullptr;
     }
 
-    Ptr<UbLifecycleCoordinator> coordinator = UbLifecycleCoordinator::GetOrCreate(node);
+    Ptr<UbLifecycleCoordinator> coordinator = UbLifecycleCoordinator::GetOrCreate(ownerNode);
     if (!coordinator->IsResourceActive(expectedIdentity))
     {
         return nullptr;
@@ -653,7 +686,7 @@ UbTransportChannelManager::ResolveLiveTpLocked(uint32_t tpn,
     tp->SetLifecycleStateChangedCallback(
         MakeCallback(&UbTransportChannelManager::NotifyStateChanged, this));
 
-    Ptr<UbSwitch> sw = node->GetObject<UbSwitch>();
+    Ptr<UbSwitch> sw = ownerNode->GetObject<UbSwitch>();
     if (sw == nullptr || !sw->ReplaceDormantTpBacking(record.allocatorPlaceholder, tp))
     {
         return nullptr;

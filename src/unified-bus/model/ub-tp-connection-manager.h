@@ -19,6 +19,7 @@
 namespace ns3
 {
 class UbController;
+class UbTpnAllocationBoundaryAccessor;
 class UbTransportChannelManager;
 }
 
@@ -224,7 +225,8 @@ public:
     }
 private:
   friend class ns3::UbController;
-    friend class ns3::UbTransportChannelManager;
+  friend class ns3::UbTpnAllocationBoundaryAccessor;
+  friend class ns3::UbTransportChannelManager;
 
   static std::mutex g_tpConnectionControlLock;
 
@@ -309,6 +311,19 @@ private:
     };
 
     const Connection* ResolveConnectionRefLocked(const LocalConnectionRef& ref) const;
+    enum class InboundConnectionState : uint8_t
+    {
+        LIVE,
+        RETIRED_EXACT,
+        INVALID,
+    };
+    InboundConnectionState ResolveInboundConnection(uint32_t localNodeId,
+                                                    uint32_t srcTpn,
+                                                    uint32_t dstTpn,
+                                                    Ipv4Address sourceIp,
+                                                    Ipv4Address destinationIp,
+                                                    uint32_t priority,
+                                                    Connection& connection) const;
     void InvalidateAllConnectionsCacheLocked();
 
     // 为指定节点建立各种索引
@@ -362,12 +377,14 @@ private:
 
     // 索引6: (localNodeId, localTpn) -> generation-aware local view reference
     std::map<std::pair<uint32_t, uint32_t>, LocalConnectionRef> m_localTpnIndex;
+    std::map<std::pair<uint32_t, uint32_t>, Connection> m_retiredLocalConnectionViews;
     std::set<std::pair<uint32_t, uint32_t>> m_destroyRequestedViews;
 
     std::set<uint32_t> m_tpnList;
     std::set<uint32_t> m_reservedTpnList;
 
     uint32_t m_nextTpn = 0;
+    bool m_tpnSpaceExhausted{false};
 
     Ptr<UniformRandomVariable> m_random;
 

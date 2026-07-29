@@ -820,12 +820,21 @@ bool UbSwitch::SinkTpDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Pars
     const uint32_t srcTpn = headers.transportHeader.GetSrcTpn();
     uint32_t dstTpn = headers.transportHeader.GetDestTpn();
     Ptr<UbController> controller = GetObject<UbController>();
-    auto targetTp = controller->GetTransportChannelManager()->ResolveInboundTp(srcTpn,
-                                                 dstTpn,
-                                                 headers.ipv4Header.GetSource(),
-                                                 headers.ipv4Header.GetDestination(),
-                                                 headers.datalinkPacketHeader.GetPacketVL());
-    if (targetTp == nullptr) {
+    const UbInboundTpResolution resolution =
+        controller->GetTransportChannelManager()->ResolveInboundTp(
+            srcTpn,
+            dstTpn,
+            headers.ipv4Header.GetSource(),
+            headers.ipv4Header.GetDestination(),
+            headers.datalinkPacketHeader.GetPacketVL());
+    if (resolution.state == UbInboundTpState::RETIRED_EXACT)
+    {
+        NS_LOG_DEBUG("Ignoring stale packet for retired TP channel key");
+        UbLifecycleCoordinator::TerminatePacket(packet, UbPacketTerminal::ENDPOINT_CONSUMED);
+        return true;
+    }
+    Ptr<UbTransportChannel> targetTp = resolution.endpoint;
+    if (resolution.state != UbInboundTpState::LIVE || targetTp == nullptr) {
         NS_ABORT_MSG("Received unreserved or mismatched TP channel key. node="
                      << GetObject<Node>()->GetId() << " srcTpn=" << srcTpn << " dstTpn=" << dstTpn
                      << " sourceIp=" << headers.ipv4Header.GetSource()
