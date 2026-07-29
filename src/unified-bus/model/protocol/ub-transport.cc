@@ -2919,18 +2919,4 @@ UbTransportGroup::GetCleanupMode() const
     return m_cleanupMode;
 }
 
-bool
-UbTransportGroup::AreBindingLeasesReleased() const
-{
-    return m_bindingLeasesReleased;
-}
-
-void
-UbTransportGroup::MarkBindingLeasesReleased()
-{
-    NS_ABORT_MSG_IF(m_bindingLeasesReleased,
-                    "TPG binding leases were already released");
-    m_bindingLeasesReleased = true;
-}
-
 } // namespace ns3

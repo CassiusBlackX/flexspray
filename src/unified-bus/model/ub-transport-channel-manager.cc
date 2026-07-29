@@ -455,11 +455,7 @@ UbTransportChannelManager::AssessTpQuiescenceLocked(uint32_t tpn,
     {
         assessment.AddBlocker(UbTpQuiescenceBlocker::ACTIVE_CHILD_LEASE);
     }
-    if (lifecycle.activeTransportUseLeases != 0)
-    {
-        assessment.AddBlocker(UbTpQuiescenceBlocker::ACTIVE_TRANSPORT_USE_LEASE);
-    }
-    if (lifecycle.activeBindingLeases != 0)
+    if (m_controller->ResolveRtpTpGroupForMember(assessment.identity) != nullptr)
     {
         assessment.AddBlocker(UbTpQuiescenceBlocker::ACTIVE_BINDING_LEASE);
     }

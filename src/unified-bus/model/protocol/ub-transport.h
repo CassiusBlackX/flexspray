@@ -126,7 +126,6 @@ struct UbTransportGroupMember
 {
     uint32_t tpn{UINT32_MAX};
     UbLifecycleResourceIdentity tpIdentity;
-    UbLifecycleLeaseIdentity membershipLease;
     UbTransportGroupMemberState state{UbTransportGroupMemberState::ACTIVE};
 };
 
@@ -779,8 +778,6 @@ public:
     void RequestDestroy(UbTpgCleanupMode mode);
     bool IsDestroyPending() const;
     UbTpgCleanupMode GetCleanupMode() const;
-    bool AreBindingLeasesReleased() const;
-    void MarkBindingLeasesReleased();
 
 private:
     UbLifecycleResourceIdentity m_identity;
@@ -790,7 +787,6 @@ private:
     std::optional<UbLifecycleResourceIdentity> m_pendingLastMemberRemoval;
     bool m_destroyPending{false};
     UbTpgCleanupMode m_cleanupMode{UbTpgCleanupMode::GRACEFUL};
-    bool m_bindingLeasesReleased{false};
     uint64_t m_membershipVersion{1};
 };
 

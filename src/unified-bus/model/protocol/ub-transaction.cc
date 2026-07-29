@@ -384,13 +384,6 @@ void UbTransaction::DestroyJettyTpMap(uint32_t jettyNum)
 }
 
 void
-UbTransaction::ReleaseRtpTpGroupBindingLeases(
-    const UbLifecycleResourceIdentity& groupIdentity)
-{
-    GetFunction()->ReleaseJettyRtpBindings(groupIdentity);
-}
-
-void
 UbTransaction::EraseRtpTpGroupBindings(
     const UbLifecycleResourceIdentity& groupIdentity)
 {
@@ -832,6 +825,21 @@ UbTransaction::HasLifecycleOperationForJetty(uint32_t jettyNum) const
     return first != m_operations.end() && first->first.first == jettyNum;
 }
 
+bool
+UbTransaction::HasRtpTpGroupWork(
+    const UbLifecycleResourceIdentity& groupIdentity) const
+{
+    return std::any_of(
+        m_operations.begin(),
+        m_operations.end(),
+        [&groupIdentity](const auto& entry) {
+            const OperationRecord& operation = entry.second;
+            return !operation.ctp && !operation.terminalPending &&
+                   !operation.transportReference.IsDirectTp() &&
+                   operation.transportReference.GetIdentity() == groupIdentity;
+        });
+}
+
 UbTransaction::RtpSegmentAdmissionResult
 UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
                                   Ptr<UbWqe> originatingWqe,
@@ -959,10 +967,6 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
     if (selectedGroup != nullptr)
     {
         selectedGroup->CommitSelection(selectedGroupIndex);
-        if (originatingWqe->GetBytesLeft() == 0)
-        {
-            ReleaseTransportUseLease(operation->second);
-        }
     }
     return RtpSegmentAdmissionResult::ADMITTED;
 }
@@ -1556,11 +1560,12 @@ UbTransaction::RecordSegmentSuccess(uint32_t jettyNum,
     operation->second.segments.erase(segment);
     if (terminalCleanup && operation->second.segments.empty())
     {
+        const UbRtpTransportReference reference = operation->second.transportReference;
         coordinator->ReleaseLease(operation->second.workLease);
-        ReleaseTransportUseLease(operation->second);
         coordinator->RetireResource(operation->second.operationIdentity);
         coordinator->RetireResource(operation->second.wqeIdentity);
         m_operations.erase(operation);
+        NotifyRtpTpGroupWorkChanged(reference);
         GetFunction()->NotifyJettyProgress(jettyNum);
     }
     return true;
@@ -2011,16 +2016,6 @@ UbTransaction::TryAdmitRtpWqe(uint32_t jettyNum,
     operation.workLease = coordinator->AcquireLease(wqeIdentity,
                                                     UbLifecycleLeaseKind::WORK,
                                                     operation.operationIdentity);
-    operation.transportUseLease = reference->IsDirectTp()
-                                      ? coordinator->AcquireLease(
-                                            wqeIdentity,
-                                            UbLifecycleLeaseKind::TRANSPORT_USE,
-                                            reference->GetIdentity())
-                                      : coordinator->AcquireLease(
-                                            reference->GetIdentity(),
-                                            UbLifecycleLeaseKind::TRANSPORT_USE,
-                                            operation.operationIdentity);
-    operation.transportUseLeaseHeld = true;
     m_operations.emplace(key, operation);
     wqe->MarkLifecycleManaged();
     return true;
@@ -2056,26 +2051,22 @@ UbTransaction::TryAdmitCtpWqe(uint32_t jettyNum,
 }
 
 void
-UbTransaction::ReleaseTransportUseLease(OperationRecord& operation)
+UbTransaction::NotifyRtpTpGroupWorkChanged(
+    const UbRtpTransportReference& reference)
 {
-    if (!operation.transportUseLeaseHeld)
+    if (reference.IsDirectTp())
     {
         return;
     }
-    const bool tpgUse = !operation.transportReference.IsDirectTp();
-    const UbLifecycleResourceIdentity groupIdentity =
-        operation.transportReference.GetIdentity();
-    m_coordinator->ReleaseLease(operation.transportUseLease);
-    operation.transportUseLeaseHeld = false;
-    if (tpgUse &&
-        std::find(m_suppressedTpgOwnerProgress.begin(),
+    const UbLifecycleResourceIdentity groupIdentity = reference.GetIdentity();
+    if (std::find(m_suppressedTpgOwnerProgress.begin(),
                   m_suppressedTpgOwnerProgress.end(),
                   groupIdentity) == m_suppressedTpgOwnerProgress.end())
     {
         Ptr<UbController> controller = GetOwnerController();
         if (controller != nullptr)
         {
-            controller->NotifyRtpTpGroupUseLeaseReleased(groupIdentity);
+            controller->NotifyRtpTpGroupWorkChanged(groupIdentity);
         }
     }
 }
@@ -2361,10 +2352,7 @@ UbTransaction::FinishWqe(uint32_t jettyNum,
         if (!operation->second.segments.empty())
         {
             operation->second.terminalPending = true;
-            if (!operation->second.transportReference.IsDirectTp())
-            {
-                ReleaseTransportUseLease(operation->second);
-            }
+            NotifyRtpTpGroupWorkChanged(operation->second.transportReference);
             for (const auto& [taSsn, segment] : operation->second.segments)
             {
                 (void)taSsn;
@@ -2375,13 +2363,14 @@ UbTransaction::FinishWqe(uint32_t jettyNum,
         }
         else
         {
+            const UbRtpTransportReference reference = operation->second.transportReference;
             coordinator->ReleaseLease(operation->second.workLease);
-            ReleaseTransportUseLease(operation->second);
             coordinator->RecordWorkTerminal(operation->second.operationIdentity, outcome);
             coordinator->RetireResource(operation->second.operationIdentity);
             coordinator->RecordWorkTerminal(operation->second.wqeIdentity, outcome);
             coordinator->RetireResource(operation->second.wqeIdentity);
             m_operations.erase(operation);
+            NotifyRtpTpGroupWorkChanged(reference);
         }
     }
 
@@ -2494,11 +2483,12 @@ UbTransaction::ForceDrainTerminalPendingOperation(uint32_t jettyNum, uint32_t wq
         coordinator->RetireResource(segment.identity);
     }
     operation->second.segments.clear();
+    const UbRtpTransportReference reference = operation->second.transportReference;
     coordinator->ReleaseLease(operation->second.workLease);
-    ReleaseTransportUseLease(operation->second);
     coordinator->RetireResource(operation->second.operationIdentity);
     coordinator->RetireResource(operation->second.wqeIdentity);
     m_operations.erase(operation);
+    NotifyRtpTpGroupWorkChanged(reference);
 }
 
 void
