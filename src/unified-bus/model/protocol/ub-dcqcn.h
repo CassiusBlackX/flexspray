@@ -52,18 +52,12 @@ public:
     void OnSenderTransportIdle() override;
     void OnTpDestroyRequested() override;
 
-    UbCongestionControlDormancyEligibility GetDormancyEligibility() const override;
-    std::unique_ptr<UbCongestionControlDormancyState> SnapshotDormancyState() const override;
-    bool RestoreDormancyState(const UbCongestionControlDormancyState& state) override;
-
     DataRate GetCurrentRateForTest() const { return m_currentRate; }
     DataRate GetTargetRateForTest() const { return m_targetRate; }
     Time GetNextAvailableSendTimeForTest() const { return m_nextAvailableSendTime; }
     void ApplySyntheticCnpForTest();
 
   private:
-    struct DormancyState;
-
     void DoDispose() override;
     void EnsureSenderStartState();
     void TraceSenderState(const char* reason) const;

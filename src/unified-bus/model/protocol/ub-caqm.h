@@ -89,13 +89,7 @@ public:
                                         uint32_t retransmitBytes) override;
     void OnSenderRetransmissionPacketSent(uint32_t psn, uint32_t size) override;
 
-    UbCongestionControlDormancyEligibility GetDormancyEligibility() const override;
-    std::unique_ptr<UbCongestionControlDormancyState> SnapshotDormancyState() const override;
-    bool RestoreDormancyState(const UbCongestionControlDormancyState& state) override;
-
   private:
-    struct DormancyState;
-
     void StateReset();
     void UpdateRttEstimate(Time sample);
     void ApplySenderCetphFeedback(uint32_t psn, const UbCongestionExtTph& header);

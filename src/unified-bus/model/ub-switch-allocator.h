@@ -16,7 +16,6 @@ namespace ns3 {
 class UbSwitch;
 class UbIngressQueue;
 class UbPort;
-class UbTransportChannelManager;
 
 // outport, priority, voq/TpChannel/ctrlq
 typedef std::vector<std::vector<std::vector<Ptr<UbIngressQueue> > > > IngressSource_t;
@@ -37,8 +36,6 @@ public:
     void SetNodeId(uint32_t nodeId) {m_nodeId = nodeId;}
     void RegisterUbIngressQueue(Ptr<UbIngressQueue> ingressQueue, uint32_t outPort, uint32_t priority);
     void UnregisterUbIngressQueue(Ptr<UbIngressQueue> ingressQueue, uint32_t outPort, uint32_t priority);
-    Ptr<UbIngressQueue> ReplaceUbIngressQueueWithEmptyPlaceholder(Ptr<UbIngressQueue> ingressQueue);
-    bool ReplaceUbIngressQueue(Ptr<UbIngressQueue> expected, Ptr<UbIngressQueue> replacement);
     void RegisterEgressStauts(uint32_t portsNum);
     void SetEgressStatus(uint32_t portId, bool status);
     bool GetEgressStatus(uint32_t portId);
@@ -82,7 +79,6 @@ protected:
     void RunDeadlockCheck();
     void FinalizeDisposeStorage();
     void NotifyAllocationFinish(Ptr<UbPort> outPort);
-    void TryReclaimReleasedTp(Ptr<UbIngressQueue> ingressQueue);
     void SetActiveIngressQueue(Ptr<UbIngressQueue> ingressQueue);
     void ClearActiveIngressQueue(uint32_t outPortId);
 
@@ -102,7 +98,6 @@ protected:
     uint32_t m_runningAllocationCallbacks{0};
     bool m_disposed{false};
     bool m_deferredDisposeCleanup{false};
-    Ptr<UbTransportChannelManager> m_transportChannelManager;
 };
 
 

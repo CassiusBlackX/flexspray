@@ -342,18 +342,6 @@ void UbSwitch::RemoveTpFromAllocator(Ptr<UbIngressQueue> tp)
     m_allocator->UnregisterUbIngressQueue(tp, outPort, priority);
 }
 
-Ptr<UbIngressQueue>
-UbSwitch::ReplaceTpWithDormantPlaceholder(Ptr<UbIngressQueue> tp)
-{
-    return m_allocator->ReplaceUbIngressQueueWithEmptyPlaceholder(tp);
-}
-
-bool
-UbSwitch::ReplaceDormantTpBacking(Ptr<UbIngressQueue> expected, Ptr<UbIngressQueue> replacement)
-{
-    return m_allocator->ReplaceUbIngressQueue(expected, replacement);
-}
-
 UbSwitch::UbSwitch()
 {
 }
@@ -860,12 +848,6 @@ bool UbSwitch::SinkTpDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Pars
     } else {
         NS_LOG_WARN("Dropping reserved transport opcode " << static_cast<uint32_t>(tpOpcode));
         UbLifecycleCoordinator::TerminatePacket(packet, UbPacketTerminal::MALFORMED_PACKET);
-    }
-    Ptr<UbTransportChannelManager> manager = controller->GetTransportChannelManager();
-    Ptr<UbTransportChannel> reclaimCandidate = manager->PeekLiveTp(dstTpn);
-    if (reclaimCandidate != nullptr && reclaimCandidate->IsSafeForBackingReclaim())
-    {
-        manager->ReclaimBackingState(dstTpn);
     }
     return true;
 }

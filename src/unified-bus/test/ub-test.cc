@@ -2059,44 +2059,6 @@ public:
     }
 };
 
-class UbCongestionControlDormancyDefaultsFailClosedTest : public TestCase
-{
-  public:
-    UbCongestionControlDormancyDefaultsFailClosedTest()
-        : TestCase("UnifiedBus - congestion control dormancy defaults fail closed")
-    {
-    }
-
-    void DoRun() override
-    {
-        Ptr<UbCongestionControl> congestionControl = CreateObject<UbCongestionControl>();
-
-        NS_TEST_ASSERT_MSG_EQ(
-            static_cast<uint32_t>(congestionControl->GetDormancyEligibility()),
-            static_cast<uint32_t>(UbCongestionControlDormancyEligibility::INELIGIBLE),
-            "An algorithm without an explicit dormancy contract must retain live backing");
-        auto snapshot = congestionControl->SnapshotDormancyState();
-        NS_TEST_ASSERT_MSG_EQ(snapshot.get(),
-                              nullptr,
-                              "An ineligible algorithm must not produce a partial snapshot");
-        UbCongestionControlDormancyState unrelatedState;
-        NS_TEST_ASSERT_MSG_EQ(congestionControl->RestoreDormancyState(unrelatedState),
-                              false,
-                              "The base contract must reject unknown dormancy state");
-
-        Ptr<UbSwitchCaqm> switchCaqm = CreateObject<UbSwitchCaqm>();
-        Ptr<UbSwitchDcqcn> switchDcqcn = CreateObject<UbSwitchDcqcn>();
-        NS_TEST_ASSERT_MSG_EQ(
-            static_cast<uint32_t>(switchCaqm->GetDormancyEligibility()),
-            static_cast<uint32_t>(UbCongestionControlDormancyEligibility::INELIGIBLE),
-            "Switch CAQM must remain outside endpoint backing reclamation");
-        NS_TEST_ASSERT_MSG_EQ(
-            static_cast<uint32_t>(switchDcqcn->GetDormancyEligibility()),
-            static_cast<uint32_t>(UbCongestionControlDormancyEligibility::INELIGIBLE),
-            "Switch DCQCN must remain outside endpoint backing reclamation");
-    }
-};
-
 class UbCaqmHostRttUsesSmoothedEstimateTest : public TestCase
 {
 public:
@@ -2128,168 +2090,6 @@ public:
                               500,
                               "EWMA RTT estimate should smooth toward the sample rather than jump to it");
 
-        Config::Reset();
-    }
-};
-
-class UbCaqmDormancyPreservesContinuityTest : public TestCase
-{
-  public:
-    UbCaqmDormancyPreservesContinuityTest()
-        : TestCase("UnifiedBus - CAQM dormancy preserves host continuity and drains reset events")
-    {
-    }
-
-    void DoRun() override
-    {
-        Config::Reset();
-        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(true));
-        GlobalValue::Bind("UB_CC_ALGO", StringValue("CAQM"));
-
-        Ptr<UbHostCaqm> original = DynamicCast<UbHostCaqm>(UbCongestionControl::Create(UB_DEVICE));
-        original->ApplyRttSampleForTest(NanoSeconds(100));
-        original->OnSenderDataPacketSent(7, 1000);
-        Simulator::Schedule(NanoSeconds(1000), []() {});
-        Simulator::Stop(NanoSeconds(1000));
-        Simulator::Run();
-
-        UbIpBasedNetworkHeader receivedHeader;
-        receivedHeader.SetC(0);
-        receivedHeader.SetI(1);
-        receivedHeader.SetHint(2);
-        original->OnReceiverDataPacketReceived(41, 512, receivedHeader);
-
-        NS_TEST_ASSERT_MSG_EQ(
-            static_cast<uint32_t>(original->GetDormancyEligibility()),
-            static_cast<uint32_t>(UbCongestionControlDormancyEligibility::ELIGIBLE),
-            "CAQM without a pending reset event should be eligible for a continuity snapshot");
-        auto snapshot = original->SnapshotDormancyState();
-        NS_TEST_ASSERT_MSG_NE(snapshot.get(), nullptr, "Eligible CAQM should produce a snapshot");
-        if (snapshot == nullptr)
-        {
-            return;
-        }
-        UbCongestionControlDormancyState unrelatedCaqmState;
-        NS_TEST_ASSERT_MSG_EQ(original->RestoreDormancyState(unrelatedCaqmState),
-                              false,
-                              "CAQM must reject a snapshot produced by another contract");
-
-        Ptr<UbHostCaqm> restored = DynamicCast<UbHostCaqm>(UbCongestionControl::Create(UB_DEVICE));
-        NS_TEST_ASSERT_MSG_EQ(restored->RestoreDormancyState(*snapshot),
-                              true,
-                              "CAQM should restore its own dormancy snapshot");
-        NS_TEST_ASSERT_MSG_EQ(restored->GetRttForTest(),
-                              original->GetRttForTest(),
-                              "CAQM restore must preserve the smoothed RTT");
-        NS_TEST_ASSERT_MSG_EQ(restored->GetInflightForTest(),
-                              original->GetInflightForTest(),
-                              "CAQM restore must preserve in-flight accounting");
-        NS_TEST_ASSERT_MSG_EQ(restored->GetDataByteSentForTest(),
-                              original->GetDataByteSentForTest(),
-                              "CAQM restore must preserve sent-byte accounting");
-        NS_TEST_ASSERT_MSG_EQ(restored->GetRestCwnd(),
-                              original->GetRestCwnd(),
-                              "CAQM restore must preserve the next admission decision");
-
-        UbCongestionExtTph regularAck;
-        regularAck.SetAckSequence(1000);
-        regularAck.SetC(0);
-        regularAck.SetI(true);
-        regularAck.SetHint(0);
-        original->OnSenderCongestionNotification(TpOpcode::TP_OPCODE_ACK_WITH_CETPH, 7, regularAck);
-        restored->OnSenderCongestionNotification(TpOpcode::TP_OPCODE_ACK_WITH_CETPH, 7, regularAck);
-        NS_TEST_ASSERT_MSG_EQ(restored->GetRttForTest(),
-                              original->GetRttForTest(),
-                              "CAQM restore must preserve RTT sampling from the PSN send-time map");
-
-        UbIpBasedNetworkHeader originalNextHeader;
-        UbIpBasedNetworkHeader restoredNextHeader;
-        original->OnSenderPrepareIpBasedNetworkHeader(originalNextHeader);
-        restored->OnSenderPrepareIpBasedNetworkHeader(restoredNextHeader);
-        NS_TEST_ASSERT_MSG_EQ(restoredNextHeader.GetC(),
-                              originalNextHeader.GetC(),
-                              "CAQM restore must preserve the next sender congestion bit");
-        NS_TEST_ASSERT_MSG_EQ(restoredNextHeader.GetI(),
-                              originalNextHeader.GetI(),
-                              "CAQM restore must preserve the next sender increase bit");
-        NS_TEST_ASSERT_MSG_EQ(restoredNextHeader.GetHint(),
-                              originalNextHeader.GetHint(),
-                              "CAQM restore must preserve the next sender hint");
-
-        const UbCongestionExtTph originalFeedback =
-            original->OnReceiverPrepareAckCongestionHeader(41, 42);
-        const UbCongestionExtTph restoredFeedback =
-            restored->OnReceiverPrepareAckCongestionHeader(41, 42);
-        NS_TEST_ASSERT_MSG_EQ(restoredFeedback.GetAckSequence(),
-                              originalFeedback.GetAckSequence(),
-                              "CAQM restore must preserve receiver byte aggregation");
-        NS_TEST_ASSERT_MSG_EQ(restoredFeedback.GetC(),
-                              originalFeedback.GetC(),
-                              "CAQM restore must preserve receiver congestion aggregation");
-        NS_TEST_ASSERT_MSG_EQ(restoredFeedback.GetI(),
-                              originalFeedback.GetI(),
-                              "CAQM restore must preserve receiver increase aggregation");
-        NS_TEST_ASSERT_MSG_EQ(restoredFeedback.GetHint(),
-                              originalFeedback.GetHint(),
-                              "CAQM restore must preserve receiver hint aggregation");
-
-        UbCongestionExtTph congestionFeedback;
-        congestionFeedback.SetAckSequence(1000);
-        congestionFeedback.SetC(1);
-        congestionFeedback.SetI(false);
-        congestionFeedback.SetHint(0);
-        restored->OnSenderCongestionNotification(TpOpcode::TP_OPCODE_ACK_WITH_CETPH,
-                                                 7,
-                                                 congestionFeedback);
-        NS_TEST_ASSERT_MSG_EQ(
-            static_cast<uint32_t>(restored->GetDormancyEligibility()),
-            static_cast<uint32_t>(UbCongestionControlDormancyEligibility::INELIGIBLE),
-            "CAQM must retain live backing while its state-reset event is pending");
-        auto pendingSnapshot = restored->SnapshotDormancyState();
-        NS_TEST_ASSERT_MSG_EQ(pendingSnapshot.get(),
-                              nullptr,
-                              "CAQM must not partially snapshot around a pending reset event");
-
-        UbIpBasedNetworkHeader partialHintHeader;
-        restored->OnSenderPrepareIpBasedNetworkHeader(partialHintHeader);
-        Simulator::Stop(Simulator::Now() + MicroSeconds(100));
-        Simulator::Run();
-        NS_TEST_ASSERT_MSG_EQ(
-            static_cast<uint32_t>(restored->GetDormancyEligibility()),
-            static_cast<uint32_t>(UbCongestionControlDormancyEligibility::ELIGIBLE),
-            "CAQM should become eligible after its state-reset event drains");
-        auto drainedSnapshot = restored->SnapshotDormancyState();
-        NS_TEST_ASSERT_MSG_NE(drainedSnapshot.get(),
-                              nullptr,
-                              "CAQM should snapshot after its reset event drains");
-        if (drainedSnapshot == nullptr)
-        {
-            return;
-        }
-
-        Ptr<UbHostCaqm> restoredAfterDrain =
-            DynamicCast<UbHostCaqm>(UbCongestionControl::Create(UB_DEVICE));
-        NS_TEST_ASSERT_MSG_EQ(restoredAfterDrain->RestoreDormancyState(*drainedSnapshot),
-                              true,
-                              "CAQM should restore state captured after its reset event drains");
-        restored->OnSenderCongestionNotification(TpOpcode::TP_OPCODE_ACK_WITH_CETPH,
-                                                 7,
-                                                 congestionFeedback);
-        restoredAfterDrain->OnSenderCongestionNotification(TpOpcode::TP_OPCODE_ACK_WITH_CETPH,
-                                                           7,
-                                                           congestionFeedback);
-        for (uint32_t packet = 0; packet < 128; ++packet)
-        {
-            UbIpBasedNetworkHeader continuedHeader;
-            UbIpBasedNetworkHeader restoredHeader;
-            restored->OnSenderPrepareIpBasedNetworkHeader(continuedHeader);
-            restoredAfterDrain->OnSenderPrepareIpBasedNetworkHeader(restoredHeader);
-            NS_TEST_ASSERT_MSG_EQ(restoredHeader.GetHint(),
-                                  continuedHeader.GetHint(),
-                                  "CAQM restore must preserve accumulated next-header hints");
-        }
-
-        Simulator::Destroy();
         Config::Reset();
     }
 };
@@ -6258,152 +6058,6 @@ public:
 
         Simulator::Stop(MicroSeconds(121));
         Simulator::Run();
-        Simulator::Destroy();
-        Config::Reset();
-    }
-};
-
-class UbDcqcnDormancyPreservesIdleResetAndCnpCooldownTest : public TestCase
-{
-  public:
-    UbDcqcnDormancyPreservesIdleResetAndCnpCooldownTest()
-        : TestCase("UnifiedBus - DCQCN dormancy preserves idle reset and receiver CNP cooldown")
-    {
-    }
-
-    void DoRun() override
-    {
-        Config::Reset();
-        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(true));
-        GlobalValue::Bind("UB_CC_ALGO", StringValue("DCQCN"));
-        Config::SetDefault("ns3::UbHostDcqcn::LineRate", DataRateValue(DataRate("100Gbps")));
-        Config::SetDefault("ns3::UbHostDcqcn::InitialRate", DataRateValue(DataRate("25Gbps")));
-        Config::SetDefault("ns3::UbHostDcqcn::CnpInterval", TimeValue(MicroSeconds(50)));
-
-        LocalTpTopology topo = BuildLocalTpTopology();
-        InstallStaticTpPair(topo);
-        Ptr<UbController> senderController = topo.sender->GetObject<UbController>();
-        Ptr<UbTransportChannel> txTp =
-            senderController->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
-        Ptr<UbHostDcqcn> sender = DynamicCast<UbHostDcqcn>(txTp->GetCongestionCtrlForTest());
-
-        (void)sender->IsCcLimited(1);
-        sender->ApplySyntheticCnpForTest();
-        NS_TEST_ASSERT_MSG_EQ(
-            static_cast<uint32_t>(sender->GetDormancyEligibility()),
-            static_cast<uint32_t>(UbCongestionControlDormancyEligibility::INELIGIBLE),
-            "DCQCN must retain live backing while sender recovery events are pending");
-        auto activeSnapshot = sender->SnapshotDormancyState();
-        NS_TEST_ASSERT_MSG_EQ(activeSnapshot.get(),
-                              nullptr,
-                              "Active DCQCN recovery must not produce a partial snapshot");
-
-        sender->OnSenderTransportIdle();
-        NS_TEST_ASSERT_MSG_EQ(
-            static_cast<uint32_t>(sender->GetDormancyEligibility()),
-            static_cast<uint32_t>(UbCongestionControlDormancyEligibility::ELIGIBLE),
-            "The existing DCQCN idle reset should establish its sender dormancy boundary");
-        auto senderSnapshot = sender->SnapshotDormancyState();
-        NS_TEST_ASSERT_MSG_NE(senderSnapshot.get(),
-                              nullptr,
-                              "Idle DCQCN should produce a continuity snapshot");
-        if (senderSnapshot == nullptr)
-        {
-            return;
-        }
-        UbCongestionControlDormancyState unrelatedDcqcnState;
-        NS_TEST_ASSERT_MSG_EQ(sender->RestoreDormancyState(unrelatedDcqcnState),
-                              false,
-                              "DCQCN must reject a snapshot produced by another contract");
-
-        Ptr<UbHostDcqcn> restoredSender =
-            DynamicCast<UbHostDcqcn>(UbCongestionControl::Create(UB_DEVICE));
-        restoredSender->OnTpAttached(txTp);
-        NS_TEST_ASSERT_MSG_EQ(restoredSender->RestoreDormancyState(*senderSnapshot),
-                              true,
-                              "DCQCN should restore its own idle snapshot");
-        NS_TEST_ASSERT_MSG_EQ(restoredSender->GetCurrentRateForTest(),
-                              sender->GetCurrentRateForTest(),
-                              "DCQCN restore must preserve the idle-reset current rate");
-        NS_TEST_ASSERT_MSG_EQ(restoredSender->GetTargetRateForTest(),
-                              sender->GetTargetRateForTest(),
-                              "DCQCN restore must preserve the idle-reset target rate");
-        NS_TEST_ASSERT_MSG_EQ(restoredSender->GetNextAvailableSendTimeForTest(),
-                              sender->GetNextAvailableSendTimeForTest(),
-                              "DCQCN restore must preserve the next pacing admission time");
-        const bool originalLimited = sender->IsCcLimited(1);
-        const DataRate originalStartRate = sender->GetCurrentRateForTest();
-        sender->OnSenderTransportIdle();
-        const bool restoredLimited = restoredSender->IsCcLimited(1);
-        NS_TEST_ASSERT_MSG_EQ(restoredLimited,
-                              originalLimited,
-                              "DCQCN restore must preserve the next admission decision");
-        NS_TEST_ASSERT_MSG_EQ(restoredSender->GetCurrentRateForTest(),
-                              originalStartRate,
-                              "DCQCN restore must preserve the next sender start-rate decision");
-        restoredSender->OnSenderTransportIdle();
-
-        Ptr<UbTransportChannel> rxTp =
-            topo.receiver->GetObject<UbController>()->GetTransportChannelManager()->GetTp(
-                kUrmaWriteRegressionReceiverTpn);
-        Ptr<UbHostDcqcn> receiver = DynamicCast<UbHostDcqcn>(rxTp->GetCongestionCtrlForTest());
-        Ptr<UbLifecycleCoordinator> receiverCoordinator =
-            UbLifecycleCoordinator::GetOrCreate(topo.receiver);
-        const uint64_t registeredBeforeCnp =
-            receiverCoordinator->GetSnapshot(rxTp->GetLifecycleOwner()).registeredPackets;
-        UbIpBasedNetworkHeader marked;
-        marked.SetMode(0b100);
-        marked.SetFecn(0x1);
-        marked.SetLocation(false);
-        receiver->OnReceiverDataPacketReceived(1, 256, marked);
-        NS_TEST_ASSERT_MSG_EQ(rxTp->GetPendingCnpCountForTest(),
-                              1u,
-                              "First marked packet should emit one immediate CNP");
-
-        auto receiverSnapshot = receiver->SnapshotDormancyState();
-        NS_TEST_ASSERT_MSG_NE(
-            receiverSnapshot.get(),
-            nullptr,
-            "DCQCN should snapshot a drained receiver while retaining cooldown history");
-        if (receiverSnapshot == nullptr)
-        {
-            return;
-        }
-
-        Ptr<UbHostDcqcn> restoredReceiver =
-            DynamicCast<UbHostDcqcn>(UbCongestionControl::Create(UB_DEVICE));
-        restoredReceiver->OnTpAttached(rxTp);
-        NS_TEST_ASSERT_MSG_EQ(restoredReceiver->RestoreDormancyState(*receiverSnapshot),
-                              true,
-                              "DCQCN should restore receiver cooldown history");
-        restoredReceiver->OnReceiverDataPacketReceived(2, 256, marked);
-        NS_TEST_ASSERT_MSG_EQ(rxTp->GetPendingCnpCountForTest(),
-                              1u,
-                              "Restored cooldown must suppress an immediate second CNP");
-        NS_TEST_ASSERT_MSG_EQ(
-            static_cast<uint32_t>(restoredReceiver->GetDormancyEligibility()),
-            static_cast<uint32_t>(UbCongestionControlDormancyEligibility::INELIGIBLE),
-            "A restored pending CNP event must keep the endpoint live until it drains");
-
-        Simulator::Schedule(
-            MicroSeconds(49),
-            [this, receiverCoordinator, rxTp, registeredBeforeCnp]() {
-                NS_TEST_ASSERT_MSG_EQ(
-                    receiverCoordinator->GetSnapshot(rxTp->GetLifecycleOwner()).registeredPackets,
-                    registeredBeforeCnp + 1,
-                    "Restored CNP cooldown must preserve its original deadline");
-            });
-        Simulator::Schedule(
-            MicroSeconds(51),
-            [this, receiverCoordinator, rxTp, registeredBeforeCnp]() {
-                NS_TEST_ASSERT_MSG_EQ(
-                    receiverCoordinator->GetSnapshot(rxTp->GetLifecycleOwner()).registeredPackets,
-                    registeredBeforeCnp + 2,
-                    "Restored pending feedback should emit after the cooldown deadline");
-            });
-        Simulator::Stop(MicroSeconds(52));
-        Simulator::Run();
-
         Simulator::Destroy();
         Config::Reset();
     }
@@ -10543,8 +10197,8 @@ class UbLifecycleLiveTpgDestroyReleasesExactBindingTest : public TestCase
                               firstTp,
                               "TPG destroy must retain the first member TP");
         NS_TEST_ASSERT_MSG_EQ(controller->GetTransportChannelManager()->GetTp(secondTp->GetTpn()),
-                              nullptr,
-                              "An otherwise unused second member may release its live backing");
+                              secondTp,
+                              "TPG destroy must retain the second member until explicit TP close");
         Ptr<UbTransportChannel> resolvedSecond =
             controller->GetTransportChannelManager()->ResolveLiveTp(secondTp->GetTpn(),
                                                                     secondTp->GetLifecycleOwner());
@@ -10842,8 +10496,8 @@ class UbLifecycleLastTpgMemberRemovalWaitsForUseLeaseTest : public TestCase
                               false,
                               "Completed operation should release exact owner-local TPG work");
         NS_TEST_ASSERT_MSG_EQ(m_controller->GetTransportChannelManager()->GetTp(m_lastTp->GetTpn()),
-                              nullptr,
-                              "Member removal may release otherwise unused live backing");
+                              m_lastTp,
+                              "Member removal must retain the TP until explicit close");
         Ptr<UbTransportChannel> resolvedLast =
             m_controller->GetTransportChannelManager()->ResolveLiveTp(
                 m_lastTp->GetTpn(),
@@ -22144,9 +21798,7 @@ class UbExplicitTpDestroyDrainsAndRematerializesTest : public TestCase
                               false,
                               "Destroy request should freeze new segment admission");
         const UbTpQuiescenceAssessment drainingDestroy =
-            m_controller->GetTransportChannelManager()->AssessTpQuiescence(
-                tpn,
-                UbTeardownIntent::EXPLICIT_DESTROY);
+            m_controller->GetTransportChannelManager()->AssessTpQuiescence(tpn);
         NS_TEST_ASSERT_MSG_EQ(
             drainingDestroy.HasBlocker(UbTpQuiescenceBlocker::ACTIVE_TRANSPORT_WORK_LEASE),
             true,
@@ -22155,15 +21807,6 @@ class UbExplicitTpDestroyDrainsAndRematerializesTest : public TestCase
             drainingDestroy.HasBlocker(UbTpQuiescenceBlocker::ENDPOINT_NOT_DRAINING),
             false,
             "Explicit-destroy assessment should observe the real DRAINING state");
-        const UbTpQuiescenceAssessment drainingReclaim =
-            m_controller->GetTransportChannelManager()->AssessTpQuiescence(
-                tpn,
-                UbTeardownIntent::BACKING_RECLAIM);
-        NS_TEST_ASSERT_MSG_EQ(
-            drainingReclaim.HasBlocker(UbTpQuiescenceBlocker::ENDPOINT_DRAINING),
-            true,
-            "Backing reclaim should report the typed blocker for a real DRAINING endpoint");
-
         coordinator->ReleaseLease(gate);
         NS_TEST_ASSERT_MSG_EQ(m_callbackCount, 1u, "Pending callback should run exactly once");
         NS_TEST_ASSERT_MSG_EQ(m_controller->GetTransportChannelManager()->GetTp(tpn),
@@ -22211,385 +21854,11 @@ class UbExplicitTpDestroyDrainsAndRematerializesTest : public TestCase
     uint32_t m_callbackCount{0};
 };
 
-class UbDormantTpBackingReclaimsAndResolvesSameGenerationTest : public TestCase
-{
-  public:
-    UbDormantTpBackingReclaimsAndResolvesSameGenerationTest()
-        : TestCase("UnifiedBus - dormant TP backing reclaims and resolves the same generation")
-    {
-    }
-
-  private:
-    void OnDormantDestroyed(UbLifecycleResourceIdentity identity, UbDestroyStatus status)
-    {
-        m_destroyedIdentity = identity;
-        m_destroyStatus = status;
-        ++m_destroyCallbackCount;
-    }
-
-    void DoRun() override
-    {
-        Config::Reset();
-        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(true));
-        GlobalValue::Bind("UB_CC_ALGO", StringValue("DCQCN"));
-        LocalTpTopology topo = BuildLocalTpTopology();
-        Ptr<UbController> sender = topo.sender->GetObject<UbController>();
-        Ptr<UbController> receiver = topo.receiver->GetObject<UbController>();
-        sender->GetTpConnManager()->ReserveTpnsForTraffic(true,
-                                                          topo.sender->GetId(),
-                                                          topo.receiver->GetId(),
-                                                          kUrmaWriteRegressionPriority);
-        const auto receiverTpns =
-            receiver->GetTpConnManager()->GetTpnsByPeerNodePriority(topo.receiver->GetId(),
-                                                                    topo.sender->GetId(),
-                                                                    kUrmaWriteRegressionPriority);
-        NS_TEST_ASSERT_MSG_EQ(receiverTpns.size(), 1u, "Expected one receiver reservation");
-        const uint32_t tpn = receiverTpns[0].first;
-        Ptr<UbTransportChannelManager> manager = receiver->GetTransportChannelManager();
-        Ptr<UbTransportChannel> first = manager->CreateReservedTpEndpoint(tpn);
-        NS_TEST_ASSERT_MSG_NE(first, nullptr, "Reserved endpoint should materialize");
-        const UbLifecycleResourceIdentity identity = first->GetLifecycleOwner();
-        const UbTransportEndpointStorageSnapshot initiallyLive = manager->GetStorageSnapshot();
-        NS_TEST_ASSERT_MSG_EQ(initiallyLive.liveBackingObjects,
-                              1u,
-                              "Initial materialization should expose one live backing object");
-        NS_TEST_ASSERT_MSG_EQ(initiallyLive.dormantRecords,
-                              0u,
-                              "Initial materialization should not expose a dormant record");
-        NS_TEST_ASSERT_MSG_EQ(initiallyLive.backingRehydrations,
-                              0u,
-                              "Initial materialization is not a backing rehydration");
-
-        manager->SetAttribute("EnableAutomaticBackingReclaim", BooleanValue(false));
-        NS_TEST_ASSERT_MSG_EQ(manager->IsAutomaticBackingReclaimEnabled(),
-                              false,
-                              "The public reclaim state must reflect the disabled attribute");
-        NS_TEST_ASSERT_MSG_EQ(manager->ReclaimBackingState(tpn),
-                              false,
-                              "Disabled automatic backing reclaim must retain live backing");
-        NS_TEST_ASSERT_MSG_EQ(manager->GetTp(tpn),
-                              first,
-                              "Disabled automatic backing reclaim must retain the original object");
-        manager->SetAttribute("EnableAutomaticBackingReclaim", BooleanValue(true));
-        NS_TEST_ASSERT_MSG_EQ(manager->IsAutomaticBackingReclaimEnabled(),
-                              true,
-                              "The public reclaim state must reflect the enabled attribute");
-
-        constexpr uint32_t directJettyNum = kUrmaWriteRegressionJettyNum + 101;
-        Ptr<UbFunction> function = receiver->GetUbFunction();
-        function->CreateJetty(topo.receiver->GetId(), topo.sender->GetId(), directJettyNum);
-        NS_TEST_ASSERT_MSG_EQ(receiver->GetUbTransaction()->JettyBindTp(topo.receiver->GetId(),
-                                                                        topo.sender->GetId(),
-                                                                        directJettyNum,
-                                                                        false,
-                                                                        {tpn}),
-                              true,
-                              "Direct Jetty should bind the reserved endpoint generation");
-        NS_TEST_ASSERT_MSG_EQ(manager->ReclaimBackingState(tpn),
-                              false,
-                              "A direct Jetty binding should block backing reclaim");
-        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(function->DestroyJetty(directJettyNum)),
-                              static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
-                              "Idle direct Jetty should destroy synchronously");
-        NS_TEST_ASSERT_MSG_EQ(manager->GetTp(tpn),
-                              nullptr,
-                              "Direct Jetty retirement should reclaim after its binding is erased");
-        first = manager->CreateReservedTpEndpoint(tpn);
-        NS_TEST_ASSERT_MSG_NE(first,
-                              nullptr,
-                              "Ordinary reserved resolution should rehydrate dormant backing");
-        NS_TEST_ASSERT_MSG_EQ(first->GetLifecycleOwner(),
-                              identity,
-                              "Ordinary reserved resolution should preserve exact identity");
-        const uint32_t allocatorOutPort = first->GetOutPortId();
-        const uint32_t allocatorInPort = first->GetInPortId();
-        const uint32_t allocatorPriority = first->GetIngressPriority();
-        receiver->GetUbTransaction()->SetTpRoundRobinIndexForTest(tpn, 7);
-        first->SetPsnSndUnaForTest(41);
-        first->SetPsnSndNxtForTest(41);
-        first->UpDateMsnCnt(7);
-        first->UpdatePsnCnt(19);
-        first->SetPsnRecvNxtForTest(70);
-        NS_TEST_ASSERT_MSG_EQ(first->SetBitmap(72), true, "Receive-window mark should be accepted");
-        first->SetInboundTpMsnReferenceForTest(123, 17);
-        first->SetInboundTaSsnReferenceForTest(123, 9, 11);
-        first->SetLbHashSaltForTest(29);
-
-        Ptr<UbLifecycleCoordinator> coordinator =
-            UbLifecycleCoordinator::GetOrCreate(topo.receiver);
-        const UbLifecycleLeaseIdentity activeLease =
-            coordinator->AcquireLease(identity, UbLifecycleLeaseKind::TRANSPORT_WORK, identity);
-        first->EnqueueAckForTest(Create<Packet>(1));
-        first->SetRetransEnable(true);
-        first->RetainSentPsnForTest(41, 64);
-        Ptr<UbCongestionControl> supportedCc = first->GetCongestionCtrlForTest();
-        first->SetCongestionControlForTest(CreateObject<UbCongestionControl>());
-        NS_TEST_ASSERT_MSG_EQ(manager->ReclaimBackingState(tpn),
-                              false,
-                              "An active lifecycle lease should reject backing reclaim");
-        NS_TEST_ASSERT_MSG_EQ(manager->GetTp(tpn),
-                              first,
-                              "Rejected lifecycle gate must retain the original backing object");
-        coordinator->ReleaseLease(activeLease);
-
-        NS_TEST_ASSERT_MSG_EQ(manager->ReclaimBackingState(tpn),
-                              false,
-                              "Pending ACK work should reject backing reclaim");
-        NS_TEST_ASSERT_MSG_EQ(manager->GetTp(tpn),
-                              first,
-                              "Rejected queue gate must retain the original backing object");
-        first->PopAckForTest();
-
-        NS_TEST_ASSERT_MSG_EQ(manager->ReclaimBackingState(tpn),
-                              false,
-                              "Retained retransmission state should reject backing reclaim");
-        NS_TEST_ASSERT_MSG_EQ(
-            manager->GetTp(tpn),
-            first,
-            "Rejected retransmission gate must retain the original backing object");
-        first->SetRetransEnable(false);
-        first->SetPsnSndNxtForTest(41);
-
-        NS_TEST_ASSERT_MSG_EQ(manager->ReclaimBackingState(tpn),
-                              false,
-                              "Unsupported congestion control should fail closed");
-        NS_TEST_ASSERT_MSG_EQ(
-            manager->GetTp(tpn),
-            first,
-            "Rejected congestion-control gate must retain the original backing object");
-        first->SetCongestionControlForTest(supportedCc);
-
-        NS_TEST_ASSERT_MSG_EQ(first->IsSafeForBackingReclaim(),
-                              true,
-                              "Drained transport state should satisfy the backing-only gate");
-        NS_TEST_ASSERT_MSG_EQ(
-            static_cast<uint32_t>(supportedCc->GetDormancyEligibility()),
-            static_cast<uint32_t>(UbCongestionControlDormancyEligibility::ELIGIBLE),
-            "Restored DCQCN state should be eligible for dormancy");
-        const UbLifecycleResourceSnapshot drainedLifecycle = coordinator->GetSnapshot(identity);
-        NS_TEST_ASSERT_MSG_EQ(drainedLifecycle.inFlightPackets,
-                              0u,
-                              "Drained endpoint should have no lifecycle packets");
-        NS_TEST_ASSERT_MSG_EQ(drainedLifecycle.activeWorkLeases,
-                              0u,
-                              "Drained endpoint should have no active work leases");
-        NS_TEST_ASSERT_MSG_EQ(receiver->GetUbTransaction()->IsTpInUse(tpn),
-                              false,
-                              "Drained endpoint should have no transaction binding");
-        NS_TEST_ASSERT_MSG_EQ(receiver->GetUbTransaction()->HasPendingTransportWork(tpn),
-                              false,
-                              "Drained endpoint should have no pending transaction work");
-        NS_TEST_ASSERT_MSG_EQ(
-            topo.receiver->GetObject<UbSwitch>()->GetAllocator()->HasPendingOrActiveWork(first),
-            false,
-            "Drained endpoint should have no allocator work");
-
-        NS_TEST_ASSERT_MSG_EQ(manager->ReclaimBackingState(tpn),
-                              true,
-                              "A fully drained endpoint should reclaim its backing state");
-        NS_TEST_ASSERT_MSG_EQ(manager->Contains(tpn),
-                              true,
-                              "A dormant endpoint should remain logically present");
-        NS_TEST_ASSERT_MSG_EQ(manager->GetTp(tpn),
-                              nullptr,
-                              "A dormant endpoint should have no live backing object");
-        const UbTransportEndpointStorageSnapshot dormant = manager->GetStorageSnapshot();
-        NS_TEST_ASSERT_MSG_EQ(dormant.liveBackingObjects,
-                              0u,
-                              "Dormant reclaim should release the live backing object");
-        NS_TEST_ASSERT_MSG_EQ(dormant.dormantRecords,
-                              1u,
-                              "Dormant reclaim should retain one logical endpoint record");
-        NS_TEST_ASSERT_MSG_EQ(
-            dormant.backingRehydrations,
-            1u,
-            "The earlier ordinary resolution should count one successful rehydration");
-        NS_TEST_ASSERT_MSG_EQ(manager->PeekLiveTp(tpn),
-                              nullptr,
-                              "A dormant endpoint observation should expose no live backing");
-        const auto observedTpnMap = manager->GetTpnMap();
-        const auto observedTpn = observedTpnMap.find(tpn);
-        const bool observedLogicalEndpoint = observedTpn != observedTpnMap.end();
-        NS_TEST_ASSERT_MSG_EQ(observedLogicalEndpoint,
-                              true,
-                              "A dormant endpoint should remain present in the observation map");
-        const Ptr<UbTransportChannel> observedBacking =
-            observedLogicalEndpoint ? observedTpn->second : nullptr;
-        NS_TEST_ASSERT_MSG_EQ(observedBacking,
-                              nullptr,
-                              "A dormant observation map entry should expose no live backing");
-        const UbTransportEndpointStorageSnapshot afterObservation = manager->GetStorageSnapshot();
-        NS_TEST_ASSERT_MSG_EQ(afterObservation.liveBackingObjects,
-                              dormant.liveBackingObjects,
-                              "Observation-only lookup must not materialize backing");
-        NS_TEST_ASSERT_MSG_EQ(afterObservation.dormantRecords,
-                              dormant.dormantRecords,
-                              "Observation-only lookup must retain the dormant record");
-        NS_TEST_ASSERT_MSG_EQ(afterObservation.backingRehydrations,
-                              dormant.backingRehydrations,
-                              "Observation-only lookup must not increment rehydrations");
-        NS_TEST_ASSERT_MSG_EQ(first->CanAdmitWqeSegment(CreateObject<UbWqeSegment>()),
-                              false,
-                              "Detached dormant backing must reject stale admissions");
-        NS_TEST_ASSERT_MSG_EQ(
-            first->GetCongestionCtrlForTest(),
-            nullptr,
-            "Dormant release must break the TP/congestion-control ownership cycle");
-        NS_TEST_ASSERT_MSG_EQ(manager->ReclaimBackingState(tpn),
-                              true,
-                              "Duplicate reclaim should be idempotent");
-
-        UbLifecycleResourceIdentity wrongOwner = identity;
-        ++wrongOwner.ownerNodeId;
-        NS_TEST_ASSERT_MSG_EQ(manager->ResolveLiveTp(tpn, wrongOwner),
-                              nullptr,
-                              "Wrong-owner resolution should fail closed");
-        UbLifecycleResourceIdentity wrongGeneration = identity;
-        ++wrongGeneration.generation;
-        NS_TEST_ASSERT_MSG_EQ(manager->ResolveLiveTp(tpn, wrongGeneration),
-                              nullptr,
-                              "Stale-generation resolution should fail closed");
-        NS_TEST_ASSERT_MSG_EQ(manager->GetTp(tpn),
-                              nullptr,
-                              "Rejected resolution must leave the record dormant");
-        const UbTransportEndpointStorageSnapshot rejected = manager->GetStorageSnapshot();
-        NS_TEST_ASSERT_MSG_EQ(rejected.liveBackingObjects,
-                              dormant.liveBackingObjects,
-                              "Wrong identities must not materialize live backing");
-        NS_TEST_ASSERT_MSG_EQ(rejected.dormantRecords,
-                              dormant.dormantRecords,
-                              "Wrong identities must retain the compact endpoint record");
-        NS_TEST_ASSERT_MSG_EQ(rejected.backingRehydrations,
-                              dormant.backingRehydrations,
-                              "Wrong identities must not increment successful rehydrations");
-        NS_TEST_ASSERT_MSG_EQ(receiver->GetUbTransaction()->GetTpRoundRobinIndexForTest(tpn),
-                              7u,
-                              "Dormant pointer replacement should preserve transaction RR phase");
-
-        Ptr<UbTransportChannel> second = manager->ResolveLiveTp(tpn, identity);
-        NS_TEST_ASSERT_MSG_NE(second, nullptr, "Exact identity should synchronously rehydrate");
-        NS_TEST_ASSERT_MSG_NE(second,
-                              first,
-                              "Rehydration should create a different backing object");
-        NS_TEST_ASSERT_MSG_EQ(second->GetOutPortId(),
-                              allocatorOutPort,
-                              "Rehydration should preserve allocator out-port metadata");
-        NS_TEST_ASSERT_MSG_EQ(second->GetInPortId(),
-                              allocatorInPort,
-                              "Rehydration should preserve allocator in-port metadata");
-        NS_TEST_ASSERT_MSG_EQ(second->GetIngressPriority(),
-                              allocatorPriority,
-                              "Rehydration should preserve allocator priority metadata");
-        NS_TEST_ASSERT_MSG_EQ(
-            second->GetLifecycleOwner(),
-            identity,
-            "Rehydration should preserve exact lifecycle identity and generation");
-        const UbTransportEndpointStorageSnapshot rehydrated = manager->GetStorageSnapshot();
-        NS_TEST_ASSERT_MSG_EQ(rehydrated.liveBackingObjects,
-                              1u,
-                              "Successful rehydration should publish one live backing object");
-        NS_TEST_ASSERT_MSG_EQ(rehydrated.dormantRecords,
-                              0u,
-                              "Successful rehydration should consume the dormant record");
-        NS_TEST_ASSERT_MSG_EQ(
-            rehydrated.backingRehydrations,
-            dormant.backingRehydrations + 1,
-            "Only the successful restore and publish should increment rehydrations");
-        NS_TEST_ASSERT_MSG_EQ(second->GetPsnSndUnaForTest(),
-                              41u,
-                              "ACK continuity should survive dormancy");
-        NS_TEST_ASSERT_MSG_EQ(second->GetPsnSndNxtForTest(),
-                              41u,
-                              "Send PSN continuity should survive dormancy");
-        NS_TEST_ASSERT_MSG_EQ(second->GetMsnCnt(), 7u, "TP MSN allocation should survive dormancy");
-        NS_TEST_ASSERT_MSG_EQ(second->GetPsnCnt(),
-                              19u,
-                              "TP PSN allocation should survive dormancy");
-        NS_TEST_ASSERT_MSG_EQ(second->GetPsnRecvNxtForTest(),
-                              70u,
-                              "Receive-next continuity should survive dormancy");
-        NS_TEST_ASSERT_MSG_EQ(second->IsRepeatPacket(72),
-                              true,
-                              "Receive-window bitmap should survive dormancy");
-        NS_TEST_ASSERT_MSG_EQ(second->GetInboundTpMsnReferenceForTest(123),
-                              17u,
-                              "Inbound TP MSN ordering should survive dormancy");
-        NS_TEST_ASSERT_MSG_EQ(second->GetInboundTaSsnReferenceForTest(123, 9),
-                              11u,
-                              "Inbound TA SSN ordering should survive dormancy");
-        NS_TEST_ASSERT_MSG_EQ(second->GetLbHashSalt(),
-                              29u,
-                              "Per-packet load-balancing salt should survive dormancy");
-        NS_TEST_ASSERT_MSG_EQ(
-            receiver->GetUbTransaction()->GetTpRoundRobinIndexForTest(tpn),
-            7u,
-            "Rehydrated pointer replacement should preserve transaction RR phase");
-        NS_TEST_ASSERT_MSG_EQ(coordinator->IsResourceActive(identity),
-                              true,
-                              "Dormancy should leave the lifecycle generation active");
-
-        NS_TEST_ASSERT_MSG_EQ(manager->ReclaimBackingState(tpn),
-                              true,
-                              "A rehydrated drained endpoint should reclaim again");
-        NS_TEST_ASSERT_MSG_EQ(
-            static_cast<uint32_t>(manager->DestroyTp(
-                tpn,
-                UbDestroyReason::EXPLICIT,
-                MakeCallback(
-                    &UbDormantTpBackingReclaimsAndResolvesSameGenerationTest::OnDormantDestroyed,
-                    this))),
-            static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
-            "Explicit destroy should synchronously retire a dormant endpoint");
-        NS_TEST_ASSERT_MSG_EQ(m_destroyCallbackCount,
-                              1u,
-                              "Dormant explicit destroy should complete its callback exactly once");
-        NS_TEST_ASSERT_MSG_EQ(
-            m_destroyedIdentity,
-            identity,
-            "Dormant explicit destroy callback should report the preserved identity");
-        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_destroyStatus),
-                              static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
-                              "Dormant explicit destroy callback should report completion");
-        NS_TEST_ASSERT_MSG_EQ(manager->Contains(tpn),
-                              false,
-                              "Explicit destroy should remove the dormant logical endpoint");
-        NS_TEST_ASSERT_MSG_EQ(coordinator->IsResourceActive(identity),
-                              false,
-                              "Explicit destroy should retire the preserved lifecycle generation");
-        Ptr<UbTransportChannel> third = manager->CreateReservedTpEndpoint(tpn);
-        NS_TEST_ASSERT_MSG_NE(third, nullptr, "Explicit demand should rematerialize after destroy");
-        NS_TEST_ASSERT_MSG_NE(third->GetLifecycleOwner().generation,
-                              identity.generation,
-                              "Explicit rematerialization should open a new generation");
-
-        Simulator::Destroy();
-        Config::Reset();
-    }
-
-    UbLifecycleResourceIdentity m_destroyedIdentity;
-    UbDestroyStatus m_destroyStatus{UbDestroyStatus::NOT_FOUND};
-    uint32_t m_destroyCallbackCount{0};
-};
-
-class UbFailingDormancySnapshotCongestionControl : public UbCongestionControl
-{
-  public:
-    UbCongestionControlDormancyEligibility GetDormancyEligibility() const override
-    {
-        return UbCongestionControlDormancyEligibility::ELIGIBLE;
-    }
-
-    std::unique_ptr<UbCongestionControlDormancyState> SnapshotDormancyState() const override
-    {
-        return nullptr;
-    }
-};
-
 class UbTpQuiescenceAssessmentReportsTypedBlockersTest : public TestCase
 {
   public:
     UbTpQuiescenceAssessmentReportsTypedBlockersTest()
-        : TestCase("UnifiedBus - TP quiescence assessment reports typed blockers without mutation")
+        : TestCase("UnifiedBus - explicit TP close assessment reports owner-local blockers")
     {
     }
 
@@ -22597,8 +21866,6 @@ class UbTpQuiescenceAssessmentReportsTypedBlockersTest : public TestCase
     void DoRun() override
     {
         Config::Reset();
-        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(true));
-        GlobalValue::Bind("UB_CC_ALGO", StringValue("DCQCN"));
         LocalTpTopology topo = BuildLocalTpTopology();
         Ptr<UbController> sender = topo.sender->GetObject<UbController>();
         Ptr<UbController> receiver = topo.receiver->GetObject<UbController>();
@@ -22616,233 +21883,64 @@ class UbTpQuiescenceAssessmentReportsTypedBlockersTest : public TestCase
         Ptr<UbTransportChannel> tp = manager->CreateReservedTpEndpoint(tpn);
         NS_TEST_ASSERT_MSG_NE(tp, nullptr, "Reserved endpoint should materialize");
 
-        UbTpQuiescenceAssessment assessment =
-            manager->AssessTpQuiescence(tpn, UbTeardownIntent::BACKING_RECLAIM);
-        NS_TEST_ASSERT_MSG_EQ(assessment.IsAllowed(),
-                              true,
-                              "A new idle endpoint should pass backing assessment");
-        NS_TEST_ASSERT_MSG_EQ(assessment.tpn, tpn, "Assessment should retain the queried TPN");
+        UbTpQuiescenceAssessment assessment = manager->AssessTpQuiescence(tpn);
+        NS_TEST_ASSERT_MSG_EQ(
+            assessment.HasBlocker(UbTpQuiescenceBlocker::ENDPOINT_NOT_DRAINING),
+            true,
+            "Explicit close assessment should require the drain phase");
         NS_TEST_ASSERT_MSG_EQ(assessment.identity,
                               tp->GetLifecycleOwner(),
                               "Assessment should report the exact endpoint generation");
-
-        manager->SetAttribute("EnableAutomaticBackingReclaim", BooleanValue(false));
-        const UbTransportEndpointStorageSnapshot beforeDisabled = manager->GetStorageSnapshot();
-        assessment = manager->AssessTpQuiescence(tpn, UbTeardownIntent::BACKING_RECLAIM);
-        NS_TEST_ASSERT_MSG_EQ(
-            assessment.HasBlocker(UbTpQuiescenceBlocker::AUTOMATIC_RECLAIM_DISABLED),
-            true,
-            "Disabled automatic reclaim should produce its typed blocker");
         NS_TEST_ASSERT_MSG_EQ(manager->PeekLiveTp(tpn),
                               tp,
-                              "Assessment must not release or replace live backing");
-        NS_TEST_ASSERT_MSG_EQ(manager->GetStorageSnapshot().liveBackingObjects,
-                              beforeDisabled.liveBackingObjects,
-                              "Assessment must not change live backing accounting");
+                              "Read-only assessment must retain the endpoint");
 
         Ptr<UbLifecycleCoordinator> coordinator =
             UbLifecycleCoordinator::GetOrCreate(topo.receiver);
-        const UbLifecycleResourceIdentity identity = tp->GetLifecycleOwner();
-        manager->SetAttribute("EnableAutomaticBackingReclaim", BooleanValue(true));
-        const std::array<std::pair<UbLifecycleLeaseKind, UbTpQuiescenceBlocker>, 4> leaseCases{{
-            {UbLifecycleLeaseKind::WORK, UbTpQuiescenceBlocker::ACTIVE_WORK_LEASE},
-            {UbLifecycleLeaseKind::CHILD, UbTpQuiescenceBlocker::ACTIVE_CHILD_LEASE},
-            {UbLifecycleLeaseKind::TRACKED_EVENT,
-             UbTpQuiescenceBlocker::ACTIVE_TRACKED_EVENT_LEASE},
-            {UbLifecycleLeaseKind::TRANSPORT_WORK,
-             UbTpQuiescenceBlocker::ACTIVE_TRANSPORT_WORK_LEASE},
-        }};
-        for (const auto& [kind, blocker] : leaseCases)
-        {
-            const UbLifecycleLeaseIdentity lease =
-                coordinator->AcquireLease(identity, kind, identity);
-            const UbLifecycleResourceSnapshot before = coordinator->GetSnapshot(identity);
-            manager->SetAttribute("EnableAutomaticBackingReclaim", BooleanValue(true));
-            assessment = manager->AssessTpQuiescence(tpn, UbTeardownIntent::BACKING_RECLAIM);
-            NS_TEST_ASSERT_MSG_EQ(assessment.HasBlocker(blocker),
-                                  true,
-                                  "Lifecycle lease kind " << static_cast<uint32_t>(kind)
-                                                          << " should report its typed blocker");
-            NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(identity).inFlightPackets,
-                                  before.inFlightPackets,
-                                  "Assessment must not mutate lifecycle packet state");
-            manager->SetAttribute("EnableAutomaticBackingReclaim", BooleanValue(false));
-            coordinator->ReleaseLease(lease);
-        }
-
         Ptr<Packet> inFlight = Create<Packet>(1);
-        coordinator->RegisterPacketAttempt(identity, inFlight);
-        manager->SetAttribute("EnableAutomaticBackingReclaim", BooleanValue(true));
-        assessment = manager->AssessTpQuiescence(tpn, UbTeardownIntent::BACKING_RECLAIM);
+        coordinator->RegisterPacketAttempt(tp->GetLifecycleOwner(), inFlight);
+        assessment = manager->AssessTpQuiescence(tpn);
         NS_TEST_ASSERT_MSG_EQ(assessment.HasBlocker(UbTpQuiescenceBlocker::IN_FLIGHT_PACKETS),
                               true,
-                              "An in-flight packet should report its typed blocker");
-        NS_TEST_ASSERT_MSG_EQ(assessment.diagnostics.lifecycle.inFlightPackets,
-                              1u,
-                              "Assessment should report the in-flight packet count");
-        manager->SetAttribute("EnableAutomaticBackingReclaim", BooleanValue(false));
+                              "An in-flight packet should block explicit close");
         UbLifecycleCoordinator::TerminatePacket(inFlight, UbPacketTerminal::ENDPOINT_CONSUMED);
 
         tp->EnqueueAckForTest(Create<Packet>(1));
-        manager->SetAttribute("EnableAutomaticBackingReclaim", BooleanValue(true));
-        assessment = manager->AssessTpQuiescence(tpn, UbTeardownIntent::BACKING_RECLAIM);
+        tp->EnqueueCnpForTest(Create<Packet>(1));
+        tp->PushWqeSegment(CreateObject<UbWqeSegment>());
+        tp->AddRemoteRequestForTest(CreateObject<UbWqeSegment>());
+        tp->AddInboundTaUnitForTest(7, 11);
+        tp->AddBufferedInboundPacketForTest(13);
+        tp->SetPsnSndUnaForTest(17);
+        tp->SetPsnSndNxtForTest(18);
+        assessment = manager->AssessTpQuiescence(tpn);
         NS_TEST_ASSERT_MSG_EQ(assessment.HasBlocker(UbTpQuiescenceBlocker::ACK_QUEUE),
                               true,
-                              "Pending ACK work should produce its typed blocker");
-        NS_TEST_ASSERT_MSG_EQ(assessment.diagnostics.transport.pendingAckPackets,
-                              1u,
-                              "Assessment should report the pending ACK count");
-        manager->SetAttribute("EnableAutomaticBackingReclaim", BooleanValue(false));
-        tp->PopAckForTest();
-        manager->SetAttribute("EnableAutomaticBackingReclaim", BooleanValue(true));
-
-        tp->EnqueueCnpForTest(Create<Packet>(1));
-        assessment = manager->AssessTpQuiescence(tpn, UbTeardownIntent::BACKING_RECLAIM);
+                              "Pending ACK work should block explicit close");
         NS_TEST_ASSERT_MSG_EQ(assessment.HasBlocker(UbTpQuiescenceBlocker::CNP_QUEUE),
                               true,
-                              "Pending CNP work should report its typed blocker");
-        tp->ClearCnpForTest();
-
-        tp->PushWqeSegment(CreateObject<UbWqeSegment>());
-        assessment = manager->AssessTpQuiescence(tpn, UbTeardownIntent::BACKING_RECLAIM);
+                              "Pending CNP work should block explicit close");
         NS_TEST_ASSERT_MSG_EQ(assessment.HasBlocker(UbTpQuiescenceBlocker::WQE_SEGMENT_QUEUE),
                               true,
-                              "Pending WQE segment work should report its typed blocker");
-        tp->ClearWqeSegmentsForTest();
-
-        tp->AddRemoteRequestForTest(CreateObject<UbWqeSegment>());
-        assessment = manager->AssessTpQuiescence(tpn, UbTeardownIntent::BACKING_RECLAIM);
+                              "Pending WQE work should block explicit close");
         NS_TEST_ASSERT_MSG_EQ(assessment.HasBlocker(UbTpQuiescenceBlocker::REMOTE_REQUEST),
                               true,
-                              "Pending TP remote-request work should report its typed blocker");
-        tp->ClearRemoteRequestsForTest();
-
-        tp->AddInboundTaUnitForTest(7, 11);
-        assessment = manager->AssessTpQuiescence(tpn, UbTeardownIntent::BACKING_RECLAIM);
+                              "Pending remote work should block explicit close");
         NS_TEST_ASSERT_MSG_EQ(assessment.HasBlocker(UbTpQuiescenceBlocker::INBOUND_WORK),
                               true,
-                              "Pending inbound TA work should report its typed blocker");
-        tp->ClearInboundTaUnitsForTest();
-
-        tp->AddBufferedInboundPacketForTest(13);
-        assessment = manager->AssessTpQuiescence(tpn, UbTeardownIntent::BACKING_RECLAIM);
+                              "Pending inbound work should block explicit close");
         NS_TEST_ASSERT_MSG_EQ(
             assessment.HasBlocker(UbTpQuiescenceBlocker::BUFFERED_INBOUND_PACKET),
             true,
-            "A buffered inbound packet should report its typed blocker");
-        tp->ClearBufferedInboundPacketsForTest();
-
-        tp->SetPsnSndUnaForTest(17);
-        tp->SetPsnSndNxtForTest(18);
-        assessment = manager->AssessTpQuiescence(tpn, UbTeardownIntent::BACKING_RECLAIM);
+            "Buffered inbound data should block explicit close");
         NS_TEST_ASSERT_MSG_EQ(assessment.HasBlocker(UbTpQuiescenceBlocker::UNACKNOWLEDGED_PSN),
                               true,
-                              "An unacknowledged PSN range should report its typed blocker");
-        tp->SetPsnSndNxtForTest(17);
+                              "An unacknowledged PSN range should block explicit close");
 
-        tp->SetRetransEnable(true);
-        tp->RetainSentPsnForTest(17, 64);
-        tp->StartRetransTimerForTest();
-        assessment = manager->AssessTpQuiescence(tpn, UbTeardownIntent::BACKING_RECLAIM);
-        NS_TEST_ASSERT_MSG_EQ(assessment.HasBlocker(UbTpQuiescenceBlocker::RETRANSMISSION_TIMER),
-                              true,
-                              "A running retransmission timer should report its typed blocker");
-        tp->SetRetransEnable(false);
-        tp->SetPsnSndNxtForTest(17);
-
-        Ptr<UbCongestionControl> supportedCc = tp->GetCongestionCtrlForTest();
-        tp->SetPsnSndUnaForTest(41);
-        tp->SetPsnSndNxtForTest(41);
-        tp->SetRetransEnable(true);
-        tp->RetainSentPsnForTest(41, 64);
-        tp->SetCongestionControlForTest(CreateObject<UbCongestionControl>());
-        manager->SetAttribute("EnableAutomaticBackingReclaim", BooleanValue(true));
-        const UbTpQuiescenceAssessment reclaimSpecific =
-            manager->AssessTpQuiescence(tpn, UbTeardownIntent::BACKING_RECLAIM);
-        NS_TEST_ASSERT_MSG_EQ(
-            reclaimSpecific.HasBlocker(UbTpQuiescenceBlocker::OUTSTANDING_RETRANSMISSION),
-            true,
-            "Retained retransmission state should block backing reclaim");
-        NS_TEST_ASSERT_MSG_EQ(
-            reclaimSpecific.HasBlocker(UbTpQuiescenceBlocker::CONGESTION_CONTROL_INELIGIBLE),
-            true,
-            "Unsupported congestion control should block backing reclaim");
-        const UbTpQuiescenceAssessment explicitDestroy =
-            manager->AssessTpQuiescence(tpn, UbTeardownIntent::EXPLICIT_DESTROY);
-        NS_TEST_ASSERT_MSG_EQ(
-            explicitDestroy.HasBlocker(UbTpQuiescenceBlocker::ENDPOINT_NOT_DRAINING),
-            true,
-            "Explicit destroy assessment should require the drain phase first");
-        NS_TEST_ASSERT_MSG_EQ(
-            explicitDestroy.HasBlocker(UbTpQuiescenceBlocker::OUTSTANDING_RETRANSMISSION),
-            false,
-            "Explicit destroy should preserve its existing retransmission-state policy");
-        NS_TEST_ASSERT_MSG_EQ(
-            explicitDestroy.HasBlocker(UbTpQuiescenceBlocker::CONGESTION_CONTROL_INELIGIBLE),
-            false,
-            "Explicit destroy should not require a dormancy snapshot contract");
-        NS_TEST_ASSERT_MSG_EQ(manager->PeekLiveTp(tpn),
-                              tp,
-                              "Neither intent assessment may mutate live backing");
-
-        manager->SetAttribute("EnableAutomaticBackingReclaim", BooleanValue(false));
-        tp->SetCongestionControlForTest(supportedCc);
-        tp->SetRetransEnable(false);
-        tp->SetPsnSndNxtForTest(41);
-        manager->SetAttribute("EnableAutomaticBackingReclaim", BooleanValue(true));
-
-        Ptr<UbCongestionControl> failingSnapshot =
-            CreateObject<UbFailingDormancySnapshotCongestionControl>();
-        tp->SetCongestionControlForTest(failingSnapshot);
-        const UbTransportEndpointStorageSnapshot beforeSnapshotFailure =
-            manager->GetStorageSnapshot();
-        assessment = manager->AssessTpQuiescence(tpn, UbTeardownIntent::BACKING_RECLAIM);
-        NS_TEST_ASSERT_MSG_EQ(assessment.IsAllowed(),
-                              true,
-                              "An eligible CC should pass the read-only assessment");
-        NS_TEST_ASSERT_MSG_EQ(manager->ReclaimBackingState(tpn),
-                              false,
-                              "Snapshot materialization failure should fail closed");
-        NS_TEST_ASSERT_MSG_EQ(manager->PeekLiveTp(tpn),
-                              tp,
-                              "Snapshot failure must retain the exact live backing");
-        NS_TEST_ASSERT_MSG_EQ(tp->GetLifecycleOwner(),
-                              identity,
-                              "Snapshot failure must retain the endpoint identity");
-        const UbTransportEndpointStorageSnapshot afterSnapshotFailure =
-            manager->GetStorageSnapshot();
-        NS_TEST_ASSERT_MSG_EQ(afterSnapshotFailure.liveBackingObjects,
-                              beforeSnapshotFailure.liveBackingObjects,
-                              "Snapshot failure must preserve live backing accounting");
-        NS_TEST_ASSERT_MSG_EQ(afterSnapshotFailure.dormantRecords,
-                              beforeSnapshotFailure.dormantRecords,
-                              "Snapshot failure must not create a dormant record");
-        tp->SetCongestionControlForTest(supportedCc);
-
-        assessment = manager->AssessTpQuiescence(tpn, UbTeardownIntent::BACKING_RECLAIM);
-        NS_TEST_ASSERT_MSG_EQ(assessment.IsAllowed(),
-                              true,
-                              "Clearing all owner-local blockers should allow reclaim");
-        NS_TEST_ASSERT_MSG_EQ(manager->ReclaimBackingState(tpn),
-                              true,
-                              "An allowed assessment should be executable by the reclaim path");
-        const UbTransportEndpointStorageSnapshot dormant = manager->GetStorageSnapshot();
-        assessment = manager->AssessTpQuiescence(tpn, UbTeardownIntent::BACKING_RECLAIM);
-        NS_TEST_ASSERT_MSG_EQ(assessment.IsAllowed(),
-                              true,
-                              "Assessment should preserve idempotent dormant reclaim");
-        NS_TEST_ASSERT_MSG_EQ(manager->GetStorageSnapshot().backingRehydrations,
-                              dormant.backingRehydrations,
-                              "Assessing a dormant endpoint must not materialize backing");
-        NS_TEST_ASSERT_MSG_EQ(manager->PeekLiveTp(tpn),
-                              nullptr,
-                              "Assessing a dormant endpoint must keep it compact");
-
-        const UbTpQuiescenceAssessment missing =
-            manager->AssessTpQuiescence(tpn + 1000000, UbTeardownIntent::BACKING_RECLAIM);
+        const UbTpQuiescenceAssessment missing = manager->AssessTpQuiescence(tpn + 1000000);
         NS_TEST_ASSERT_MSG_EQ(missing.HasBlocker(UbTpQuiescenceBlocker::ENDPOINT_MISSING),
                               true,
-                              "A missing endpoint should fail closed with a typed blocker");
+                              "A missing endpoint should fail closed");
 
         Simulator::Destroy();
         Config::Reset();
@@ -22872,7 +21970,6 @@ class UbTpQuiescenceAssessmentReportsTransactionReferencesTest : public TestCase
         InstallStaticTpPair(topo);
         Ptr<UbController> controller = topo.sender->GetObject<UbController>();
         Ptr<UbTransportChannelManager> manager = controller->GetTransportChannelManager();
-        manager->SetAttribute("EnableAutomaticBackingReclaim", BooleanValue(false));
         constexpr uint32_t jettyNum = kUrmaWriteRegressionJettyNum + 201;
         controller->GetUbFunction()->CreateJetty(topo.sender->GetId(),
                                                  topo.receiver->GetId(),
@@ -22885,10 +21982,8 @@ class UbTpQuiescenceAssessmentReportsTransactionReferencesTest : public TestCase
                                   {kUrmaWriteRegressionSenderTpn}),
                               true,
                               "Direct-reference fixture should bind one TP");
-        manager->SetAttribute("EnableAutomaticBackingReclaim", BooleanValue(true));
-        const UbTpQuiescenceAssessment assessment = manager->AssessTpQuiescence(
-            kUrmaWriteRegressionSenderTpn,
-            UbTeardownIntent::BACKING_RECLAIM);
+        const UbTpQuiescenceAssessment assessment =
+            manager->AssessTpQuiescence(kUrmaWriteRegressionSenderTpn);
         NS_TEST_ASSERT_MSG_EQ(
             assessment.HasBlocker(UbTpQuiescenceBlocker::TRANSACTION_REFERENCE),
             true,
@@ -22896,7 +21991,6 @@ class UbTpQuiescenceAssessmentReportsTransactionReferencesTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(assessment.diagnostics.transactionReferenced,
                               true,
                               "Direct reference diagnostics should report the real transaction fact");
-        manager->SetAttribute("EnableAutomaticBackingReclaim", BooleanValue(false));
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(controller->GetUbFunction()->DestroyJetty(jettyNum)),
             static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
@@ -22913,7 +22007,6 @@ class UbTpQuiescenceAssessmentReportsTransactionReferencesTest : public TestCase
         InstallAdditionalTpPair(topo, 303, 404);
         Ptr<UbController> controller = topo.sender->GetObject<UbController>();
         Ptr<UbTransportChannelManager> manager = controller->GetTransportChannelManager();
-        manager->SetAttribute("EnableAutomaticBackingReclaim", BooleanValue(false));
         constexpr uint32_t jettyNum = kUrmaWriteRegressionJettyNum + 202;
         controller->GetUbFunction()->CreateJetty(topo.sender->GetId(),
                                                  topo.receiver->GetId(),
@@ -22926,10 +22019,8 @@ class UbTpQuiescenceAssessmentReportsTransactionReferencesTest : public TestCase
                                   {kUrmaWriteRegressionSenderTpn, 303}),
                               true,
                               "TPG-reference fixture should bind two member TPs");
-        manager->SetAttribute("EnableAutomaticBackingReclaim", BooleanValue(true));
-        const UbTpQuiescenceAssessment assessment = manager->AssessTpQuiescence(
-            kUrmaWriteRegressionSenderTpn,
-            UbTeardownIntent::BACKING_RECLAIM);
+        const UbTpQuiescenceAssessment assessment =
+            manager->AssessTpQuiescence(kUrmaWriteRegressionSenderTpn);
         NS_TEST_ASSERT_MSG_EQ(
             assessment.HasBlocker(UbTpQuiescenceBlocker::TRANSACTION_REFERENCE),
             true,
@@ -22937,8 +22028,7 @@ class UbTpQuiescenceAssessmentReportsTransactionReferencesTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(
             assessment.HasBlocker(UbTpQuiescenceBlocker::ACTIVE_BINDING_LEASE),
             true,
-            "Owner-local TPG membership should block member TP backing reclaim");
-        manager->SetAttribute("EnableAutomaticBackingReclaim", BooleanValue(false));
+            "Owner-local TPG membership should block explicit member TP close");
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(controller->GetUbFunction()->DestroyJetty(jettyNum)),
             static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
@@ -22955,7 +22045,7 @@ class UbTpQuiescenceAssessmentReportsTransactionReferencesTest : public TestCase
         Ptr<UbController> controller = topo.sender->GetObject<UbController>();
         Ptr<UbTransportChannelManager> manager = controller->GetTransportChannelManager();
         Ptr<UbTransportChannel> tp = manager->PeekLiveTp(kUrmaWriteRegressionSenderTpn);
-        NS_TEST_ASSERT_MSG_NE(tp, nullptr, "Remote-work fixture should have live backing");
+        NS_TEST_ASSERT_MSG_NE(tp, nullptr, "Remote-work fixture should have a materialized TP");
         tp->SetMaxQueueSizeForTest(0);
         tp->FreezeNewWork();
         Ptr<UbWqeSegment> request = CreateObject<UbWqeSegment>();
@@ -22965,9 +22055,8 @@ class UbTpQuiescenceAssessmentReportsTransactionReferencesTest : public TestCase
         request->SetTaskId(88);
         controller->GetUbTransaction()->HandleInboundTaUnit(kUrmaWriteRegressionSenderTpn,
                                                             request);
-        const UbTpQuiescenceAssessment assessment = manager->AssessTpQuiescence(
-            kUrmaWriteRegressionSenderTpn,
-            UbTeardownIntent::BACKING_RECLAIM);
+        const UbTpQuiescenceAssessment assessment =
+            manager->AssessTpQuiescence(kUrmaWriteRegressionSenderTpn);
         NS_TEST_ASSERT_MSG_EQ(
             assessment.HasBlocker(UbTpQuiescenceBlocker::PENDING_TRANSPORT_WORK),
             true,
@@ -22985,44 +22074,29 @@ class UbTpResolutionMtpOwnershipReadinessTest : public TestCase
 {
   public:
     UbTpResolutionMtpOwnershipReadinessTest()
-        : TestCase("UnifiedBus - TP resolution treats MTP ownership readiness fail closed")
+        : TestCase("UnifiedBus - live TP resolution honors MTP ownership readiness")
     {
     }
 
     void DoRun() override
     {
         const int prePartitionStatus = RunInChildProcess([]() {
-            const DormantEndpoint endpoint = PrepareDormantEndpoint();
+            const LiveEndpoint endpoint = PrepareLiveEndpoint();
             MtpInterface::Enable();
-            Ptr<UbTransportChannel> reserved =
-                endpoint.manager->CreateReservedTpEndpoint(endpoint.tpn);
-            if (reserved == nullptr || !endpoint.manager->ReclaimBackingState(endpoint.tpn))
+            if (endpoint.manager->CreateReservedTpEndpoint(endpoint.tpn) != endpoint.tp)
             {
                 std::_Exit(2);
             }
-            const UbInboundTpResolution inbound =
-                endpoint.manager->ResolveInboundTp(endpoint.peerTpn,
-                                                   endpoint.tpn,
-                                                   endpoint.sourceIp,
-                                                   endpoint.destinationIp,
-                                                   endpoint.priority);
-            if (inbound.state != UbInboundTpState::LIVE || inbound.endpoint == nullptr ||
-                !endpoint.manager->ReclaimBackingState(endpoint.tpn))
+            const UbInboundTpResolution inbound = endpoint.manager->ResolveInboundTp(
+                endpoint.peerTpn,
+                endpoint.tpn,
+                endpoint.sourceIp,
+                endpoint.destinationIp,
+                endpoint.priority);
+            if (inbound.state != UbInboundTpState::LIVE || inbound.endpoint != endpoint.tp ||
+                endpoint.manager->ResolveLiveTp(endpoint.tpn, endpoint.identity) != endpoint.tp)
             {
                 std::_Exit(3);
-            }
-            Ptr<UbTransportChannel> resolved =
-                endpoint.manager->ResolveLiveTp(endpoint.tpn, endpoint.identity);
-            if (resolved == nullptr)
-            {
-                std::_Exit(4);
-            }
-            const UbTransportEndpointStorageSnapshot after =
-                endpoint.manager->GetStorageSnapshot();
-            if (after.liveBackingObjects != 1 || after.dormantRecords != 0 ||
-                after.backingRehydrations != endpoint.before.backingRehydrations + 3)
-            {
-                std::_Exit(5);
             }
         });
         NS_TEST_ASSERT_MSG_EQ(WIFEXITED(prePartitionStatus),
@@ -23030,34 +22104,26 @@ class UbTpResolutionMtpOwnershipReadinessTest : public TestCase
                               "Pre-partition MTP resolution must not abort");
         NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(prePartitionStatus),
                               0,
-                              "Pre-partition MTP should preserve the normal single-thread path");
+                              "Pre-partition MTP should preserve the bootstrap path");
 
         const int missingOwnerStatus = RunInChildProcess([]() {
-            const DormantEndpoint endpoint = PrepareDormantEndpoint();
+            const LiveEndpoint endpoint = PrepareLiveEndpoint();
             MtpInterface::Enable(1, 1);
-            Ptr<UbTransportChannel> reserved =
-                endpoint.manager->CreateReservedTpEndpoint(endpoint.tpn);
-            const UbInboundTpResolution inbound =
-                endpoint.manager->ResolveInboundTp(endpoint.peerTpn,
-                                                   endpoint.tpn,
-                                                   endpoint.sourceIp,
-                                                   endpoint.destinationIp,
-                                                   endpoint.priority);
-            Ptr<UbTransportChannel> resolved =
-                endpoint.manager->ResolveLiveTp(endpoint.tpn, endpoint.identity);
-            const bool reclaimed = endpoint.manager->ReclaimBackingState(endpoint.tpn);
-            if (reserved != nullptr || inbound.state != UbInboundTpState::INVALID ||
-                inbound.endpoint != nullptr || resolved != nullptr || reclaimed)
+            const UbInboundTpResolution inbound = endpoint.manager->ResolveInboundTp(
+                endpoint.peerTpn,
+                endpoint.tpn,
+                endpoint.sourceIp,
+                endpoint.destinationIp,
+                endpoint.priority);
+            const UbTpQuiescenceAssessment assessment =
+                endpoint.manager->AssessTpQuiescence(endpoint.tpn);
+            if (endpoint.manager->CreateReservedTpEndpoint(endpoint.tpn) != nullptr ||
+                inbound.state != UbInboundTpState::INVALID || inbound.endpoint != nullptr ||
+                endpoint.manager->ResolveLiveTp(endpoint.tpn, endpoint.identity) != nullptr ||
+                !assessment.HasBlocker(UbTpQuiescenceBlocker::WRONG_EXECUTION_OWNER) ||
+                endpoint.manager->PeekLiveTp(endpoint.tpn) != endpoint.tp)
             {
-                std::_Exit(6);
-            }
-            const UbTransportEndpointStorageSnapshot after =
-                endpoint.manager->GetStorageSnapshot();
-            if (after.liveBackingObjects != endpoint.before.liveBackingObjects ||
-                after.dormantRecords != endpoint.before.dormantRecords ||
-                after.backingRehydrations != endpoint.before.backingRehydrations)
-            {
-                std::_Exit(7);
+                std::_Exit(4);
             }
         });
         NS_TEST_ASSERT_MSG_EQ(WIFEXITED(missingOwnerStatus),
@@ -23065,222 +22131,92 @@ class UbTpResolutionMtpOwnershipReadinessTest : public TestCase
                               "Missing partition ownership must fail closed without aborting");
         NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(missingOwnerStatus),
                               0,
-                              "Missing partition ownership must leave compact storage unchanged");
+                              "Missing ownership must not mutate the live endpoint");
 
         const int mappedOwnerStatus = RunInChildProcess([]() {
-            const DormantEndpoint endpoint = PrepareDormantEndpoint();
+            const LiveEndpoint endpoint = PrepareLiveEndpoint();
             NodeList::GetNode(endpoint.identity.ownerNodeId)->SetSystemId(1);
             MtpInterface::Enable(1, 2);
             if (MtpInterface::RequireNodeLocalLpId(endpoint.identity.ownerNodeId) != 1)
             {
-                std::_Exit(19);
+                std::_Exit(10);
             }
-
             MtpInterface::SetSystem(2);
             if (endpoint.manager->ResolveLiveTp(endpoint.tpn, endpoint.identity) != nullptr)
             {
-                std::_Exit(20);
+                std::_Exit(11);
             }
-            UbTransportEndpointStorageSnapshot after = endpoint.manager->GetStorageSnapshot();
-            if (after.liveBackingObjects != endpoint.before.liveBackingObjects ||
-                after.dormantRecords != endpoint.before.dormantRecords ||
-                after.backingRehydrations != endpoint.before.backingRehydrations)
-            {
-                std::_Exit(21);
-            }
-
             MtpInterface::SetSystem(0);
             if (endpoint.manager->ResolveLiveTp(endpoint.tpn, endpoint.identity) != nullptr)
             {
-                std::_Exit(22);
+                std::_Exit(12);
             }
-            after = endpoint.manager->GetStorageSnapshot();
-            if (after.liveBackingObjects != endpoint.before.liveBackingObjects ||
-                after.dormantRecords != endpoint.before.dormantRecords ||
-                after.backingRehydrations != endpoint.before.backingRehydrations)
-            {
-                std::_Exit(23);
-            }
-
             MtpInterface::SetSystem(1);
-            Ptr<UbTransportChannel> resolved =
-                endpoint.manager->ResolveLiveTp(endpoint.tpn, endpoint.identity);
-            if (resolved == nullptr || resolved->GetLifecycleOwner() != endpoint.identity)
+            if (endpoint.manager->ResolveLiveTp(endpoint.tpn, endpoint.identity) != endpoint.tp)
             {
-                std::_Exit(24);
-            }
-            after = endpoint.manager->GetStorageSnapshot();
-            if (after.liveBackingObjects != 1 || after.dormantRecords != 0 ||
-                after.backingRehydrations != endpoint.before.backingRehydrations + 1)
-            {
-                std::_Exit(25);
-            }
-
-            MtpInterface::SetSystem(2);
-            const UbTpQuiescenceAssessment wrongOwnerAssessment =
-                endpoint.manager->AssessTpQuiescence(endpoint.tpn,
-                                                      UbTeardownIntent::BACKING_RECLAIM);
-            if (!wrongOwnerAssessment.HasBlocker(
-                    UbTpQuiescenceBlocker::WRONG_EXECUTION_OWNER) ||
-                wrongOwnerAssessment.IsAllowed())
-            {
-                std::_Exit(32);
-            }
-            if (endpoint.manager->ReclaimBackingState(endpoint.tpn))
-            {
-                std::_Exit(26);
-            }
-            after = endpoint.manager->GetStorageSnapshot();
-            if (after.liveBackingObjects != 1 || after.dormantRecords != 0 ||
-                after.backingRehydrations != endpoint.before.backingRehydrations + 1)
-            {
-                std::_Exit(27);
-            }
-
-            MtpInterface::SetSystem(0);
-            if (endpoint.manager->ReclaimBackingState(endpoint.tpn))
-            {
-                std::_Exit(28);
-            }
-            after = endpoint.manager->GetStorageSnapshot();
-            if (after.liveBackingObjects != 1 || after.dormantRecords != 0 ||
-                after.backingRehydrations != endpoint.before.backingRehydrations + 1)
-            {
-                std::_Exit(29);
-            }
-
-            MtpInterface::SetSystem(1);
-            if (!endpoint.manager->ReclaimBackingState(endpoint.tpn))
-            {
-                std::_Exit(30);
-            }
-            after = endpoint.manager->GetStorageSnapshot();
-            if (after.liveBackingObjects != 0 || after.dormantRecords != 1 ||
-                after.backingRehydrations != endpoint.before.backingRehydrations + 1)
-            {
-                std::_Exit(31);
+                std::_Exit(13);
             }
         });
         NS_TEST_ASSERT_MSG_EQ(WIFEXITED(mappedOwnerStatus),
                               1,
                               "Mapped MTP ownership checks must not abort");
-        NS_TEST_ASSERT_MSG_EQ(
-            WEXITSTATUS(mappedOwnerStatus),
-            0,
-            "Only the mapped worker owner may restore or reclaim exact TP backing");
-
-        const int reservedWrongOwnerStatus = RunInChildProcess([]() {
-            Config::Reset();
-            LocalTpTopology topo = BuildLocalTpTopology();
-            Ptr<UbController> sender = topo.sender->GetObject<UbController>();
-            Ptr<UbController> receiver = topo.receiver->GetObject<UbController>();
-            sender->GetTpConnManager()->ReserveTpnsForTraffic(true,
-                                                              topo.sender->GetId(),
-                                                              topo.receiver->GetId(),
-                                                              kUrmaWriteRegressionPriority);
-            const auto receiverTpns = receiver->GetTpConnManager()->GetTpnsByPeerNodePriority(
-                topo.receiver->GetId(),
-                topo.sender->GetId(),
-                kUrmaWriteRegressionPriority);
-            if (receiverTpns.size() != 1)
-            {
-                std::_Exit(40);
-            }
-            Connection connection;
-            if (!receiver->GetTpConnManager()->TryGetLocalConnection(topo.receiver->GetId(),
-                                                                     receiverTpns[0].first,
-                                                                     connection))
-            {
-                std::_Exit(41);
-            }
-
-            topo.receiver->SetSystemId(1);
-            MtpInterface::Enable(1, 2);
-            MtpInterface::SetSystem(2);
-            const UbInboundTpResolution inbound =
-                receiver->GetTransportChannelManager()->ResolveInboundTp(
-                    connection.tpn2,
-                    connection.tpn1,
-                    NodeIdToIp(connection.node2, connection.port2),
-                    NodeIdToIp(connection.node1, connection.port1),
-                    static_cast<UbPriority>(connection.priority));
-            if (inbound.state != UbInboundTpState::INVALID || inbound.endpoint != nullptr ||
-                receiver->GetTransportChannelManager()->GetTp(connection.tpn1) != nullptr)
-            {
-                std::_Exit(42);
-            }
-        });
-        NS_TEST_ASSERT_MSG_EQ(WIFEXITED(reservedWrongOwnerStatus),
-                              1,
-                              "Wrong-owner reserved ingress must not abort");
-        NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(reservedWrongOwnerStatus),
+        NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(mappedOwnerStatus),
                               0,
-                              "Wrong-owner reserved ingress must not materialize TP backing");
+                              "Only the mapped worker may resolve the endpoint");
 
         const int drainingWrongOwnerStatus = RunInChildProcess([]() {
-            const DormantEndpoint endpoint = PrepareDormantEndpoint();
-            Ptr<UbTransportChannel> tp =
-                endpoint.manager->ResolveLiveTp(endpoint.tpn, endpoint.identity);
-            if (tp == nullptr)
-            {
-                std::_Exit(50);
-            }
+            const LiveEndpoint endpoint = PrepareLiveEndpoint();
             NodeList::GetNode(endpoint.identity.ownerNodeId)->SetSystemId(1);
             MtpInterface::Enable(1, 2);
             MtpInterface::SetSystem(1);
-            const UbLifecycleLeaseIdentity lease =
-                UbLifecycleCoordinator::GetOrCreate(
-                    NodeList::GetNode(endpoint.identity.ownerNodeId))
-                    ->AcquireLease(endpoint.identity,
-                                   UbLifecycleLeaseKind::TRANSPORT_WORK,
-                                   endpoint.identity);
+            Ptr<UbLifecycleCoordinator> coordinator = UbLifecycleCoordinator::GetOrCreate(
+                NodeList::GetNode(endpoint.identity.ownerNodeId));
+            const UbLifecycleLeaseIdentity lease = coordinator->AcquireLease(
+                endpoint.identity,
+                UbLifecycleLeaseKind::TRANSPORT_WORK,
+                endpoint.identity);
             if (endpoint.manager->DestroyTp(endpoint.tpn) != UbDestroyStatus::PENDING)
             {
-                std::_Exit(51);
+                std::_Exit(20);
             }
-
             MtpInterface::SetSystem(2);
-            const UbInboundTpResolution inbound =
-                endpoint.manager->ResolveInboundTp(endpoint.peerTpn,
-                                                   endpoint.tpn,
-                                                   endpoint.sourceIp,
-                                                   endpoint.destinationIp,
-                                                   endpoint.priority);
+            const UbInboundTpResolution inbound = endpoint.manager->ResolveInboundTp(
+                endpoint.peerTpn,
+                endpoint.tpn,
+                endpoint.sourceIp,
+                endpoint.destinationIp,
+                endpoint.priority);
             if (inbound.state != UbInboundTpState::INVALID || inbound.endpoint != nullptr)
             {
-                std::_Exit(52);
+                std::_Exit(21);
             }
-
             MtpInterface::SetSystem(1);
-            UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(endpoint.identity.ownerNodeId))
-                ->ReleaseLease(lease);
+            coordinator->ReleaseLease(lease);
         });
         NS_TEST_ASSERT_MSG_EQ(WIFEXITED(drainingWrongOwnerStatus),
                               1,
                               "Wrong-owner draining ingress must not abort");
         NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(drainingWrongOwnerStatus),
                               0,
-                              "Wrong-owner draining ingress must not expose live backing");
+                              "Wrong-owner draining ingress must not expose the endpoint");
     }
 
   private:
-    struct DormantEndpoint
+    struct LiveEndpoint
     {
         Ptr<UbTransportChannelManager> manager;
+        Ptr<UbTransportChannel> tp;
         uint32_t tpn{0};
         uint32_t peerTpn{0};
         Ipv4Address sourceIp;
         Ipv4Address destinationIp;
         UbPriority priority{UB_PRIORITY_DEFAULT};
         UbLifecycleResourceIdentity identity;
-        UbTransportEndpointStorageSnapshot before;
     };
 
-    static DormantEndpoint PrepareDormantEndpoint()
+    static LiveEndpoint PrepareLiveEndpoint()
     {
         Config::Reset();
-        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(true));
-        GlobalValue::Bind("UB_CC_ALGO", StringValue("DCQCN"));
         LocalTpTopology topo = BuildLocalTpTopology();
         Ptr<UbController> sender = topo.sender->GetObject<UbController>();
         Ptr<UbController> receiver = topo.receiver->GetObject<UbController>();
@@ -23294,30 +22230,21 @@ class UbTpResolutionMtpOwnershipReadinessTest : public TestCase
                                                                     kUrmaWriteRegressionPriority);
         if (receiverTpns.size() != 1)
         {
-            std::_Exit(10);
+            std::_Exit(30);
         }
-        DormantEndpoint endpoint;
+        LiveEndpoint endpoint;
         endpoint.manager = receiver->GetTransportChannelManager();
         endpoint.tpn = receiverTpns[0].first;
-        Ptr<UbTransportChannel> tp = endpoint.manager->CreateReservedTpEndpoint(endpoint.tpn);
-        if (tp == nullptr)
+        endpoint.tp = endpoint.manager->CreateReservedTpEndpoint(endpoint.tpn);
+        if (endpoint.tp == nullptr)
         {
-            std::_Exit(11);
+            std::_Exit(31);
         }
-        endpoint.peerTpn = tp->GetDestTpn();
-        endpoint.sourceIp = tp->GetDip();
-        endpoint.destinationIp = tp->GetSip();
-        endpoint.priority = static_cast<UbPriority>(tp->GetPriority());
-        endpoint.identity = tp->GetLifecycleOwner();
-        if (!endpoint.manager->ReclaimBackingState(endpoint.tpn))
-        {
-            std::_Exit(12);
-        }
-        endpoint.before = endpoint.manager->GetStorageSnapshot();
-        if (endpoint.before.liveBackingObjects != 0 || endpoint.before.dormantRecords != 1)
-        {
-            std::_Exit(13);
-        }
+        endpoint.peerTpn = endpoint.tp->GetDestTpn();
+        endpoint.sourceIp = endpoint.tp->GetDip();
+        endpoint.destinationIp = endpoint.tp->GetSip();
+        endpoint.priority = static_cast<UbPriority>(endpoint.tp->GetPriority());
+        endpoint.identity = endpoint.tp->GetLifecycleOwner();
         return endpoint;
     }
 };
@@ -23374,194 +22301,6 @@ class UbTpnAllocationBoundaryTest : public TestCase
                               SIGABRT,
                               "An occupied final wire TPN must fail with SIGABRT");
 #endif
-    }
-};
-
-class UbGlobalTpBackingPeakTracksConcurrentOwnersTest : public TestCase
-{
-  public:
-    UbGlobalTpBackingPeakTracksConcurrentOwnersTest()
-        : TestCase("UnifiedBus - global TP backing peak tracks concurrent owners")
-    {
-    }
-
-  private:
-    void DoRun() override
-    {
-        Config::Reset();
-        utils::UbUtils::Get()->Destroy();
-        LocalTpTopology topo = BuildLocalTpTopology();
-        Ptr<UbController> sender = topo.sender->GetObject<UbController>();
-        Ptr<UbController> receiver = topo.receiver->GetObject<UbController>();
-        sender->GetTpConnManager()->ReserveTpnsForTraffic(true,
-                                                          topo.sender->GetId(),
-                                                          topo.receiver->GetId(),
-                                                          kUrmaWriteRegressionPriority);
-        const auto senderTpns =
-            sender->GetTpConnManager()->GetTpnsByPeerNodePriority(topo.sender->GetId(),
-                                                                  topo.receiver->GetId(),
-                                                                  kUrmaWriteRegressionPriority);
-        const auto receiverTpns =
-            receiver->GetTpConnManager()->GetTpnsByPeerNodePriority(topo.receiver->GetId(),
-                                                                    topo.sender->GetId(),
-                                                                    kUrmaWriteRegressionPriority);
-        NS_TEST_ASSERT_MSG_EQ(senderTpns.size(), 1u, "Expected one sender reservation");
-        NS_TEST_ASSERT_MSG_EQ(receiverTpns.size(), 1u, "Expected one receiver reservation");
-
-        Ptr<UbTransportChannelManager> senderManager = sender->GetTransportChannelManager();
-        Ptr<UbTransportChannelManager> receiverManager = receiver->GetTransportChannelManager();
-        NS_TEST_ASSERT_MSG_NE(senderManager->CreateReservedTpEndpoint(senderTpns[0].first),
-                              nullptr,
-                              "Sender backing should materialize first");
-        utils::UbRuntimeStorageSnapshot snapshot = utils::UbUtils::CaptureRuntimeStorageSnapshot();
-        NS_TEST_ASSERT_MSG_EQ(snapshot.liveTpBackingObjects,
-                              1u,
-                              "Only the sender backing should be live initially");
-        NS_TEST_ASSERT_MSG_EQ(snapshot.peakLiveTpBackingObjects,
-                              1u,
-                              "The first owner should establish a global peak of one");
-
-        NS_TEST_ASSERT_MSG_EQ(
-            senderManager->ReclaimBackingState(senderTpns[0].first),
-            true,
-            "The idle sender backing should reclaim before receiver materialization");
-        snapshot = utils::UbUtils::CaptureRuntimeStorageSnapshot();
-        NS_TEST_ASSERT_MSG_EQ(snapshot.liveTpBackingObjects,
-                              0u,
-                              "No backing should remain live between staggered owners");
-        NS_TEST_ASSERT_MSG_EQ(snapshot.peakLiveTpBackingObjects,
-                              1u,
-                              "Reclaim should preserve the prior global peak");
-
-        NS_TEST_ASSERT_MSG_NE(receiverManager->CreateReservedTpEndpoint(receiverTpns[0].first),
-                              nullptr,
-                              "Receiver backing should materialize after sender reclaim");
-        snapshot = utils::UbUtils::CaptureRuntimeStorageSnapshot();
-        NS_TEST_ASSERT_MSG_EQ(snapshot.liveTpBackingObjects,
-                              1u,
-                              "Only the receiver backing should be live after the stagger");
-        NS_TEST_ASSERT_MSG_EQ(
-            snapshot.peakLiveTpBackingObjects,
-            1u,
-            "Non-overlapping per-owner peaks must not be summed into a false global peak");
-
-        utils::UbUtils::Get()->Destroy();
-        Simulator::Destroy();
-        NS_TEST_ASSERT_MSG_EQ(
-            utils::UbUtils::GetPeakLiveTpBackingObjects(),
-            0u,
-            "Active teardown should reset the global peak after the final release");
-        utils::UbUtils::Get()->Destroy();
-        Config::Reset();
-    }
-};
-
-class UbDormantTpBackingPreservesCaqmStateTest : public TestCase
-{
-  public:
-    UbDormantTpBackingPreservesCaqmStateTest()
-        : TestCase("UnifiedBus - dormant TP backing preserves CAQM state")
-    {
-    }
-
-    void DoRun() override
-    {
-        Config::Reset();
-        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(true));
-        GlobalValue::Bind("UB_CC_ALGO", StringValue("CAQM"));
-        LocalTpTopology topo = BuildLocalTpTopology();
-        Ptr<UbController> sender = topo.sender->GetObject<UbController>();
-        Ptr<UbController> receiver = topo.receiver->GetObject<UbController>();
-        sender->GetTpConnManager()->ReserveTpnsForTraffic(true,
-                                                          topo.sender->GetId(),
-                                                          topo.receiver->GetId(),
-                                                          kUrmaWriteRegressionPriority);
-        const auto receiverTpns =
-            receiver->GetTpConnManager()->GetTpnsByPeerNodePriority(topo.receiver->GetId(),
-                                                                    topo.sender->GetId(),
-                                                                    kUrmaWriteRegressionPriority);
-        NS_TEST_ASSERT_MSG_EQ(receiverTpns.size(), 1u, "Expected one receiver reservation");
-        Ptr<UbTransportChannelManager> manager = receiver->GetTransportChannelManager();
-        Ptr<UbTransportChannel> first = manager->CreateReservedTpEndpoint(receiverTpns[0].first);
-        Ptr<UbHostCaqm> original = DynamicCast<UbHostCaqm>(first->GetCongestionCtrlForTest());
-        NS_TEST_ASSERT_MSG_NE(original, nullptr, "Materialized TP should use configured CAQM");
-        original->ApplyRttSampleForTest(NanoSeconds(321));
-        const Time expectedRtt = original->GetRttForTest();
-        const UbLifecycleResourceIdentity identity = first->GetLifecycleOwner();
-
-        NS_TEST_ASSERT_MSG_EQ(manager->ReclaimBackingState(first->GetTpn()),
-                              true,
-                              "Drained CAQM endpoint should reclaim through the manager");
-        Ptr<UbTransportChannel> second = manager->ResolveLiveTp(first->GetTpn(), identity);
-        NS_TEST_ASSERT_MSG_NE(second, nullptr, "CAQM endpoint should rehydrate synchronously");
-        Ptr<UbHostCaqm> restored = DynamicCast<UbHostCaqm>(second->GetCongestionCtrlForTest());
-        NS_TEST_ASSERT_MSG_NE(restored, nullptr, "Rehydrated TP should retain the CAQM algorithm");
-        NS_TEST_ASSERT_MSG_EQ(restored->GetRttForTest(),
-                              expectedRtt,
-                              "Manager reclaim/resolve should preserve CAQM RTT continuity");
-
-        Simulator::Destroy();
-        Config::Reset();
-    }
-};
-
-class UbDwrrReclaimsEveryReleasedTpInOneRoundTest : public TestCase
-{
-  public:
-    UbDwrrReclaimsEveryReleasedTpInOneRoundTest()
-        : TestCase("UnifiedBus - DWRR reclaims every released TP in one round")
-    {
-    }
-
-    void DoRun() override
-    {
-        Config::Reset();
-        Config::SetDefault("ns3::UbSwitch::FlowControl", EnumValue(FcType::NONE));
-        Config::SetDefault("ns3::UbSwitch::VlScheduler", StringValue("DWRR"));
-        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(true));
-        GlobalValue::Bind("UB_CC_ALGO", StringValue("DCQCN"));
-
-        LocalTpTopology topo = BuildLocalTpTopology();
-        InstallStaticTpPair(topo);
-        InstallAdditionalTpPair(topo, 303, 404);
-
-        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
-        Ptr<UbTransportChannelManager> manager = controller->GetTransportChannelManager();
-        Ptr<UbTransportChannel> first = manager->GetTp(kUrmaWriteRegressionSenderTpn);
-        Ptr<UbTransportChannel> second = manager->GetTp(303);
-        NS_TEST_ASSERT_MSG_NE(first, nullptr, "First DWRR TP should be materialized");
-        NS_TEST_ASSERT_MSG_NE(second, nullptr, "Second DWRR TP should be materialized");
-        const UbLifecycleResourceIdentity firstIdentity = first->GetLifecycleOwner();
-        const UbLifecycleResourceIdentity secondIdentity = second->GetLifecycleOwner();
-
-        first->EnqueueAckForTest(Create<Packet>(64));
-        second->EnqueueAckForTest(Create<Packet>(64));
-        Ptr<UbDwrrAllocator> allocator =
-            DynamicCast<UbDwrrAllocator>(topo.sender->GetObject<UbSwitch>()->GetAllocator());
-        NS_TEST_ASSERT_MSG_NE(allocator, nullptr, "Fixture should use the DWRR allocator");
-        allocator->SetQuantum(first->GetOutPortId(), first->GetIngressPriority(), 1024);
-        Ptr<UbPort> outPort = DynamicCast<UbPort>(topo.sender->GetDevice(first->GetOutPortId()));
-        allocator->AllocateNextPacket(outPort);
-
-        NS_TEST_ASSERT_MSG_EQ(manager->GetTp(first->GetTpn()),
-                              nullptr,
-                              "DWRR should reclaim the first released TP backing");
-        NS_TEST_ASSERT_MSG_EQ(manager->GetTp(second->GetTpn()),
-                              nullptr,
-                              "DWRR should reclaim the final released TP backing");
-        Ptr<UbTransportChannel> resolvedFirst =
-            manager->ResolveLiveTp(first->GetTpn(), firstIdentity);
-        Ptr<UbTransportChannel> resolvedSecond =
-            manager->ResolveLiveTp(second->GetTpn(), secondIdentity);
-        NS_TEST_ASSERT_MSG_NE(resolvedFirst,
-                              nullptr,
-                              "First released TP should retain its exact generation");
-        NS_TEST_ASSERT_MSG_NE(resolvedSecond,
-                              nullptr,
-                              "Second released TP should retain its exact generation");
-
-        Simulator::Destroy();
-        Config::Reset();
     }
 };
 
@@ -26337,7 +25076,7 @@ class UbAllocatorSingleRetriggerOwnershipTest : public TestCase
                               "A single retrigger must retain one pending ownership handle");
         NS_TEST_ASSERT_MSG_EQ(allocator->HasPendingOrActiveWork(queue),
                               true,
-                              "A single pending retrigger must block owner-local reclaim");
+                              "A single pending retrigger must remain visible as owner-local work");
 
         Simulator::Run();
 
@@ -26350,7 +25089,7 @@ class UbAllocatorSingleRetriggerOwnershipTest : public TestCase
                               "A resolved single retrigger must leave no pending handle");
         NS_TEST_ASSERT_MSG_EQ(allocator->HasPendingOrActiveWork(queue),
                               false,
-                              "A resolved single retrigger must release the reclaim gate");
+                              "A resolved single retrigger must clear owner-local work");
 
         allocator->Dispose();
         Simulator::Destroy();
@@ -26800,100 +25539,6 @@ class UbAllocatorEgressCommitReentrantStopTest : public TestCase
     uint32_t m_expectedForcedResidue;
 };
 
-class UbAllocatorPendingWorkBlocksTpBackingReclaimTest : public TestCase
-{
-  public:
-    UbAllocatorPendingWorkBlocksTpBackingReclaimTest()
-        : TestCase("UnifiedBus - allocator pending work blocks TP backing reclaim until resolve")
-    {
-    }
-
-  private:
-    void DoRun() override
-    {
-        Config::Reset();
-        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(true));
-        GlobalValue::Bind("UB_CC_ALGO", StringValue("DCQCN"));
-        LocalTpTopology topo = BuildLocalTpTopology();
-        Ptr<UbController> sender = topo.sender->GetObject<UbController>();
-        Ptr<UbController> receiver = topo.receiver->GetObject<UbController>();
-        sender->GetTpConnManager()->ReserveTpnsForTraffic(true,
-                                                          topo.sender->GetId(),
-                                                          topo.receiver->GetId(),
-                                                          kUrmaWriteRegressionPriority);
-        const auto receiverTpns =
-            receiver->GetTpConnManager()->GetTpnsByPeerNodePriority(topo.receiver->GetId(),
-                                                                    topo.sender->GetId(),
-                                                                    kUrmaWriteRegressionPriority);
-        NS_TEST_ASSERT_MSG_EQ(receiverTpns.size(), 1u, "Expected one receiver reservation");
-        const uint32_t tpn = receiverTpns[0].first;
-        Ptr<UbTransportChannelManager> manager = receiver->GetTransportChannelManager();
-        Ptr<UbTransportChannel> tp = manager->CreateReservedTpEndpoint(tpn);
-        NS_TEST_ASSERT_MSG_NE(tp, nullptr, "Reserved endpoint should materialize");
-        NS_TEST_ASSERT_MSG_EQ(tp->IsSafeForBackingReclaim(),
-                              true,
-                              "The TP must be otherwise drained before testing allocator ownership");
-
-        const UbLifecycleResourceIdentity identity = tp->GetLifecycleOwner();
-        NS_TEST_ASSERT_MSG_EQ(manager->ReclaimBackingState(tpn),
-                              true,
-                              "The no-pending control must reclaim the otherwise-quiescent endpoint");
-        tp = manager->CreateReservedTpEndpoint(tpn);
-        NS_TEST_ASSERT_MSG_NE(tp, nullptr, "The control endpoint should rehydrate for treatment");
-        NS_TEST_ASSERT_MSG_EQ(tp->GetLifecycleOwner(),
-                              identity,
-                              "Control rehydration must preserve the endpoint generation");
-        NS_TEST_ASSERT_MSG_EQ(tp->IsSafeForBackingReclaim(),
-                              true,
-                              "The rehydrated treatment endpoint must remain otherwise quiescent");
-
-        Ptr<UbSwitchAllocator> allocator = topo.receiver->GetObject<UbSwitch>()->GetAllocator();
-        Ptr<UbPort> outPort = DynamicCast<UbPort>(topo.receiver->GetDevice(tp->GetOutPortId()));
-        NS_TEST_ASSERT_MSG_NE(outPort, nullptr, "The TP output port must resolve on its owner node");
-        allocator->ScheduleTriggerAllocator(outPort);
-
-        NS_TEST_ASSERT_MSG_EQ(allocator->HasPendingOrActiveWork(tp),
-                              true,
-                              "The pending retrigger must expose allocator work for the TP output port");
-        const UbTpQuiescenceAssessment pendingAssessment =
-            manager->AssessTpQuiescence(tpn, UbTeardownIntent::BACKING_RECLAIM);
-        NS_TEST_ASSERT_MSG_EQ(pendingAssessment.HasBlocker(UbTpQuiescenceBlocker::ALLOCATOR_WORK),
-                              true,
-                              "Allocator pending work should produce its typed reclaim blocker");
-        NS_TEST_ASSERT_MSG_EQ(pendingAssessment.diagnostics.allocatorWork,
-                              true,
-                              "Assessment diagnostics should expose allocator ownership");
-        NS_TEST_ASSERT_MSG_EQ(manager->ReclaimBackingState(tpn),
-                              false,
-                              "Allocator pending work must explicitly reject TP backing reclaim");
-        NS_TEST_ASSERT_MSG_EQ(manager->GetTp(tpn),
-                              tp,
-                              "Rejected allocator-gated reclaim must retain the same TP backing");
-
-        Simulator::Stop(NanoSeconds(11));
-        Simulator::Run();
-
-        NS_TEST_ASSERT_MSG_EQ(allocator->HasPendingOrActiveWork(tp),
-                              false,
-                              "Resolved allocator work must release the TP reclaim gate");
-        const UbTpQuiescenceAssessment resolvedAssessment =
-            manager->AssessTpQuiescence(tpn, UbTeardownIntent::BACKING_RECLAIM);
-        NS_TEST_ASSERT_MSG_EQ(
-            resolvedAssessment.IsAllowed(),
-            true,
-            "The same endpoint should pass assessment after allocator work resolves");
-        NS_TEST_ASSERT_MSG_EQ(manager->ReclaimBackingState(tpn),
-                              true,
-                              "The same drained TP must reclaim after allocator work resolves");
-        NS_TEST_ASSERT_MSG_EQ(manager->GetTp(tpn),
-                              nullptr,
-                              "Successful reclaim must release the live TP backing");
-
-        Simulator::Destroy();
-        Config::Reset();
-    }
-};
-
 class UbAllocatorSamePortRetriggersUseSingleFlightTest : public TestCase
 {
   public:
@@ -26934,7 +25579,7 @@ class UbAllocatorSamePortRetriggersUseSingleFlightTest : public TestCase
         queue->SetOutPortId(kOutPort);
         NS_TEST_ASSERT_MSG_EQ(allocator->HasPendingOrActiveWork(queue),
                               true,
-                              "The shared pending retrigger must conservatively block reclaim");
+                              "The shared pending retrigger must remain visible as owner-local work");
 
         allocator->Dispose();
         NS_TEST_ASSERT_MSG_EQ(allocator->GetForcedEventResidueForTest(),
@@ -30268,8 +28913,6 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbAllocatorSingleRetriggerOwnershipTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorMultipleOutputPortsKeepOwnerLocalPendingWorkTest(),
                 TestCase::Duration::QUICK);
-    AddTestCase(new UbAllocatorPendingWorkBlocksTpBackingReclaimTest(),
-                TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorRunningCallbackForcedStopReportsActiveResidueTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorSelectionReentrantStopTest("RR", "SP", 1),
@@ -30425,8 +29068,6 @@ UbTpReservationTestSuite::UbTpReservationTestSuite()
     AddTestCase(new UbUnreservedReceiverTpnDoesNotMaterializeTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbExplicitTpDestroyDrainsAndRematerializesTest(),
                 TestCase::Duration::QUICK);
-    AddTestCase(new UbDormantTpBackingReclaimsAndResolvesSameGenerationTest(),
-                TestCase::Duration::QUICK);
     AddTestCase(new UbTpQuiescenceAssessmentReportsTypedBlockersTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTpQuiescenceAssessmentReportsTransactionReferencesTest(),
                 TestCase::Duration::QUICK);
@@ -30434,9 +29075,6 @@ UbTpReservationTestSuite::UbTpReservationTestSuite()
     AddTestCase(new UbTpResolutionMtpOwnershipReadinessTest(), TestCase::Duration::QUICK);
 #endif
     AddTestCase(new UbTpnAllocationBoundaryTest(), TestCase::Duration::QUICK);
-    AddTestCase(new UbGlobalTpBackingPeakTracksConcurrentOwnersTest(), TestCase::Duration::QUICK);
-    AddTestCase(new UbDormantTpBackingPreservesCaqmStateTest(), TestCase::Duration::QUICK);
-    AddTestCase(new UbDwrrReclaimsEveryReleasedTpInOneRoundTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbExplicitConnectionDestroyAggregatesBothEndpointsTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbExplicitConnectionDestroyDrainsAdmittedWriteTest(),
@@ -30952,10 +29590,8 @@ static UbFlowControlTestSuite g_ubFlowControlTestSuite;
 UbCongestionControlTestSuite::UbCongestionControlTestSuite()
     : TestSuite("unified-bus-congestion-control", Type::UNIT)
 {
-    AddTestCase(new UbCongestionControlDormancyDefaultsFailClosedTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnHostAckCeTphDefaultTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCaqmHostRttUsesSmoothedEstimateTest(), TestCase::Duration::QUICK);
-    AddTestCase(new UbCaqmDormancyPreservesContinuityTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnSwitchMarksFecnTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnSwitchNoMarkPreservesPacketHeadersTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnSwitchMarksAboveKmaxEvenWhenPmaxIsZeroTest(), TestCase::Duration::QUICK);
@@ -30980,8 +29616,6 @@ UbCongestionControlTestSuite::UbCongestionControlTestSuite()
     AddTestCase(new UbDcqcnCnpCutRescalesOutstandingPacingDebtTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnCompletedFlowReleasesHostActiveSlotTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnIdleFlowCancelsRecoveryStateTest(), TestCase::Duration::QUICK);
-    AddTestCase(new UbDcqcnDormancyPreservesIdleResetAndCnpCooldownTest(),
-                TestCase::Duration::QUICK);
 }
 
 static UbCongestionControlTestSuite g_ubCongestionControlTestSuite;
@@ -31041,8 +29675,6 @@ UbSwitchVoqTestSuite::UbSwitchVoqTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorSingleRetriggerOwnershipTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorMultipleOutputPortsKeepOwnerLocalPendingWorkTest(),
-                TestCase::Duration::QUICK);
-    AddTestCase(new UbAllocatorPendingWorkBlocksTpBackingReclaimTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorRunningCallbackForcedStopReportsActiveResidueTest(),
                 TestCase::Duration::QUICK);
@@ -32144,18 +30776,6 @@ class UbQuickExampleRuntimeStorageSnapshotSystemTest : public TestCase
         NS_TEST_ASSERT_MSG_NE(csv.find("1,runtime,reserved_endpoint_slots,,"),
                               std::string::npos,
                               "Runtime storage should expose unmaterialized reservation slots");
-        NS_TEST_ASSERT_MSG_NE(csv.find("1,runtime,live_tp_backing_objects,,"),
-                              std::string::npos,
-                              "Runtime storage should expose live TP backing objects");
-        NS_TEST_ASSERT_MSG_NE(csv.find("1,runtime,dormant_tp_records,,"),
-                              std::string::npos,
-                              "Runtime storage should expose dormant TP records");
-        NS_TEST_ASSERT_MSG_NE(csv.find("1,runtime,tp_backing_rehydrations,,"),
-                              std::string::npos,
-                              "Runtime storage should expose successful TP backing rehydrations");
-        NS_TEST_ASSERT_MSG_NE(csv.find("1,runtime,peak_live_tp_backing_objects,,"),
-                              std::string::npos,
-                              "Runtime storage should expose the live TP backing peak");
         NS_TEST_ASSERT_MSG_NE(csv.find("1,runtime,task_scoped_jetties,,"),
                               std::string::npos,
                               "Runtime storage should expose task-scoped owner records");

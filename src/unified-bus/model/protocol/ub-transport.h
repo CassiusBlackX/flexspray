@@ -32,58 +32,6 @@ class UbWqe;
 class UbWqeSegment;
 class UbJetty;
 
-struct UbTransportDormantState
-{
-    UbTransportDormantState() = default;
-    UbTransportDormantState(const UbTransportDormantState&) = delete;
-    UbTransportDormantState& operator=(const UbTransportDormantState&) = delete;
-    UbTransportDormantState(UbTransportDormantState&&) = default;
-    UbTransportDormantState& operator=(UbTransportDormantState&&) = default;
-
-    uint32_t nodeId{0};
-    uint32_t src{0};
-    uint32_t dest{0};
-    uint32_t tpn{0};
-    uint32_t dstTpn{0};
-    UbLifecycleResourceIdentity lifecycleIdentity;
-    uint64_t size{0};
-    uint16_t priority{0};
-    uint16_t sport{0};
-    uint16_t dport{0};
-    Ipv4Address sip;
-    Ipv4Address dip;
-    TypeId congestionControlType;
-    std::unique_ptr<UbCongestionControlDormancyState> congestionControlState;
-    uint64_t psnSndNxt{0};
-    uint64_t psnSndUna{0};
-    uint64_t psnRecvNxt{0};
-    uint64_t maxRcvPsn{0};
-    bool hasReceivedAnyPsn{false};
-    uint64_t tpMsnCnt{0};
-    uint64_t tpPsnCnt{0};
-    uint32_t psnOooThreshold{0};
-    uint64_t recvPsnWindowBase{0};
-    uint32_t recvPsnWindowSize{0};
-    std::vector<uint64_t> recvPsnWindowMarkedSequences;
-    std::map<uint32_t, uint64_t> inboundTpMsnReferences;
-    std::map<std::pair<uint32_t, uint32_t>, uint32_t> inboundTaSsnReferences;
-    bool tpFullFlag{false};
-    bool sendWindowLimited{false};
-    uint64_t defaultMaxWqeSegNum{0};
-    uint64_t defaultMaxInflightPacketSize{0};
-    RoutingType routingType{RoutingType::PER_FLOW_SHORTEST_PATHS};
-    uint16_t lbHashSalt{0};
-    bool retransEnabled{false};
-    Time baseRto;
-    uint16_t maxRetransAttempts{0};
-    uint16_t retransExponentFactor{0};
-    UbRetransTimeoutMode retransTimeoutMode{UbRetransTimeoutMode::DYNAMIC};
-    UbRetransmissionMode retransmissionMode{UbRetransmissionMode::GBN};
-    uint32_t selectiveAckBitmapBits{0};
-    bool fastRetransEnabled{false};
-    bool selectiveMarkPsnEnabled{false};
-};
-
 struct UbTransportQuiescenceSnapshot
 {
     uint64_t pendingAckPackets{0};
@@ -94,10 +42,6 @@ struct UbTransportQuiescenceSnapshot
     uint64_t bufferedInboundPackets{0};
     bool hasUnacknowledgedPsn{false};
     bool retransmissionTimerRunning{false};
-    bool outstandingRetransmissionState{false};
-    bool congestionControlPresent{false};
-    UbCongestionControlDormancyEligibility congestionControlDormancyEligibility{
-        UbCongestionControlDormancyEligibility::INELIGIBLE};
 };
 
 enum class UbTpgMemberMutationStatus : uint8_t
@@ -199,12 +143,7 @@ public:
     bool IsEmpty() override;
     bool IsLimited() override;
     bool IsSafeForExplicitDestroy() const;
-    bool IsSafeForBackingReclaim() const;
     UbTransportQuiescenceSnapshot GetQuiescenceSnapshot() const;
-    std::unique_ptr<UbTransportDormantState> SnapshotDormantState() const;
-    bool RestoreDormantState(const UbTransportDormantState& state,
-                             Ptr<UbCongestionControl> congestionCtrl);
-    void ReleaseBackingForDormancy();
     void FreezeNewWork();
     void PrepareForExplicitDestroy();
     void SetLifecycleStateChangedCallback(Callback<void, uint32_t> callback);

@@ -8,7 +8,6 @@
 #include "ns3/ub-controller.h"
 #include "ns3/ub-port.h"
 #include "ns3/ub-switch.h"
-#include "ns3/ub-transport-channel-manager.h"
 
 #include <algorithm>
 #include <limits>
@@ -119,33 +118,12 @@ void UbSwitchAllocator::FinalizeDisposeStorage()
     m_ingressSources.clear();
     m_isRunning.clear();
     m_oneMoreRound.clear();
-    m_transportChannelManager = nullptr;
     m_deferredDisposeCleanup = false;
 }
 
 void UbSwitchAllocator::InitializePortEventState(uint32_t portsNum)
 {
     m_portEventState.resize(portsNum);
-    Ptr<Node> node =
-        m_nodeId < NodeList::GetNNodes() ? NodeList::GetNode(m_nodeId) : nullptr;
-    Ptr<UbController> controller = node == nullptr ? nullptr : node->GetObject<UbController>();
-    m_transportChannelManager =
-        controller == nullptr ? nullptr : controller->GetTransportChannelManager();
-}
-
-void
-UbSwitchAllocator::TryReclaimReleasedTp(Ptr<UbIngressQueue> ingressQueue)
-{
-    if (m_transportChannelManager == nullptr ||
-        !m_transportChannelManager->IsAutomaticBackingReclaimEnabled())
-    {
-        return;
-    }
-    Ptr<UbTransportChannel> tp = DynamicCast<UbTransportChannel>(ingressQueue);
-    if (tp != nullptr && tp->IsSafeForBackingReclaim())
-    {
-        m_transportChannelManager->ReclaimBackingState(tp->GetTpn());
-    }
 }
 
 void UbSwitchAllocator::ScheduleAllocation(Ptr<UbPort> outPort)
@@ -383,49 +361,6 @@ void UbSwitchAllocator::RegisterUbIngressQueue(Ptr<UbIngressQueue> ingressQueue,
     queues.insert(insertAt, ingressQueue);
 }
 
-Ptr<UbIngressQueue>
-UbSwitchAllocator::ReplaceUbIngressQueueWithEmptyPlaceholder(Ptr<UbIngressQueue> ingressQueue)
-{
-    if (ingressQueue == nullptr)
-    {
-        return nullptr;
-    }
-    Ptr<UbIngressQueue> placeholder = CreateObject<UbIngressQueue>();
-    placeholder->SetOutPortId(ingressQueue->GetOutPortId());
-    placeholder->SetInPortId(ingressQueue->GetInPortId());
-    placeholder->SetIngressPriority(ingressQueue->GetIngressPriority());
-    return ReplaceUbIngressQueue(ingressQueue, placeholder) ? placeholder : nullptr;
-}
-
-bool
-UbSwitchAllocator::ReplaceUbIngressQueue(Ptr<UbIngressQueue> expected,
-                                         Ptr<UbIngressQueue> replacement)
-{
-    if (expected == nullptr || replacement == nullptr)
-    {
-        return false;
-    }
-    const uint32_t outPortId = expected->GetOutPortId();
-    if (outPortId < m_portEventState.size() &&
-        m_portEventState[outPortId].activeIngressQueue == expected)
-    {
-        return false;
-    }
-    for (auto& byPriority : m_ingressSources)
-    {
-        for (auto& queues : byPriority)
-        {
-            const auto queue = std::find(queues.begin(), queues.end(), expected);
-            if (queue != queues.end())
-            {
-                *queue = replacement;
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
 uint32_t
 UbSwitchAllocator::GetIngressQueueSlotCount(uint32_t outPort, uint32_t priority) const
 {
@@ -607,7 +542,6 @@ void UbRoundRobinAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
                          << " outPortId=" << outPortId
                          << " bytes=" << nextPacketBytes);
             ClearActiveIngressQueue(outPortId);
-            TryReclaimReleasedTp(ingressQueue);
             m_isRunning[outPortId] = false;
             return;
         }
@@ -648,7 +582,6 @@ void UbRoundRobinAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
         }
     }
     ClearActiveIngressQueue(outPortId);
-    TryReclaimReleasedTp(ingressQueue);
     m_isRunning[outPortId] = false;
     if (m_enableDirectAllocationCompletion) {
         if (!outPort->GetUbQueue()->IsEmpty()) {
@@ -859,13 +792,7 @@ void UbDwrrAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
                     break;
                 }
                 auto q = candidate->queue;
-                Ptr<UbIngressQueue> releasedIngressQueue =
-                    m_portEventState[outPortId].activeIngressQueue;
                 SetActiveIngressQueue(q);
-                if (releasedIngressQueue != q)
-                {
-                    TryReclaimReleasedTp(releasedIngressQueue);
-                }
                 ingressQueueSlot = candidate->ingressQueueSlot;
 
                 uint32_t pktSize = q->GetNextPacketSize();
@@ -958,17 +885,12 @@ void UbDwrrAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
     }
 
     if (ingressQueue != nullptr && !sentAny) {
-        Ptr<UbIngressQueue> releasedIngressQueue =
-            m_portEventState[outPortId].activeIngressQueue;
         ClearActiveIngressQueue(outPortId);
-        TryReclaimReleasedTp(releasedIngressQueue);
         ScheduleAllocation(outPort);
         return;
     }
 
-    Ptr<UbIngressQueue> releasedIngressQueue = m_portEventState[outPortId].activeIngressQueue;
     ClearActiveIngressQueue(outPortId);
-    TryReclaimReleasedTp(releasedIngressQueue);
     m_isRunning[outPortId] = false;
     if (m_enableDirectAllocationCompletion) {
         if (!outPort->GetUbQueue()->IsEmpty()) {
