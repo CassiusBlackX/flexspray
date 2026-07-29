@@ -91,8 +91,8 @@ void UbSwitchAllocator::DoDispose()
         if (state.allocationPending) {
             state.allocation.Cancel();
         }
-        for (auto& entry : state.retriggers) {
-            entry.second.Cancel();
+        if (state.retriggerPending) {
+            state.retrigger.Cancel();
         }
         for (auto& entry : state.notifications) {
             entry.second.Cancel();
@@ -174,15 +174,14 @@ void UbSwitchAllocator::ScheduleOwnedRetrigger(uint32_t outPortId, Ptr<UbPort> o
         return;
     }
     auto& state = m_portEventState[outPortId];
-    NS_ABORT_MSG_IF(m_nextEventToken == std::numeric_limits<uint64_t>::max(),
-                    "Allocator event token exhausted");
-    const uint64_t token = ++m_nextEventToken;
-    EventId event = Simulator::ScheduleNow(&UbSwitchAllocator::RunOwnedRetrigger,
-                                           this,
-                                           outPortId,
-                                           token,
-                                           outPort);
-    state.retriggers.emplace_back(token, event);
+    if (state.retriggerPending) {
+        return;
+    }
+    state.retriggerPending = true;
+    state.retrigger = Simulator::ScheduleNow(&UbSwitchAllocator::RunOwnedRetrigger,
+                                             this,
+                                             outPortId,
+                                             outPort);
     ++state.schedulingWorkCount;
 }
 
@@ -237,19 +236,14 @@ void UbSwitchAllocator::RunAllocation(Ptr<UbPort> outPort)
     }
 }
 
-void UbSwitchAllocator::RunOwnedRetrigger(uint32_t outPortId,
-                                          uint64_t token,
-                                          Ptr<UbPort> outPort)
+void UbSwitchAllocator::RunOwnedRetrigger(uint32_t outPortId, Ptr<UbPort> outPort)
 {
     NS_ASSERT_MSG(outPortId < m_portEventState.size(),
                   "Retrigger callback requires retained output-port ownership state");
     auto& state = m_portEventState[outPortId];
-    const auto retrigger = std::find_if(state.retriggers.begin(),
-                                        state.retriggers.end(),
-                                        [token](const auto& entry) { return entry.first == token; });
-    NS_ASSERT(retrigger != state.retriggers.end() && state.schedulingWorkCount > 0);
-    *retrigger = std::move(state.retriggers.back());
-    state.retriggers.pop_back();
+    NS_ASSERT(state.retriggerPending && state.schedulingWorkCount > 0);
+    state.retriggerPending = false;
+    state.retrigger = EventId();
     --state.schedulingWorkCount;
     TriggerAllocator(outPort);
 }
@@ -279,7 +273,8 @@ UbSwitchAllocator::GetPendingEventCountForTest() const
     uint32_t count = m_deadlockPending ? 1u : 0u;
     for (const auto& state : m_portEventState) {
         count += state.allocationPending ? 1u : 0u;
-        count += static_cast<uint32_t>(state.retriggers.size() + state.notifications.size());
+        count += state.retriggerPending ? 1u : 0u;
+        count += static_cast<uint32_t>(state.notifications.size());
     }
     return count;
 }
