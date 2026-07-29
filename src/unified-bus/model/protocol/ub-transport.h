@@ -392,6 +392,8 @@ public:
 
     bool TryAdmitWqeSegment(Ptr<UbWqeSegment> segment);
     bool CanAdmitWqeSegment(Ptr<const UbWqeSegment> segment) const;
+    bool TryContinueAcceptedWqeSegment(Ptr<UbWqeSegment> segment);
+    bool CanContinueAcceptedWqeSegment(Ptr<const UbWqeSegment> segment) const;
     bool IsAcceptingNewWorkForTest() const { return m_isActive; }
     UbWqeSegmentTerminalDisposition TryCancelUnsentWqeSegment(
         Ptr<UbWqeSegment> segment,
@@ -413,6 +415,7 @@ public:
     void EnqueueCnpForTest(Ptr<Packet> p) { m_cnpQ.push(p); }
     void ClearCnpForTest() { while (!m_cnpQ.empty()) { m_cnpQ.pop(); } }
     void ClearWqeSegmentsForTest() { m_wqeSegmentVector.clear(); }
+    void SetMaxQueueSizeForTest(uint64_t size) { m_maxQueueSize = size; }
     void AddRemoteRequestForTest(Ptr<UbWqeSegment> segment) { m_remoteRequest.push_back(segment); }
     void ClearRemoteRequestsForTest() { m_remoteRequest.clear(); }
     void AddInboundTaUnitForTest(uint32_t srcTpn, uint64_t msn);

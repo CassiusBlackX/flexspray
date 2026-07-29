@@ -744,8 +744,6 @@ TpConnectionManager::DestroyConnectionOwned(const UbLifecycleResourceIdentity& i
 {
     const uint32_t ownerTpn = static_cast<uint32_t>(identity.localId);
     Connection connection;
-    bool active1 = false;
-    bool active2 = false;
     {
         std::lock_guard<std::mutex> lock(m_stateLock);
         auto it = m_canonicalConnections.find({m_ownerNodeId, ownerTpn});
@@ -785,8 +783,6 @@ TpConnectionManager::DestroyConnectionOwned(const UbLifecycleResourceIdentity& i
         }
         lifecycle.destroyRequested = true;
         lifecycle.reason = reason;
-        active1 = lifecycle.slot1Materialized;
-        active2 = lifecycle.slot2Materialized;
     }
 
     {
@@ -794,25 +790,12 @@ TpConnectionManager::DestroyConnectionOwned(const UbLifecycleResourceIdentity& i
         ConnectionLifecycleRecord& record =
             m_canonicalConnections.at({m_ownerNodeId, ownerTpn});
         ConnectionLifecycleSidecar& lifecycle = *record.lifecycle;
-        lifecycle.slot1 =
-            active1 ? EndpointSlotState::DRAINING
-                    : (active2 ? EndpointSlotState::DRAINING : EndpointSlotState::RETIRED);
-        lifecycle.slot2 =
-            active2 ? EndpointSlotState::DRAINING
-                    : (active1 ? EndpointSlotState::DRAINING : EndpointSlotState::RETIRED);
+        lifecycle.slot1 = EndpointSlotState::DRAINING;
+        lifecycle.slot2 = EndpointSlotState::DRAINING;
     }
 
-    RequestDestroyNotice(connection, identity, 1, reason, active1);
-    RequestDestroyNotice(connection, identity, 2, reason, active2);
-
-    if (active1)
-    {
-        RequestEndpointDestroy(connection, identity, 1, reason);
-    }
-    if (active2)
-    {
-        RequestEndpointDestroy(connection, identity, 2, reason);
-    }
+    RequestDestroyNotice(connection, identity, 1, reason);
+    RequestDestroyNotice(connection, identity, 2, reason);
     TryFinalizeConnection(identity);
 
     std::lock_guard<std::mutex> lock(m_stateLock);
@@ -826,31 +809,12 @@ void
 TpConnectionManager::RequestDestroyNotice(const Connection& connection,
                                           const UbLifecycleResourceIdentity& identity,
                                           uint8_t slot,
-                                          UbDestroyReason reason,
-                                          bool ownerObservedActive)
+                                          UbDestroyReason reason)
 {
     UbLifecycleControlRecord control;
     control.sourceNodeId = m_ownerNodeId;
     control.targetNodeId = slot == 1 ? connection.node1 : connection.node2;
     control.operation = UbLifecycleControlOperation::CONNECTION_DESTROY_NOTICE;
-    control.resource = identity;
-    control.nodeId = control.targetNodeId;
-    control.tpn = slot == 1 ? connection.tpn1 : connection.tpn2;
-    control.requestId = slot | (ownerObservedActive ? 0x100 : 0);
-    control.value = static_cast<uint64_t>(reason);
-    UbParallelLifecycleAdapter::RouteControl(control);
-}
-
-void
-TpConnectionManager::RequestEndpointDestroy(const Connection& connection,
-                                            const UbLifecycleResourceIdentity& identity,
-                                            uint8_t slot,
-                                            UbDestroyReason reason)
-{
-    UbLifecycleControlRecord control;
-    control.sourceNodeId = m_ownerNodeId;
-    control.targetNodeId = slot == 1 ? connection.node1 : connection.node2;
-    control.operation = UbLifecycleControlOperation::ENDPOINT_DESTROY_REQUEST;
     control.resource = identity;
     control.nodeId = control.targetNodeId;
     control.tpn = slot == 1 ? connection.tpn1 : connection.tpn2;
@@ -899,19 +863,11 @@ TpConnectionManager::OnEndpointDestroyed(const UbLifecycleResourceIdentity& iden
         {
             lifecycle.slot1 = EndpointSlotState::RETIRED;
             lifecycle.slot1Materialized = false;
-            if (lifecycle.slot2 == EndpointSlotState::DRAINING && !lifecycle.slot2Materialized)
-            {
-                lifecycle.slot2 = EndpointSlotState::RETIRED;
-            }
         }
         else
         {
             lifecycle.slot2 = EndpointSlotState::RETIRED;
             lifecycle.slot2Materialized = false;
-            if (lifecycle.slot1 == EndpointSlotState::DRAINING && !lifecycle.slot1Materialized)
-            {
-                lifecycle.slot1 = EndpointSlotState::RETIRED;
-            }
         }
     }
     TryFinalizeConnection(identity);
@@ -1083,7 +1039,9 @@ TpConnectionManager::ApplyLifecycleControl(const UbLifecycleControlRecord& contr
                                                control.requestId) != UbDestroyStatus::NOT_FOUND;
     case UbLifecycleControlOperation::CONNECTION_DESTROY_NOTICE:
     {
-        if (!matchesLocalView())
+        Connection connection;
+        if (!manager->TryGetLocalConnection(control.nodeId, control.tpn, connection) ||
+            GetConnectionIdentity(connection) != control.resource)
         {
             return false;
         }
@@ -1091,16 +1049,18 @@ TpConnectionManager::ApplyLifecycleControl(const UbLifecycleControlRecord& contr
             std::lock_guard<std::mutex> lock(manager->m_stateLock);
             manager->m_destroyRequestedViews.insert({control.nodeId, control.tpn});
         }
-        const bool ownerObservedActive = (control.requestId & 0x100) != 0;
-        const uint8_t slot = static_cast<uint8_t>(control.requestId & 0xff);
-        if (!ownerObservedActive &&
-            controller->GetTransportChannelManager()->PeekLiveTp(control.tpn) != nullptr)
+        const uint8_t slot = static_cast<uint8_t>(control.requestId);
+        const UbDestroyStatus status = controller->GetTransportChannelManager()->DestroyTp(
+            control.tpn,
+            static_cast<UbDestroyReason>(control.value),
+            MakeCallback(&TpConnectionManager::OnLocalEndpointDestroyed, PeekPointer(manager))
+                .Bind(control.resource, slot));
+        if (status == UbDestroyStatus::NOT_FOUND)
         {
-            controller->GetTransportChannelManager()->DestroyTp(
-                control.tpn,
-                static_cast<UbDestroyReason>(control.value),
-                MakeCallback(&TpConnectionManager::OnLocalEndpointDestroyed, PeekPointer(manager))
-                    .Bind(control.resource, slot));
+            manager->OnLocalEndpointDestroyed(control.resource,
+                                              slot,
+                                              {},
+                                              UbDestroyStatus::COMPLETED);
         }
         return true;
     }
