@@ -6,22 +6,22 @@ CTP, or LDST module, without introducing a replacement global ledger or generic 
 
 **Blocked by:** 01 — Resolve live, closing, retired, and invalid TP ingress owner-locally.
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] Jetty destroy closes new WQE admission and derives readiness from accepted WQEs, transaction
+- [x] Jetty destroy closes new WQE admission and derives readiness from accepted WQEs, transaction
       operations, owner-tracked actions, and bindings.
-- [ ] RTP TPG destroy and last-member removal freeze new selection and derive readiness from actual
+- [x] RTP TPG destroy and last-member removal freeze new selection and derive readiness from actual
       transaction operations, admitted segments, selection activity, admission bindings, and member
       records.
-- [ ] RTP TPG use and binding leases from the global lifecycle coordinator are removed without
+- [x] RTP TPG use and binding leases from the global lifecycle coordinator are removed without
       changing group membership, selection, or member TP lifetime behavior.
-- [ ] CTP retains its existing operation, pending/outstanding segment, delayed completion, queue,
+- [x] CTP retains its existing operation, pending/outstanding segment, delayed completion, queue,
       and congestion behavior without global packet ownership state.
-- [ ] LDST retains its task map, segment map, thread queue, ACK, scheduled-action, and completion
+- [x] LDST retains its task map, segment map, thread queue, ACK, scheduled-action, and completion
       behavior without using a global in-flight packet count.
-- [ ] WQEs, transaction segments, allocator work, timers, packets, and queue entries remain finite
+- [x] WQEs, transaction segments, allocator work, timers, packets, and queue entries remain finite
       owner state and do not acquire customer-facing destroy interfaces.
-- [ ] No universal lifecycle participant, root-operation identity, lineage ledger, or manual generic
+- [x] No universal lifecycle participant, root-operation identity, lineage ledger, or manual generic
       acquire/release framework is introduced.
-- [ ] Focused Jetty, TPG, CTP, and LDST external-behavior tests pass with byte-identical frozen
+- [x] Focused Jetty, TPG, CTP, and LDST external-behavior tests pass with byte-identical frozen
       canonical outputs.
