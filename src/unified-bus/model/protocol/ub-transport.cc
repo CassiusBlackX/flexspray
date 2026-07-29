@@ -2380,13 +2380,6 @@ UbTransportChannel::IsSafeForExplicitDestroy() const
            (m_retrans == nullptr || !m_retrans->HasTimerRunning());
 }
 
-bool
-UbTransportChannel::IsSafeForBackingReclaim() const
-{
-    return IsSafeForExplicitDestroy() &&
-           (m_retrans == nullptr || !m_retrans->HasOutstandingRetransmissionState());
-}
-
 UbTransportQuiescenceSnapshot
 UbTransportChannel::GetQuiescenceSnapshot() const
 {
@@ -2399,13 +2392,6 @@ UbTransportChannel::GetQuiescenceSnapshot() const
     snapshot.bufferedInboundPackets = m_bufferedInboundPackets.size();
     snapshot.hasUnacknowledgedPsn = m_psnSndUna != m_psnSndNxt;
     snapshot.retransmissionTimerRunning = m_retrans != nullptr && m_retrans->HasTimerRunning();
-    snapshot.outstandingRetransmissionState =
-        m_retrans != nullptr && m_retrans->HasOutstandingRetransmissionState();
-    snapshot.congestionControlPresent = m_congestionCtrl != nullptr;
-    if (m_congestionCtrl != nullptr)
-    {
-        snapshot.congestionControlDormancyEligibility = m_congestionCtrl->GetDormancyEligibility();
-    }
     return snapshot;
 }
 
@@ -2419,149 +2405,6 @@ void
 UbTransportChannel::AddBufferedInboundPacketForTest(uint64_t psn)
 {
     m_bufferedInboundPackets.emplace(psn, BufferedInboundPacket{});
-}
-
-std::unique_ptr<UbTransportDormantState>
-UbTransportChannel::SnapshotDormantState() const
-{
-    if (!IsSafeForBackingReclaim() || m_congestionCtrl == nullptr ||
-        m_congestionCtrl->GetDormancyEligibility() !=
-            UbCongestionControlDormancyEligibility::ELIGIBLE)
-    {
-        return nullptr;
-    }
-    std::unique_ptr<UbCongestionControlDormancyState> congestionControlState =
-        m_congestionCtrl->SnapshotDormancyState();
-    if (congestionControlState == nullptr)
-    {
-        return nullptr;
-    }
-
-    auto state = std::make_unique<UbTransportDormantState>();
-    state->nodeId = m_nodeId;
-    state->src = m_src;
-    state->dest = m_dest;
-    state->tpn = m_tpn;
-    state->dstTpn = m_dstTpn;
-    state->lifecycleIdentity = m_packetLifecycleOwner;
-    state->size = m_size;
-    state->priority = m_priority;
-    state->sport = m_sport;
-    state->dport = m_dport;
-    state->sip = m_sip;
-    state->dip = m_dip;
-    state->congestionControlType = m_congestionCtrl->GetInstanceTypeId();
-    state->congestionControlState = std::move(congestionControlState);
-    state->psnSndNxt = m_psnSndNxt;
-    state->psnSndUna = m_psnSndUna;
-    state->psnRecvNxt = m_psnRecvNxt;
-    state->maxRcvPsn = m_maxRcvPsn;
-    state->hasReceivedAnyPsn = m_hasReceivedAnyPsn;
-    state->tpMsnCnt = m_tpMsnCnt;
-    state->tpPsnCnt = m_tpPsnCnt;
-    state->psnOooThreshold = m_psnOooThreshold;
-    state->recvPsnWindowBase = m_recvPsnWindow.GetBase();
-    state->recvPsnWindowSize = m_recvPsnWindow.GetWindowSize();
-    state->recvPsnWindowMarkedSequences = m_recvPsnWindow.GetMarkedSequences();
-    state->inboundTpMsnReferences = m_inboundTpMsnReferences;
-    state->inboundTaSsnReferences = m_inboundTaSsnReferences;
-    state->tpFullFlag = m_tpFullFlag;
-    state->sendWindowLimited = m_sendWindowLimited;
-    state->defaultMaxWqeSegNum = m_defaultMaxWqeSegNum;
-    state->defaultMaxInflightPacketSize = m_defaultMaxInflightPacketSize;
-    state->routingType = m_routingType;
-    state->lbHashSalt = m_lbHashSalt;
-    state->retransEnabled = GetRetransEnable();
-    state->baseRto = GetBaseRto();
-    state->maxRetransAttempts = GetMaxRetransAttempts();
-    state->retransExponentFactor = GetRetransExponentFactor();
-    state->retransTimeoutMode = GetRetransTimeoutMode();
-    state->retransmissionMode = GetRetransmissionMode();
-    state->selectiveAckBitmapBits = GetSelectiveAckBitmapBitsConfig();
-    state->fastRetransEnabled = GetFastRetransEnable();
-    state->selectiveMarkPsnEnabled = GetSelectiveMarkPsnEnable();
-    return state;
-}
-
-bool
-UbTransportChannel::RestoreDormantState(const UbTransportDormantState& state,
-                                        Ptr<UbCongestionControl> congestionCtrl)
-{
-    Ptr<Node> node = NodeList::GetNode(state.nodeId);
-    if (node == nullptr || congestionCtrl == nullptr || state.congestionControlState == nullptr ||
-        !UbLifecycleCoordinator::GetOrCreate(node)->IsResourceActive(state.lifecycleIdentity))
-    {
-        return false;
-    }
-
-    m_nodeId = state.nodeId;
-    m_src = state.src;
-    m_dest = state.dest;
-    m_tpn = state.tpn;
-    m_dstTpn = state.dstTpn;
-    m_packetLifecycleOwner = state.lifecycleIdentity;
-    m_size = state.size;
-    m_priority = state.priority;
-    m_sport = state.sport;
-    m_dport = state.dport;
-    SetOutPortId(state.sport);
-    SetInPortId(state.sport);
-    SetIngressPriority(state.priority);
-    m_sip = state.sip;
-    m_dip = state.dip;
-    m_psnSndNxt = state.psnSndNxt;
-    m_psnSndUna = state.psnSndUna;
-    m_psnRecvNxt = state.psnRecvNxt;
-    m_maxRcvPsn = state.maxRcvPsn;
-    m_hasReceivedAnyPsn = state.hasReceivedAnyPsn;
-    m_tpMsnCnt = state.tpMsnCnt;
-    m_tpPsnCnt = state.tpPsnCnt;
-    m_psnOooThreshold = state.psnOooThreshold;
-    m_recvPsnWindow.Resize(state.recvPsnWindowSize);
-    m_recvPsnWindow.Reset(state.recvPsnWindowBase);
-    for (uint64_t sequence : state.recvPsnWindowMarkedSequences)
-    {
-        if (!m_recvPsnWindow.Mark(sequence))
-        {
-            return false;
-        }
-    }
-    m_inboundTpMsnReferences = state.inboundTpMsnReferences;
-    m_inboundTaSsnReferences = state.inboundTaSsnReferences;
-    m_tpFullFlag = state.tpFullFlag;
-    m_sendWindowLimited = state.sendWindowLimited;
-    m_defaultMaxWqeSegNum = state.defaultMaxWqeSegNum;
-    m_defaultMaxInflightPacketSize = state.defaultMaxInflightPacketSize;
-    m_maxQueueSize = m_defaultMaxWqeSegNum;
-    m_maxInflightPacketSize = m_defaultMaxInflightPacketSize;
-    m_routingType = state.routingType;
-    m_lbHashSalt = state.lbHashSalt;
-    SetRetransEnable(state.retransEnabled);
-    SetBaseRto(state.baseRto);
-    SetMaxRetransAttempts(state.maxRetransAttempts);
-    SetRetransExponentFactor(state.retransExponentFactor);
-    SetRetransTimeoutMode(state.retransTimeoutMode);
-    SetRetransmissionMode(state.retransmissionMode);
-    SetSelectiveAckBitmapBits(state.selectiveAckBitmapBits);
-    SetFastRetransEnable(state.fastRetransEnabled);
-    SetSelectiveMarkPsnEnable(state.selectiveMarkPsnEnabled);
-    m_congestionCtrl = congestionCtrl;
-    m_congestionCtrl->OnTpAttached(this);
-    if (!m_congestionCtrl->RestoreDormancyState(*state.congestionControlState))
-    {
-        m_congestionCtrl = nullptr;
-        return false;
-    }
-    return true;
-}
-
-void
-UbTransportChannel::ReleaseBackingForDormancy()
-{
-    NS_ABORT_MSG_IF(!IsSafeForBackingReclaim(), "Cannot release busy TP backing for dormancy");
-    m_isActive = false;
-    m_lifecycleStateChangedCallback = {};
-    Dispose();
 }
 
 void

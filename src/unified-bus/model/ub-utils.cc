@@ -35,16 +35,6 @@ using namespace ns3;
 
 namespace
 {
-struct RuntimeTpBackingTracker
-{
-    std::mutex mutex;
-    uint64_t current{0};
-    uint64_t peak{0};
-    bool resetWhenIdle{false};
-};
-
-RuntimeTpBackingTracker g_runtimeTpBackingTracker;
-
 const char*
 LifecycleResourceKindToString(UbLifecycleResourceKind kind)
 {
@@ -1282,11 +1272,6 @@ UbUtils::CaptureRuntimeStorageSnapshot()
             if (endpoints != nullptr)
             {
                 snapshot.residentTpEndpoints += endpoints->GetCount();
-                const UbTransportEndpointStorageSnapshot endpointStorage =
-                    endpoints->GetStorageSnapshot();
-                snapshot.liveTpBackingObjects += endpointStorage.liveBackingObjects;
-                snapshot.dormantTpRecords += endpointStorage.dormantRecords;
-                snapshot.tpBackingRehydrations += endpointStorage.backingRehydrations;
             }
             Ptr<UbFunction> function = controller->GetUbFunction();
             if (function != nullptr)
@@ -1328,41 +1313,8 @@ UbUtils::CaptureRuntimeStorageSnapshot()
     snapshot.completedTrafficTasks = traffic->GetCompletedTaskCount();
     snapshot.trafficDependencyReferences = traffic->GetDependencyReferenceCount();
     snapshot.traceWriter = GetTraceWriterStorageSnapshot();
-    snapshot.peakLiveTpBackingObjects = GetPeakLiveTpBackingObjects();
     snapshot.simulatorEventCount = Simulator::GetEventCount();
     return snapshot;
-}
-
-void
-UbUtils::NotifyTpBackingMaterialized()
-{
-    std::lock_guard<std::mutex> guard(g_runtimeTpBackingTracker.mutex);
-    NS_ABORT_MSG_IF(g_runtimeTpBackingTracker.current == std::numeric_limits<uint64_t>::max(),
-                    "Global live TP backing count overflow");
-    ++g_runtimeTpBackingTracker.current;
-    g_runtimeTpBackingTracker.peak =
-        std::max(g_runtimeTpBackingTracker.peak, g_runtimeTpBackingTracker.current);
-}
-
-void
-UbUtils::NotifyTpBackingReleased()
-{
-    std::lock_guard<std::mutex> guard(g_runtimeTpBackingTracker.mutex);
-    NS_ABORT_MSG_IF(g_runtimeTpBackingTracker.current == 0,
-                    "Global live TP backing count underflow");
-    --g_runtimeTpBackingTracker.current;
-    if (g_runtimeTpBackingTracker.current == 0 && g_runtimeTpBackingTracker.resetWhenIdle)
-    {
-        g_runtimeTpBackingTracker.peak = 0;
-        g_runtimeTpBackingTracker.resetWhenIdle = false;
-    }
-}
-
-uint64_t
-UbUtils::GetPeakLiveTpBackingObjects()
-{
-    std::lock_guard<std::mutex> guard(g_runtimeTpBackingTracker.mutex);
-    return g_runtimeTpBackingTracker.peak;
 }
 
 void
@@ -1403,10 +1355,6 @@ UbUtils::WriteRuntimeStorageSnapshot(const std::string& outputPath)
           snapshot.secondaryConnectionIndexEntries);
     write("runtime", "resident_tp_endpoints", "", snapshot.residentTpEndpoints);
     write("runtime", "reserved_endpoint_slots", "", snapshot.reservedEndpointSlots);
-    write("runtime", "live_tp_backing_objects", "", snapshot.liveTpBackingObjects);
-    write("runtime", "dormant_tp_records", "", snapshot.dormantTpRecords);
-    write("runtime", "tp_backing_rehydrations", "", snapshot.tpBackingRehydrations);
-    write("runtime", "peak_live_tp_backing_objects", "", snapshot.peakLiveTpBackingObjects);
     write("runtime", "task_scoped_jetties", "", snapshot.taskScopedJetties);
     write("runtime", "reusable_jetties", "", snapshot.reusableJetties);
     write("runtime", "simulator_event_count", "", snapshot.simulatorEventCount);
@@ -1883,16 +1831,6 @@ void UbUtils::Destroy()
     }
     UbLifecycleTrace::Reset();
 
-    std::lock_guard<std::mutex> guard(g_runtimeTpBackingTracker.mutex);
-    if (g_runtimeTpBackingTracker.current == 0)
-    {
-        g_runtimeTpBackingTracker.peak = 0;
-        g_runtimeTpBackingTracker.resetWhenIdle = false;
-    }
-    else
-    {
-        g_runtimeTpBackingTracker.resetWhenIdle = true;
-    }
 }
 
 std::string UbUtils::PrepareTraceDir(const std::string &configPath)
