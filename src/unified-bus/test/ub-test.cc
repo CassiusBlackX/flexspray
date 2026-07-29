@@ -8936,8 +8936,8 @@ class UbLifecycleAtomicWqeSubmissionTest : public TestCase
                               0u,
                               "Submission should remain lazily unsegmented");
         NS_TEST_ASSERT_MSG_EQ(snapshot.activeTransportUseLeases,
-                              1u,
-                              "Accepted WQE should expose one direct-TP use lease");
+                              0u,
+                              "Accepted WQE should not create a global transport-use ledger");
 
         Simulator::Destroy();
         Config::Reset();
@@ -9010,7 +9010,6 @@ class UbLifecycleDuplicateDirectSubmissionTest : public TestCase
                 operation.wqeIdentity != accepted.wqeIdentity ||
                 after.activeWorkLeases != before.activeWorkLeases ||
                 after.activeChildLeases != before.activeChildLeases ||
-                after.activeTransportUseLeases != before.activeTransportUseLeases ||
                 after.retired != before.retired)
             {
                 std::_Exit(5);
@@ -10500,11 +10499,11 @@ class UbLifecycleLiveTpgDestroyReleasesExactBindingTest : public TestCase
         Ptr<UbLifecycleCoordinator> coordinator =
             UbLifecycleCoordinator::GetOrCreate(topo.sender);
         NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(groupJettyIdentity).activeBindingLeases,
-                              1u,
-                              "TPG Jetty should bind the exact group generation once");
+                              0u,
+                              "TPG Jetty binding should not create a global lease");
         NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(directJettyIdentity).activeBindingLeases,
-                              1u,
-                              "Direct Jetty should bind the exact endpoint generation once");
+                              0u,
+                              "Direct Jetty binding should not create a global lease");
 
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(controller->DestroyRtpTpGroup(groupIdentity)),
@@ -10530,7 +10529,7 @@ class UbLifecycleLiveTpgDestroyReleasesExactBindingTest : public TestCase
                               "TPG destroy should clear the exact Jetty transport reference");
         NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(groupJettyIdentity).activeBindingLeases,
                               0u,
-                              "TPG destroy should release the matching Jetty binding lease");
+                              "TPG destroy should leave no global Jetty binding ledger");
         NS_TEST_ASSERT_MSG_NE(transaction->FindRtpTransportReference(directJettyNum),
                               nullptr,
                               "TPG destroy must not clear an unrelated direct binding");
@@ -10538,8 +10537,8 @@ class UbLifecycleLiveTpgDestroyReleasesExactBindingTest : public TestCase
                               directIdentity,
                               "Unrelated direct binding should retain its exact endpoint generation");
         NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(directJettyIdentity).activeBindingLeases,
-                              1u,
-                              "TPG destroy must not release an unrelated direct binding lease");
+                              0u,
+                              "Unrelated direct binding should remain owner-local");
         NS_TEST_ASSERT_MSG_EQ(controller->GetTransportChannelManager()->GetTp(firstTp->GetTpn()),
                               firstTp,
                               "TPG destroy must retain the first member TP");
@@ -10683,8 +10682,8 @@ class UbLifecycleAddTpgMemberRestoresActiveEmptyGroupTest : public TestCase
             UbLifecycleCoordinator::GetOrCreate(topo.sender);
         NS_TEST_ASSERT_MSG_EQ(
             coordinator->GetSnapshot(firstTp->GetLifecycleOwner()).activeBindingLeases,
-            1u,
-            "Added member should own one membership lease");
+            0u,
+            "Added member should not create a global membership lease");
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(transaction->PreflightRtpOperation(*reference)),
             static_cast<uint32_t>(UbRtpOperationPreflightResult::ACCEPTING),
@@ -10697,8 +10696,8 @@ class UbLifecycleAddTpgMemberRestoresActiveEmptyGroupTest : public TestCase
             "Duplicate AddMember must not acquire a second membership lease");
         NS_TEST_ASSERT_MSG_EQ(
             coordinator->GetSnapshot(firstTp->GetLifecycleOwner()).activeBindingLeases,
-            1u,
-            "Duplicate AddMember must preserve one exact membership lease");
+            0u,
+            "Duplicate AddMember must not create a global membership lease");
 
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(controller->DestroyRtpTpGroup(groupIdentity)),
@@ -10839,10 +10838,9 @@ class UbLifecycleLastTpgMemberRemovalWaitsForUseLeaseTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(m_group->GetMemberCount(),
                               0u,
                               "Final assignment should finalize the pending last-member removal");
-        NS_TEST_ASSERT_MSG_EQ(
-            m_coordinator->GetSnapshot(m_groupIdentity).activeTransportUseLeases,
-            0u,
-            "Final assignment should release the exact TPG-use lease");
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->HasRtpTpGroupWork(m_groupIdentity),
+                              false,
+                              "Completed operation should release exact owner-local TPG work");
         NS_TEST_ASSERT_MSG_EQ(m_controller->GetTransportChannelManager()->GetTp(m_lastTp->GetTpn()),
                               nullptr,
                               "Member removal may release otherwise unused live backing");
@@ -11070,8 +11068,8 @@ class UbLifecyclePendingLastRemovalAddMemberWakesHolderTest : public TestCase
             "Retired old member should release its membership lease");
         NS_TEST_ASSERT_MSG_EQ(
             m_coordinator->GetSnapshot(m_newTp->GetLifecycleOwner()).activeBindingLeases,
-            1u,
-            "Replacement member should acquire one exact membership lease");
+            0u,
+            "Replacement membership should remain owner-local");
         NS_TEST_ASSERT_MSG_EQ(m_controller->GetTransportChannelManager()->GetTp(m_oldTp->GetTpn()),
                               m_oldTp,
                               "Replacing membership must not destroy the old TP");
@@ -11430,9 +11428,10 @@ class UbLifecycleActiveUseTpgDestroyFinalizesOnceTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(m_completionCount,
                               1u,
                               "Pending group destroy must not strand accepted operation work");
-        NS_TEST_ASSERT_MSG_EQ(m_finalizedBeforeSecondTrace,
-                              true,
-                              "Final segment assignment should finalize the group before TP send trace");
+        NS_TEST_ASSERT_MSG_EQ(
+            m_finalizedBeforeSecondTrace,
+            false,
+            "Final segment assignment must not finalize the group before operation completion");
         NS_TEST_ASSERT_MSG_EQ(m_controller->ResolveRtpTpGroup(m_groupIdentity),
                               nullptr,
                               "Final assignment should erase the canonical group exactly once");
@@ -11448,9 +11447,9 @@ class UbLifecycleActiveUseTpgDestroyFinalizesOnceTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(groupSnapshot.successfulTerminals,
                               1u,
                               "Repeated pending destroy must record one group terminal");
-        NS_TEST_ASSERT_MSG_EQ(groupSnapshot.activeTransportUseLeases,
-                              0u,
-                              "Final assignment should release the group-use lease");
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->HasRtpTpGroupWork(m_groupIdentity),
+                              false,
+                              "Completed operation should leave no owner-local group work");
         NS_TEST_ASSERT_MSG_EQ(
             m_coordinator->GetSnapshot(m_firstTp->GetLifecycleOwner()).activeBindingLeases,
             0u,
@@ -11717,9 +11716,9 @@ class UbLifecycleTypedTpgCleanupTerminatesBlockedTailTest : public TestCase
             transaction->GetAdmissionDomainReadySourceCountForTest(m_groupIdentity),
             1u,
             "Blocked tail should retain one exact ready-source entry");
-        NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(m_groupIdentity).activeTransportUseLeases,
-                              1u,
-                              "Blocked tail should retain its TPG-use lease before cleanup");
+        NS_TEST_ASSERT_MSG_EQ(transaction->HasRtpTpGroupWork(m_groupIdentity),
+                              true,
+                              "Blocked tail should retain exact owner-local TPG work");
 
         const UbDestroyStatus status =
             controller->DestroyRtpTpGroup(m_groupIdentity, m_reason);
@@ -11741,9 +11740,9 @@ class UbLifecycleTypedTpgCleanupTerminatesBlockedTailTest : public TestCase
                                   static_cast<uint32_t>(expected),
                                   "Cleanup reason should map to one typed WQE outcome");
         }
-        NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(m_groupIdentity).activeTransportUseLeases,
-                              0u,
-                              "Typed cleanup should release TPG-use before group finalize");
+        NS_TEST_ASSERT_MSG_EQ(transaction->HasRtpTpGroupWork(m_groupIdentity),
+                              false,
+                              "Typed cleanup should leave no operation that interacts with the TPG");
         NS_TEST_ASSERT_MSG_EQ(coordinator->IsResourceActive(m_firstTp->GetLifecycleOwner()),
                               true,
                               "Typed group cleanup must not destroy first member TP");
@@ -11914,10 +11913,9 @@ class UbLifecycleTypedLastTpgMemberRemovalTerminatesActiveUseTest : public TestC
         NS_TEST_ASSERT_MSG_EQ(m_group->GetMemberCount(),
                               1u,
                               "Last-member cleanup should begin with one canonical member");
-        NS_TEST_ASSERT_MSG_EQ(
-            m_coordinator->GetSnapshot(m_groupIdentity).activeTransportUseLeases,
-            1u,
-            "Blocked tail should retain one TPG-use lease before member cleanup");
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->HasRtpTpGroupWork(m_groupIdentity),
+                              true,
+                              "Blocked tail should retain exact owner-local group work");
 
         const UbTpgMemberMutationStatus status =
             m_controller->RemoveRtpTpGroupMember(m_groupIdentity,
@@ -11944,10 +11942,9 @@ class UbLifecycleTypedLastTpgMemberRemovalTerminatesActiveUseTest : public TestC
                                   static_cast<uint32_t>(expected),
                                   "Member cleanup reason should preserve typed outcome");
         }
-        NS_TEST_ASSERT_MSG_EQ(
-            m_coordinator->GetSnapshot(m_groupIdentity).activeTransportUseLeases,
-            0u,
-            "Typed last-member cleanup should release exact group use");
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->HasRtpTpGroupWork(m_groupIdentity),
+                              false,
+                              "Member cleanup should leave no operation that interacts with the TPG");
         NS_TEST_ASSERT_MSG_EQ(
             m_coordinator->GetSnapshot(m_memberTp->GetLifecycleOwner()).activeBindingLeases,
             0u,
@@ -12169,9 +12166,9 @@ class UbLifecycleReentrantTypedTpgCleanupTest : public TestCase
                 std::_Exit(6);
             }
         }
-        if (m_coordinator->GetSnapshot(m_firstGroupIdentity).activeTransportUseLeases != 1 ||
+        if (!m_transaction->HasRtpTpGroupWork(m_firstGroupIdentity) ||
             (m_destroyOtherGroup &&
-             m_coordinator->GetSnapshot(m_secondGroupIdentity).activeTransportUseLeases != 1))
+             !m_transaction->HasRtpTpGroupWork(m_secondGroupIdentity)))
         {
             std::_Exit(7);
         }
@@ -12191,7 +12188,7 @@ class UbLifecycleReentrantTypedTpgCleanupTest : public TestCase
         const UbLifecycleResourceSnapshot firstSnapshot =
             m_coordinator->GetSnapshot(m_firstGroupIdentity);
         if (!firstSnapshot.retired || firstSnapshot.successfulTerminals != 1 ||
-            firstSnapshot.activeTransportUseLeases != 0)
+            m_transaction->HasRtpTpGroupWork(m_firstGroupIdentity))
         {
             std::_Exit(9);
         }
@@ -12200,7 +12197,7 @@ class UbLifecycleReentrantTypedTpgCleanupTest : public TestCase
             const UbLifecycleResourceSnapshot secondSnapshot =
                 m_coordinator->GetSnapshot(m_secondGroupIdentity);
             if (!secondSnapshot.retired || secondSnapshot.successfulTerminals != 1 ||
-                secondSnapshot.activeTransportUseLeases != 0 ||
+                m_transaction->HasRtpTpGroupWork(m_secondGroupIdentity) ||
                 m_transaction->HasWqeOperation(secondJetty, m_secondTask))
             {
                 std::_Exit(10);
@@ -12312,9 +12309,9 @@ class UbLifecycleControllerDisposeForceCleansCanonicalTpgTest : public TestCase
             "Dispose fixture should acquire one TPG-use lease");
         Simulator::Stop(NanoSeconds(1));
         Simulator::Run();
-        NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(groupIdentity).activeTransportUseLeases,
-                              1u,
-                              "Blocked operation should hold TPG-use before Controller dispose");
+        NS_TEST_ASSERT_MSG_EQ(transaction->HasRtpTpGroupWork(groupIdentity),
+                              true,
+                              "Blocked operation should remain in owner-local TPG work");
 
         Simulator::Destroy();
 
@@ -12323,9 +12320,9 @@ class UbLifecycleControllerDisposeForceCleansCanonicalTpgTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(groupSnapshot.retired,
                               true,
                               "Controller dispose should retire every canonical TPG generation");
-        NS_TEST_ASSERT_MSG_EQ(groupSnapshot.activeTransportUseLeases,
-                              0u,
-                              "Controller dispose should release blocked TPG-use");
+        NS_TEST_ASSERT_MSG_EQ(transaction->HasRtpTpGroupWork(groupIdentity),
+                              false,
+                              "Controller dispose should remove blocked owner-local TPG work");
         NS_TEST_ASSERT_MSG_EQ(m_terminals.size(),
                               1u,
                               "Controller dispose should apply one forced WQE terminal");
@@ -12449,12 +12446,12 @@ class UbLifecycleMultiSegmentTpgRoundRobinPinsGenerationsTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(m_secondAdmissions,
                               1u,
                               "Second TPG member should admit the success continuation");
-        NS_TEST_ASSERT_MSG_EQ(m_useLeaseObservedAfterFirst,
+        NS_TEST_ASSERT_MSG_EQ(m_groupWorkObservedAfterFirst,
                               true,
-                              "TPG owner should hold one use lease after the first assignment");
-        NS_TEST_ASSERT_MSG_EQ(m_useLeaseReleasedAfterFinal,
+                              "TPG owner should retain work after the first assignment");
+        NS_TEST_ASSERT_MSG_EQ(m_groupWorkObservedAfterFinalAssignment,
                               true,
-                              "TPG owner should release its use lease after final assignment");
+                              "TPG owner should retain work after final assignment");
         NS_TEST_ASSERT_MSG_EQ(m_snapshot.activeSegments,
                               2u,
                               "Operation should expose two accepted segments");
@@ -12534,8 +12531,8 @@ class UbLifecycleMultiSegmentTpgRoundRobinPinsGenerationsTest : public TestCase
         if (taskId == kUrmaWriteRegressionTaskId)
         {
             ++m_firstAdmissions;
-            m_useLeaseObservedAfterFirst =
-                m_coordinator->GetSnapshot(m_groupIdentity).activeTransportUseLeases == 1;
+            m_groupWorkObservedAfterFirst =
+                m_transaction->HasRtpTpGroupWork(m_groupIdentity);
             CaptureSecondAdmission();
         }
     }
@@ -12545,8 +12542,8 @@ class UbLifecycleMultiSegmentTpgRoundRobinPinsGenerationsTest : public TestCase
         if (taskId == kUrmaWriteRegressionTaskId)
         {
             ++m_secondAdmissions;
-            m_useLeaseReleasedAfterFinal =
-                m_coordinator->GetSnapshot(m_groupIdentity).activeTransportUseLeases == 0;
+            m_groupWorkObservedAfterFinalAssignment =
+                m_transaction->HasRtpTpGroupWork(m_groupIdentity);
             CaptureSecondAdmission();
         }
     }
@@ -12572,8 +12569,8 @@ class UbLifecycleMultiSegmentTpgRoundRobinPinsGenerationsTest : public TestCase
     UbTransactionOperationSnapshot m_snapshot;
     uint32_t m_firstAdmissions{0};
     uint32_t m_secondAdmissions{0};
-    bool m_useLeaseObservedAfterFirst{false};
-    bool m_useLeaseReleasedAfterFinal{false};
+    bool m_groupWorkObservedAfterFirst{false};
+    bool m_groupWorkObservedAfterFinalAssignment{false};
 };
 
 class UbLifecycleTpgRetransmissionPinsResolvedTpGenerationTest : public TestCase
@@ -15490,9 +15487,6 @@ class UbLifecycleDirectWriteCompletionTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(wqeSnapshot.activeChildLeases,
                               0u,
                               "Completion should release all segment child leases");
-        NS_TEST_ASSERT_MSG_EQ(wqeSnapshot.activeTransportUseLeases,
-                              0u,
-                              "Completion should release the direct-TP use lease");
         NS_TEST_ASSERT_MSG_EQ(wqeSnapshot.successfulTerminals,
                               1u,
                               "WQE should receive one typed success terminal");
@@ -16173,9 +16167,6 @@ class UbLifecycleFailedWqeOutcomeTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(snapshot.activeWorkLeases,
                               0u,
                               "Failure should release the Transaction work lease");
-        NS_TEST_ASSERT_MSG_EQ(snapshot.activeTransportUseLeases,
-                              0u,
-                              "Failure should release the transport-use lease");
         NS_TEST_ASSERT_MSG_EQ(snapshot.retired,
                               true,
                               "Failed WQE generation should retire");
@@ -16343,8 +16334,8 @@ class UbLifecycleIdleJettyDestroyTest : public TestCase
         Ptr<UbLifecycleCoordinator> coordinator =
             UbLifecycleCoordinator::GetOrCreate(topo.sender);
         NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(jettyIdentity).activeBindingLeases,
-                              1u,
-                              "Direct RTP binding should own one typed binding lease");
+                              0u,
+                              "Direct RTP binding should remain owner-local");
 
         const UbDestroyStatus status = function->DestroyJetty(
             kUrmaWriteRegressionJettyNum,
@@ -16366,7 +16357,7 @@ class UbLifecycleIdleJettyDestroyTest : public TestCase
         const UbLifecycleResourceSnapshot retired = coordinator->GetSnapshot(jettyIdentity);
         NS_TEST_ASSERT_MSG_EQ(retired.activeBindingLeases,
                               0u,
-                              "Jetty retirement should release its binding lease");
+                              "Jetty retirement should leave no global binding ledger");
         NS_TEST_ASSERT_MSG_EQ(retired.retired,
                               true,
                               "Idle destroy should retire the Jetty generation");
@@ -16993,7 +16984,7 @@ class UbLifecycleForcedJettyDisposalTest : public TestCase
             UbLifecycleCoordinator::GetOrCreate(topo.sender)->GetSnapshot(jettyIdentity);
         NS_TEST_ASSERT_MSG_EQ(jettySnapshot.activeBindingLeases,
                               0u,
-                              "Forced disposal should release binding lease");
+                              "Forced disposal should leave no global binding ledger");
         NS_TEST_ASSERT_MSG_EQ(jettySnapshot.activeTrackedEventLeases,
                               0u,
                               "Forced disposal should resolve tracked event residue");
@@ -22653,12 +22644,9 @@ class UbTpQuiescenceAssessmentReportsTypedBlockersTest : public TestCase
             UbLifecycleCoordinator::GetOrCreate(topo.receiver);
         const UbLifecycleResourceIdentity identity = tp->GetLifecycleOwner();
         manager->SetAttribute("EnableAutomaticBackingReclaim", BooleanValue(true));
-        const std::array<std::pair<UbLifecycleLeaseKind, UbTpQuiescenceBlocker>, 6> leaseCases{{
+        const std::array<std::pair<UbLifecycleLeaseKind, UbTpQuiescenceBlocker>, 4> leaseCases{{
             {UbLifecycleLeaseKind::WORK, UbTpQuiescenceBlocker::ACTIVE_WORK_LEASE},
             {UbLifecycleLeaseKind::CHILD, UbTpQuiescenceBlocker::ACTIVE_CHILD_LEASE},
-            {UbLifecycleLeaseKind::TRANSPORT_USE,
-             UbTpQuiescenceBlocker::ACTIVE_TRANSPORT_USE_LEASE},
-            {UbLifecycleLeaseKind::BINDING, UbTpQuiescenceBlocker::ACTIVE_BINDING_LEASE},
             {UbLifecycleLeaseKind::TRACKED_EVENT,
              UbTpQuiescenceBlocker::ACTIVE_TRACKED_EVENT_LEASE},
             {UbLifecycleLeaseKind::TRANSPORT_WORK,
@@ -22946,6 +22934,10 @@ class UbTpQuiescenceAssessmentReportsTransactionReferencesTest : public TestCase
             assessment.HasBlocker(UbTpQuiescenceBlocker::TRANSACTION_REFERENCE),
             true,
             "A TPG member reference should report its typed blocker");
+        NS_TEST_ASSERT_MSG_EQ(
+            assessment.HasBlocker(UbTpQuiescenceBlocker::ACTIVE_BINDING_LEASE),
+            true,
+            "Owner-local TPG membership should block member TP backing reclaim");
         manager->SetAttribute("EnableAutomaticBackingReclaim", BooleanValue(false));
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(controller->GetUbFunction()->DestroyJetty(jettyNum)),

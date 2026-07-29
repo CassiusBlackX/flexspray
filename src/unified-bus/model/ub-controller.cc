@@ -168,12 +168,6 @@ UbController::CreateRtpTpGroup(const std::vector<Ptr<UbTransportChannel>>& membe
         UbLifecycleCoordinator::GetOrCreate(GetObject<Node>());
     const UbLifecycleResourceIdentity identity =
         coordinator->OpenResource(UbLifecycleResourceKind::RTP_TPG, localId);
-    for (UbTransportGroupMember& record : records)
-    {
-        record.membershipLease = coordinator->AcquireLease(record.tpIdentity,
-                                                           UbLifecycleLeaseKind::BINDING,
-                                                           identity);
-    }
     Ptr<UbTransportGroup> group = CreateObject<UbTransportGroup>();
     group->Init(identity, records, initialSelectionCursor);
     const bool inserted = m_rtpTpGroups.emplace(localId, group).second;
@@ -242,9 +236,6 @@ UbController::FinalizeRtpTpGroupMemberRemoval(Ptr<UbTransportGroup> group, uint3
                     "TPG member finalize requires an exact member");
     group->MarkMemberRetiring(index);
     const UbTransportGroupMember removed = group->RemoveMember(index);
-    Ptr<UbLifecycleCoordinator> coordinator =
-        UbLifecycleCoordinator::GetOrCreate(GetObject<Node>());
-    coordinator->ReleaseLease(removed.membershipLease);
     const auto membership = m_rtpTpGroupByTpn.find(removed.tpn);
     NS_ABORT_MSG_IF(membership == m_rtpTpGroupByTpn.end() ||
                         membership->second != group->GetLifecycleIdentity().localId,
@@ -288,9 +279,6 @@ UbController::AddRtpTpGroupMember(
     }
 
     UbTransportGroupMember member{tpn, tpIdentity};
-    member.membershipLease = coordinator->AcquireLease(tpIdentity,
-                                                       UbLifecycleLeaseKind::BINDING,
-                                                       groupIdentity);
     bool memberInserted = false;
     try
     {
@@ -302,7 +290,6 @@ UbController::AddRtpTpGroupMember(
             const int32_t index = group->FindMemberIndex(tpIdentity);
             NS_ABORT_MSG_IF(index < 0, "TPG AddMember rollback lost the inserted member");
             group->RemoveMember(static_cast<uint32_t>(index));
-            coordinator->ReleaseLease(member.membershipLease);
             return UbTpgMemberMutationStatus::REJECTED;
         }
     }
@@ -316,7 +303,6 @@ UbController::AddRtpTpGroupMember(
                 group->RemoveMember(static_cast<uint32_t>(index));
             }
         }
-        coordinator->ReleaseLease(member.membershipLease);
         throw;
     }
 
@@ -366,10 +352,7 @@ UbController::RemoveRtpTpGroupMember(
         return UbTpgMemberMutationStatus::REMOVED;
     }
 
-    Ptr<UbLifecycleCoordinator> coordinator =
-        UbLifecycleCoordinator::GetOrCreate(GetObject<Node>());
-    const uint64_t useLeases = coordinator->GetSnapshot(groupIdentity).activeTransportUseLeases;
-    if (useLeases != 0)
+    if (m_transaction != nullptr && m_transaction->HasRtpTpGroupWork(groupIdentity))
     {
         if (reason == UbDestroyReason::ERROR ||
             reason == UbDestroyReason::SIMULATION_STOP)
@@ -389,9 +372,9 @@ UbController::RemoveRtpTpGroupMember(
             {
                 return UbTpgMemberMutationStatus::NOT_FOUND;
             }
-            NS_ABORT_MSG_IF(
-                coordinator->GetSnapshot(groupIdentity).activeTransportUseLeases != 0,
-                "Typed last TPG member cleanup did not drain exact group use leases");
+            NS_ABORT_MSG_IF(m_transaction != nullptr &&
+                                m_transaction->HasRtpTpGroupWork(groupIdentity),
+                            "Typed last TPG member cleanup did not drain exact group work");
             const int32_t currentIndex = group->FindMemberIndex(tpIdentity);
             if (currentIndex < 0)
             {
@@ -417,8 +400,8 @@ UbController::FinalizeRtpTpGroupDestroy(Ptr<UbTransportGroup> group)
     const UbLifecycleResourceIdentity identity = group->GetLifecycleIdentity();
     Ptr<UbLifecycleCoordinator> coordinator =
         UbLifecycleCoordinator::GetOrCreate(GetObject<Node>());
-    NS_ABORT_MSG_IF(coordinator->GetSnapshot(identity).activeTransportUseLeases != 0,
-                    "TPG destroy finalize requires drained use leases");
+    NS_ABORT_MSG_IF(m_transaction != nullptr && m_transaction->HasRtpTpGroupWork(identity),
+                    "TPG destroy finalize requires drained group work");
     if (m_transaction != nullptr)
     {
         m_transaction->RetireRtpAdmissionDomain(identity);
@@ -464,14 +447,6 @@ UbController::DestroyRtpTpGroup(const UbLifecycleResourceIdentity& groupIdentity
                                                 : UbTpgCleanupMode::GRACEFUL);
     group->RequestDestroy(requestedMode);
     group->FreezeNewOperations();
-    if (!group->AreBindingLeasesReleased())
-    {
-        if (m_transaction != nullptr)
-        {
-            m_transaction->ReleaseRtpTpGroupBindingLeases(groupIdentity);
-        }
-        group->MarkBindingLeasesReleased();
-    }
     if (group->GetCleanupMode() != UbTpgCleanupMode::GRACEFUL && m_transaction != nullptr)
     {
         const bool forceDrain = group->GetCleanupMode() == UbTpgCleanupMode::FORCE;
@@ -485,9 +460,7 @@ UbController::DestroyRtpTpGroup(const UbLifecycleResourceIdentity& groupIdentity
             return UbDestroyStatus::COMPLETED;
         }
     }
-    Ptr<UbLifecycleCoordinator> coordinator =
-        UbLifecycleCoordinator::GetOrCreate(GetObject<Node>());
-    if (coordinator->GetSnapshot(groupIdentity).activeTransportUseLeases != 0)
+    if (m_transaction != nullptr && m_transaction->HasRtpTpGroupWork(groupIdentity))
     {
         return UbDestroyStatus::PENDING;
     }
@@ -497,7 +470,7 @@ UbController::DestroyRtpTpGroup(const UbLifecycleResourceIdentity& groupIdentity
 }
 
 void
-UbController::NotifyRtpTpGroupUseLeaseReleased(
+UbController::NotifyRtpTpGroupWorkChanged(
     const UbLifecycleResourceIdentity& groupIdentity)
 {
     Ptr<UbTransportGroup> group = ResolveRtpTpGroup(groupIdentity);
@@ -506,9 +479,7 @@ UbController::NotifyRtpTpGroupUseLeaseReleased(
     {
         return;
     }
-    Ptr<UbLifecycleCoordinator> coordinator =
-        UbLifecycleCoordinator::GetOrCreate(GetObject<Node>());
-    if (coordinator->GetSnapshot(groupIdentity).activeTransportUseLeases != 0)
+    if (m_transaction != nullptr && m_transaction->HasRtpTpGroupWork(groupIdentity))
     {
         return;
     }

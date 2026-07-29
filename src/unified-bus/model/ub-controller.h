@@ -55,7 +55,7 @@ public:
     UbDestroyStatus DestroyRtpTpGroup(
         const UbLifecycleResourceIdentity& groupIdentity,
         UbDestroyReason reason = UbDestroyReason::EXPLICIT);
-    void NotifyRtpTpGroupUseLeaseReleased(
+    void NotifyRtpTpGroupWorkChanged(
         const UbLifecycleResourceIdentity& groupIdentity);
 
     // Port management
