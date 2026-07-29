@@ -177,9 +177,11 @@ python3 scratch/ns-3-ub-tools/ub_tools.py traffic {collective} \
   --output-dir {case_dir}
 ```
 
-The command writes `{case_dir}/traffic.csv` directly. Use `--placement-file` instead of
-`--group-layout` for an explicit group/rank/node mapping. AllToAll scatter additionally accepts
-`--peers-per-phase`; AllToAllV uses `--distribution` and its related matrix/seed options.
+The command validates the collective schedule before it writes `{case_dir}/traffic.csv`. Use
+`--placement-file` instead of `--group-layout` for an explicit group/rank/node mapping. AllToAll
+`pairwise` additionally accepts `--peers-per-phase`; AllToAllV uses `--distribution` and its
+related matrix/seed options. AllToAllV `--include-local` only emits self tasks during lowering;
+it does not alter the schedule. `scatter` is not a current AllToAll algorithm name.
 
 For an existing SimAI flow export, use
 `python3 scratch/ns-3-ub-tools/ub_tools.py traffic convert-simai FLOW.jsonl --output {case_dir}/traffic.csv`.

@@ -95,11 +95,6 @@ Snapshot (verify against code before relying on this list):
 - Pairwise all-to-all.
 - Good for direct all-to-all traffic pressure and pattern comparisons.
 
-### `a2a_scatter`
-
-- Scatter-style all-to-all.
-- Good when the user wants a bounded all-to-all variant with `scatter_k`.
-
 ### reference `traffic.csv`
 
 - Use when the user already has a concrete workload file and wants to anchor on that instead of a built-in template.
@@ -202,7 +197,14 @@ uses `--algorithm <name>` and defines `--data-size` as the complete logical coll
 one transfer or accumulated wire bytes. Supported collectives are AllReduce, ReduceScatter,
 AllGather, AllToAll, and AllToAllV. AllToAllV supports `matrix`, `uniform`, and deterministic
 `random` distributions (`--seed` is required for random); matrix input is a square byte CSV and
-does not use `--data-size`.
+does not use `--data-size`. `--data-size` is otherwise the complete logical input per rank, and
+the generator validates the collective contract before it writes `traffic.csv`.
+`--include-local` only controls CSV self-task lowering; it does not change the AllToAllV matrix,
+remote transfers, or validation contract.
+
+AllToAll has one algorithm name, `pairwise`. `--peers-per-phase K` (`1 <= K < group-size`) groups
+consecutive atomic pairwise phases without changing chunk ownership, remote peers, transfers, or
+wire bytes. Do not use the removed `a2a_scatter` / `scatter_k` vocabulary for new cases.
 
 ```bash
 python3 scratch/ns-3-ub-tools/ub_tools.py traffic allreduce \
@@ -276,7 +278,6 @@ Tool: `python3 scratch/ns-3-ub-tools/traffic_maker/build_traffic.py`
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
-| `--scatter-k` | int | 1 | For `a2a_scatter`: merge every k phases |
 | `-d, --phase-delay` | int | 0 | Inter-phase delay in ns |
 | `-o, --output-dir` | str | `./output` | Output root directory |
 | `--rank-mapping` | str | `linear` | Rank assignment: `linear` or `round-robin` |
@@ -284,7 +285,6 @@ Tool: `python3 scratch/ns-3-ub-tools/traffic_maker/build_traffic.py`
 ### Hard constraints
 
 - `host_count % comm_domain_size == 0` (raises ValueError)
-- `1 <= scatter_k < comm_domain_size`
 - `data_size` must parse as number + unit (B/KB/MB/GB, case-insensitive)
 - `rank_mapping` must be `linear` or `round-robin`
 
