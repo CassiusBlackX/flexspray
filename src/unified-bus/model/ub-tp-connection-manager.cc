@@ -483,6 +483,43 @@ TpConnectionManager::TryGetLocalConnection(uint32_t localNodeId,
     return true;
 }
 
+TpConnectionManager::InboundConnectionState
+TpConnectionManager::ResolveInboundConnection(uint32_t localNodeId,
+                                               uint32_t srcTpn,
+                                               uint32_t dstTpn,
+                                               Ipv4Address sourceIp,
+                                               Ipv4Address destinationIp,
+                                               uint32_t priority,
+                                               Connection& connection) const
+{
+    const auto matchesWireKey = [&](const Connection& candidate) {
+        return srcTpn == candidate.tpn2 && dstTpn == candidate.tpn1 &&
+               sourceIp == NodeIdToIp(candidate.node2, candidate.port2) &&
+               destinationIp == NodeIdToIp(candidate.node1, candidate.port1) &&
+               priority == candidate.priority;
+    };
+
+    std::lock_guard<std::mutex> lock(m_stateLock);
+    const auto local = m_localTpnIndex.find({localNodeId, dstTpn});
+    if (local != m_localTpnIndex.end())
+    {
+        const Connection* resolved = ResolveConnectionRefLocked(local->second);
+        if (resolved != nullptr && matchesWireKey(*resolved))
+        {
+            connection = *resolved;
+            return InboundConnectionState::LIVE;
+        }
+        return InboundConnectionState::INVALID;
+    }
+
+    const auto retired = m_retiredLocalConnectionViews.find({localNodeId, dstTpn});
+    if (retired != m_retiredLocalConnectionViews.end() && matchesWireKey(retired->second))
+    {
+        return InboundConnectionState::RETIRED_EXACT;
+    }
+    return InboundConnectionState::INVALID;
+}
+
 const Connection*
 TpConnectionManager::ResolveConnectionRefLocked(const LocalConnectionRef& ref) const
 {
@@ -1146,6 +1183,11 @@ TpConnectionManager::EraseConnectionView(uint32_t localNodeId, uint32_t localTpn
     NS_ABORT_MSG_IF(resolved == nullptr, "Local TPN index contains a stale connection view");
     const Connection oriented = *resolved;
     const UbLifecycleResourceIdentity identity = GetConnectionIdentity(oriented);
+    const auto [retired, inserted] =
+        m_retiredLocalConnectionViews.emplace(std::make_pair(localNodeId, localTpn), oriented);
+    NS_ABORT_MSG_IF(!inserted &&
+                        retired->second.reservationGeneration != oriented.reservationGeneration,
+                    "Retired TPN cannot identify multiple connection generations");
     const auto removeView = [&](auto& index, const auto& key) {
         auto entry = index.find(key);
         if (entry == index.end())
@@ -1180,10 +1222,7 @@ TpConnectionManager::EraseConnectionView(uint32_t localNodeId, uint32_t localTpn
         m_allConnectionOrder.end());
     m_localConnectionViews.erase(ref);
     InvalidateAllConnectionsCacheLocked();
-    m_tpnList.erase(localTpn);
-    m_reservedTpnList.erase(localTpn);
     m_destroyRequestedViews.erase({localNodeId, localTpn});
-    m_nextTpn = std::min(m_nextTpn, localTpn);
 }
 
 bool
@@ -1292,6 +1331,18 @@ void TpConnectionManager::ClearNodeConnections(uint32_t nodeId)
             ++it;
         }
     }
+    for (auto it = m_retiredLocalConnectionViews.begin();
+         it != m_retiredLocalConnectionViews.end();)
+    {
+        if (it->first.first == nodeId)
+        {
+            it = m_retiredLocalConnectionViews.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
     InvalidateAllConnectionsCacheLocked();
 }
 
@@ -1301,6 +1352,7 @@ void TpConnectionManager::Clear()
     std::lock_guard<std::mutex> lock(m_stateLock);
     m_allConnectionOrder.clear();
     m_localConnectionViews.clear();
+    m_retiredLocalConnectionViews.clear();
     m_nodeConnections.clear();
     m_peerNodeIndex.clear();
     m_peerNodePriorityIndex.clear();
@@ -1309,6 +1361,8 @@ void TpConnectionManager::Clear()
     m_localTpnIndex.clear();
     m_tpnList.clear();
     m_reservedTpnList.clear();
+    m_nextTpn = 0;
+    m_tpnSpaceExhausted = false;
     InvalidateAllConnectionsCacheLocked();
 }
 
@@ -1536,14 +1590,25 @@ uint32_t TpConnectionManager::GetNextTpn()
 
 uint32_t TpConnectionManager::ReserveNextTpnLocked()
 {
+    constexpr uint32_t kMaxWireTpn = 0xFFFFFF;
+    NS_ABORT_MSG_IF(m_tpnSpaceExhausted, "Exhausted the 24-bit TPN space without safe reuse");
     while (m_tpnList.find(m_nextTpn) != m_tpnList.end() ||
            m_reservedTpnList.find(m_nextTpn) != m_reservedTpnList.end()) {
+        NS_ABORT_MSG_IF(m_nextTpn == kMaxWireTpn,
+                        "Exhausted the 24-bit TPN space without safe reuse");
         ++m_nextTpn;
     }
 
     const uint32_t reservedTpn = m_nextTpn;
     m_reservedTpnList.insert(reservedTpn);
-    ++m_nextTpn;
+    if (m_nextTpn == kMaxWireTpn)
+    {
+        m_tpnSpaceExhausted = true;
+    }
+    else
+    {
+        ++m_nextTpn;
+    }
     return reservedTpn;
 }
 

@@ -27,6 +27,19 @@ struct UbTransportEndpointStorageSnapshot
     uint64_t backingRehydrations{0};
 };
 
+enum class UbInboundTpState : uint8_t
+{
+    LIVE,
+    RETIRED_EXACT,
+    INVALID,
+};
+
+struct UbInboundTpResolution
+{
+    UbInboundTpState state{UbInboundTpState::INVALID};
+    Ptr<UbTransportChannel> endpoint;
+};
+
 enum class UbTeardownIntent : uint8_t
 {
     BACKING_RECLAIM,
@@ -138,11 +151,11 @@ class UbTransportChannelManager : public Object
     Ptr<UbTransportChannel> GetTp(uint32_t tpn) const;
     bool TryGetEndpointIdentity(uint32_t tpn, UbLifecycleResourceIdentity& identity) const;
     Ptr<UbTransportChannel> CreateReservedTpEndpoint(uint32_t tpn);
-    Ptr<UbTransportChannel> ResolveInboundTp(uint32_t srcTpn,
-                                             uint32_t dstTpn,
-                                             Ipv4Address sourceIp,
-                                             Ipv4Address destinationIp,
-                                             UbPriority priority);
+    UbInboundTpResolution ResolveInboundTp(uint32_t srcTpn,
+                                           uint32_t dstTpn,
+                                           Ipv4Address sourceIp,
+                                           Ipv4Address destinationIp,
+                                           UbPriority priority);
     /** Release eligible backing only when called by the endpoint execution owner. */
     bool ReclaimBackingState(uint32_t tpn);
     /** Return whether allocator-driven automatic backing reclaim is enabled. */
@@ -198,6 +211,10 @@ class UbTransportChannelManager : public Object
     Ptr<UbTransportChannel> ResolveLiveTpLocked(
         uint32_t tpn,
         const UbLifecycleResourceIdentity& expectedIdentity);
+    Ptr<UbTransportChannel> ResolveLiveTpForOwnerLocked(
+        uint32_t tpn,
+        const UbLifecycleResourceIdentity& expectedIdentity,
+        Ptr<Node> ownerNode);
     bool TryGetEndpointIdentityLocked(uint32_t tpn, UbLifecycleResourceIdentity& identity) const;
     void BeginDrainOnlyDestroy(uint32_t tpn);
     bool CanFinalize(const EndpointRecord& record) const;
