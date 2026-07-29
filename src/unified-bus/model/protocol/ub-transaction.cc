@@ -865,13 +865,26 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
     uint32_t selectedGroupIndex = UINT32_MAX;
     const UbRtpTransportReference& reference = operation->second.transportReference;
     RtpTransportResolution resolution;
-    if (!ResolveRtpTransportReference(reference, resolution))
+    if (!ResolveRtpTransportReference(reference, resolution) && reference.IsDirectTp())
+    {
+        Ptr<UbController> controller = GetOwnerController();
+        resolution.kind = reference.GetKind();
+        resolution.identity = reference.GetIdentity();
+        resolution.directTpn = reference.GetDirectTpn();
+        resolution.directTp =
+            controller == nullptr
+                ? nullptr
+                : controller->GetTransportChannelManager()->ResolveTpForAcceptedWork(
+                      reference.GetDirectTpn(),
+                      reference.GetIdentity());
+    }
+    if (resolution.directTp == nullptr && resolution.group == nullptr)
     {
         return RtpSegmentAdmissionResult::REJECTED;
     }
     if (reference.IsDirectTp())
     {
-        if (!resolution.directTp->CanAdmitWqeSegment(segment))
+        if (!resolution.directTp->CanContinueAcceptedWqeSegment(segment))
         {
             return RtpSegmentAdmissionResult::DEFERRED;
         }
@@ -935,7 +948,10 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
         operation->second.segments.emplace(segment->GetTaSsn(), record).second;
     NS_ABORT_MSG_IF(!inserted, "Duplicate Transaction segment admission commit");
 
-    NS_ABORT_MSG_IF(!admittedTp->TryAdmitWqeSegment(segment),
+    const bool admitted = reference.IsDirectTp()
+                              ? admittedTp->TryContinueAcceptedWqeSegment(segment)
+                              : admittedTp->TryAdmitWqeSegment(segment);
+    NS_ABORT_MSG_IF(!admitted,
                     "RTP TP admission changed after owner-local preflight");
     NS_ABORT_MSG_IF(segment->GetResolvedTpIdentity() != record.resolvedTpIdentity,
                     "Admitted segment did not pin the resolved TP generation");
@@ -1050,13 +1066,29 @@ UbTransaction::EnqueueRemoteRtpSource(uint32_t tpn, Ptr<UbWqeSegment> segment)
     Ptr<UbController> controller = GetOwnerController();
     Ptr<UbTransportChannelManager> manager =
         controller == nullptr ? nullptr : controller->GetTransportChannelManager();
-    UbLifecycleResourceIdentity tpIdentity;
-    if (segment == nullptr || manager == nullptr ||
-        !manager->TryGetEndpointIdentity(tpn, tpIdentity))
+    if (segment == nullptr || manager == nullptr)
     {
         return;
     }
-    Ptr<UbTransportChannel> transport = manager->ResolveLiveTp(tpn, tpIdentity);
+    UbLifecycleResourceIdentity tpIdentity;
+    if (segment->HasResolvedTpIdentity())
+    {
+        tpIdentity = segment->GetResolvedTpIdentity();
+    }
+    else if (!manager->TryGetEndpointIdentity(tpn, tpIdentity))
+    {
+        return;
+    }
+    Ptr<UbTransportChannel> transport =
+        segment->HasResolvedTpIdentity()
+            ? manager->ResolveTpForAcceptedWork(tpn, tpIdentity)
+            : manager->ResolveLiveTp(tpn, tpIdentity);
+    if (transport == nullptr)
+    {
+        transport = segment->HasResolvedTpIdentity()
+                        ? manager->ResolveLiveTp(tpn, tpIdentity)
+                        : manager->ResolveTpForAcceptedWork(tpn, tpIdentity);
+    }
     if (transport == nullptr)
     {
         return;
@@ -1104,10 +1136,16 @@ UbTransaction::RunRemoteRtpSource(const AdmissionDomainKey& domainKey,
 {
     const uint32_t tpn = static_cast<uint32_t>(domainKey.identity.localId);
     Ptr<UbController> controller = GetOwnerController();
+    Ptr<UbTransportChannelManager> manager =
+        controller == nullptr ? nullptr : controller->GetTransportChannelManager();
     Ptr<UbTransportChannel> transport =
-        controller == nullptr
+        manager == nullptr
             ? nullptr
-            : controller->GetTransportChannelManager()->ResolveLiveTp(tpn, domainKey.identity);
+            : manager->ResolveTpForAcceptedWork(tpn, domainKey.identity);
+    if (transport == nullptr && manager != nullptr)
+    {
+        transport = manager->ResolveLiveTp(tpn, domainKey.identity);
+    }
     auto remoteByTp = m_tpRelatedRemoteRequests.find(tpn);
     const RemoteSourceKey remoteKey{source.jettyNum,
                                     source.wqeId,
@@ -1137,7 +1175,7 @@ UbTransaction::RunRemoteRtpSource(const AdmissionDomainKey& domainKey,
     }
 
     Ptr<UbWqeSegment> segment = remote->second.segments.front();
-    if (!transport->TryAdmitWqeSegment(segment))
+    if (!transport->TryContinueAcceptedWqeSegment(segment))
     {
         AdmissionDomainState& domain = m_admissionDomains[domainKey];
         domain.readySources.push_front(source);
@@ -1578,6 +1616,10 @@ void UbTransaction::HandleInboundTaUnit(uint32_t localTpn, Ptr<UbWqeSegment> seg
     }
 
     response->SetTpn(localTpn);
+    if (segment->HasResolvedTpIdentity())
+    {
+        response->SetResolvedTpIdentity(segment->GetResolvedTpIdentity());
+    }
     EnqueueRemoteRtpSource(localTpn, response);
 }
 

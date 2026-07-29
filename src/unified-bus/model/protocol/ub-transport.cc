@@ -2115,7 +2115,13 @@ uint32_t UbTransportChannel::GetCurrentSqSize() const
 bool
 UbTransportChannel::TryAdmitWqeSegment(Ptr<UbWqeSegment> segment)
 {
-    if (!CanAdmitWqeSegment(segment))
+    return m_isActive && TryContinueAcceptedWqeSegment(segment);
+}
+
+bool
+UbTransportChannel::TryContinueAcceptedWqeSegment(Ptr<UbWqeSegment> segment)
+{
+    if (!CanContinueAcceptedWqeSegment(segment))
     {
         return false;
     }
@@ -2133,8 +2139,13 @@ UbTransportChannel::TryAdmitWqeSegment(Ptr<UbWqeSegment> segment)
 bool
 UbTransportChannel::CanAdmitWqeSegment(Ptr<const UbWqeSegment> segment) const
 {
-    return m_isActive && segment != nullptr && !IsWqeSegmentLimited() &&
-           CanScheduleAnotherSegment();
+    return m_isActive && CanContinueAcceptedWqeSegment(segment);
+}
+
+bool
+UbTransportChannel::CanContinueAcceptedWqeSegment(Ptr<const UbWqeSegment> segment) const
+{
+    return segment != nullptr && !IsWqeSegmentLimited() && CanScheduleAnotherSegment();
 }
 
 UbWqeSegmentTerminalDisposition

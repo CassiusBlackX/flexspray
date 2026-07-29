@@ -320,13 +320,15 @@ BuildSinglePortCtpNode()
 }
 
 LocalTpTopology
-BuildLocalTpTopology(bool addReverseRoutes = true)
+BuildLocalTpTopology(bool addReverseRoutes = true,
+                     uint32_t leftSystemId = 0,
+                     uint32_t rightSystemId = 0)
 {
     LocalTpTopology topo;
-    topo.sender = CreateObject<Node>(0);
-    topo.switch0 = CreateObject<Node>(0);
-    topo.switch1 = CreateObject<Node>(0);
-    topo.receiver = CreateObject<Node>(0);
+    topo.sender = CreateObject<Node>(leftSystemId);
+    topo.switch0 = CreateObject<Node>(leftSystemId);
+    topo.switch1 = CreateObject<Node>(rightSystemId);
+    topo.receiver = CreateObject<Node>(rightSystemId);
 
     InitNode(topo.sender, UB_DEVICE, 1);
     InitNode(topo.switch0, UB_SWITCH, 2);
@@ -22962,6 +22964,7 @@ class UbTpQuiescenceAssessmentReportsTransactionReferencesTest : public TestCase
         Ptr<UbTransportChannelManager> manager = controller->GetTransportChannelManager();
         Ptr<UbTransportChannel> tp = manager->PeekLiveTp(kUrmaWriteRegressionSenderTpn);
         NS_TEST_ASSERT_MSG_NE(tp, nullptr, "Remote-work fixture should have live backing");
+        tp->SetMaxQueueSizeForTest(0);
         tp->FreezeNewWork();
         Ptr<UbWqeSegment> request = CreateObject<UbWqeSegment>();
         request->SetSrc(topo.receiver->GetId());
@@ -22976,7 +22979,7 @@ class UbTpQuiescenceAssessmentReportsTransactionReferencesTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(
             assessment.HasBlocker(UbTpQuiescenceBlocker::PENDING_TRANSPORT_WORK),
             true,
-            "Queued remote transaction work should report its typed blocker");
+            "Capacity-blocked remote transaction work should report its typed blocker");
         NS_TEST_ASSERT_MSG_EQ(assessment.diagnostics.pendingTransportWork,
                               true,
                               "Remote-work diagnostics should report the real transaction fact");
@@ -23855,6 +23858,219 @@ class UbExplicitConnectionDestroyAggregatesBothEndpointsTest : public TestCase
     Connection m_connection;
     UbLifecycleResourceIdentity m_destroyedIdentity;
     uint32_t m_callbackCount{0};
+};
+
+class UbExplicitConnectionDestroyDrainsAdmittedWriteTest : public TestCase
+{
+  public:
+    explicit UbExplicitConnectionDestroyDrainsAdmittedWriteTest(bool mtp = false)
+        : TestCase(mtp
+                       ? "UnifiedBus - MTP cross-owner connection destroy drains an admitted write"
+                       : "UnifiedBus - explicit connection destroy drains an admitted write"),
+          m_mtp(mtp)
+    {
+    }
+
+  private:
+    void ObserveAdmission(uint32_t, uint32_t taskId, uint32_t)
+    {
+        if (taskId != kUrmaWriteRegressionTaskId || m_closeStarted)
+        {
+            return;
+        }
+        m_closeStarted = true;
+        Simulator::ScheduleNow(
+            &UbExplicitConnectionDestroyDrainsAdmittedWriteTest::BeginClose,
+            this);
+    }
+
+    void BeginClose()
+    {
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(m_connectionManager->DestroyConnection(
+                m_senderNodeId,
+                kUrmaWriteRegressionSenderTpn,
+                UbDestroyReason::EXPLICIT,
+                MakeCallback(&UbExplicitConnectionDestroyDrainsAdmittedWriteTest::OnDestroyed,
+                             this))),
+            static_cast<uint32_t>(UbDestroyStatus::PENDING),
+            "An admitted write should keep connection destroy pending");
+        Ptr<UbWqe> rejected = m_function->CreateWqe(m_senderNodeId,
+                                                    m_receiverNodeId,
+                                                    4096,
+                                                    kUrmaWriteRegressionTaskId + 1,
+                                                    TaOpcode::TA_OPCODE_WRITE);
+        NS_TEST_ASSERT_MSG_NE(
+            static_cast<uint32_t>(
+                m_function->SubmitWqe(rejected, kUrmaWriteRegressionJettyNum).status),
+            static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+            "Connection drain must reject a new WQE before Jetty withdrawal");
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(m_function->DestroyJetty(kUrmaWriteRegressionJettyNum)),
+            static_cast<uint32_t>(UbDestroyStatus::PENDING),
+            "Jetty withdrawal should wait for the admitted write");
+        NS_TEST_ASSERT_MSG_EQ(m_connectionDestroyed,
+                              false,
+                              "Connection retirement must wait for admitted work");
+    }
+
+    void OnWqeCompleted(UbWqeCompletion completion)
+    {
+        const uint32_t callbackLp = m_mtp ? Simulator::GetSystemId() : 0u;
+        const uint32_t expectedLp = m_mtp ? 1u : 0u;
+        NS_TEST_ASSERT_MSG_EQ(callbackLp,
+                              expectedLp,
+                              "Admitted write completion should execute on the sender owner LP");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(completion.outcome),
+                              static_cast<uint32_t>(UbWorkOutcome::COMPLETED),
+                              "Closing must preserve the admitted write outcome");
+        m_writeCompleted = true;
+    }
+
+    void OnDestroyed(UbLifecycleResourceIdentity, UbDestroyStatus status)
+    {
+        const uint32_t callbackLp = m_mtp ? Simulator::GetSystemId() : 0u;
+        const uint32_t expectedLp = m_mtp ? 1u : 0u;
+        NS_TEST_ASSERT_MSG_EQ(callbackLp,
+                              expectedLp,
+                              "Connection completion should execute on the canonical owner LP");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(status),
+                              static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
+                              "Connection destroy callback should report completion");
+        NS_TEST_ASSERT_MSG_EQ(m_writeCompleted,
+                              true,
+                              "Connection retirement must follow admitted write completion");
+        Connection ignored;
+        NS_TEST_ASSERT_MSG_EQ(m_connectionManager->TryGetLocalConnection(
+                                  m_senderNodeId,
+                                  kUrmaWriteRegressionSenderTpn,
+                                  ignored),
+                              false,
+                              "Connection callback should follow sender view retirement");
+        NS_TEST_ASSERT_MSG_EQ(m_receiverConnectionManager->TryGetLocalConnection(
+                                  m_receiverNodeId,
+                                  kUrmaWriteRegressionReceiverTpn,
+                                  ignored),
+                              false,
+                              "Connection callback should follow receiver owner acknowledgement");
+        m_connectionDestroyed = true;
+    }
+
+    void SubmitWrite()
+    {
+        m_function = m_senderController->GetUbFunction();
+        Ptr<UbTransaction> transaction = m_senderController->GetUbTransaction();
+        m_function->CreateJetty(m_senderNodeId,
+                                m_receiverNodeId,
+                                kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(m_senderNodeId,
+                                                       m_receiverNodeId,
+                                                       kUrmaWriteRegressionJettyNum,
+                                                       false,
+                                                       {kUrmaWriteRegressionSenderTpn}),
+                              true,
+                              "Delayed-destroy fixture should bind the reserved TP");
+
+        Ptr<UbJetty> jetty = m_function->GetJetty(kUrmaWriteRegressionJettyNum);
+        jetty->SetTaSegmentBytes(UB_WQE_TA_SEGMENT_BYTE / 2);
+        jetty->SetWqeCompletionCallback(MakeCallback(
+            &UbExplicitConnectionDestroyDrainsAdmittedWriteTest::OnWqeCompleted,
+            this));
+        Ptr<UbTransportChannel> senderTp =
+            m_senderController->GetTransportChannelManager()->GetTp(
+                kUrmaWriteRegressionSenderTpn);
+        senderTp->TraceConnectWithoutContext(
+            "WqeSegmentSendsNotify",
+            MakeCallback(&UbExplicitConnectionDestroyDrainsAdmittedWriteTest::ObserveAdmission,
+                         this));
+
+        Ptr<UbWqe> wqe = m_function->CreateWqe(m_senderNodeId,
+                                               m_receiverNodeId,
+                                               UB_WQE_TA_SEGMENT_BYTE,
+                                               kUrmaWriteRegressionTaskId,
+                                               TaOpcode::TA_OPCODE_WRITE);
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(m_function->SubmitWqe(wqe,
+                                                        kUrmaWriteRegressionJettyNum)
+                                      .status),
+            static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+            "Delayed-destroy fixture should admit one real write operation");
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        if (m_mtp)
+        {
+            Config::SetDefault("ns3::UbLink::Delay", TimeValue(NanoSeconds(10)));
+            MtpInterface::Enable(2, 2);
+        }
+        LocalTpTopology topo =
+            BuildLocalTpTopology(true, m_mtp ? 1u : 0u, m_mtp ? 2u : 0u);
+        if (m_mtp)
+        {
+            NS_TEST_ASSERT_MSG_EQ(MtpInterface::RequireNodeLocalLpId(topo.sender->GetId()),
+                                  1u,
+                                  "Sender should execute on the first worker LP");
+            NS_TEST_ASSERT_MSG_EQ(MtpInterface::RequireNodeLocalLpId(topo.receiver->GetId()),
+                                  2u,
+                                  "Receiver should execute on the second worker LP");
+        }
+        InstallStaticTpPair(topo);
+        topo.sender->GetObject<UbController>()
+            ->GetTransportChannelManager()
+            ->GetTp(kUrmaWriteRegressionSenderTpn)
+            ->SetMaxQueueSizeForTest(1);
+        topo.receiver->GetObject<UbController>()
+            ->GetTransportChannelManager()
+            ->GetTp(kUrmaWriteRegressionReceiverTpn)
+            ->SetMaxQueueSizeForTest(1);
+
+        m_senderNodeId = topo.sender->GetId();
+        m_receiverNodeId = topo.receiver->GetId();
+        m_senderController = topo.sender->GetObject<UbController>();
+        m_connectionManager = m_senderController->GetTpConnManager();
+        m_receiverConnectionManager =
+            topo.receiver->GetObject<UbController>()->GetTpConnManager();
+        if (m_mtp)
+        {
+            Simulator::ScheduleWithContext(
+                m_senderNodeId,
+                NanoSeconds(1),
+                &UbExplicitConnectionDestroyDrainsAdmittedWriteTest::SubmitWrite,
+                this);
+        }
+        else
+        {
+            SubmitWrite();
+        }
+
+        Simulator::Stop(MilliSeconds(10));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(m_closeStarted,
+                              true,
+                              "Delayed destroy should start after transport admission");
+        NS_TEST_ASSERT_MSG_EQ(m_writeCompleted,
+                              true,
+                              "Admitted write should complete while the connection drains");
+        NS_TEST_ASSERT_MSG_EQ(m_connectionDestroyed,
+                              true,
+                              "Both endpoint owners should acknowledge before the deadline");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+    Ptr<TpConnectionManager> m_connectionManager;
+    Ptr<TpConnectionManager> m_receiverConnectionManager;
+    Ptr<UbController> m_senderController;
+    Ptr<UbFunction> m_function;
+    uint32_t m_senderNodeId{UINT32_MAX};
+    uint32_t m_receiverNodeId{UINT32_MAX};
+    bool m_closeStarted{false};
+    bool m_writeCompleted{false};
+    bool m_connectionDestroyed{false};
+    bool m_mtp{false};
 };
 
 class UbTraceDirSetupTest : public TestCase
@@ -30231,6 +30447,12 @@ UbTpReservationTestSuite::UbTpReservationTestSuite()
     AddTestCase(new UbDwrrReclaimsEveryReleasedTpInOneRoundTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbExplicitConnectionDestroyAggregatesBothEndpointsTest(),
                 TestCase::Duration::QUICK);
+    AddTestCase(new UbExplicitConnectionDestroyDrainsAdmittedWriteTest(),
+                TestCase::Duration::QUICK);
+#if defined(NS3_MTP) && !defined(_WIN32)
+    AddTestCase(new UbExplicitConnectionDestroyDrainsAdmittedWriteTest(true),
+                TestCase::Duration::QUICK);
+#endif
 }
 
 static UbTpReservationTestSuite g_ubTpReservationTestSuite;

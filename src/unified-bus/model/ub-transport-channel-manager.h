@@ -172,6 +172,10 @@ class UbTransportChannelManager : public Object
      */
     Ptr<UbTransportChannel> ResolveLiveTp(uint32_t tpn,
                                           const UbLifecycleResourceIdentity& expectedIdentity);
+    /** Resolve exact backing only for work admitted before endpoint drain began. */
+    Ptr<UbTransportChannel> ResolveTpForAcceptedWork(
+        uint32_t tpn,
+        const UbLifecycleResourceIdentity& expectedIdentity);
     UbDestroyStatus DestroyTp(uint32_t tpn,
                               UbDestroyReason reason = UbDestroyReason::EXPLICIT,
                               UbDestroyCallback callback = {});

@@ -625,6 +625,31 @@ UbTransportChannelManager::ResolveLiveTp(uint32_t tpn,
 }
 
 Ptr<UbTransportChannel>
+UbTransportChannelManager::ResolveTpForAcceptedWork(
+    uint32_t tpn,
+    const UbLifecycleResourceIdentity& expectedIdentity)
+{
+    if (m_controller == nullptr || m_controller->IsDisposing())
+    {
+        return nullptr;
+    }
+    Ptr<Node> node = m_controller->GetObject<Node>();
+    if (node == nullptr || expectedIdentity.ownerNodeId != node->GetId() ||
+        !IsTpBackingExecutionOwner(node->GetId()))
+    {
+        return nullptr;
+    }
+    const auto endpoint = m_endpoints.find(tpn);
+    if (endpoint == m_endpoints.end() || endpoint->second.channel == nullptr ||
+        endpoint->second.channel->GetLifecycleOwner() != expectedIdentity)
+    {
+        return nullptr;
+    }
+    Ptr<UbLifecycleCoordinator> coordinator = UbLifecycleCoordinator::GetOrCreate(node);
+    return coordinator->IsResourceActive(expectedIdentity) ? endpoint->second.channel : nullptr;
+}
+
+Ptr<UbTransportChannel>
 UbTransportChannelManager::ResolveLiveTpLocked(uint32_t tpn,
                                                const UbLifecycleResourceIdentity& expectedIdentity)
 {

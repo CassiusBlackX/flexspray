@@ -270,15 +270,10 @@ private:
                                            UbDestroyCallback callback,
                                            uint32_t callbackNodeId = UINT32_MAX,
                                            uint64_t requestId = 0);
-    void RequestEndpointDestroy(const Connection& connection,
-                                const UbLifecycleResourceIdentity& identity,
-                                uint8_t slot,
-                                UbDestroyReason reason);
     void RequestDestroyNotice(const Connection& connection,
                               const UbLifecycleResourceIdentity& identity,
                               uint8_t slot,
-                              UbDestroyReason reason,
-                              bool ownerObservedActive);
+                              UbDestroyReason reason);
     void OnLocalEndpointDestroyed(UbLifecycleResourceIdentity connectionIdentity,
                                   uint8_t slot,
                                   UbLifecycleResourceIdentity endpointIdentity,
