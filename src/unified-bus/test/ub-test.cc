@@ -25712,7 +25712,7 @@ class UbAllocatorCallbackOwnershipProbe : public UbRoundRobinAllocator
         ScheduleOwnedRetrigger(outPortId, outPort);
     }
 
-    void ScheduleCallbackEntryQueries(Ptr<UbIngressQueue> queue)
+    void ScheduleCoalescedThenFollowupQueries(Ptr<UbIngressQueue> queue)
     {
         const uint32_t outPortId = queue->GetOutPortId();
         InitializePortEventState(outPortId + 1);
@@ -25725,18 +25725,36 @@ class UbAllocatorCallbackOwnershipProbe : public UbRoundRobinAllocator
                                 outPortId,
                                 queue,
                                 nullptr,
-                                UbAllocatorOwnershipObservation::SAME_PORT_PEER_PENDING,
-                                &firstCallbackObservedPendingPeer);
-        Ptr<UbAllocatorOwnershipObserverPort> secondOutPort =
+                                UbAllocatorOwnershipObservation::SINGLE_CLEARED,
+                                &firstCallbackObservedNoPendingOwner);
+        Ptr<UbAllocatorOwnershipObserverPort> duplicateOutPort =
             CreateObject<UbAllocatorOwnershipObserverPort>();
-        secondOutPort->Configure(this,
-                                 outPortId,
-                                 queue,
-                                 nullptr,
-                                 UbAllocatorOwnershipObservation::ALL_CLEARED,
-                                 &secondCallbackObservedNoPendingPeer);
+        duplicateOutPort->Configure(this,
+                                    outPortId,
+                                    queue,
+                                    nullptr,
+                                    UbAllocatorOwnershipObservation::SINGLE_CLEARED,
+                                    &duplicateCallbackRan);
         ScheduleOwnedRetrigger(outPortId, firstOutPort);
-        ScheduleOwnedRetrigger(outPortId, secondOutPort);
+        ScheduleOwnedRetrigger(outPortId, duplicateOutPort);
+        Simulator::ScheduleNow(&UbAllocatorCallbackOwnershipProbe::ScheduleFollowupQuery,
+                               this,
+                               queue);
+    }
+
+    void ScheduleFollowupQuery(Ptr<UbIngressQueue> queue)
+    {
+        const uint32_t outPortId = queue->GetOutPortId();
+        Ptr<UbAllocatorOwnershipObserverPort> followupOutPort =
+            CreateObject<UbAllocatorOwnershipObserverPort>();
+        followupOutPort->Configure(this,
+                                   outPortId,
+                                   queue,
+                                   nullptr,
+                                   UbAllocatorOwnershipObservation::SINGLE_CLEARED,
+                                   &followupCallbackObservedNoPendingOwner);
+        ScheduleOwnedRetrigger(outPortId, followupOutPort);
+        followupObservedPendingOwner = HasPendingOrActiveWork(queue);
     }
 
     void SchedulePortIsolationQueries(Ptr<UbIngressQueue> first, Ptr<UbIngressQueue> second)
@@ -25770,8 +25788,10 @@ class UbAllocatorCallbackOwnershipProbe : public UbRoundRobinAllocator
     }
 
     bool singleCallbackObservedNoPendingOwner{false};
-    bool firstCallbackObservedPendingPeer{false};
-    bool secondCallbackObservedNoPendingPeer{false};
+    bool firstCallbackObservedNoPendingOwner{false};
+    bool duplicateCallbackRan{false};
+    bool followupObservedPendingOwner{false};
+    bool followupCallbackObservedNoPendingOwner{false};
     bool firstPortObservedOnlyPeerPending{false};
     bool secondPortObservedBothResolved{false};
 
@@ -26457,14 +26477,14 @@ class UbAllocatorPendingWorkBlocksTpBackingReclaimTest : public TestCase
     }
 };
 
-class UbAllocatorMultipleSamePortRetriggersRetainOwnershipTest : public TestCase
+class UbAllocatorSamePortRetriggersUseSingleFlightTest : public TestCase
 {
   public:
-    UbAllocatorMultipleSamePortRetriggersRetainOwnershipTest(const std::string& displayName,
-                                                             const std::string& schedulerConfig,
-                                                             uint32_t expectedPendingEvents)
+    UbAllocatorSamePortRetriggersUseSingleFlightTest(const std::string& displayName,
+                                                     const std::string& schedulerConfig,
+                                                     uint32_t expectedPendingEvents)
         : TestCase("UnifiedBus - " + displayName +
-                   " allocator retains multiple same-port retrigger events"),
+                   " allocator coalesces same-port retrigger events"),
           m_schedulerConfig(schedulerConfig),
           m_expectedPendingEvents(expectedPendingEvents)
     {
@@ -26491,18 +26511,18 @@ class UbAllocatorMultipleSamePortRetriggersRetainOwnershipTest : public TestCase
 
         NS_TEST_ASSERT_MSG_EQ(allocator->GetPendingEventCountForTest(),
                               m_expectedPendingEvents,
-                              "Both same-port retrigger ownership handles must remain visible");
+                              "Same-port retrigger requests must share one pending scheduler event");
 
         Ptr<UbIngressQueue> queue = CreateObject<UbIngressQueue>();
         queue->SetOutPortId(kOutPort);
         NS_TEST_ASSERT_MSG_EQ(allocator->HasPendingOrActiveWork(queue),
                               true,
-                              "Either pending retrigger must conservatively block same-port reclaim");
+                              "The shared pending retrigger must conservatively block reclaim");
 
         allocator->Dispose();
         NS_TEST_ASSERT_MSG_EQ(allocator->GetForcedEventResidueForTest(),
                               m_expectedPendingEvents,
-                              "Forced stop must report every scheduler-owned pending event");
+                              "Forced stop must report the physical pending scheduler events");
         NS_TEST_ASSERT_MSG_EQ(allocator->GetPendingEventCountForTest(),
                               0u,
                               "Forced stop must cancel every same-port retrigger handle");
@@ -26516,11 +26536,11 @@ class UbAllocatorMultipleSamePortRetriggersRetainOwnershipTest : public TestCase
     uint32_t m_expectedPendingEvents;
 };
 
-class UbAllocatorCallbackEntryReclaimQueryTracksPendingPeerTest : public TestCase
+class UbAllocatorSingleFlightRetriggerPreservesFollowupTest : public TestCase
 {
   public:
-    UbAllocatorCallbackEntryReclaimQueryTracksPendingPeerTest()
-        : TestCase("UnifiedBus - allocator callback-entry reclaim query tracks pending peer")
+    UbAllocatorSingleFlightRetriggerPreservesFollowupTest()
+        : TestCase("UnifiedBus - allocator single-flight retrigger preserves later wakeup")
     {
     }
 
@@ -26531,18 +26551,33 @@ class UbAllocatorCallbackEntryReclaimQueryTracksPendingPeerTest : public TestCas
             CreateObject<UbAllocatorCallbackOwnershipProbe>();
         Ptr<UbIngressQueue> queue = CreateObject<UbIngressQueue>();
         queue->SetOutPortId(1);
-        allocator->ScheduleCallbackEntryQueries(queue);
+        allocator->ScheduleCoalescedThenFollowupQueries(queue);
+
+        NS_TEST_ASSERT_MSG_EQ(allocator->GetPendingEventCountForTest(),
+                              1u,
+                              "Duplicate requests before callback entry must share one event");
 
         Simulator::Run();
 
         NS_TEST_ASSERT_MSG_EQ(
-            allocator->firstCallbackObservedPendingPeer,
+            allocator->firstCallbackObservedNoPendingOwner,
             true,
-            "At first callback entry, the second same-port retrigger must still block reclaim");
+            "The shared retrigger must release ownership at callback entry");
         NS_TEST_ASSERT_MSG_EQ(
-            allocator->secondCallbackObservedNoPendingPeer,
+            allocator->duplicateCallbackRan,
+            false,
+            "The duplicate request must not create a second callback");
+        NS_TEST_ASSERT_MSG_EQ(
+            allocator->followupObservedPendingOwner,
             true,
-            "At second callback entry, resolved retriggers must no longer block reclaim");
+            "A request after callback entry must install a new pending owner");
+        NS_TEST_ASSERT_MSG_EQ(
+            allocator->followupCallbackObservedNoPendingOwner,
+            true,
+            "The later wakeup must run and release its ownership at callback entry");
+        NS_TEST_ASSERT_MSG_EQ(allocator->GetPendingEventCountForTest(),
+                              0u,
+                              "Both the shared wake and later wake must resolve without residue");
 
         allocator->Dispose();
         Simulator::Destroy();
@@ -26619,8 +26654,8 @@ class UbSwitchDisposeCancelsOwnedQueueEventsAndRecordsResidueTest : public TestC
                               "The delayed packet should be owned by one saved switch event");
         NS_TEST_ASSERT_MSG_EQ(
             allocator->GetPendingEventCountForTest(),
-            5u,
-            "Allocator should own deadlock, notification, allocation, and both retrigger events");
+            4u,
+            "Allocator should own deadlock, notification, allocation, and one retrigger event");
         NS_TEST_ASSERT_MSG_EQ(fixture.sw->TryDestroyVoqForTest(kOutPort, kPriority, kInPort),
                               false,
                               "A delayed packet must not create or destroy a VOQ before completion");
@@ -26641,7 +26676,7 @@ class UbSwitchDisposeCancelsOwnedQueueEventsAndRecordsResidueTest : public TestC
                               "Forced switch disposal should report total buffered residue");
         NS_TEST_ASSERT_MSG_EQ(
             allocator->GetForcedEventResidueForTest(),
-            5u,
+            4u,
             "Forced allocator disposal should report each pending event kind exactly");
         NS_TEST_ASSERT_MSG_EQ(allocator->GetPendingEventCountForTest(),
                               0u,
@@ -29809,9 +29844,9 @@ UbTestSuite::UbTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbSwitchVoqDestroyGateBlocksAllocatorAndAccountingTest(),
                 TestCase::Duration::QUICK);
-    AddTestCase(new UbAllocatorMultipleSamePortRetriggersRetainOwnershipTest("RR", "SP", 3),
+    AddTestCase(new UbAllocatorSamePortRetriggersUseSingleFlightTest("RR", "SP", 2),
                 TestCase::Duration::QUICK);
-    AddTestCase(new UbAllocatorMultipleSamePortRetriggersRetainOwnershipTest("DWRR", "DWRR", 2),
+    AddTestCase(new UbAllocatorSamePortRetriggersUseSingleFlightTest("DWRR", "DWRR", 1),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorSingleRetriggerOwnershipTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorMultipleOutputPortsKeepOwnerLocalPendingWorkTest(),
@@ -29830,7 +29865,7 @@ UbTestSuite::UbTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorEgressCommitReentrantStopTest("DWRR", "DWRR", 1),
                 TestCase::Duration::QUICK);
-    AddTestCase(new UbAllocatorCallbackEntryReclaimQueryTracksPendingPeerTest(),
+    AddTestCase(new UbAllocatorSingleFlightRetriggerPreservesFollowupTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorRetriggerBeforeInitAndAfterDisposeIsIgnoredTest(),
                 TestCase::Duration::QUICK);
@@ -30576,9 +30611,9 @@ UbSwitchVoqTestSuite::UbSwitchVoqTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbSwitchVoqDestroyGateBlocksAllocatorAndAccountingTest(),
                 TestCase::Duration::QUICK);
-    AddTestCase(new UbAllocatorMultipleSamePortRetriggersRetainOwnershipTest("RR", "SP", 3),
+    AddTestCase(new UbAllocatorSamePortRetriggersUseSingleFlightTest("RR", "SP", 2),
                 TestCase::Duration::QUICK);
-    AddTestCase(new UbAllocatorMultipleSamePortRetriggersRetainOwnershipTest("DWRR", "DWRR", 2),
+    AddTestCase(new UbAllocatorSamePortRetriggersUseSingleFlightTest("DWRR", "DWRR", 1),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorSingleRetriggerOwnershipTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorMultipleOutputPortsKeepOwnerLocalPendingWorkTest(),
@@ -30597,7 +30632,7 @@ UbSwitchVoqTestSuite::UbSwitchVoqTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorEgressCommitReentrantStopTest("DWRR", "DWRR", 1),
                 TestCase::Duration::QUICK);
-    AddTestCase(new UbAllocatorCallbackEntryReclaimQueryTracksPendingPeerTest(),
+    AddTestCase(new UbAllocatorSingleFlightRetriggerPreservesFollowupTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorRetriggerBeforeInitAndAfterDisposeIsIgnoredTest(),
                 TestCase::Duration::QUICK);

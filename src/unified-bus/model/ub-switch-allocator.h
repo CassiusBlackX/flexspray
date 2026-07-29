@@ -59,7 +59,8 @@ protected:
     {
         EventId allocation;
         bool allocationPending{false};
-        std::vector<std::pair<uint64_t, EventId>> retriggers;
+        EventId retrigger;
+        bool retriggerPending{false};
         std::unordered_map<uint64_t, EventId> notifications;
         uint32_t schedulingWorkCount{0};
         Ptr<UbIngressQueue> activeIngressQueue;
@@ -76,7 +77,7 @@ protected:
     void SchedulePortNotification(Ptr<UbPort> outPort);
     void ScheduleDeadlockCheck();
     void RunAllocation(Ptr<UbPort> outPort);
-    void RunOwnedRetrigger(uint32_t outPortId, uint64_t token, Ptr<UbPort> outPort);
+    void RunOwnedRetrigger(uint32_t outPortId, Ptr<UbPort> outPort);
     void RunPortNotification(uint32_t outPortId, uint64_t token, Ptr<UbPort> outPort);
     void RunDeadlockCheck();
     void FinalizeDisposeStorage();
