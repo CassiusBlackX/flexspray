@@ -326,6 +326,7 @@ public:
             m_headArrivalTime = Simulator::Now();
         }
         m_wqeSegmentVector.push_back(segment);
+        RefreshAllocatorSummary();
     }
 
     bool TryAdmitWqeSegment(Ptr<UbWqeSegment> segment);
@@ -347,22 +348,70 @@ public:
     uint32_t GetOutstandingUnackedSegmentCount() const;
     bool CanScheduleAnotherSegment() const;
 
-    Ptr<UbCongestionControl> GetCongestionCtrlForTest() const { return m_congestionCtrl; }
-    void SetCongestionControlForTest(Ptr<UbCongestionControl> cc) { m_congestionCtrl = cc; }
-    void EnqueueAckForTest(Ptr<Packet> p) { m_ackQ.push(p); }
-    void EnqueueCnpForTest(Ptr<Packet> p) { m_cnpQ.push(p); }
-    void ClearCnpForTest() { while (!m_cnpQ.empty()) { m_cnpQ.pop(); } }
-    void ClearWqeSegmentsForTest() { m_wqeSegmentVector.clear(); }
+    Ptr<UbCongestionControl> GetCongestionCtrlForTest() const
+    {
+        return m_congestionCtrl;
+    }
+
+    void SetCongestionControlForTest(Ptr<UbCongestionControl> cc)
+    {
+        m_congestionCtrl = cc;
+    }
+
+    void EnqueueAckForTest(Ptr<Packet> p)
+    {
+        m_ackQ.push(p);
+        RefreshAllocatorSummary();
+    }
+
+    void EnqueueCnpForTest(Ptr<Packet> p)
+    {
+        m_cnpQ.push(p);
+        RefreshAllocatorSummary();
+    }
+
+    void ClearCnpForTest()
+    {
+        while (!m_cnpQ.empty())
+        {
+            m_cnpQ.pop();
+        }
+        RefreshAllocatorSummary();
+    }
+
+    void ClearWqeSegmentsForTest()
+    {
+        m_wqeSegmentVector.clear();
+        RefreshAllocatorSummary();
+    }
     void SetMaxQueueSizeForTest(uint64_t size) { m_maxQueueSize = size; }
     void AddRemoteRequestForTest(Ptr<UbWqeSegment> segment) { m_remoteRequest.push_back(segment); }
     void ClearRemoteRequestsForTest() { m_remoteRequest.clear(); }
     void AddInboundTaUnitForTest(uint32_t srcTpn, uint64_t msn);
     void ClearInboundTaUnitsForTest() { m_inboundTaUnits.clear(); }
     void AddBufferedInboundPacketForTest(uint64_t psn);
-    void ClearBufferedInboundPacketsForTest() { m_bufferedInboundPackets.clear(); }
-    Ptr<Packet> GetNextPacketForTest() { return GetNextPacket(); }
-    uint32_t GetPendingAckCountForTest() const { return static_cast<uint32_t>(m_ackQ.size()); }
-    Ptr<Packet> PopAckForTest() { return GetNextPacket(); }
+
+    void ClearBufferedInboundPacketsForTest()
+    {
+        m_bufferedInboundPackets.clear();
+    }
+
+    Ptr<Packet> GetNextPacketForTest()
+    {
+        return GetNextPacket();
+    }
+
+    uint32_t GetPendingAckCountForTest() const
+    {
+        return static_cast<uint32_t>(m_ackQ.size());
+    }
+
+    Ptr<Packet> PopAckForTest()
+    {
+        Ptr<Packet> packet = GetNextPacket();
+        RefreshAllocatorSummary();
+        return packet;
+    }
     uint32_t GetPendingCnpCountForTest() const { return static_cast<uint32_t>(m_cnpQ.size()); }
     uint64_t GetPsnSndUnaForTest() const { return m_psnSndUna; }
     void SetPsnSndUnaForTest(uint64_t psn) { m_psnSndUna = psn; }

@@ -25,7 +25,9 @@ typedef std::vector<bool> EgressStatus_t;
  * @brief 交换机调度器基类
  */
 class UbSwitchAllocator : public Object {
-public:
+    friend class UbIngressQueue;
+
+  public:
     UbSwitchAllocator();
     virtual ~UbSwitchAllocator();
     static TypeId GetTypeId (void);
@@ -81,6 +83,12 @@ protected:
     void NotifyAllocationFinish(Ptr<UbPort> outPort);
     void SetActiveIngressQueue(Ptr<UbIngressQueue> ingressQueue);
     void ClearActiveIngressQueue(uint32_t outPortId);
+    void UpdateIngressSummary(UbIngressQueue* ingressQueue, bool nonEmpty);
+    void RefreshIngressSummary(Ptr<UbIngressQueue> ingressQueue);
+    bool HasNonEmptyIngress(uint32_t outPortId) const;
+    void BindIngressSummary(Ptr<UbIngressQueue> ingressQueue);
+    void UnbindIngressSummary(Ptr<UbIngressQueue> ingressQueue);
+    bool ConsumePendingRetrigger(uint32_t outPortId);
 
     Time m_allocationTime;
     uint32_t m_nodeId;
@@ -88,6 +96,7 @@ protected:
     EgressStatus_t m_egressStatus;
     std::vector<bool> m_isRunning;	
     std::vector<bool> m_oneMoreRound;
+    std::vector<uint32_t> m_nonEmptyIngressCount;
     uint32_t m_voqIngressSlotCount = 0;
     bool m_enableDirectAllocationCompletion = true;
     std::vector<PortEventState> m_portEventState;
