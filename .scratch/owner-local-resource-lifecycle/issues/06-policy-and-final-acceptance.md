@@ -7,7 +7,7 @@ and performance acceptance package.
 **Blocked by:** 02 — Complete explicit TP connection close across execution owners; 05 — Remove TP
 dormancy and obsolete global lifecycle machinery.
 
-**Status:** implementation-complete; final acceptance blocked by restricted host permissions
+**Status:** complete
 
 ## Batch reuse map
 
@@ -66,8 +66,8 @@ Pre-refactor commit: `01a642d0`
       repurposed.
 - [x] Policy-off and policy-on canonical network outputs are byte-identical when scoped resources
       have no later declared use.
-- [ ] The complete frozen local, MTP, MPI, and hybrid manifests are raw-byte-identical to baseline.
-- [ ] Reversed-order approximately 30-second measurements report retired instructions as primary and
+- [x] The complete frozen local, MTP, MPI, and hybrid manifests are raw-byte-identical to baseline.
+- [x] Reversed-order approximately 30-second measurements report retired instructions as primary and
       wall time as supporting evidence; the prototype's median `3.89%` reduction is directional only.
 - [x] Throwaway prototype and microprobe source files are excluded from the production commit while
       their decision-relevant findings remain documented.
@@ -90,13 +90,32 @@ Pre-refactor commit: `01a642d0`
 - Stable-commit review restored the original direct `ReserveTpnsForTraffic()` implementation for
   policy-off startup, so identity vector construction and generation lookup remain opt-in costs.
 
-## Remaining acceptance blockers
+## Final acceptance evidence
 
-- MPI-only and hybrid launch stop before simulation because the restricted host denies PRTE's
-  `bind()` with `Operation not permitted`. Rerun the frozen MPI manifest with one MTP thread and the
-  hybrid manifest with two MTP threads on an unrestricted host.
-- Retired-instruction collection is blocked because `/usr/bin/time` cannot read
-  `kern.clockrate` under the restricted host. Two wall-only reversed-order comparisons were noisy
-  (approximately `+3.3%` and `+0.5%`) and are intentionally not acceptance evidence.
-- Do not close Ticket 06 until both blockers above are resolved and recorded in a separate closeout
-  commit.
+- MPI-only (`--mtp-threads=1`) and hybrid (`--mtp-threads=2`) both completed with exit status 0.
+  Both ranks reported `PASSED`, including ACK, task completion, stale request rejection, explicit
+  connection close, and final sender/receiver view retirement.
+- OpenMPI per-rank output was captured separately for Ticket 05 baseline and Ticket 06. The raw bytes
+  matched for both MPI-only and hybrid: rank 0 SHA-256
+  `609529d52bed74d81273e1bea421525f4263341084a6371fe4e6901a0c431dcb`; rank 1 SHA-256
+  `54495d57bc6e3e74fb6ff599aba9edb84eec0817d5570668a55b5a2c08b110b6`.
+- The valid performance comparison built both revisions from the same module example source with
+  identical release, MPI, MTP, examples, tests, and native-optimization settings. Two reversed-order
+  16 by 768 MiB pairs measured Ticket 06 minus Ticket 05 retired instructions at `-0.0057%` and
+  `+0.0119%` (median `+0.0031%`), establishing no measurable default-off regression. Median simulator
+  wall time was `-1.04%` and median peak RSS was `-0.57%`; these remain supporting metrics.
+- Canonical identity output was exact across all four valid performance runs. Evidence is stored at
+  `/tmp/ticket06-perf-evidence/20260730T040245Z-measure/summary.json`.
+- An earlier run that compared the scratch executable without MPI to the module example linked with
+  MPI produced an invalid `+56%` RSS difference. That run is retained for diagnosis but excluded from
+  acceptance because its executable and linkage boundary differed.
+- A final same-build comparison measured the complete `next-speedup` result at `67f981f0` against
+  pre-Ticket-05 commit `82b22954`, where per-packet lifecycle bookkeeping was still active. The two
+  reversed-order pairs reduced retired instructions by `3.8904%` and `3.8994%` (median `3.8949%`),
+  cycles by a median `6.25%`, and simulator wall time by a median `6.04%`. Canonical identity output
+  remained exact in all four runs. Evidence is stored at
+  `/tmp/ticket06-perf-evidence/20260730T065104Z-measure/summary.json`.
+- Ticket 06 therefore adds opt-in explicit cleanup policy without giving back the packet-bookkeeping
+  removal gain when the policy is disabled.
+- The final implementation is committed on `next-speedup` as `67f981f0`; target-worktree rebuild,
+  focused suites, MPI-only, and hybrid were rerun successfully after migration.
