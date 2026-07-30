@@ -126,6 +126,12 @@ public:
                                uint32_t peerNodeId,
                                uint32_t priority);
 
+    std::vector<UbLifecycleResourceIdentity> ReservePlannedTpnsForTraffic(
+        bool useShortestPath,
+        uint32_t localNodeId,
+        uint32_t peerNodeId,
+        uint32_t priority);
+
     // 1. 获取节点相关的所有连接
     std::vector<Connection> GetNodeConnections(uint32_t nodeId) const;
 
@@ -196,6 +202,10 @@ public:
                                       UbDestroyReason reason = UbDestroyReason::EXPLICIT,
                                       UbDestroyCallback callback = {});
 
+    UbDestroyStatus DestroyConnection(const UbLifecycleResourceIdentity& identity,
+                                      UbDestroyReason reason = UbDestroyReason::EXPLICIT,
+                                      UbDestroyCallback callback = {});
+
     static bool ApplyLifecycleControl(const UbLifecycleControlRecord& record);
 
     bool GetConnectionLifecycleSnapshot(uint32_t localTpn,
@@ -214,15 +224,7 @@ public:
     // 清空所有连接
     void Clear();
 
-    // 删除无用tp
-    void RemoveUselessTps(uint32_t jettyNum, uint32_t src, uint32_t dst, uint32_t priority);
-
     uint32_t GetNextTpn();
-
-    bool IsTpRemoveMode()
-    {
-        return m_removeUselessTp;
-    }
 private:
   friend class ns3::UbController;
   friend class ns3::UbTpnAllocationBoundaryAccessor;
@@ -270,6 +272,12 @@ private:
                                            UbDestroyCallback callback,
                                            uint32_t callbackNodeId = UINT32_MAX,
                                            uint64_t requestId = 0);
+    UbDestroyStatus DestroyConnectionLocked(
+        uint32_t localNodeId,
+        uint32_t localTpn,
+        const UbLifecycleResourceIdentity* expectedIdentity,
+        UbDestroyReason reason,
+        UbDestroyCallback callback);
     void RequestDestroyNotice(const Connection& connection,
                               const UbLifecycleResourceIdentity& identity,
                               uint8_t slot,
@@ -383,7 +391,6 @@ private:
 
     Ptr<UniformRandomVariable> m_random;
 
-    bool m_removeUselessTp = false;
 
     mutable std::mutex m_stateLock;
     uint32_t m_ownerNodeId{UINT32_MAX};

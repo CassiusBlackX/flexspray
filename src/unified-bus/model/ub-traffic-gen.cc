@@ -120,19 +120,19 @@ void UbTrafficGen::AddTask(const TrafficRecord& record)
     AddTaskLocked(record, false);
 }
 
-void
+bool
 UbTrafficGen::AddTaskDuringInitialLoad(const TrafficRecord& record)
 {
-    AddTaskLocked(record, true);
+    return AddTaskLocked(record, true);
 }
 
-void
+bool
 UbTrafficGen::AddTaskDuringInitialLoad(const TrafficRecordView& record)
 {
-    AddTaskLocked(record, true);
+    return AddTaskLocked(record, true);
 }
 
-void
+bool
 UbTrafficGen::AddTaskLocked(const TrafficRecord& record, bool phaseAlreadyIndexed)
 {
     uint32_t taskId = record.taskId;
@@ -140,7 +140,7 @@ UbTrafficGen::AddTaskLocked(const TrafficRecord& record, bool phaseAlreadyIndexe
     if (!SetTaskLocked(task))
     {
         NS_LOG_ERROR("TaskId " << taskId << " already exists, cannot add duplicate task!");
-        return;
+        return false;
     }
     if (!phaseAlreadyIndexed) {
         RegisterTaskPhaseLocked(record.phaseId, taskId);
@@ -181,9 +181,10 @@ UbTrafficGen::AddTaskLocked(const TrafficRecord& record, bool phaseAlreadyIndexe
 
     NS_LOG_DEBUG("Added task " << taskId << " with " << uniqueDependencyPhaseCount
                                << " phase dependencies");
+    return true;
 }
 
-void
+bool
 UbTrafficGen::AddTaskLocked(const TrafficRecordView& record, bool phaseAlreadyIndexed)
 {
     const uint32_t taskId = record.taskId;
@@ -191,7 +192,7 @@ UbTrafficGen::AddTaskLocked(const TrafficRecordView& record, bool phaseAlreadyIn
     if (!SetTaskLocked(task))
     {
         NS_LOG_ERROR("TaskId " << taskId << " already exists, cannot add duplicate task!");
-        return;
+        return false;
     }
     if (!phaseAlreadyIndexed) {
         RegisterTaskPhaseLocked(record.phaseId, taskId);
@@ -250,6 +251,36 @@ UbTrafficGen::AddTaskLocked(const TrafficRecordView& record, bool phaseAlreadyIn
 
     NS_LOG_DEBUG("Added task " << taskId << " with " << uniqueDependencyPhaseCount
                                << " phase dependencies");
+    return true;
+}
+
+void
+UbTrafficGen::RegisterPlannedTpConnections(
+    uint32_t taskId,
+    const std::vector<UbLifecycleResourceIdentity>& connections)
+{
+    if (connections.empty())
+    {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(m_mutex);
+    NS_ABORT_MSG_IF(FindTaskLocked(taskId) == nullptr,
+                    "Cannot register planned TP connections for an unknown task " << taskId);
+    const auto [task, inserted] = m_taskPlannedTpConnections.emplace(taskId, connections);
+    NS_ABORT_MSG_IF(!inserted,
+                    "Planned TP connections already registered for task " << taskId);
+    for (const auto& identity : task->second)
+    {
+        NS_ABORT_MSG_IF(identity.kind != UbLifecycleResourceKind::RTP_CONNECTION,
+                        "Planned TP policy accepts only connection identities");
+        const PlannedTpConnectionKey key{identity.ownerNodeId,
+                                         identity.localId,
+                                         identity.generation};
+        auto [use, created] = m_plannedTpUses.emplace(key, PlannedTpUseRecord{identity, 0});
+        NS_ABORT_MSG_IF(!created && use->second.identity != identity,
+                        "Planned TP identity key collision");
+        ++use->second.remainingUses;
+    }
 }
 
 void
@@ -758,7 +789,11 @@ UbTrafficGen::SubmitTaskCompletion(uint32_t taskId,
                                 (cleanupIt->second.ownerNodeId != cleanupRequest->ownerNodeId ||
                                  cleanupIt->second.ownerApplicationIndex !=
                                      cleanupRequest->ownerApplicationIndex ||
-                                 cleanupIt->second.jettyNum != cleanupRequest->jettyNum),
+                                 cleanupIt->second.jettyNum != cleanupRequest->jettyNum ||
+                                 cleanupIt->second.destroyTaskScopedJetty !=
+                                     cleanupRequest->destroyTaskScopedJetty ||
+                                 cleanupIt->second.destroyPlannedTpConnections !=
+                                     cleanupRequest->destroyPlannedTpConnections),
                             "Conflicting task cleanup request for task " << taskId);
             if (!inserted)
             {
@@ -978,6 +1013,35 @@ UbTrafficGen::ApplyTaskCompletion(uint32_t taskId)
             cleanupRequest = cleanupIt->second;
             m_pendingTaskCleanups.erase(cleanupIt);
         }
+
+        if (!m_taskPlannedTpConnections.empty())
+        {
+            const auto plannedTask = m_taskPlannedTpConnections.find(taskId);
+            if (plannedTask != m_taskPlannedTpConnections.end())
+            {
+                for (const auto& identity : plannedTask->second)
+                {
+                    const PlannedTpConnectionKey key{identity.ownerNodeId,
+                                                     identity.localId,
+                                                     identity.generation};
+                    auto use = m_plannedTpUses.find(key);
+                    NS_ABORT_MSG_IF(use == m_plannedTpUses.end() ||
+                                        use->second.remainingUses == 0,
+                                    "Planned TP reference balance is corrupt for task " << taskId);
+                    --use->second.remainingUses;
+                    if (use->second.remainingUses == 0)
+                    {
+                        if (cleanupRequest.has_value() &&
+                            cleanupRequest->destroyPlannedTpConnections)
+                        {
+                            cleanupRequest->plannedTpConnections.push_back(identity);
+                        }
+                        m_plannedTpUses.erase(use);
+                    }
+                }
+                m_taskPlannedTpConnections.erase(plannedTask);
+            }
+        }
     }
 
     ScheduleTasks(readyBatch);
@@ -999,7 +1063,9 @@ UbTrafficGen::ApplyTaskCompletion(uint32_t taskId)
                                        cleanupRequest->ownerNodeId,
                                        cleanupRequest->ownerApplicationIndex,
                                        taskId,
-                                       cleanupRequest->jettyNum);
+                                       cleanupRequest->jettyNum,
+                                       cleanupRequest->destroyTaskScopedJetty,
+                                       cleanupRequest->plannedTpConnections);
     }
 
     if (IsCompleted()) {
@@ -1011,7 +1077,9 @@ void
 UbTrafficGen::ApplyTaskCleanupOnOwner(uint32_t ownerNodeId,
                                       uint32_t ownerApplicationIndex,
                                       uint32_t taskId,
-                                      uint32_t jettyNum)
+                                      uint32_t jettyNum,
+                                      bool destroyTaskScopedJetty,
+                                      std::vector<UbLifecycleResourceIdentity> plannedTpConnections)
 {
     Ptr<Node> ownerNode = NodeList::GetNode(ownerNodeId);
     NS_ABORT_MSG_IF(ownerNode == nullptr || ownerApplicationIndex >= ownerNode->GetNApplications(),
@@ -1019,7 +1087,10 @@ UbTrafficGen::ApplyTaskCleanupOnOwner(uint32_t ownerNodeId,
     Ptr<UbApp> cleanupOwner = DynamicCast<UbApp>(ownerNode->GetApplication(ownerApplicationIndex));
     NS_ABORT_MSG_IF(cleanupOwner == nullptr,
                     "Task cleanup owner application is not UbApp for task " << taskId);
-    cleanupOwner->CleanupTaskScopedJetty(taskId, jettyNum);
+    cleanupOwner->CleanupCompletedTask(taskId,
+                                       jettyNum,
+                                       destroyTaskScopedJetty,
+                                       plannedTpConnections);
 }
 
 bool UbTrafficGen::IsCompleted() const
@@ -1351,7 +1422,11 @@ void UbTrafficGen::OnTaskCompleted(uint32_t taskId)
 }
 
 void
-UbTrafficGen::OnTaskCompleted(uint32_t taskId, Ptr<UbApp> cleanupOwner, uint32_t jettyNum)
+UbTrafficGen::OnTaskCompleted(uint32_t taskId,
+                              Ptr<UbApp> cleanupOwner,
+                              uint32_t jettyNum,
+                              bool destroyTaskScopedJetty,
+                              bool destroyPlannedTpConnections)
 {
     NS_ABORT_MSG_IF(cleanupOwner == nullptr, "Task cleanup owner must not be null");
     Ptr<Node> ownerNode = cleanupOwner->GetNode();
@@ -1368,7 +1443,12 @@ UbTrafficGen::OnTaskCompleted(uint32_t taskId, Ptr<UbApp> cleanupOwner, uint32_t
     NS_ABORT_MSG_IF(applicationIndex == ownerNode->GetNApplications(),
                     "Task cleanup owner must be installed on its node");
     SubmitTaskCompletion(taskId,
-                         TaskCleanupRequest{ownerNode->GetId(), applicationIndex, jettyNum});
+                         TaskCleanupRequest{ownerNode->GetId(),
+                                            applicationIndex,
+                                            jettyNum,
+                                            destroyTaskScopedJetty,
+                                            destroyPlannedTpConnections,
+                                            {}});
 }
 
 void

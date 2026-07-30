@@ -93,7 +93,11 @@ protected:
 private:
     friend class UbTrafficGen;
 
-    void CleanupTaskScopedJetty(uint32_t taskId, uint32_t jettyNum);
+    void CleanupCompletedTask(
+        uint32_t taskId,
+        uint32_t jettyNum,
+        bool destroyTaskScopedJetty,
+        const std::vector<UbLifecycleResourceIdentity>& plannedTpConnections);
 
     TracedCallback<uint32_t, uint32_t> m_traceMemTaskStartsNotify;
     TracedCallback<uint32_t, uint32_t> m_traceMemTaskCompletesNotify;
@@ -109,6 +113,8 @@ private:
 
     // 控制器
     bool m_multiPathEnable = false;
+    bool m_enableTaskScopedJettyDestroy = false;
+    bool m_enablePlannedTpConnectionDestroy = false;
 
     GetTpnRuleT m_getTpnRule = GetTpnRuleT::BY_PEERNODE_PRIORITY;
     RoutingType m_routingType{RoutingType::PER_FLOW_SHORTEST_PATHS};

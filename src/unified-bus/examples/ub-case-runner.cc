@@ -21,8 +21,10 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <sstream>
 #include <string>
+#include <tuple>
 
 #ifdef NS3_MPI
 #include "ns3/mpi-interface.h"
@@ -737,14 +739,19 @@ uint32_t ActivateTrafficFromConfig(const std::string& configPath,
 
     uint32_t localTaskCount = 0;
     std::vector<Ptr<UbApp>> sourceApps;
+    using PlannedRouteKey = std::tuple<uint32_t, uint32_t, uint8_t>;
+    std::map<PlannedRouteKey, std::vector<UbLifecycleResourceIdentity>> driverOwnedConnections;
     Ptr<UbApp> appDefaults = CreateObject<UbApp>();
     const bool reserveRtpConnections = appDefaults->GetTransportMode() == TransportMode::RTP;
     const bool useShortestPaths =
         RoutingTypeUsesShortestPaths(appDefaults->GetRoutingType());
+    BooleanValue plannedDestroyValue;
+    appDefaults->GetAttribute("EnablePlannedTpConnectionDestroy", plannedDestroyValue);
+    const bool managePlannedConnections = plannedDestroyValue.Get();
     UbUtils::Get()->PrintTimestamp("[traffic] Activate clients and enqueue tasks.");
     UbUtils::Get()->ForEachTrafficRecordView(trafficPath, [&](const TrafficRecordView& record) {
         Ptr<Node> sourceNode = NodeList::GetNode(record.sourceNode);
-        if (reserveRtpConnections &&
+        if (!managePlannedConnections && reserveRtpConnections &&
             (record.opType == "URMA_WRITE" || record.opType == "URMA_READ"))
         {
             sourceNode->GetObject<UbController>()->GetTpConnManager()->ReserveTpnsForTraffic(
@@ -783,7 +790,29 @@ uint32_t ActivateTrafficFromConfig(const std::string& configPath,
             ++localTaskCount;
         }
 
-        UbTrafficGen::Get()->AddTaskDuringInitialLoad(record);
+        const bool accepted = UbTrafficGen::Get()->AddTaskDuringInitialLoad(record);
+        if (accepted && managePlannedConnections && reserveRtpConnections &&
+            (record.opType == "URMA_WRITE" || record.opType == "URMA_READ"))
+        {
+            const PlannedRouteKey routeKey{record.sourceNode,
+                                           record.destNode,
+                                           record.priority};
+            auto planned = driverOwnedConnections.find(routeKey);
+            if (planned == driverOwnedConnections.end())
+            {
+                Ptr<TpConnectionManager> manager =
+                    sourceNode->GetObject<UbController>()->GetTpConnManager();
+                planned = driverOwnedConnections
+                              .emplace(routeKey,
+                                       manager->ReservePlannedTpnsForTraffic(
+                                           useShortestPaths,
+                                           record.sourceNode,
+                                           record.destNode,
+                                           record.priority))
+                              .first;
+            }
+            UbTrafficGen::Get()->RegisterPlannedTpConnections(record.taskId, planned->second);
+        }
     });
 
     UbTrafficGen::Get()->ValidateDependencyVisibilityDelay(

@@ -15569,6 +15569,204 @@ class UbLifecycleAppRtpJettyLifetimeTest : public TestCase
     }
 };
 
+class UbLifecycleAppDestroyPolicyDefaultsTest : public TestCase
+{
+  public:
+    UbLifecycleAppDestroyPolicyDefaultsTest()
+        : TestCase("UnifiedBus - app convenience destroy policies default off and stay independent")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        Ptr<UbApp> app = CreateObject<UbApp>();
+        topo.sender->AddApplication(app);
+
+        BooleanValue taskScopedPolicy;
+        BooleanValue plannedTpPolicy;
+        app->GetAttribute("EnableTaskScopedJettyDestroy", taskScopedPolicy);
+        app->GetAttribute("EnablePlannedTpConnectionDestroy", plannedTpPolicy);
+        NS_TEST_ASSERT_MSG_EQ(taskScopedPolicy.Get(), false, "Jetty destroy must default off");
+        NS_TEST_ASSERT_MSG_EQ(plannedTpPolicy.Get(), false, "planned TP destroy must default off");
+
+        constexpr uint32_t taskId = 900010;
+        constexpr uint32_t jettyNum = 208;
+        Ptr<UbFunction> function = topo.sender->GetObject<UbController>()->GetUbFunction();
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              jettyNum,
+                              UbJettyLifetime::TASK_SCOPED);
+
+        TrafficRecord record;
+        record.taskId = taskId;
+        record.phaseId = taskId;
+        record.sourceNode = topo.sender->GetId();
+        record.destNode = topo.receiver->GetId();
+        record.dataSize = 64;
+        record.opType = "URMA_WRITE";
+        record.priority = 1;
+        record.delay = "1s";
+        UbTrafficGen::Get()->AddTask(record);
+        UbTrafficGen::Get()->ScheduleNextTasks();
+
+        app->SetAttribute("EnablePlannedTpConnectionDestroy", BooleanValue(true));
+        app->OnTaskCompleted(taskId, jettyNum);
+        Simulator::Stop(NanoSeconds(1));
+        Simulator::Run();
+
+        UbJettyLifecycleState state = UbJettyLifecycleState::DRAINING;
+        NS_TEST_ASSERT_MSG_EQ(function->TryGetJettyState(jettyNum, state),
+                              true,
+                              "policy-off Jetty must remain present");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(state),
+                              static_cast<uint32_t>(UbJettyLifecycleState::ACTIVE),
+                              "planned TP policy must not enable Jetty destroy");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbLifecyclePlannedTpPolicyTest : public TestCase
+{
+  public:
+    UbLifecyclePlannedTpPolicyTest()
+        : TestCase("UnifiedBus - planned TP policy closes only owned connections after final use")
+    {
+    }
+
+    void DoRun() override
+    {
+        RunPolicyOffScenario();
+        RunPolicyOnScenario();
+    }
+
+  private:
+    static TrafficRecord MakeTask(const LocalTpTopology& topo, uint32_t taskId)
+    {
+        TrafficRecord record;
+        record.taskId = taskId;
+        record.phaseId = taskId;
+        record.sourceNode = topo.sender->GetId();
+        record.destNode = topo.receiver->GetId();
+        record.dataSize = 64;
+        record.opType = "URMA_WRITE";
+        record.priority = kUrmaWriteRegressionPriority;
+        record.delay = "1s";
+        return record;
+    }
+
+    static std::vector<UbLifecycleResourceIdentity> ReserveOwned(const LocalTpTopology& topo,
+                                                                 Ptr<TpConnectionManager> manager)
+    {
+        return manager->ReservePlannedTpnsForTraffic(true,
+                                                     topo.sender->GetId(),
+                                                     topo.receiver->GetId(),
+                                                     kUrmaWriteRegressionPriority);
+    }
+
+    void RunPolicyOffScenario()
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        Ptr<TpConnectionManager> manager =
+            topo.sender->GetObject<UbController>()->GetTpConnManager();
+        const auto identities = ReserveOwned(topo, manager);
+        NS_TEST_ASSERT_MSG_NE(identities.empty(), true, "driver should create a reservation set");
+        const size_t initialCount = manager->GetCanonicalConnectionCountForTest();
+
+        constexpr uint32_t taskId = 900011;
+        constexpr uint32_t jettyNum = 209;
+        Ptr<UbApp> app = CreateObject<UbApp>();
+        topo.sender->AddApplication(app);
+        Ptr<UbFunction> function = topo.sender->GetObject<UbController>()->GetUbFunction();
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              jettyNum,
+                              UbJettyLifetime::TASK_SCOPED);
+        UbTrafficGen::Get()->AddTask(MakeTask(topo, taskId));
+        UbTrafficGen::Get()->RegisterPlannedTpConnections(taskId, identities);
+        UbTrafficGen::Get()->ScheduleNextTasks();
+        app->OnTaskCompleted(taskId, jettyNum);
+        Simulator::Stop(NanoSeconds(1));
+        Simulator::Run();
+
+        NS_TEST_ASSERT_MSG_EQ(manager->GetCanonicalConnectionCountForTest(),
+                              initialCount,
+                              "policy-off completion must retain planned connections");
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+    void RunPolicyOnScenario()
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        Ptr<TpConnectionManager> manager =
+            topo.sender->GetObject<UbController>()->GetTpConnManager();
+        const auto identities = ReserveOwned(topo, manager);
+        NS_TEST_ASSERT_MSG_NE(identities.empty(), true, "driver should create a reservation set");
+        NS_TEST_ASSERT_MSG_EQ(
+            ReserveOwned(topo, manager).empty(),
+            true,
+            "pre-existing reservations must not be claimed by a later planned reservation call");
+
+        UbLifecycleResourceIdentity stale = identities.front();
+        ++stale.generation;
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(manager->DestroyConnection(stale)),
+                              static_cast<uint32_t>(UbDestroyStatus::REJECTED),
+                              "generation-aware planned close must reject a stale identity");
+
+        Ptr<UbApp> app = CreateObject<UbApp>();
+        app->SetAttribute("EnablePlannedTpConnectionDestroy", BooleanValue(true));
+        topo.sender->AddApplication(app);
+        Ptr<UbFunction> function = topo.sender->GetObject<UbController>()->GetUbFunction();
+        constexpr uint32_t firstTaskId = 900012;
+        constexpr uint32_t secondTaskId = 900013;
+        constexpr uint32_t firstJettyNum = 210;
+        constexpr uint32_t secondJettyNum = 211;
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              firstJettyNum,
+                              UbJettyLifetime::REUSABLE);
+        function->CreateJetty(topo.sender->GetId(),
+                              topo.receiver->GetId(),
+                              secondJettyNum,
+                              UbJettyLifetime::REUSABLE);
+        UbTrafficGen::Get()->AddTask(MakeTask(topo, firstTaskId));
+        UbTrafficGen::Get()->AddTask(MakeTask(topo, secondTaskId));
+        UbTrafficGen::Get()->RegisterPlannedTpConnections(firstTaskId, identities);
+        UbTrafficGen::Get()->RegisterPlannedTpConnections(secondTaskId, identities);
+        UbTrafficGen::Get()->ScheduleNextTasks();
+
+        const size_t initialCount = manager->GetCanonicalConnectionCountForTest();
+        app->OnTaskCompleted(firstTaskId, firstJettyNum);
+        Simulator::Stop(NanoSeconds(1));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(manager->GetCanonicalConnectionCountForTest(),
+                              initialCount,
+                              "first planned use must retain shared connections");
+
+        app->OnTaskCompleted(secondTaskId, secondJettyNum);
+        Simulator::Stop(NanoSeconds(2));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(manager->GetCanonicalConnectionCountForTest(),
+                              0u,
+                              "final planned use should explicitly close owned connections");
+        NS_TEST_ASSERT_MSG_EQ(function->IsJettyExists(firstJettyNum),
+                              true,
+                              "planned TP policy must not enable Jetty destroy");
+        NS_TEST_ASSERT_MSG_EQ(function->IsJettyExists(secondJettyNum),
+                              true,
+                              "planned TP policy must remain independent for every Jetty");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
 class UbLifecycleTaskCompletionPrecedesJettyRetirementTest : public TestCase
 {
   public:
@@ -15583,6 +15781,7 @@ class UbLifecycleTaskCompletionPrecedesJettyRetirementTest : public TestCase
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
         Ptr<UbApp> app = CreateObject<UbApp>();
+        app->SetAttribute("EnableTaskScopedJettyDestroy", BooleanValue(true));
         topo.sender->AddApplication(app);
         app->TraceConnectWithoutContext(
             "WqeTaskStartsNotify",
@@ -15760,6 +15959,7 @@ class UbLifecycleTaskCleanupSubmissionIsExactlyOnceTest : public TestCase
             Config::Reset();
             LocalTpTopology topo = BuildLocalTpTopology();
             Ptr<UbApp> app = CreateObject<UbApp>();
+            app->SetAttribute("EnableTaskScopedJettyDestroy", BooleanValue(true));
             topo.sender->AddApplication(app);
             Ptr<UbFunction> function = topo.sender->GetObject<UbController>()->GetUbFunction();
             function->CreateJetty(topo.sender->GetId(),
@@ -15810,6 +16010,7 @@ class UbLifecycleTaskCleanupSubmissionIsExactlyOnceTest : public TestCase
         Config::Reset();
         LocalTpTopology topo = BuildLocalTpTopology();
         Ptr<UbApp> app = CreateObject<UbApp>();
+        app->SetAttribute("EnableTaskScopedJettyDestroy", BooleanValue(true));
         topo.sender->AddApplication(app);
         Ptr<UbFunction> function = topo.sender->GetObject<UbController>()->GetUbFunction();
         constexpr uint32_t jettyNum = 204;
@@ -15856,6 +16057,7 @@ class UbLifecyclePendingTaskCleanupDoesNotRetainAppTest : public TestCase
         Config::Reset();
         LocalTpTopology topo = BuildLocalTpTopology();
         Ptr<UbApp> app = CreateObject<UbApp>();
+        app->SetAttribute("EnableTaskScopedJettyDestroy", BooleanValue(true));
         topo.sender->AddApplication(app);
         Ptr<UbFunction> function = topo.sender->GetObject<UbController>()->GetUbFunction();
         constexpr uint32_t jettyNum = 206;
@@ -15895,6 +16097,7 @@ class UbLifecyclePendingTaskCleanupDoesNotRetainAppTest : public TestCase
             Config::Reset();
             LocalTpTopology childTopo = BuildLocalTpTopology();
             Ptr<UbApp> childApp = CreateObject<UbApp>();
+            childApp->SetAttribute("EnableTaskScopedJettyDestroy", BooleanValue(true));
             childTopo.sender->AddApplication(childApp);
             Ptr<UbFunction> childFunction =
                 childTopo.sender->GetObject<UbController>()->GetUbFunction();
@@ -20319,76 +20522,6 @@ class UbInboundTpChannelKeyValidationTest : public TestCase
     }
 };
 
-class UbUnknownInboundTpnFailsWithAutoRemoveTest : public TestCase
-{
-  public:
-    UbUnknownInboundTpnFailsWithAutoRemoveTest()
-        : TestCase("UnifiedBus - auto-remove mode does not hide an unknown inbound TPN")
-    {
-    }
-
-  private:
-    void DoRun() override
-    {
-        const int status = RunInChildProcess([]() {
-            LocalTpTopology topo = BuildLocalTpTopology();
-            Ptr<UbController> receiverCtrl = topo.receiver->GetObject<UbController>();
-            receiverCtrl->GetTpConnManager()->SetAttribute("RemoveUselessTp", BooleanValue(true));
-
-            Ptr<Packet> packet = BuildInboundTpPacket(
-                topo,
-                1234,
-                9090,
-                NodeIdToIp(topo.sender->GetId(), topo.senderPort->GetIfIndex()),
-                NodeIdToIp(topo.receiver->GetId(), topo.receiverPort->GetIfIndex()),
-                kUrmaWriteRegressionPriority);
-            topo.receiver->GetObject<UbSwitch>()->SwitchHandlePacket(topo.receiverPort, packet);
-        });
-
-        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status),
-                              1,
-                              "Unknown inbound TPN should abort even in auto-remove mode");
-        NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status),
-                              SIGABRT,
-                              "Unknown inbound TPN should fail with SIGABRT");
-    }
-};
-
-class UbLegacyTaskDrivenTpRemovalFailsFastTest : public TestCase
-{
-  public:
-    UbLegacyTaskDrivenTpRemovalFailsFastTest()
-        : TestCase("UnifiedBus - legacy task-driven TP removal stays disabled and fails fast")
-    {
-    }
-
-  private:
-    void DoRun() override
-    {
-        const int disabledStatus = RunInChildProcess([]() {
-            Ptr<TpConnectionManager> manager = CreateObject<TpConnectionManager>();
-            manager->RemoveUselessTps(0, 0, 1, 0);
-        });
-        NS_TEST_ASSERT_MSG_EQ(WIFEXITED(disabledStatus),
-                              1,
-                              "Default-disabled legacy removal should remain a no-op");
-        NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(disabledStatus),
-                              0,
-                              "Default-disabled legacy removal should not mutate or abort");
-
-        const int enabledStatus = RunInChildProcess([]() {
-            Ptr<TpConnectionManager> manager = CreateObject<TpConnectionManager>();
-            manager->SetAttribute("RemoveUselessTp", BooleanValue(true));
-            manager->RemoveUselessTps(0, 0, 1, 0);
-        });
-        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(enabledStatus),
-                              1,
-                              "Enabled legacy removal should fail fast");
-        NS_TEST_ASSERT_MSG_EQ(WTERMSIG(enabledStatus),
-                              SIGABRT,
-                              "Unsupported task-driven teardown should abort explicitly");
-    }
-};
 #endif
 
 class UbConcurrentReservedReceiverTpnMaterializationTest : public TestCase
@@ -27811,8 +27944,6 @@ UbTpReservationTestSuite::UbTpReservationTestSuite()
     AddTestCase(new UbReservedReceiverTpnMaterializesLocallyTest(), TestCase::Duration::QUICK);
 #ifndef _WIN32
     AddTestCase(new UbInboundTpChannelKeyValidationTest(), TestCase::Duration::QUICK);
-    AddTestCase(new UbUnknownInboundTpnFailsWithAutoRemoveTest(), TestCase::Duration::QUICK);
-    AddTestCase(new UbLegacyTaskDrivenTpRemovalFailsFastTest(), TestCase::Duration::QUICK);
 #endif
     AddTestCase(new UbConcurrentReservedReceiverTpnMaterializationTest(),
                 TestCase::Duration::QUICK);
@@ -28010,6 +28141,8 @@ UbLifecycleTestSuite::UbLifecycleTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleJettyLifetimeClassificationTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleAppRtpJettyLifetimeTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecycleAppDestroyPolicyDefaultsTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbLifecyclePlannedTpPolicyTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleTaskCompletionPrecedesJettyRetirementTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbLifecycleCtpCompletionDoesNotScheduleRtpCleanupTest(),
