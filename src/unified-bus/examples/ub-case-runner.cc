@@ -742,15 +742,61 @@ uint32_t ActivateTrafficFromConfig(const std::string& configPath,
     using PlannedRouteKey = std::tuple<uint32_t, uint32_t, uint8_t>;
     std::map<PlannedRouteKey, std::vector<UbLifecycleResourceIdentity>> driverOwnedConnections;
     Ptr<UbApp> appDefaults = CreateObject<UbApp>();
-    const bool reserveRtpConnections = appDefaults->GetTransportMode() == TransportMode::RTP;
-    const bool useShortestPaths =
-        RoutingTypeUsesShortestPaths(appDefaults->GetRoutingType());
-    BooleanValue plannedDestroyValue;
-    appDefaults->GetAttribute("EnablePlannedTpConnectionDestroy", plannedDestroyValue);
-    const bool managePlannedConnections = plannedDestroyValue.Get();
     UbUtils::Get()->PrintTimestamp("[traffic] Activate clients and enqueue tasks.");
     UbUtils::Get()->ForEachTrafficRecordView(trafficPath, [&](const TrafficRecordView& record) {
         Ptr<Node> sourceNode = NodeList::GetNode(record.sourceNode);
+        const bool localOwned =
+            !activateLocalOwnedTasksOnly ||
+            UbUtils::ExtractMpiRank(sourceNode->GetSystemId()) == mpiRank;
+
+        if (static_cast<size_t>(record.sourceNode) >= sourceApps.size())
+        {
+            sourceApps.resize(static_cast<size_t>(record.sourceNode) + 1);
+        }
+
+        Ptr<UbApp>& configuredApp = sourceApps[record.sourceNode];
+        if (configuredApp == nullptr)
+        {
+            if (localOwned && sourceNode->GetNApplications() > 0)
+            {
+                configuredApp = DynamicCast<UbApp>(sourceNode->GetApplication(0));
+                NS_ABORT_MSG_IF(configuredApp == nullptr,
+                                "Source node " << record.sourceNode
+                                               << " application 0 is not an ns3::UbApp");
+            }
+            else if (localOwned)
+            {
+                configuredApp = CreateObject<UbApp>();
+                sourceNode->AddApplication(configuredApp);
+                UbUtils::Get()->ClientTraceConnect(record.sourceNode);
+            }
+            else
+            {
+                configuredApp = appDefaults;
+                for (uint32_t i = 0; i < sourceNode->GetNApplications(); ++i)
+                {
+                    Ptr<UbApp> candidate = DynamicCast<UbApp>(sourceNode->GetApplication(i));
+                    if (candidate != nullptr)
+                    {
+                        configuredApp = candidate;
+                        break;
+                    }
+                }
+            }
+
+            if (localOwned)
+            {
+                UbTrafficGen::Get()->RegisterSourceAppDuringInitialLoad(record.sourceNode,
+                                                                        configuredApp);
+            }
+        }
+
+        const bool reserveRtpConnections =
+            configuredApp->GetTransportMode() == TransportMode::RTP;
+        const bool useShortestPaths =
+            RoutingTypeUsesShortestPaths(configuredApp->GetRoutingType());
+        const bool managePlannedConnections =
+            configuredApp->IsPlannedTpConnectionDestroyEnabled();
         if (!managePlannedConnections && reserveRtpConnections &&
             (record.opType == "URMA_WRITE" || record.opType == "URMA_READ"))
         {
@@ -761,32 +807,8 @@ uint32_t ActivateTrafficFromConfig(const std::string& configPath,
                 record.priority);
         }
 
-        const bool localOwned =
-            !activateLocalOwnedTasksOnly ||
-            UbUtils::ExtractMpiRank(sourceNode->GetSystemId()) == mpiRank;
-
         if (localOwned)
         {
-            if (static_cast<size_t>(record.sourceNode) >= sourceApps.size())
-            {
-                sourceApps.resize(static_cast<size_t>(record.sourceNode) + 1);
-            }
-
-            Ptr<UbApp>& client = sourceApps[record.sourceNode];
-            if (client == nullptr)
-            {
-                if (sourceNode->GetNApplications() == 0)
-                {
-                    client = CreateObject<UbApp>();
-                    sourceNode->AddApplication(client);
-                    UbUtils::Get()->ClientTraceConnect(record.sourceNode);
-                }
-                else
-                {
-                    client = DynamicCast<UbApp>(sourceNode->GetApplication(0));
-                }
-                UbTrafficGen::Get()->RegisterSourceAppDuringInitialLoad(record.sourceNode, client);
-            }
             ++localTaskCount;
         }
 

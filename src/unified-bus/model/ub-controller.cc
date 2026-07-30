@@ -241,6 +241,10 @@ UbController::FinalizeRtpTpGroupMemberRemoval(Ptr<UbTransportGroup> group, uint3
                         membership->second != group->GetLifecycleIdentity().localId,
                     "TPG member reverse index is stale");
     m_rtpTpGroupByTpn.erase(membership);
+    if (m_transportChannelManager != nullptr)
+    {
+        m_transportChannelManager->NotifyStateChanged(removed.tpn);
+    }
 }
 
 UbTpgMemberMutationStatus

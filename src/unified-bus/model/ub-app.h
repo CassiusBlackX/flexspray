@@ -66,6 +66,15 @@ public:
         return m_routingType;
     }
 
+    /**
+     * @brief Return whether the standard driver should destroy its planned TP connections.
+     * @return True when planned driver-owned connections are destroyed after their last use.
+     */
+    bool IsPlannedTpConnectionDestroyEnabled() const
+    {
+        return m_enablePlannedTpConnectionDestroy;
+    }
+
     void SetGetTpnRule(GetTpnRuleT type)
     {
         m_getTpnRule = type;
@@ -97,6 +106,7 @@ private:
         uint32_t taskId,
         uint32_t jettyNum,
         bool destroyTaskScopedJetty,
+        bool releasePlannedTpBinding,
         const std::vector<UbLifecycleResourceIdentity>& plannedTpConnections);
 
     TracedCallback<uint32_t, uint32_t> m_traceMemTaskStartsNotify;

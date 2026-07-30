@@ -955,6 +955,7 @@ UbTrafficGen::ApplyTaskCompletion(uint32_t taskId)
 {
     ReadyTaskBatch readyBatch;
     std::optional<TaskCleanupRequest> cleanupRequest;
+    bool releasePlannedTpBinding = false;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
 
@@ -1019,6 +1020,8 @@ UbTrafficGen::ApplyTaskCompletion(uint32_t taskId)
             const auto plannedTask = m_taskPlannedTpConnections.find(taskId);
             if (plannedTask != m_taskPlannedTpConnections.end())
             {
+                releasePlannedTpBinding = cleanupRequest.has_value() &&
+                                          cleanupRequest->destroyPlannedTpConnections;
                 for (const auto& identity : plannedTask->second)
                 {
                     const PlannedTpConnectionKey key{identity.ownerNodeId,
@@ -1065,6 +1068,7 @@ UbTrafficGen::ApplyTaskCompletion(uint32_t taskId)
                                        taskId,
                                        cleanupRequest->jettyNum,
                                        cleanupRequest->destroyTaskScopedJetty,
+                                       releasePlannedTpBinding,
                                        cleanupRequest->plannedTpConnections);
     }
 
@@ -1079,6 +1083,7 @@ UbTrafficGen::ApplyTaskCleanupOnOwner(uint32_t ownerNodeId,
                                       uint32_t taskId,
                                       uint32_t jettyNum,
                                       bool destroyTaskScopedJetty,
+                                      bool releasePlannedTpBinding,
                                       std::vector<UbLifecycleResourceIdentity> plannedTpConnections)
 {
     Ptr<Node> ownerNode = NodeList::GetNode(ownerNodeId);
@@ -1090,6 +1095,7 @@ UbTrafficGen::ApplyTaskCleanupOnOwner(uint32_t ownerNodeId,
     cleanupOwner->CleanupCompletedTask(taskId,
                                        jettyNum,
                                        destroyTaskScopedJetty,
+                                       releasePlannedTpBinding,
                                        plannedTpConnections);
 }
 

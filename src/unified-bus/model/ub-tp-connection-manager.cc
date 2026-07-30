@@ -635,7 +635,9 @@ TpConnectionManager::NotifyEndpointMaterialized(uint32_t localNodeId,
     control.nodeId = localNodeId;
     control.tpn = localTpn;
     control.value = static_cast<uint64_t>(state);
-    UbParallelLifecycleAdapter::RouteControl(control);
+    Simulator::ScheduleWithContext(localNodeId, TimeStep(0), [control]() {
+        UbParallelLifecycleAdapter::RouteControl(control);
+    });
 }
 
 bool

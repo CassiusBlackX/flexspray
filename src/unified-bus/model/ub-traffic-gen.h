@@ -358,6 +358,7 @@ public:
                                         uint32_t taskId,
                                         uint32_t jettyNum,
                                         bool destroyTaskScopedJetty,
+                                        bool releasePlannedTpBinding,
                                         std::vector<UbLifecycleResourceIdentity> plannedTpConnections);
 
     void ScheduleTaskCompletionVisibility(uint32_t taskId, Time completionVisibleTs);

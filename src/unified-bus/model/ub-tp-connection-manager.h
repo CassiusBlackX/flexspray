@@ -126,6 +126,15 @@ public:
                                uint32_t peerNodeId,
                                uint32_t priority);
 
+    /**
+     * @brief Reserve connections owned by the standard driver's planned-destroy policy.
+     * @param useShortestPath Whether reserved paths must use shortest routes.
+     * @param localNodeId Local node identifier and lifecycle owner of the returned identities.
+     * @param peerNodeId Peer node identifier.
+     * @param priority Traffic priority associated with the reservation.
+     * @return Exact identities created by this call, or an empty vector when matching
+     *         reservations already exist. Existing reservations are never claimed.
+     */
     std::vector<UbLifecycleResourceIdentity> ReservePlannedTpnsForTraffic(
         bool useShortestPath,
         uint32_t localNodeId,
@@ -202,6 +211,14 @@ public:
                                       UbDestroyReason reason = UbDestroyReason::EXPLICIT,
                                       UbDestroyCallback callback = {});
 
+    /**
+     * @brief Explicitly destroy the connection identified by an immutable lifecycle identity.
+     * @param identity Exact RTP connection identity returned by this manager.
+     * @param reason Network-semantic reason for the explicit destroy request.
+     * @param callback Callback invoked after destroy completes or fails asynchronously.
+     * @return REJECTED when the kind, owner, local ID, or generation does not match this manager;
+     *         otherwise the current explicit-destroy status.
+     */
     UbDestroyStatus DestroyConnection(const UbLifecycleResourceIdentity& identity,
                                       UbDestroyReason reason = UbDestroyReason::EXPLICIT,
                                       UbDestroyCallback callback = {});

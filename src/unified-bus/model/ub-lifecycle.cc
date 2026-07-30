@@ -769,10 +769,13 @@ UbParallelLifecycleAdapter::IsExecutionOwner(uint32_t nodeId)
 #ifdef NS3_MTP
     if (MtpInterface::isEnabled())
     {
+        if (!MtpInterface::isPartitioned())
+        {
+            return true;
+        }
+        const std::optional<uint32_t> ownerLp = MtpInterface::FindNodeLocalLpId(nodeId);
         LogicalProcess* current = MtpInterface::GetSystem();
-        NS_ABORT_MSG_IF(current == nullptr,
-                        "Lifecycle owner check requires an active MTP logical process");
-        if (MtpInterface::RequireNodeLocalLpId(nodeId) != current->GetSystemId())
+        if (!ownerLp.has_value() || current == nullptr || *ownerLp != current->GetSystemId())
         {
             return false;
         }
