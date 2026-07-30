@@ -5,7 +5,6 @@
 #include "ns3/callback.h"
 #include "ns3/event-id.h"
 #include "ns3/object.h"
-#include "ns3/packet.h"
 #include "ns3/simulator.h"
 #include "ns3/tag.h"
 #include "ns3/traced-callback.h"
@@ -21,6 +20,7 @@ namespace ns3
 {
 
 class Node;
+class Packet;
 struct UbLifecycleTraceRecord;
 
 enum class UbLifecycleResourceKind : uint8_t
@@ -35,7 +35,6 @@ enum class UbLifecycleResourceKind : uint8_t
     CTP_SERVICE = 8,
     LDST_INSTANCE = 9,
     LDST_SEGMENT = 10,
-    DATALINK_PORT_VL = 11,
 };
 
 enum class UbLifecycleLeaseKind : uint8_t
@@ -56,28 +55,8 @@ enum class UbWorkOutcome : uint8_t
     FLUSHED = 3,
 };
 
-enum class UbPacketTransfer : uint8_t
-{
-    EGRESS_QUEUE_ENQUEUE = 1,
-    EGRESS_QUEUE_DEQUEUE = 2,
-    LOCAL_LINK = 3,
-};
-
-enum class UbPacketTerminal : uint8_t
-{
-    ENDPOINT_CONSUMED = 1,
-    ROUTE_NOT_FOUND = 2,
-    EGRESS_QUEUE_FULL = 3,
-    INGRESS_QUEUE_FULL = 4,
-    FAULT_DROP = 5,
-    CHANNEL_FAILURE = 6,
-    MALFORMED_PACKET = 7,
-};
-
 enum class UbLifecycleControlOperation : uint8_t
 {
-    PACKET_TRANSFER = 1,
-    PACKET_TERMINAL = 2,
     ENDPOINT_MATERIALIZED = 3,
     CONNECTION_DESTROY_REQUEST = 4,
     ENDPOINT_DESTROY_REQUEST = 5,
@@ -116,23 +95,14 @@ enum class UbDestroyStatus : uint8_t
 
 using UbDestroyCallback = Callback<void, UbLifecycleResourceIdentity, UbDestroyStatus>;
 
-struct UbPacketAttemptIdentity
-{
-    UbLifecycleResourceIdentity owner;
-    uint64_t attempt{0};
-
-    bool operator==(const UbPacketAttemptIdentity&) const = default;
-};
-
 struct UbLifecycleControlRecord
 {
     uint32_t sourceNodeId{Simulator::NO_CONTEXT};
     uint32_t targetNodeId{0};
     uint64_t sequence{0};
     int64_t visibleTs{0};
-    UbLifecycleControlOperation operation{UbLifecycleControlOperation::PACKET_TRANSFER};
+    UbLifecycleControlOperation operation{UbLifecycleControlOperation::ENDPOINT_MATERIALIZED};
     UbLifecycleResourceIdentity resource;
-    UbPacketAttemptIdentity packet;
     uint32_t nodeId{0};
     uint32_t tpn{0};
     uint64_t requestId{0};
@@ -169,27 +139,8 @@ struct UbTransactionCorrelationIdentity
 };
 
 std::ostream& operator<<(std::ostream& os, const UbLifecycleResourceIdentity& identity);
-std::ostream& operator<<(std::ostream& os, const UbPacketAttemptIdentity& identity);
 Ptr<Packet> CopyPacketView(Ptr<const Packet> packet);
 Ptr<Packet> CopyPacketTransfer(Ptr<const Packet> packet);
-
-class UbPacketLifecycleTag : public Tag
-{
-  public:
-    static TypeId GetTypeId();
-    TypeId GetInstanceTypeId() const override;
-
-    uint32_t GetSerializedSize() const override;
-    void Serialize(TagBuffer buffer) const override;
-    void Deserialize(TagBuffer buffer) override;
-    void Print(std::ostream& os) const override;
-
-    void SetIdentity(const UbPacketAttemptIdentity& identity);
-    UbPacketAttemptIdentity GetIdentity() const;
-
-  private:
-    UbPacketAttemptIdentity m_identity;
-};
 
 class UbTransactionCorrelationTag : public Tag
 {
@@ -211,19 +162,6 @@ class UbTransactionCorrelationTag : public Tag
 
 struct UbLifecycleResourceSnapshot
 {
-    uint64_t inFlightPackets{0};
-    uint64_t registeredPackets{0};
-    uint64_t transferObservations{0};
-    uint64_t endpointConsumed{0};
-    uint64_t routeNotFoundDrops{0};
-    uint64_t egressQueueFullDrops{0};
-    uint64_t ingressQueueFullDrops{0};
-    uint64_t faultDrops{0};
-    uint64_t channelFailureDrops{0};
-    uint64_t malformedPacketDrops{0};
-    uint64_t lastBirthSequence{0};
-    uint64_t lastTransferSequence{0};
-    uint64_t lastTerminalSequence{0};
     uint64_t activeWorkLeases{0};
     uint64_t activeChildLeases{0};
     uint64_t activeTransportUseLeases{0};
@@ -244,7 +182,6 @@ struct UbLifecycleKindStorageSnapshot
     std::size_t compactHistoryRunCount{0};
     std::size_t activeStateCount{0};
     std::size_t retainedSummaryCount{0};
-    std::size_t activeAttemptWordCount{0};
     std::size_t activeLeaseCount{0};
 };
 
@@ -273,10 +210,6 @@ class UbLifecycleCoordinator : public Object
         const UbLifecycleResourceIdentity& identity,
         Callback<void, UbLifecycleResourceIdentity> callback);
 
-    UbLifecycleResourceIdentity OpenPacketOwner(UbLifecycleResourceKind kind, uint64_t localId);
-    void RetirePacketOwner(const UbLifecycleResourceIdentity& identity);
-    UbPacketAttemptIdentity RegisterPacketAttempt(const UbLifecycleResourceIdentity& owner,
-                                                  Ptr<Packet> packet);
     UbLifecycleResourceSnapshot GetSnapshot(const UbLifecycleResourceIdentity& owner) const;
     UbLifecycleStorageSnapshot GetStorageSnapshot() const;
     UbLifecycleStorageSnapshot GetStorageSnapshotForTest() const
@@ -284,13 +217,6 @@ class UbLifecycleCoordinator : public Object
         return GetStorageSnapshot();
     }
     void EmitLifecycleSummary();
-
-    static void ObservePacketTransfer(Ptr<Packet> packet,
-                                      UbPacketTransfer transfer,
-                                      uint32_t sourceNodeId = Simulator::NO_CONTEXT);
-    static void TerminatePacket(Ptr<Packet> packet,
-                                UbPacketTerminal terminal,
-                                uint32_t sourceNodeId = Simulator::NO_CONTEXT);
 
   private:
     friend class UbParallelLifecycleAdapter;
@@ -304,11 +230,9 @@ class UbLifecycleCoordinator : public Object
 
     struct ActiveResourceState
     {
-        uint64_t nextAttempt{0};
         uint64_t nextLease{0};
         uint64_t sequence{0};
         UbLifecycleResourceSnapshot snapshot;
-        std::map<uint64_t, uint64_t> activeAttemptWords;
         std::map<uint64_t, UbLifecycleLeaseIdentity> activeLeases;
         Callback<void, UbLifecycleResourceIdentity> stateChangedCallback;
     };
@@ -344,9 +268,6 @@ class UbLifecycleCoordinator : public Object
         const CompactResourceHistory* compactHistory{nullptr};
     };
 
-    static bool TryReadIdentity(Ptr<const Packet> packet, UbPacketAttemptIdentity& identity);
-    static Ptr<UbLifecycleCoordinator> Resolve(const UbPacketAttemptIdentity& identity);
-
     ResourceState& ValidateMutable(const UbLifecycleResourceIdentity& identity);
     ResourceValidation Validate(const UbLifecycleResourceIdentity& identity) const;
     const CompactResourceHistory* FindCompactHistory(UbLifecycleResourceKind kind,
@@ -359,9 +280,6 @@ class UbLifecycleCoordinator : public Object
                              const CompactResourceHistory& history);
     static UbLifecycleResourceSnapshot BuildSnapshot(const ResourceState& state);
     static UbLifecycleResourceSnapshot BuildSnapshot(const ResourceValidation& validation);
-    void ObservePacketTransfer(const UbPacketAttemptIdentity& identity, UbPacketTransfer transfer);
-    void TerminatePacket(const UbPacketAttemptIdentity& identity, UbPacketTerminal terminal);
-
     uint32_t m_ownerNodeId{0};
     uint64_t m_traceSequence{0};
     TracedCallback<const UbLifecycleTraceRecord&> m_lifecycleTrace;
@@ -377,12 +295,6 @@ class UbParallelLifecycleAdapter : public Object
     static TypeId GetTypeId();
     static Ptr<UbParallelLifecycleAdapter> GetOrCreate(Ptr<Node> node);
 
-    static void RoutePacketTransfer(const UbPacketAttemptIdentity& identity,
-                                    UbPacketTransfer transfer,
-                                    uint32_t sourceNodeId = Simulator::NO_CONTEXT);
-    static void RoutePacketTerminal(const UbPacketAttemptIdentity& identity,
-                                    UbPacketTerminal terminal,
-                                    uint32_t sourceNodeId = Simulator::NO_CONTEXT);
     static bool RouteControl(UbLifecycleControlRecord record);
     static bool IsExecutionOwner(uint32_t nodeId);
 

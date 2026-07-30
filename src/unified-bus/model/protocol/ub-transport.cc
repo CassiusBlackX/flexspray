@@ -868,8 +868,6 @@ UbTransportChannel::EnqueueDcqcnCnp(uint8_t ecn, bool location)
                                 m_routingType,
                                 UbDatalinkHeaderConfig::PACKET_IPV4);
 
-    UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId))
-        ->RegisterPacketAttempt(m_packetLifecycleOwner, cnp);
     if (m_cnpQ.empty() && m_ackQ.empty() && m_wqeSegmentVector.empty()) {
         m_headArrivalTime = Simulator::Now();
     }
@@ -1028,9 +1026,6 @@ UbTransportChannel::BuildRtpDataPacket(const UbGbnPacketDescriptor& descriptor)
                                 m_priority,
                                 m_routingType,
                                 UbDatalinkHeaderConfig::PACKET_IPV4);
-    Ptr<UbLifecycleCoordinator> coordinator =
-        UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId));
-    coordinator->RegisterPacketAttempt(m_packetLifecycleOwner, p);
     return p;
 }
 
@@ -1068,7 +1063,7 @@ Ptr<UbWqeSegment> UbTransportChannel::TrackInboundTaPacket(const UbTransportHead
         state.segment->SetTaSsn(logicalTaSsn);
         state.segment->SetOriginJettyNum(taHeader.GetIniRcId());
         state.segment->SetRequestTassn(logicalTaSsn);
-        state.segment->SetResolvedTpIdentity(m_packetLifecycleOwner);
+        state.segment->SetResolvedTpIdentity(m_lifecycleOwner);
         state.segment->SetTpMsn(logicalTpMsn);
         state.segment->SetTpn(m_tpn);
     }
@@ -1636,34 +1631,24 @@ void UbTransportChannel::RecvTpAck(Ptr<Packet> p)
 {
     TransportResponseContext ctx;
     if (!ParseTransportResponsePacket(p, ctx)) {
-        UbLifecycleCoordinator::TerminatePacket(p,
-                                                UbPacketTerminal::MALFORMED_PACKET);
         return;
     }
 
     if (HandleReceivedCnp(ctx)) {
-        UbLifecycleCoordinator::TerminatePacket(p,
-                                                UbPacketTerminal::ENDPOINT_CONSUMED);
         return;
     }
 
     if (HandleReceivedTpNak(ctx)) {
-        UbLifecycleCoordinator::TerminatePacket(p,
-                                                UbPacketTerminal::ENDPOINT_CONSUMED);
         return;
     }
 
     const uint64_t previousSndUna = m_psnSndUna;
     UbRetransAckResult ackResult;
     if (!HandleReceivedAckOrSack(ctx, previousSndUna, ackResult)) {
-        UbLifecycleCoordinator::TerminatePacket(p,
-                                                UbPacketTerminal::ENDPOINT_CONSUMED);
         return;
     }
 
     FinalizeTransportAckProgress(ctx, previousSndUna);
-    UbLifecycleCoordinator::TerminatePacket(p,
-                                            UbPacketTerminal::ENDPOINT_CONSUMED);
     NotifyLifecycleStateChanged();
 }
 
@@ -1692,9 +1677,9 @@ void UbTransportChannel::SetUbTransport(uint32_t nodeId,
     m_dest = dest;
     m_tpn = srcTpn;
     m_dstTpn = dstTpn;
-    m_packetLifecycleOwner =
+    m_lifecycleOwner =
         UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId))
-            ->OpenPacketOwner(UbLifecycleResourceKind::RTP_ENDPOINT, m_tpn);
+            ->OpenResource(UbLifecycleResourceKind::RTP_ENDPOINT, m_tpn);
     m_size = size;
     m_priority = priority;
     m_sport = sport;
@@ -1815,8 +1800,6 @@ UbTransportChannel::EnqueueTransportResponse(Ptr<Packet> response,
                                              const char* logType,
                                              uint64_t psn)
 {
-    UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId))
-        ->RegisterPacketAttempt(m_packetLifecycleOwner, response);
     if (m_ackQ.empty()) {
         m_headArrivalTime = Simulator::Now();
     }
@@ -2058,9 +2041,6 @@ void UbTransportChannel::RecvDataPacket(Ptr<Packet> p)
         return;
     }
 
-    UbLifecycleCoordinator::TerminatePacket(ctx.packet,
-                                            UbPacketTerminal::ENDPOINT_CONSUMED);
-
     TraceReceivedDataPacket(ctx);
     UbRetransReceiveDecision receiveDecision;
     if (IsRetransEnabled()) {
@@ -2127,7 +2107,7 @@ UbTransportChannel::TryContinueAcceptedWqeSegment(Ptr<UbWqeSegment> segment)
     }
 
     segment->SetTpn(m_tpn);
-    segment->SetResolvedTpIdentity(m_packetLifecycleOwner);
+    segment->SetResolvedTpIdentity(m_lifecycleOwner);
     segment->SetTpMsn(GetMsnCnt());
     segment->SetPsnStart(GetPsnCnt());
     UpdatePsnCnt(segment->GetPsnSize());
@@ -2155,7 +2135,7 @@ UbTransportChannel::TryCancelUnsentWqeSegment(
     const UbLifecycleResourceIdentity& expectedTpIdentity)
 {
     NS_ABORT_MSG_IF(segment == nullptr, "Cannot cancel a null admitted segment");
-    NS_ABORT_MSG_IF(expectedTpIdentity != m_packetLifecycleOwner ||
+    NS_ABORT_MSG_IF(expectedTpIdentity != m_lifecycleOwner ||
                         !segment->HasResolvedTpIdentity() ||
                         segment->GetResolvedTpIdentity() != expectedTpIdentity,
                     "Admitted segment cancellation references the wrong TP generation");
@@ -2223,7 +2203,7 @@ UbTransportChannel::ForceRemoveRetainedWqeSegment(
     const UbLifecycleResourceIdentity& expectedTpIdentity)
 {
     NS_ABORT_MSG_IF(segment == nullptr, "Cannot force-remove a null admitted segment");
-    NS_ABORT_MSG_IF(expectedTpIdentity != m_packetLifecycleOwner ||
+    NS_ABORT_MSG_IF(expectedTpIdentity != m_lifecycleOwner ||
                         !segment->HasResolvedTpIdentity() ||
                         segment->GetResolvedTpIdentity() != expectedTpIdentity,
                     "Forced admitted-segment removal references the wrong TP generation");

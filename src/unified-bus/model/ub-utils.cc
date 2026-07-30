@@ -60,8 +60,6 @@ LifecycleResourceKindToString(UbLifecycleResourceKind kind)
         return "LDST_INSTANCE";
     case UbLifecycleResourceKind::LDST_SEGMENT:
         return "LDST_SEGMENT";
-    case UbLifecycleResourceKind::DATALINK_PORT_VL:
-        return "DATALINK_PORT_VL";
     }
     NS_ABORT_MSG("Unknown lifecycle resource kind");
 }
@@ -74,7 +72,6 @@ AccumulateLifecycleKindStorage(UbLifecycleKindStorageSnapshot& aggregate,
     aggregate.compactHistoryRunCount += value.compactHistoryRunCount;
     aggregate.activeStateCount += value.activeStateCount;
     aggregate.retainedSummaryCount += value.retainedSummaryCount;
-    aggregate.activeAttemptWordCount += value.activeAttemptWordCount;
     aggregate.activeLeaseCount += value.activeLeaseCount;
 }
 
@@ -1373,7 +1370,6 @@ UbUtils::WriteRuntimeStorageSnapshot(const std::string& outputPath)
         write("lifecycle", "compact_history_run_count", kind, storage.compactHistoryRunCount);
         write("lifecycle", "active_state_count", kind, storage.activeStateCount);
         write("lifecycle", "retained_summary_count", kind, storage.retainedSummaryCount);
-        write("lifecycle", "active_attempt_word_count", kind, storage.activeAttemptWordCount);
         write("lifecycle", "active_lease_count", kind, storage.activeLeaseCount);
     };
     writeLifecycle("", snapshot.lifecycle);

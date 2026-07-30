@@ -376,10 +376,6 @@ UbTransportChannelManager::AssessTpQuiescenceLocked(uint32_t tpn,
     }
     assessment.diagnostics.lifecycle = coordinator->GetSnapshot(assessment.identity);
     const UbLifecycleResourceSnapshot& lifecycle = assessment.diagnostics.lifecycle;
-    if (lifecycle.inFlightPackets != 0)
-    {
-        assessment.AddBlocker(UbTpQuiescenceBlocker::IN_FLIGHT_PACKETS);
-    }
     if (lifecycle.activeWorkLeases != 0)
     {
         assessment.AddBlocker(UbTpQuiescenceBlocker::ACTIVE_WORK_LEASE);
@@ -606,7 +602,7 @@ UbTransportChannelManager::FinalizeDestroy(uint32_t tpn, bool force)
     {
         m_controller->GetObject<Node>()->GetObject<UbSwitch>()->RemoveTpFromAllocator(tp);
         m_controller->GetUbTransaction()->TpDeinit(tpn);
-        coordinator->RetirePacketOwner(identity);
+        coordinator->RetireResource(identity);
     }
     m_endpoints.erase(it);
     if (m_transportsCount > 0)

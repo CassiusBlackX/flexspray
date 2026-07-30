@@ -22,7 +22,6 @@
 namespace ns3
 {
 
-NS_OBJECT_ENSURE_REGISTERED(UbPacketLifecycleTag);
 NS_OBJECT_ENSURE_REGISTERED(UbTransactionCorrelationTag);
 NS_OBJECT_ENSURE_REGISTERED(UbLifecycleCoordinator);
 NS_OBJECT_ENSURE_REGISTERED(UbParallelLifecycleAdapter);
@@ -83,21 +82,6 @@ ToTraceReason(UbLifecycleLeaseKind kind)
     NS_ABORT_MSG("Unknown lifecycle lease trace reason");
 }
 
-UbLifecycleTraceReason
-ToTraceReason(UbPacketTransfer transfer)
-{
-    switch (transfer)
-    {
-    case UbPacketTransfer::EGRESS_QUEUE_ENQUEUE:
-        return UbLifecycleTraceReason::EGRESS_QUEUE_ENQUEUE;
-    case UbPacketTransfer::EGRESS_QUEUE_DEQUEUE:
-        return UbLifecycleTraceReason::EGRESS_QUEUE_DEQUEUE;
-    case UbPacketTransfer::LOCAL_LINK:
-        return UbLifecycleTraceReason::LOCAL_LINK;
-    }
-    NS_ABORT_MSG("Unknown packet transfer trace reason");
-}
-
 UbLifecycleTraceOutcome
 ToTraceOutcome(UbWorkOutcome outcome)
 {
@@ -113,29 +97,6 @@ ToTraceOutcome(UbWorkOutcome outcome)
         return UbLifecycleTraceOutcome::FLUSHED;
     }
     NS_ABORT_MSG("Unknown work trace outcome");
-}
-
-UbLifecycleTraceOutcome
-ToTraceOutcome(UbPacketTerminal terminal)
-{
-    switch (terminal)
-    {
-    case UbPacketTerminal::ENDPOINT_CONSUMED:
-        return UbLifecycleTraceOutcome::ENDPOINT_CONSUMED;
-    case UbPacketTerminal::ROUTE_NOT_FOUND:
-        return UbLifecycleTraceOutcome::ROUTE_NOT_FOUND;
-    case UbPacketTerminal::EGRESS_QUEUE_FULL:
-        return UbLifecycleTraceOutcome::EGRESS_QUEUE_FULL;
-    case UbPacketTerminal::INGRESS_QUEUE_FULL:
-        return UbLifecycleTraceOutcome::INGRESS_QUEUE_FULL;
-    case UbPacketTerminal::FAULT_DROP:
-        return UbLifecycleTraceOutcome::FAULT_DROP;
-    case UbPacketTerminal::CHANNEL_FAILURE:
-        return UbLifecycleTraceOutcome::CHANNEL_FAILURE;
-    case UbPacketTerminal::MALFORMED_PACKET:
-        return UbLifecycleTraceOutcome::MALFORMED_PACKET;
-    }
-    NS_ABORT_MSG("Unknown packet terminal trace outcome");
 }
 
 bool
@@ -166,7 +127,6 @@ EncodeLifecycleControl(const UbLifecycleControlRecord& record)
     wire.payload[7] = record.value;
     wire.payload[8] = record.tpn;
     wire.payload[9] = record.requestId;
-    wire.payload[10] = record.packet.attempt;
     return wire;
 }
 
@@ -185,12 +145,10 @@ DecodeLifecycleControl(const ParallelCommunicationInterface::CausalControlRecord
     record.resource.kind = static_cast<UbLifecycleResourceKind>(wire.payload[3]);
     record.resource.localId = wire.payload[4];
     record.resource.generation = wire.payload[5];
-    record.packet.owner = record.resource;
     record.nodeId = static_cast<uint32_t>(wire.payload[6]);
     record.value = wire.payload[7];
     record.tpn = static_cast<uint32_t>(wire.payload[8]);
     record.requestId = wire.payload[9];
-    record.packet.attempt = wire.payload[10];
     return record;
 }
 
@@ -249,67 +207,6 @@ operator<<(std::ostream& os, const UbLifecycleResourceIdentity& identity)
     os << "node=" << identity.ownerNodeId << ",kind=" << static_cast<uint32_t>(identity.kind)
        << ",local=" << identity.localId << ",generation=" << identity.generation;
     return os;
-}
-
-std::ostream&
-operator<<(std::ostream& os, const UbPacketAttemptIdentity& identity)
-{
-    os << '{' << identity.owner << ",attempt=" << identity.attempt << '}';
-    return os;
-}
-
-TypeId
-UbPacketLifecycleTag::GetTypeId()
-{
-    static TypeId tid = TypeId("ns3::UbPacketLifecycleTag")
-                            .SetParent<Tag>()
-                            .SetGroupName("UnifiedBus")
-                            .AddConstructor<UbPacketLifecycleTag>();
-    return tid;
-}
-
-TypeId
-UbPacketLifecycleTag::GetInstanceTypeId() const
-{
-    return GetTypeId();
-}
-
-uint32_t
-UbPacketLifecycleTag::GetSerializedSize() const
-{
-    return sizeof(uint32_t) + sizeof(uint8_t) + 3 * sizeof(uint64_t);
-}
-
-void
-UbPacketLifecycleTag::Serialize(TagBuffer buffer) const
-{
-    SerializeResourceIdentity(buffer, m_identity.owner);
-    buffer.WriteU64(m_identity.attempt);
-}
-
-void
-UbPacketLifecycleTag::Deserialize(TagBuffer buffer)
-{
-    m_identity.owner = DeserializeResourceIdentity(buffer);
-    m_identity.attempt = buffer.ReadU64();
-}
-
-void
-UbPacketLifecycleTag::Print(std::ostream& os) const
-{
-    os << m_identity;
-}
-
-void
-UbPacketLifecycleTag::SetIdentity(const UbPacketAttemptIdentity& identity)
-{
-    m_identity = identity;
-}
-
-UbPacketAttemptIdentity
-UbPacketLifecycleTag::GetIdentity() const
-{
-    return m_identity;
 }
 
 TypeId
@@ -470,8 +367,6 @@ UbLifecycleCoordinator::RetireResource(const UbLifecycleResourceIdentity& identi
 {
     ResourceState& state = ValidateMutable(identity);
     ActiveResourceState& active = *state.active;
-    NS_ABORT_MSG_IF(active.snapshot.inFlightPackets != 0,
-                    "Cannot retire lifecycle generation with in-flight packets");
     NS_ABORT_MSG_IF(!active.activeLeases.empty(),
                     "Cannot retire lifecycle generation with active leases");
     active.snapshot.retired = true;
@@ -727,66 +622,6 @@ UbLifecycleCoordinator::RecordWorkTerminal(const UbLifecycleResourceIdentity& id
     }
 }
 
-UbLifecycleResourceIdentity
-UbLifecycleCoordinator::OpenPacketOwner(UbLifecycleResourceKind kind, uint64_t localId)
-{
-    return OpenResource(kind, localId);
-}
-
-void
-UbLifecycleCoordinator::RetirePacketOwner(const UbLifecycleResourceIdentity& identity)
-{
-    RetireResource(identity);
-}
-
-UbPacketAttemptIdentity
-UbLifecycleCoordinator::RegisterPacketAttempt(const UbLifecycleResourceIdentity& owner,
-                                              Ptr<Packet> packet)
-{
-    NS_ABORT_MSG_IF(packet == nullptr, "Cannot register a null packet attempt");
-    UbPacketLifecycleTag existingTag;
-    NS_ABORT_MSG_IF(packet->PeekPacketTag(existingTag),
-                    "Packet attempt already has lifecycle identity");
-
-    ResourceState& state = ValidateMutable(owner);
-    ActiveResourceState& active = *state.active;
-    NS_ABORT_MSG_IF(active.nextAttempt == std::numeric_limits<uint64_t>::max(),
-                    "Packet attempt identity exhausted");
-    const uint64_t attempt = ++active.nextAttempt;
-    const uint64_t wordIndex = (attempt - 1) / 64;
-    const uint64_t attemptBit = uint64_t{1} << ((attempt - 1) % 64);
-    auto [word, newWord] = active.activeAttemptWords.emplace(wordIndex, 0);
-    (void)newWord;
-    const bool inserted = (word->second & attemptBit) == 0;
-    NS_ABORT_MSG_IF(!inserted, "Duplicate packet attempt identity");
-    word->second |= attemptBit;
-
-    ++active.snapshot.inFlightPackets;
-    ++active.snapshot.registeredPackets;
-    active.snapshot.lastBirthSequence = ++active.sequence;
-
-    UbPacketAttemptIdentity identity{owner, attempt};
-    UbPacketLifecycleTag tag;
-    tag.SetIdentity(identity);
-    packet->AddPacketTag(tag);
-    if (UbLifecycleTrace::IsDetailEnabled() && UbLifecycleTrace::SelectPacket(identity))
-    {
-        m_lifecycleTrace(MakeTraceRecord(owner,
-                                                ++m_traceSequence,
-                                                UbLifecycleTraceRecordType::IDENTITY_LIFETIME,
-                                                UbLifecycleTraceSubjectKind::PACKET,
-                                                attempt,
-                                                UbLifecycleTraceEvent::PACKET_BIRTH,
-                                                static_cast<int64_t>(active.snapshot.inFlightPackets - 1),
-                                                1,
-                                                static_cast<int64_t>(active.snapshot.inFlightPackets),
-                                                UbLifecycleTraceOutcome::NONE,
-                                                UbLifecycleTraceReason::NONE,
-                                                UbLifecycleTraceSite::COORDINATOR_PACKET_BIRTH));
-    }
-    return identity;
-}
-
 void
 UbLifecycleCoordinator::EmitLifecycleSummary()
 {
@@ -795,7 +630,7 @@ UbLifecycleCoordinator::EmitLifecycleSummary()
         return;
     }
 
-    constexpr std::size_t kSummaryRecordsPerResource = 22;
+    constexpr std::size_t kSummaryRecordsPerResource = 12;
     std::vector<UbLifecycleTraceRecord> records;
     records.reserve(m_resources.size() * kSummaryRecordsPerResource);
     for (const auto& [key, state] : m_resources)
@@ -819,22 +654,6 @@ UbLifecycleCoordinator::EmitLifecycleSummary()
                                               UbLifecycleTraceReason::NONE,
                                               UbLifecycleTraceSite::COORDINATOR_SUMMARY));
         };
-        emit(UbLifecycleTraceEvent::SUMMARY_IN_FLIGHT_PACKETS, snapshot.inFlightPackets);
-        emit(UbLifecycleTraceEvent::SUMMARY_REGISTERED_PACKETS, snapshot.registeredPackets);
-        emit(UbLifecycleTraceEvent::SUMMARY_TRANSFER_OBSERVATIONS,
-             snapshot.transferObservations);
-        emit(UbLifecycleTraceEvent::SUMMARY_ENDPOINT_CONSUMED, snapshot.endpointConsumed);
-        emit(UbLifecycleTraceEvent::SUMMARY_ROUTE_NOT_FOUND_DROPS,
-             snapshot.routeNotFoundDrops);
-        emit(UbLifecycleTraceEvent::SUMMARY_EGRESS_QUEUE_FULL_DROPS,
-             snapshot.egressQueueFullDrops);
-        emit(UbLifecycleTraceEvent::SUMMARY_INGRESS_QUEUE_FULL_DROPS,
-             snapshot.ingressQueueFullDrops);
-        emit(UbLifecycleTraceEvent::SUMMARY_FAULT_DROPS, snapshot.faultDrops);
-        emit(UbLifecycleTraceEvent::SUMMARY_CHANNEL_FAILURE_DROPS,
-             snapshot.channelFailureDrops);
-        emit(UbLifecycleTraceEvent::SUMMARY_MALFORMED_PACKET_DROPS,
-             snapshot.malformedPacketDrops);
         emit(UbLifecycleTraceEvent::SUMMARY_ACTIVE_WORK_LEASES,
              snapshot.activeWorkLeases);
         emit(UbLifecycleTraceEvent::SUMMARY_ACTIVE_CHILD_LEASES,
@@ -891,8 +710,6 @@ UbLifecycleCoordinator::GetStorageSnapshot() const
         {
             ++storage.activeStateCount;
             ++kindStorage.activeStateCount;
-            storage.activeAttemptWordCount += state.active->activeAttemptWords.size();
-            kindStorage.activeAttemptWordCount += state.active->activeAttemptWords.size();
             storage.activeLeaseCount += state.active->activeLeases.size();
             kindStorage.activeLeaseCount += state.active->activeLeases.size();
         }
@@ -903,65 +720,6 @@ UbLifecycleCoordinator::GetStorageSnapshot() const
         }
     }
     return storage;
-}
-
-bool
-UbLifecycleCoordinator::TryReadIdentity(Ptr<const Packet> packet,
-                                        UbPacketAttemptIdentity& identity)
-{
-    if (packet == nullptr)
-    {
-        return false;
-    }
-    UbPacketLifecycleTag tag;
-    if (!packet->PeekPacketTag(tag))
-    {
-        return false;
-    }
-    identity = tag.GetIdentity();
-    return true;
-}
-
-Ptr<UbLifecycleCoordinator>
-UbLifecycleCoordinator::Resolve(const UbPacketAttemptIdentity& identity)
-{
-    NS_ABORT_MSG_IF(identity.owner.ownerNodeId >= NodeList::GetNNodes(),
-                    "Packet lifecycle identity references an unknown owner node");
-    Ptr<Node> node = NodeList::GetNode(identity.owner.ownerNodeId);
-    Ptr<UbLifecycleCoordinator> coordinator = node->GetObject<UbLifecycleCoordinator>();
-    NS_ABORT_MSG_IF(coordinator == nullptr,
-                    "Packet lifecycle identity has no node-scoped coordinator");
-    return coordinator;
-}
-
-void
-UbLifecycleCoordinator::ObservePacketTransfer(Ptr<Packet> packet,
-                                              UbPacketTransfer transfer,
-                                              uint32_t sourceNodeId)
-{
-    if (UbLifecycleTrace::GetLevel() == UbLifecycleTraceLevel::OFF)
-    {
-        return;
-    }
-    UbPacketAttemptIdentity identity;
-    if (!TryReadIdentity(packet, identity))
-    {
-        return;
-    }
-    UbParallelLifecycleAdapter::RoutePacketTransfer(identity, transfer, sourceNodeId);
-}
-
-void
-UbLifecycleCoordinator::TerminatePacket(Ptr<Packet> packet,
-                                        UbPacketTerminal terminal,
-                                        uint32_t sourceNodeId)
-{
-    UbPacketAttemptIdentity identity;
-    if (!TryReadIdentity(packet, identity))
-    {
-        return;
-    }
-    UbParallelLifecycleAdapter::RoutePacketTerminal(identity, terminal, sourceNodeId);
 }
 
 TypeId
@@ -1032,46 +790,6 @@ UbParallelLifecycleAdapter::RequireSourceNodeId(uint32_t preferredNodeId)
     NS_ABORT_MSG_IF(sourceNodeId == Simulator::NO_CONTEXT || sourceNodeId >= NodeList::GetNNodes(),
                     "Cross-owner lifecycle control requires a source node context");
     return sourceNodeId;
-}
-
-void
-UbParallelLifecycleAdapter::RoutePacketTransfer(const UbPacketAttemptIdentity& identity,
-                                                UbPacketTransfer transfer,
-                                                uint32_t sourceNodeId)
-{
-    if (IsExecutionOwner(identity.owner.ownerNodeId))
-    {
-        UbLifecycleCoordinator::Resolve(identity)->ObservePacketTransfer(identity, transfer);
-        return;
-    }
-    UbLifecycleControlRecord record;
-    record.sourceNodeId = RequireSourceNodeId(sourceNodeId);
-    record.targetNodeId = identity.owner.ownerNodeId;
-    record.operation = UbLifecycleControlOperation::PACKET_TRANSFER;
-    record.resource = identity.owner;
-    record.packet = identity;
-    record.value = static_cast<uint64_t>(transfer);
-    Route(record);
-}
-
-void
-UbParallelLifecycleAdapter::RoutePacketTerminal(const UbPacketAttemptIdentity& identity,
-                                                UbPacketTerminal terminal,
-                                                uint32_t sourceNodeId)
-{
-    if (IsExecutionOwner(identity.owner.ownerNodeId))
-    {
-        UbLifecycleCoordinator::Resolve(identity)->TerminatePacket(identity, terminal);
-        return;
-    }
-    UbLifecycleControlRecord record;
-    record.sourceNodeId = RequireSourceNodeId(sourceNodeId);
-    record.targetNodeId = identity.owner.ownerNodeId;
-    record.operation = UbLifecycleControlOperation::PACKET_TERMINAL;
-    record.resource = identity.owner;
-    record.packet = identity;
-    record.value = static_cast<uint64_t>(terminal);
-    Route(record);
 }
 
 void
@@ -1185,32 +903,7 @@ UbParallelLifecycleAdapter::Receive(UbLifecycleControlRecord record)
 bool
 UbParallelLifecycleAdapter::Apply(const UbLifecycleControlRecord& record)
 {
-    switch (record.operation)
-    {
-    case UbLifecycleControlOperation::PACKET_TRANSFER:
-    {
-        Ptr<UbLifecycleCoordinator> coordinator = UbLifecycleCoordinator::Resolve(record.packet);
-        if (!coordinator->IsResourceActive(record.packet.owner))
-        {
-            return false;
-        }
-        coordinator->ObservePacketTransfer(record.packet,
-                                           static_cast<UbPacketTransfer>(record.value));
-        return true;
-    }
-    case UbLifecycleControlOperation::PACKET_TERMINAL:
-    {
-        Ptr<UbLifecycleCoordinator> coordinator = UbLifecycleCoordinator::Resolve(record.packet);
-        if (!coordinator->IsResourceActive(record.packet.owner))
-        {
-            return false;
-        }
-        coordinator->TerminatePacket(record.packet, static_cast<UbPacketTerminal>(record.value));
-        return true;
-    }
-    default:
-        return utils::TpConnectionManager::ApplyLifecycleControl(record);
-    }
+    return utils::TpConnectionManager::ApplyLifecycleControl(record);
 }
 
 UbParallelLifecycleSnapshot
@@ -1430,109 +1123,6 @@ UbLifecycleCoordinator::BuildSnapshot(const ResourceValidation& validation)
     compactState.hasTerminalOutcome = validation.compactHistory->hasTerminalOutcome;
     compactState.terminalOutcome = validation.compactHistory->terminalOutcome;
     return BuildSnapshot(compactState);
-}
-
-void
-UbLifecycleCoordinator::ObservePacketTransfer(const UbPacketAttemptIdentity& identity,
-                                              UbPacketTransfer transfer)
-{
-    ResourceState& state = ValidateMutable(identity.owner);
-    ActiveResourceState& active = *state.active;
-    NS_ABORT_MSG_IF(identity.attempt == 0, "Packet transfer has an invalid attempt identity");
-    const uint64_t wordIndex = (identity.attempt - 1) / 64;
-    const uint64_t attemptBit = uint64_t{1} << ((identity.attempt - 1) % 64);
-    const auto word = active.activeAttemptWords.find(wordIndex);
-    NS_ABORT_MSG_IF(word == active.activeAttemptWords.end() || (word->second & attemptBit) == 0,
-                    "Packet transfer references an inactive attempt");
-    ++active.snapshot.transferObservations;
-    active.snapshot.lastTransferSequence = ++active.sequence;
-    if (UbLifecycleTrace::IsDetailEnabled() && UbLifecycleTrace::SelectPacket(identity))
-    {
-        m_lifecycleTrace(MakeTraceRecord(
-            identity.owner,
-            ++m_traceSequence,
-            UbLifecycleTraceRecordType::IDENTITY_LIFETIME,
-            UbLifecycleTraceSubjectKind::PACKET,
-            identity.attempt,
-            UbLifecycleTraceEvent::PACKET_TRANSFER,
-            static_cast<int64_t>(active.snapshot.transferObservations - 1),
-            1,
-            static_cast<int64_t>(active.snapshot.transferObservations),
-            UbLifecycleTraceOutcome::NONE,
-            ToTraceReason(transfer),
-            UbLifecycleTraceSite::COORDINATOR_PACKET_TRANSFER));
-    }
-}
-
-void
-UbLifecycleCoordinator::TerminatePacket(const UbPacketAttemptIdentity& identity,
-                                        UbPacketTerminal terminal)
-{
-    ResourceState& state = ValidateMutable(identity.owner);
-    ActiveResourceState& active = *state.active;
-    NS_ABORT_MSG_IF(identity.attempt == 0, "Packet terminal has an invalid attempt identity");
-    const uint64_t wordIndex = (identity.attempt - 1) / 64;
-    const uint64_t attemptBit = uint64_t{1} << ((identity.attempt - 1) % 64);
-    const auto word = active.activeAttemptWords.find(wordIndex);
-    NS_ABORT_MSG_IF(word == active.activeAttemptWords.end() || (word->second & attemptBit) == 0,
-                    "Packet lifecycle terminal would underflow the active-attempt balance");
-    NS_ABORT_MSG_IF(active.snapshot.inFlightPackets == 0,
-                    "Packet lifecycle terminal would underflow the in-flight counter");
-
-    word->second &= ~attemptBit;
-    if (word->second == 0)
-    {
-        active.activeAttemptWords.erase(word);
-    }
-    --active.snapshot.inFlightPackets;
-    switch (terminal)
-    {
-    case UbPacketTerminal::ENDPOINT_CONSUMED:
-        ++active.snapshot.endpointConsumed;
-        break;
-    case UbPacketTerminal::ROUTE_NOT_FOUND:
-        ++active.snapshot.routeNotFoundDrops;
-        break;
-    case UbPacketTerminal::EGRESS_QUEUE_FULL:
-        ++active.snapshot.egressQueueFullDrops;
-        break;
-    case UbPacketTerminal::INGRESS_QUEUE_FULL:
-        ++active.snapshot.ingressQueueFullDrops;
-        break;
-    case UbPacketTerminal::FAULT_DROP:
-        ++active.snapshot.faultDrops;
-        break;
-    case UbPacketTerminal::CHANNEL_FAILURE:
-        ++active.snapshot.channelFailureDrops;
-        break;
-    case UbPacketTerminal::MALFORMED_PACKET:
-        ++active.snapshot.malformedPacketDrops;
-        break;
-    default:
-        NS_ABORT_MSG("Unknown packet lifecycle terminal");
-    }
-    active.snapshot.lastTerminalSequence = ++active.sequence;
-    const auto callback = active.stateChangedCallback;
-    if (!callback.IsNull())
-    {
-        callback(identity.owner);
-    }
-    if (UbLifecycleTrace::IsDetailEnabled() && UbLifecycleTrace::SelectPacket(identity))
-    {
-        m_lifecycleTrace(MakeTraceRecord(
-            identity.owner,
-            ++m_traceSequence,
-            UbLifecycleTraceRecordType::TERMINAL_OUTCOME,
-            UbLifecycleTraceSubjectKind::PACKET,
-            identity.attempt,
-            UbLifecycleTraceEvent::PACKET_TERMINAL,
-            static_cast<int64_t>(active.snapshot.inFlightPackets + 1),
-            -1,
-            static_cast<int64_t>(active.snapshot.inFlightPackets),
-            ToTraceOutcome(terminal),
-            UbLifecycleTraceReason::NONE,
-            UbLifecycleTraceSite::COORDINATOR_PACKET_TERMINAL));
-    }
 }
 
 void

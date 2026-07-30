@@ -23,7 +23,6 @@ struct UbLdstForcedStopResidue
     uint64_t waitingAcks{0};
     uint64_t queuedSegments{0};
     uint64_t trackedActions{0};
-    uint64_t inFlightPackets{0};
 };
 
 class UbLdstInstance : public Object {
@@ -65,7 +64,6 @@ public:
         m_trackedActions.Attach(m_lifecycleOwner, token, event, Callback<void>());
     }
     void ScheduleNow(Callback<void> action);
-    void RegisterPacketBirth(Ptr<Packet> packet);
 
     size_t GetActiveTaskCount() const;
     size_t GetActiveSegmentCount() const;
