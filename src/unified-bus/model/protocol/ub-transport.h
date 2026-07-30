@@ -408,9 +408,7 @@ public:
 
     Ptr<Packet> PopAckForTest()
     {
-        Ptr<Packet> packet = GetNextPacket();
-        RefreshAllocatorSummary();
-        return packet;
+        return GetNextPacket();
     }
     uint32_t GetPendingCnpCountForTest() const { return static_cast<uint32_t>(m_cnpQ.size()); }
     uint64_t GetPsnSndUnaForTest() const { return m_psnSndUna; }
