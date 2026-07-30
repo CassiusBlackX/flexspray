@@ -288,6 +288,7 @@ UbCtpTxQueue::GetNextPacket()
     {
         m_headArrivalTime = Simulator::Now();
     }
+    RefreshAllocatorSummary();
     return packet;
 }
 

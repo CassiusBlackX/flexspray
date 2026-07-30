@@ -171,6 +171,7 @@ UbPacketQueue::Pop()
     if (m_packetCount == 1) {
         m_frontPacket = nullptr;
         m_packetCount = 0;
+        RefreshAllocatorSummary();
         return;
     }
 

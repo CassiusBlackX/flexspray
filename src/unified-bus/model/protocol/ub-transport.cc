@@ -820,14 +820,18 @@ UbTransportChannel::TryGetNextNewDataPacket()
 
 Ptr<Packet> UbTransportChannel::GetNextPacket()
 {
+    auto finish = [this](Ptr<Packet> packet) {
+        RefreshAllocatorSummary();
+        return packet;
+    };
     Ptr<Packet> packet = PopQueuedPacket(m_cnpQ);
     if (packet != nullptr) {
-        return packet;
+        return finish(packet);
     }
 
     packet = PopQueuedPacket(m_ackQ);
     if (packet != nullptr) {
-        return packet;
+        return finish(packet);
     }
 
     if (IsRetransEnabled()) {
@@ -836,17 +840,17 @@ Ptr<Packet> UbTransportChannel::GetNextPacket()
             if (HasPendingTransmitWork()) {
                 m_headArrivalTime = Simulator::Now();
             }
-            return packet;
+            return finish(packet);
         }
         if (m_retrans->HasPendingGbnRetransmission()) {
-            return nullptr;
+            return finish(nullptr);
         }
         if (HasPendingSelectiveRetransmissionWork()) {
-            return nullptr;
+            return finish(nullptr);
         }
     }
 
-    return TryGetNextNewDataPacket();
+    return finish(TryGetNextNewDataPacket());
 }
 
 void
