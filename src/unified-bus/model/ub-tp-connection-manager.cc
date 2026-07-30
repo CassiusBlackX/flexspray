@@ -19,12 +19,7 @@ TypeId TpConnectionManager::GetTypeId()
 {
     static TypeId tid = TypeId("ns3::TpConnectionManager")
         .SetParent<Object>()
-        .SetGroupName("UnifiedBus")
-        .AddAttribute("RemoveUselessTp",
-                      "Automatically destroy idle transport channels that have completed all WQE segments.",
-                      BooleanValue(false),
-                      MakeBooleanAccessor(&TpConnectionManager::m_removeUselessTp),
-                      MakeBooleanChecker());
+        .SetGroupName("UnifiedBus");
     return tid;
 }
 
@@ -237,6 +232,30 @@ TpConnectionManager::ReserveTpnsForTraffic(bool useShortestPath,
         return;
     }
     ReserveNewTpConnections(localNodeId, peerNodeId, priority, useShortestPath);
+}
+
+std::vector<UbLifecycleResourceIdentity>
+TpConnectionManager::ReservePlannedTpnsForTraffic(bool useShortestPath,
+                                                  uint32_t localNodeId,
+                                                  uint32_t peerNodeId,
+                                                  uint32_t priority)
+{
+    std::lock_guard<std::mutex> controlLock(g_tpConnectionControlLock);
+    if (!GetTpnsByPeerNodePriority(localNodeId, peerNodeId, priority).empty())
+    {
+        return {};
+    }
+    const auto reserved =
+        ReserveNewTpConnections(localNodeId, peerNodeId, priority, useShortestPath);
+    std::vector<UbLifecycleResourceIdentity> identities;
+    identities.reserve(reserved.size());
+    for (const auto& [tpn, metric] : reserved)
+    {
+        (void)metric;
+        const Connection connection = GetConnection(tpn, localNodeId, peerNodeId, priority);
+        identities.push_back(GetConnectionIdentity(connection));
+    }
+    return identities;
 }
 
 // 1. 获取节点相关的所有连接
@@ -695,6 +714,17 @@ TpConnectionManager::DestroyConnection(uint32_t localNodeId,
                                        UbDestroyCallback callback)
 {
     std::lock_guard<std::mutex> controlLock(g_tpConnectionControlLock);
+    return DestroyConnectionLocked(localNodeId, localTpn, nullptr, reason, callback);
+}
+
+UbDestroyStatus
+TpConnectionManager::DestroyConnectionLocked(
+    uint32_t localNodeId,
+    uint32_t localTpn,
+    const UbLifecycleResourceIdentity* expectedIdentity,
+    UbDestroyReason reason,
+    UbDestroyCallback callback)
+{
     Connection connection;
     if (!TryGetLocalConnection(localNodeId, localTpn, connection))
     {
@@ -704,6 +734,10 @@ TpConnectionManager::DestroyConnection(uint32_t localNodeId,
                                   ? connection.tpn1
                                   : connection.tpn2;
     const UbLifecycleResourceIdentity identity = GetConnectionIdentity(connection);
+    if (expectedIdentity != nullptr && identity != *expectedIdentity)
+    {
+        return UbDestroyStatus::REJECTED;
+    }
     Ptr<ns3::UbController> ownerController =
         NodeList::GetNode(connection.ownerNodeId)->GetObject<ns3::UbController>();
     NS_ABORT_MSG_IF(ownerController == nullptr, "Connection owner lacks UbController");
@@ -733,6 +767,25 @@ TpConnectionManager::DestroyConnection(uint32_t localNodeId,
     control.value = static_cast<uint64_t>(reason);
     UbParallelLifecycleAdapter::RouteControl(control);
     return UbDestroyStatus::PENDING;
+}
+
+UbDestroyStatus
+TpConnectionManager::DestroyConnection(const UbLifecycleResourceIdentity& identity,
+                                       UbDestroyReason reason,
+                                       UbDestroyCallback callback)
+{
+    if (identity.kind != UbLifecycleResourceKind::RTP_CONNECTION ||
+        identity.ownerNodeId != m_ownerNodeId ||
+        identity.localId > std::numeric_limits<uint32_t>::max())
+    {
+        return UbDestroyStatus::REJECTED;
+    }
+    std::lock_guard<std::mutex> controlLock(g_tpConnectionControlLock);
+    return DestroyConnectionLocked(identity.ownerNodeId,
+                                   static_cast<uint32_t>(identity.localId),
+                                   &identity,
+                                   reason,
+                                   callback);
 }
 
 UbDestroyStatus
@@ -1528,18 +1581,6 @@ uint32_t TpConnectionManager::ReconstructTp(Connection conn)
                            conn.priority, conn.tpn1, conn.tpn2, sendHostCaqm);
     }
     return conn.tpn1;
-}
-
-void TpConnectionManager::RemoveUselessTps(uint32_t jettyNum, uint32_t src, uint32_t dst, uint32_t priority)
-{
-    if (!m_removeUselessTp) { // 仅在开启了删除无用tp模式下才进行此操作
-        return;
-    }
-    (void)jettyNum;
-    (void)src;
-    (void)dst;
-    (void)priority;
-    NS_ABORT_MSG("RemoveUselessTp task-driven teardown is unsupported; use explicit TP lifecycle management");
 }
 
 uint32_t TpConnectionManager::GetNextTpn()
