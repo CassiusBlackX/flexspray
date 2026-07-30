@@ -182,7 +182,7 @@ class UbCtpTransportService : public Object
                                          uint32_t priority) const;
     uint32_t GetRegisteredQueueCountForTest() const;
     bool IsPacketTraceEnabledForTest() const;
-    const UbLifecycleResourceIdentity& GetPacketLifecycleOwnerForTest() const;
+    const UbLifecycleResourceIdentity& GetLifecycleOwnerForTest() const;
 
   private:
     using QueueKey = std::tuple<UbCtpEntityKey, uint32_t, uint32_t>;
@@ -222,7 +222,6 @@ class UbCtpTransportService : public Object
     void RegisterQueueIfNeeded(Ptr<UbCtpTxQueue> queue,
                                uint32_t outPort,
                                uint32_t priority);
-    void RegisterPacketBirth(Ptr<Packet> packet);
     void RunTrackedCompleteFromTaAck(UbCtpEntityKey key,
                                      uint32_t taSsn,
                                      Ptr<UbWqeSegment> response,
@@ -285,7 +284,7 @@ class UbCtpTransportService : public Object
     void DoDispose() override;
 
     Ptr<Node> m_node;
-    UbLifecycleResourceIdentity m_packetLifecycleOwner;
+    UbLifecycleResourceIdentity m_lifecycleOwner;
     UbTrackedEventSet m_delayedTaAckEvents;
     UbCtpRoutingPolicy m_defaultRoutingPolicy;
     bool m_pktTraceEnabled{false};

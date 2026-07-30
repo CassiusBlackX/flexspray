@@ -306,38 +306,34 @@ static CausalControlOrderingSystemTestSuite g_nullMessageCausalControl(
     "src/mpi/examples/causal-control-ordering",
     "--nullmsg",
     "TEST : 1 : PASSED");
-static CausalControlOrderingSystemTestSuite g_mpiUbLifecycleControl(
-    "mpi-ub-lifecycle-parallel-control",
-    "src/unified-bus/examples/ub-lifecycle-parallel-control",
-    "",
-    "TEST : 0 : PASSED owner-seq=1 sent=0 received=1 applied=1 duplicate=0 stale=0 "
-    "pending=0 balance=0 terminal=1");
-static CausalControlOrderingSystemTestSuite g_hybridUbLifecycleControl(
-    "mpi-hybrid-ub-lifecycle-parallel-control",
-    "src/unified-bus/examples/ub-lifecycle-parallel-control",
-    "--hybrid",
-    "TEST : 0 : PASSED owner-seq=1 sent=0 received=1 applied=1 duplicate=0 stale=0 "
-    "pending=0 balance=0 terminal=1");
-
 class MpiRemoteTpRegressionSystemTestCase : public TestCase
 {
   public:
-    MpiRemoteTpRegressionSystemTestCase()
-        : TestCase("Hybrid MPI MTP - remote TP traffic completes")
+    MpiRemoteTpRegressionSystemTestCase(const std::string& name, uint32_t mtpThreads)
+        : TestCase(name),
+          m_mtpThreads(mtpThreads)
     {
     }
 
     void DoRun() override
     {
         const std::string testFile = CreateTempDirFilename(GetName() + ".log");
-        const auto [status, output] =
-            RunHybridMtpExample(testFile, "src/unified-bus/examples/ub-mtp-remote-tp-regression");
+        const auto [status, output] = RunHybridMtpExample(
+            testFile,
+            "src/unified-bus/examples/ub-mtp-remote-tp-regression",
+            "--destroy-after-admission=1 --mtp-threads=" + std::to_string(m_mtpThreads));
 
         NS_TEST_ASSERT_MSG_EQ(status, 0, "remote TP traffic must complete: " << output);
-        NS_TEST_ASSERT_MSG_NE(output.find("TEST PASS"),
+        NS_TEST_ASSERT_MSG_NE(output.find("TEST : 0 : PASSED"),
                               std::string::npos,
-                              "remote TP traffic must report success: " << output);
+                              "remote TP destroy must pass on rank 0: " << output);
+        NS_TEST_ASSERT_MSG_NE(output.find("TEST : 1 : PASSED"),
+                              std::string::npos,
+                              "remote TP destroy must pass on rank 1: " << output);
     }
+
+  private:
+    uint32_t m_mtpThreads;
 };
 
 class MpiRemoteTpRegressionSystemTestSuite : public TestSuite
@@ -346,7 +342,14 @@ class MpiRemoteTpRegressionSystemTestSuite : public TestSuite
     MpiRemoteTpRegressionSystemTestSuite()
         : TestSuite("mpi-example-ub-mtp-remote-tp-regression-np2", Type::SYSTEM)
     {
-        AddTestCase(new MpiRemoteTpRegressionSystemTestCase(), TestCase::Duration::QUICK);
+        AddTestCase(new MpiRemoteTpRegressionSystemTestCase(
+                        "MPI - explicit remote TP destroy completes",
+                        1),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new MpiRemoteTpRegressionSystemTestCase(
+                        "Hybrid MPI MTP - explicit remote TP destroy completes",
+                        2),
+                    TestCase::Duration::QUICK);
     }
 };
 

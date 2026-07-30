@@ -229,7 +229,7 @@ public:
 
     const UbLifecycleResourceIdentity& GetLifecycleOwner() const
     {
-        return m_packetLifecycleOwner;
+        return m_lifecycleOwner;
     }
 
     /**
@@ -622,7 +622,7 @@ private:
     uint32_t m_dest;
     uint32_t m_tpn;           // TP Number
     uint32_t m_dstTpn;
-    UbLifecycleResourceIdentity m_packetLifecycleOwner;
+    UbLifecycleResourceIdentity m_lifecycleOwner;
     uint64_t m_size;          // Size parameter
     uint16_t m_priority;      // Process group identifier
     uint16_t m_sport;
