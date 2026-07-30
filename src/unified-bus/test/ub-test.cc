@@ -28767,11 +28767,11 @@ namespace
 bool
 HasQuickExampleBinary(const std::filesystem::path& repoRoot)
 {
-    return std::filesystem::exists(repoRoot / "build/scratch/ns3.44-ub-quick-example") ||
-           std::filesystem::exists(
+    return std::filesystem::exists(
                repoRoot / "build/src/unified-bus/examples/ns3.44-ub-quick-example-default") ||
            std::filesystem::exists(
-               repoRoot / "build/src/unified-bus/examples/ns3.44-ub-quick-example");
+               repoRoot / "build/src/unified-bus/examples/ns3.44-ub-quick-example") ||
+           std::filesystem::exists(repoRoot / "build/scratch/ns3.44-ub-quick-example");
 }
 
 std::filesystem::path
@@ -28799,9 +28799,9 @@ std::filesystem::path
 LocateQuickExampleBinary(const std::filesystem::path& repoRoot)
 {
     const std::vector<std::filesystem::path> candidates = {
-        "build/scratch/ns3.44-ub-quick-example",
         "build/src/unified-bus/examples/ns3.44-ub-quick-example",
         "build/src/unified-bus/examples/ns3.44-ub-quick-example-default",
+        "build/scratch/ns3.44-ub-quick-example",
     };
 
     for (const auto& candidate : candidates)
@@ -29622,6 +29622,60 @@ class UbQuickExampleRuntimeStorageSnapshotSystemTest : public TestCase
     }
 };
 
+class UbQuickExamplePlannedTpDestroySystemTest : public TestCase
+{
+  public:
+    UbQuickExamplePlannedTpDestroySystemTest()
+        : TestCase("UnifiedBus - ub-quick-example applies planned TP destroy policy")
+    {
+    }
+
+    void DoRun() override
+    {
+        SetDataDir(NS_TEST_SOURCEDIR);
+        const std::filesystem::path caseDir =
+            CopyCaseDirWithoutFile("scratch/2nodes_single-tp", "transport_channel.csv");
+        ReplaceInFile(caseDir / "network_attribute.txt",
+                      "default ns3::UbApp::EnableMultiPath \"false\"\n",
+                      "default ns3::UbApp::EnableMultiPath \"true\"\n"
+                      "default ns3::UbApp::EnableTaskScopedJettyDestroy \"true\"\n"
+                      "default ns3::UbApp::EnablePlannedTpConnectionDestroy \"true\"\n");
+        const std::filesystem::path snapshotPath =
+            CreateSafeTempBasename("ub-planned-tp-destroy").replace_extension(".csv");
+        auto [status, output] =
+            RunQuickExampleCommand(CreateTempDirFilename(GetName() + ".log"),
+                                   "--runtime-storage-snapshot=\"" + snapshotPath.string() + "\"",
+                                   "",
+                                   caseDir.string());
+
+        std::ifstream input(snapshotPath);
+        std::ostringstream contents;
+        contents << input.rdbuf();
+        const std::string csv = contents.str();
+        std::error_code ec;
+        std::filesystem::remove_all(caseDir, ec);
+        std::filesystem::remove(snapshotPath, ec);
+
+        NS_TEST_ASSERT_MSG_EQ(status,
+                              0,
+                              "planned TP destroy case should complete without teardown failure: "
+                                  << output);
+        NS_TEST_ASSERT_MSG_NE(csv.find("1,traffic,completed_tasks,,4\n"),
+                              std::string::npos,
+                              "planned TP destroy case should complete every accepted task");
+        NS_TEST_ASSERT_MSG_NE(csv.find("1,runtime,canonical_connections,,0\n"),
+                              std::string::npos,
+                              "planned TP destroy should retire every driver-owned connection");
+        NS_TEST_ASSERT_MSG_NE(
+            csv.find("1,runtime,authoritative_local_connection_views,,0\n"),
+            std::string::npos,
+            "planned TP destroy should retire both endpoint views");
+        NS_TEST_ASSERT_MSG_NE(csv.find("1,runtime,task_scoped_jetties,,0\n"),
+                              std::string::npos,
+                              "combined policies should retire every task-scoped Jetty");
+    }
+};
+
 class UbRuntimeStorageSnapshotSystemTestSuite : public TestSuite
 {
   public:
@@ -29629,6 +29683,8 @@ class UbRuntimeStorageSnapshotSystemTestSuite : public TestSuite
         : TestSuite("unified-bus-runtime-storage-snapshot", Type::SYSTEM)
     {
         AddTestCase(new UbQuickExampleRuntimeStorageSnapshotSystemTest(),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbQuickExamplePlannedTpDestroySystemTest(),
                     TestCase::Duration::QUICK);
     }
 };

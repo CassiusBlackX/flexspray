@@ -341,6 +341,42 @@ void UbTransaction::DestroyJettyTpMap(uint32_t jettyNum)
 }
 
 void
+UbTransaction::ReleaseCompletedJettyTransportBinding(uint32_t jettyNum, bool destroyTpGroup)
+{
+    const auto reference = m_jettyRtpReferences.find(jettyNum);
+    if (reference == m_jettyRtpReferences.end())
+    {
+        return;
+    }
+
+    const UbRtpTransportReference completedReference = reference->second;
+    DestroyJettyTpMap(jettyNum);
+    if (!completedReference.IsDirectTp())
+    {
+        if (!destroyTpGroup)
+        {
+            return;
+        }
+        Ptr<UbController> controller = GetOwnerController();
+        NS_ABORT_MSG_IF(controller == nullptr,
+                        "Completed TPG binding requires its owner Controller");
+        const UbDestroyStatus status = controller->DestroyRtpTpGroup(
+            completedReference.GetIdentity(),
+            UbDestroyReason::PROTOCOL_COMPLETE);
+        NS_ABORT_MSG_IF(status == UbDestroyStatus::REJECTED,
+                        "Completed TPG binding rejected explicit destroy");
+        return;
+    }
+
+    const uint32_t tpn = completedReference.GetDirectTpn();
+    Ptr<UbController> controller = GetOwnerController();
+    if (controller != nullptr && controller->GetTransportChannelManager() != nullptr)
+    {
+        controller->GetTransportChannelManager()->NotifyStateChanged(tpn);
+    }
+}
+
+void
 UbTransaction::EraseRtpTpGroupBindings(
     const UbLifecycleResourceIdentity& groupIdentity)
 {

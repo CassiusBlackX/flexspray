@@ -435,10 +435,20 @@ UbApp::CleanupCompletedTask(
     uint32_t taskId,
     uint32_t jettyNum,
     bool destroyTaskScopedJetty,
+    bool releasePlannedTpBinding,
     const std::vector<UbLifecycleResourceIdentity>& plannedTpConnections)
 {
     if (m_transportMode == TransportMode::RTP)
     {
+        Ptr<UbTransaction> transaction =
+            GetNode()->GetObject<UbController>()->GetUbTransaction();
+        if (releasePlannedTpBinding)
+        {
+            transaction->ReleaseCompletedJettyTransportBinding(
+                jettyNum,
+                !plannedTpConnections.empty());
+        }
+
         Ptr<UbFunction> function = GetNode()->GetObject<UbController>()->GetUbFunction();
         UbJettyLifetime lifetime = UbJettyLifetime::REUSABLE;
         if (destroyTaskScopedJetty && function->TryGetJettyLifetime(jettyNum, lifetime) &&

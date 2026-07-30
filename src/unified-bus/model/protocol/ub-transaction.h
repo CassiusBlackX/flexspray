@@ -160,6 +160,8 @@ namespace ns3 {
         bool JettyBindTp(uint32_t src, uint32_t dest, uint32_t jettyNum, bool multiPath, std::vector<uint32_t> tpns);
 
         void DestroyJettyTpMap(uint32_t jettyNum);
+        /** Release one completed task's binding and optionally retire its now-unused TPG. */
+        void ReleaseCompletedJettyTransportBinding(uint32_t jettyNum, bool destroyTpGroup);
         void EraseRtpTpGroupBindings(
             const UbLifecycleResourceIdentity& groupIdentity);
 
