@@ -134,8 +134,6 @@ public:
 
     void ValidateDependencyVisibilityDelay(bool requireStrictlyPositive) const;
 
-    void ConsiderAutomaticDependencyVisibilityDelay(Time delay);
-
     /**
      * @brief Configure deterministic start offsets for tasks without phase dependencies.
      * @param window Half-open offset window; zero disables offsets.
@@ -255,8 +253,7 @@ public:
     bool m_readyTasksSorted{true};
     std::vector<Ptr<UbApp>> m_sourceApps{};
     std::unordered_map<std::string, Time> m_delayParseCache{};
-    std::optional<Time> m_dependencyVisibilityDelay{};
-    std::optional<Time> m_automaticDependencyVisibilityDelay{};
+    Time m_dependencyVisibilityDelay{NanoSeconds(100)};
     bool m_canonicalOutputEnabled = false;
     std::string m_canonicalOutputPath;
     uint32_t m_canonicalRank = 0;
