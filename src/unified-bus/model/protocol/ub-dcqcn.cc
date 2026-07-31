@@ -34,19 +34,6 @@ NS_OBJECT_ENSURE_REGISTERED(UbSwitchDcqcn);
 
 NS_LOG_COMPONENT_DEFINE("UbDcqcn");
 
-struct UbHostDcqcn::DormancyState final : public UbCongestionControlDormancyState
-{
-    Time lastCnpSent{Time(0)};
-    bool hasSentCnp{false};
-    double alpha{1.0};
-    DataRate currentRate{0};
-    DataRate targetRate{0};
-    Time nextAvailableSendTime{Time(0)};
-    uint64_t bytesSinceLastIncrease{0};
-    uint32_t timeRecoveryEvents{0};
-    uint32_t byteRecoveryEvents{0};
-};
-
 TypeId
 UbDcqcn::GetTypeId(void)
 {
@@ -149,69 +136,6 @@ UbHostDcqcn::OnTpAttached(Ptr<UbTransportChannel> tp)
     m_targetRate = m_initialRate;
     m_nextAvailableSendTime = Simulator::Now();
     InitTrackedEvents();
-}
-
-UbCongestionControlDormancyEligibility
-UbHostDcqcn::GetDormancyEligibility() const
-{
-    const bool hasPendingEvent = m_pendingCnpEvent.IsPending() || m_rateIncreaseEvent.IsPending() ||
-                                 m_alphaEvent.IsPending() || m_pacingWakeupEvent.IsPending();
-    bool hasTrackedEvent = false;
-    if (m_trackedEventsInitialized && m_tp != nullptr)
-    {
-        const auto& owner = m_tp->GetLifecycleOwner();
-        hasTrackedEvent = m_pendingCnpTrackedEvents.HasEvents(owner) ||
-                          m_rateIncreaseTrackedEvents.HasEvents(owner) ||
-                          m_alphaTrackedEvents.HasEvents(owner) ||
-                          m_pacingTrackedEvents.HasEvents(owner);
-    }
-    return !m_senderStarted && !m_registeredHostFlow && !m_pendingMarked && !hasPendingEvent &&
-                   !hasTrackedEvent
-               ? UbCongestionControlDormancyEligibility::ELIGIBLE
-               : UbCongestionControlDormancyEligibility::INELIGIBLE;
-}
-
-std::unique_ptr<UbCongestionControlDormancyState>
-UbHostDcqcn::SnapshotDormancyState() const
-{
-    if (GetDormancyEligibility() != UbCongestionControlDormancyEligibility::ELIGIBLE)
-    {
-        return nullptr;
-    }
-
-    auto state = std::make_unique<DormancyState>();
-    state->lastCnpSent = m_lastCnpSent;
-    state->hasSentCnp = m_hasSentCnp;
-    state->alpha = m_alpha;
-    state->currentRate = m_currentRate;
-    state->targetRate = m_targetRate;
-    state->nextAvailableSendTime = m_nextAvailableSendTime;
-    state->bytesSinceLastIncrease = m_bytesSinceLastIncrease;
-    state->timeRecoveryEvents = m_timeRecoveryEvents;
-    state->byteRecoveryEvents = m_byteRecoveryEvents;
-    return state;
-}
-
-bool
-UbHostDcqcn::RestoreDormancyState(const UbCongestionControlDormancyState& state)
-{
-    const auto* dcqcnState = dynamic_cast<const DormancyState*>(&state);
-    if (dcqcnState == nullptr ||
-        GetDormancyEligibility() != UbCongestionControlDormancyEligibility::ELIGIBLE)
-    {
-        return false;
-    }
-
-    m_lastCnpSent = dcqcnState->lastCnpSent;
-    m_hasSentCnp = dcqcnState->hasSentCnp;
-    m_alpha = dcqcnState->alpha;
-    m_currentRate = dcqcnState->currentRate;
-    m_targetRate = dcqcnState->targetRate;
-    m_nextAvailableSendTime = dcqcnState->nextAvailableSendTime;
-    m_bytesSinceLastIncrease = dcqcnState->bytesSinceLastIncrease;
-    m_timeRecoveryEvents = dcqcnState->timeRecoveryEvents;
-    m_byteRecoveryEvents = dcqcnState->byteRecoveryEvents;
-    return true;
 }
 
 void

@@ -2,7 +2,6 @@
 #include "ns3/ub-port.h"
 #include "ns3/ub-cbfc.h"
 #include "ns3/ub-link.h"
-#include "ns3/ub-lifecycle.h"
 #include "ns3/ub-pfc.h"
 #include "ns3/log.h"
 #include "ns3/ub-network-address.h"
@@ -68,18 +67,11 @@ bool UbEgressQueue::DoEnqueue(PacketEntry packetEntry)
                      << (m_currentBytes + pktSize) << " bytes > limit " << m_maxEgressBytes 
                      << " bytes. Packet dropped (inPort=" << inPortId 
                      << " priority=" << (uint32_t)priority << ")");
-        UbLifecycleCoordinator::TerminatePacket(pkt,
-                                                UbPacketTerminal::EGRESS_QUEUE_FULL,
-                                                m_ownerNodeId);
         return false;
     }
     
     m_egressQ.push(packetEntry);
     m_currentBytes += pktSize;  // 更新字节统计
-    UbLifecycleCoordinator::ObservePacketTransfer(
-        pkt,
-        UbPacketTransfer::EGRESS_QUEUE_ENQUEUE,
-        m_ownerNodeId);
     m_traceUbEnqueue(pkt, static_cast<uint32_t>(m_currentBytes));
 
     NS_LOG_LOGIC ("[UbEgressQueue DoEnqueue] Egress Queue size: " << m_egressQ.size () 
@@ -141,10 +133,6 @@ PacketEntry UbEgressQueue::DoDequeue()
     auto [inPortId, priority, pkt] = packetEntry;
     uint32_t pktSize = pkt->GetSize();
     m_currentBytes -= pktSize;  // 更新字节统计
-    UbLifecycleCoordinator::ObservePacketTransfer(
-        pkt,
-        UbPacketTransfer::EGRESS_QUEUE_DEQUEUE,
-        m_ownerNodeId);
     m_traceUbDequeue(pkt, static_cast<uint32_t>(m_currentBytes));
 
     NS_LOG_LOGIC ("[UbEgressQueue DoDequeue] Egress Queue size: " << m_egressQ.size ()
@@ -387,36 +375,6 @@ void UbPort::CreateAndInitFc(FcType type)
     }
 }
 
-void
-UbPort::RegisterDatalinkControlPacket(Ptr<Packet> packet, uint32_t vlId)
-{
-    NS_ABORT_MSG_IF(packet == nullptr, "Cannot register a null Datalink control packet");
-    NS_ABORT_MSG_IF(vlId >= qCnt, "Datalink control packet VL is out of range");
-    Ptr<UbLifecycleCoordinator> coordinator =
-        UbLifecycleCoordinator::GetOrCreate(GetNode());
-    auto owner = m_datalinkPacketOwners.find(vlId);
-    if (owner == m_datalinkPacketOwners.end())
-    {
-        const uint64_t localId = (static_cast<uint64_t>(m_portId) << 32) | vlId;
-        owner = m_datalinkPacketOwners
-                    .emplace(vlId,
-                             coordinator->OpenPacketOwner(
-                                 UbLifecycleResourceKind::DATALINK_PORT_VL,
-                                 localId))
-                    .first;
-    }
-    coordinator->RegisterPacketAttempt(owner->second, packet);
-}
-
-const UbLifecycleResourceIdentity&
-UbPort::GetDatalinkPacketOwnerForTest(uint32_t vlId) const
-{
-    const auto owner = m_datalinkPacketOwners.find(vlId);
-    NS_ABORT_MSG_IF(owner == m_datalinkPacketOwners.end(),
-                    "Datalink packet owner has not been opened for this VL");
-    return owner->second;
-}
-
 void UbPort::TransmitComplete()
 {
     NS_LOG_FUNCTION(this);
@@ -495,8 +453,6 @@ void UbPort::TransmitPacket(Ptr<Packet> packet, Time delay)
         m_currentInPortId = 0;
         m_currentPriority = 0;
         Simulator::ScheduleNow(&UbPort::TriggerTransmit, this);
-        UbLifecycleCoordinator::TerminatePacket(packet,
-                                                UbPacketTerminal::CHANNEL_FAILURE);
         return;
     }
 
@@ -530,8 +486,6 @@ UbPort::TransmitPacketDetached(Ptr<Packet> packet)
     if (result == false) {
         NS_LOG_WARN("Detached channel transmission failed! Packet dropped at Node "
                     << GetNode()->GetId() << " Port " << m_portId);
-        UbLifecycleCoordinator::TerminatePacket(packet,
-                                                UbPacketTerminal::CHANNEL_FAILURE);
         return;
     }
 
@@ -807,7 +761,6 @@ void UbPort::DoDispose()
     m_currentPkt = nullptr;
     m_datalink = nullptr;
     m_flowControl = nullptr;
-    m_datalinkPacketOwners.clear();
     m_mpiReceiveEnabled = false;
     m_revQueueSize.clear();
     NetDevice::DoDispose();

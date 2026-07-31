@@ -148,8 +148,6 @@ namespace ns3 {
         void RegisterJettyRtpBinding(
             uint32_t jettyNum,
             const UbLifecycleResourceIdentity& transportIdentity);
-        void ReleaseJettyRtpBindings(
-            const UbLifecycleResourceIdentity& transportIdentity);
         void RegisterJettyCtpBinding(uint32_t jettyNum,
                                      Ptr<UbCtpTransportService> service);
     private:
@@ -209,8 +207,6 @@ namespace ns3 {
         void ReplaceRtpBinding(
             uint32_t jettyNum,
             const UbLifecycleResourceIdentity& transportIdentity);
-        void ReleaseRtpBindings(
-            const UbLifecycleResourceIdentity& transportIdentity);
         void RegisterCtpBinding(uint32_t jettyNum, Ptr<UbCtpTransportService> service);
         void DisposeAll();
 
@@ -231,7 +227,6 @@ namespace ns3 {
             UbDestroyReason reason{UbDestroyReason::EXPLICIT};
             CleanupMode cleanupMode{CleanupMode::GRACEFUL};
             std::map<uint32_t, UbLifecycleResourceIdentity> wqes;
-            std::vector<UbLifecycleLeaseIdentity> bindingLeases;
             bool hasCtpBinding{false};
             std::vector<UbDestroyCallback> callbacks;
         };

@@ -15,7 +15,6 @@
 #include "ns3/mtp-interface.h"
 #endif
 #include "ns3/node.h"
-#include "ns3/object-factory.h"
 
 #include <limits>
 
@@ -58,15 +57,7 @@ UbTransportChannelManager::GetTypeId()
     static TypeId tid = TypeId("ns3::UbTransportChannelManager")
                             .SetParent<Object>()
                             .SetGroupName("UnifiedBus")
-                            .AddConstructor<UbTransportChannelManager>()
-                            .AddAttribute(
-                                "EnableAutomaticBackingReclaim",
-                                "Release reconstructible TP backing after owner-local lifecycle "
-                                "gates pass.",
-                                BooleanValue(true),
-                                MakeBooleanAccessor(
-                                    &UbTransportChannelManager::m_enableAutomaticBackingReclaim),
-                                MakeBooleanChecker());
+                            .AddConstructor<UbTransportChannelManager>();
     return tid;
 }
 
@@ -107,21 +98,11 @@ UbTransportChannelManager::TryGetEndpointIdentityLocked(uint32_t tpn,
     {
         return false;
     }
-    const EndpointRecord& record = it->second;
-    if (record.state == EndpointState::LIVE)
-    {
-        if (record.channel == nullptr)
-        {
-            return false;
-        }
-        identity = record.channel->GetLifecycleOwner();
-        return true;
-    }
-    if (record.dormantState == nullptr)
+    if (it->second.channel == nullptr)
     {
         return false;
     }
-    identity = record.dormantState->lifecycleIdentity;
+    identity = it->second.channel->GetLifecycleOwner();
     return true;
 }
 
@@ -178,7 +159,6 @@ UbTransportChannelManager::CreateTp(uint32_t src,
     m_controller->GetUbTransaction()->TpInit(tp);
     m_endpoints.emplace(srcTpn, EndpointRecord{tp});
     ++m_transportsCount;
-    utils::UbUtils::NotifyTpBackingMaterialized();
     currentNode->GetObject<UbSwitch>()->RegisterTpWithAllocator(tp, sport, priority);
     m_controller->GetTpConnManager()->NotifyEndpointMaterialized(currentNode->GetId(),
                                                                   srcTpn,
@@ -193,6 +173,10 @@ UbTransportChannelManager::CreateReservedTpEndpoint(uint32_t tpn)
 {
     std::lock_guard<std::mutex> lock(TpConnectionManager::g_tpConnectionControlLock);
     Ptr<Node> currentNode = m_controller->GetObject<Node>();
+    if (currentNode == nullptr || !IsTpBackingExecutionOwner(currentNode->GetId()))
+    {
+        return nullptr;
+    }
     if (currentNode != nullptr &&
         m_controller->GetTpConnManager()->IsConnectionDestroyRequested(currentNode->GetId(), tpn))
     {
@@ -207,13 +191,7 @@ UbTransportChannelManager::CreateReservedTpEndpointLocked(uint32_t tpn, bool dra
     const auto existing = m_endpoints.find(tpn);
     if (existing != m_endpoints.end())
     {
-        if (existing->second.state == EndpointState::LIVE)
-        {
-            return existing->second.channel;
-        }
-        UbLifecycleResourceIdentity identity;
-        return TryGetEndpointIdentityLocked(tpn, identity) ? ResolveLiveTpLocked(tpn, identity)
-                                                           : nullptr;
+        return existing->second.state == EndpointState::LIVE ? existing->second.channel : nullptr;
     }
 
     Ptr<Node> currentNode = m_controller->GetObject<Node>();
@@ -257,73 +235,72 @@ UbTransportChannelManager::BeginDrainOnlyDestroy(uint32_t tpn)
     }
 }
 
-Ptr<UbTransportChannel>
+UbInboundTpResolution
 UbTransportChannelManager::ResolveInboundTp(uint32_t srcTpn,
                                             uint32_t dstTpn,
                                             Ipv4Address sourceIp,
                                             Ipv4Address destinationIp,
                                             UbPriority priority)
 {
-    std::lock_guard<std::mutex> lock(TpConnectionManager::g_tpConnectionControlLock);
+    if (m_controller == nullptr || m_controller->IsDisposing())
+    {
+        return {};
+    }
+    Ptr<Node> currentNode = m_controller->GetObject<Node>();
+    NS_ASSERT_MSG(currentNode != nullptr, "Inbound TP resolution requires an attached node");
+    if (!IsTpBackingExecutionOwner(currentNode->GetId()))
+    {
+        return {};
+    }
+
     const auto endpoint = m_endpoints.find(dstTpn);
     if (endpoint != m_endpoints.end())
     {
         const EndpointRecord& record = endpoint->second;
-        const UbTransportDormantState* dormant = record.dormantState.get();
-        if (record.state == EndpointState::DRAINING ||
-            (record.channel == nullptr && dormant == nullptr))
+        if (record.channel == nullptr)
         {
-            return nullptr;
+            return {};
         }
-        const uint32_t expectedSrcTpn =
-            record.channel != nullptr ? record.channel->GetDestTpn() : dormant->dstTpn;
-        const Ipv4Address expectedSourceIp =
-            record.channel != nullptr ? record.channel->GetDip() : dormant->dip;
-        const Ipv4Address expectedDestinationIp =
-            record.channel != nullptr ? record.channel->GetSip() : dormant->sip;
-        const UbPriority expectedPriority = static_cast<UbPriority>(
-            record.channel != nullptr ? record.channel->GetPriority() : dormant->priority);
+        const uint32_t expectedSrcTpn = record.channel->GetDestTpn();
+        const Ipv4Address expectedSourceIp = record.channel->GetDip();
+        const Ipv4Address expectedDestinationIp = record.channel->GetSip();
+        const UbPriority expectedPriority =
+            static_cast<UbPriority>(record.channel->GetPriority());
         if (srcTpn != expectedSrcTpn || sourceIp != expectedSourceIp ||
             destinationIp != expectedDestinationIp || priority != expectedPriority)
         {
-            return nullptr;
+            return {};
         }
-        UbLifecycleResourceIdentity identity;
-        return TryGetEndpointIdentityLocked(dstTpn, identity)
-                   ? ResolveLiveTpLocked(dstTpn, identity)
-                   : nullptr;
+        return {UbInboundTpState::LIVE, record.channel};
     }
 
-    Ptr<Node> currentNode = m_controller->GetObject<Node>();
-    NS_ASSERT_MSG(currentNode != nullptr, "Inbound TP resolution requires an attached node");
     Connection conn;
-    if (!m_controller->GetTpConnManager()->TryGetLocalConnection(currentNode->GetId(),
-                                                                 dstTpn,
-                                                                 conn))
+    const TpConnectionManager::InboundConnectionState connectionState =
+        m_controller->GetTpConnManager()->ResolveInboundConnection(currentNode->GetId(),
+                                                                   srcTpn,
+                                                                   dstTpn,
+                                                                   sourceIp,
+                                                                   destinationIp,
+                                                                   priority,
+                                                                   conn);
+    if (connectionState == TpConnectionManager::InboundConnectionState::RETIRED_EXACT)
     {
-        return nullptr;
+        return {UbInboundTpState::RETIRED_EXACT, nullptr};
     }
-    if (srcTpn != conn.tpn2 || sourceIp != NodeIdToIp(conn.node2, conn.port2) ||
-        destinationIp != NodeIdToIp(conn.node1, conn.port1) ||
-        priority != static_cast<UbPriority>(conn.priority))
+    if (connectionState != TpConnectionManager::InboundConnectionState::LIVE)
     {
-        return nullptr;
+        return {};
     }
     const bool drainOnly =
         m_controller->GetTpConnManager()->IsConnectionDestroyRequested(currentNode->GetId(),
                                                                        dstTpn);
-    return CreateReservedTpEndpointLocked(dstTpn, drainOnly);
-}
-
-bool
-UbTransportChannelManager::ReclaimBackingState(uint32_t tpn)
-{
-    std::lock_guard<std::mutex> lock(TpConnectionManager::g_tpConnectionControlLock);
-    return ReclaimBackingStateLocked(tpn);
+    Ptr<UbTransportChannel> resolved = CreateReservedTpEndpointLocked(dstTpn, drainOnly);
+    return resolved == nullptr ? UbInboundTpResolution{}
+                               : UbInboundTpResolution{UbInboundTpState::LIVE, resolved};
 }
 
 UbTpQuiescenceAssessment
-UbTransportChannelManager::AssessTpQuiescence(uint32_t tpn, UbTeardownIntent intent) const
+UbTransportChannelManager::AssessTpQuiescence(uint32_t tpn) const
 {
     std::lock_guard<std::mutex> lock(TpConnectionManager::g_tpConnectionControlLock);
     const auto it = m_endpoints.find(tpn);
@@ -331,29 +308,20 @@ UbTransportChannelManager::AssessTpQuiescence(uint32_t tpn, UbTeardownIntent int
     {
         UbTpQuiescenceAssessment assessment;
         assessment.tpn = tpn;
-        assessment.intent = intent;
         assessment.AddBlocker(UbTpQuiescenceBlocker::ENDPOINT_MISSING);
         return assessment;
     }
-    return AssessTpQuiescenceLocked(tpn, it->second, intent);
+    return AssessTpQuiescenceLocked(tpn, it->second);
 }
 
 UbTpQuiescenceAssessment
 UbTransportChannelManager::AssessTpQuiescenceLocked(uint32_t tpn,
-                                                    const EndpointRecord& endpoint,
-                                                    UbTeardownIntent intent) const
+                                                    const EndpointRecord& endpoint) const
 {
     static_assert(static_cast<uint8_t>(UbTpQuiescenceBlocker::COUNT) <= 64);
 
     UbTpQuiescenceAssessment assessment;
     assessment.tpn = tpn;
-    assessment.intent = intent;
-
-    if (intent == UbTeardownIntent::BACKING_RECLAIM && !m_enableAutomaticBackingReclaim)
-    {
-        assessment.AddBlocker(UbTpQuiescenceBlocker::AUTOMATIC_RECLAIM_DISABLED);
-        return assessment;
-    }
     if (m_controller == nullptr)
     {
         assessment.AddBlocker(UbTpQuiescenceBlocker::CONTROLLER_UNAVAILABLE);
@@ -377,22 +345,7 @@ UbTransportChannelManager::AssessTpQuiescenceLocked(uint32_t tpn,
         return assessment;
     }
 
-    if (endpoint.state == EndpointState::DORMANT)
-    {
-        if (endpoint.dormantState == nullptr || endpoint.allocatorPlaceholder == nullptr)
-        {
-            assessment.AddBlocker(UbTpQuiescenceBlocker::BACKING_UNAVAILABLE);
-            return assessment;
-        }
-        assessment.identity = endpoint.dormantState->lifecycleIdentity;
-        return assessment;
-    }
-    if (intent == UbTeardownIntent::BACKING_RECLAIM && endpoint.state == EndpointState::DRAINING)
-    {
-        assessment.AddBlocker(UbTpQuiescenceBlocker::ENDPOINT_DRAINING);
-        return assessment;
-    }
-    if (intent == UbTeardownIntent::EXPLICIT_DESTROY && endpoint.state != EndpointState::DRAINING)
+    if (endpoint.state != EndpointState::DRAINING)
     {
         assessment.AddBlocker(UbTpQuiescenceBlocker::ENDPOINT_NOT_DRAINING);
     }
@@ -400,7 +353,7 @@ UbTransportChannelManager::AssessTpQuiescenceLocked(uint32_t tpn,
     const Ptr<UbTransportChannel>& tp = endpoint.channel;
     if (tp == nullptr)
     {
-        assessment.AddBlocker(UbTpQuiescenceBlocker::BACKING_UNAVAILABLE);
+        assessment.AddBlocker(UbTpQuiescenceBlocker::ENDPOINT_MISSING);
         return assessment;
     }
     assessment.identity = tp->GetLifecycleOwner();
@@ -423,10 +376,6 @@ UbTransportChannelManager::AssessTpQuiescenceLocked(uint32_t tpn,
     }
     assessment.diagnostics.lifecycle = coordinator->GetSnapshot(assessment.identity);
     const UbLifecycleResourceSnapshot& lifecycle = assessment.diagnostics.lifecycle;
-    if (lifecycle.inFlightPackets != 0)
-    {
-        assessment.AddBlocker(UbTpQuiescenceBlocker::IN_FLIGHT_PACKETS);
-    }
     if (lifecycle.activeWorkLeases != 0)
     {
         assessment.AddBlocker(UbTpQuiescenceBlocker::ACTIVE_WORK_LEASE);
@@ -435,11 +384,7 @@ UbTransportChannelManager::AssessTpQuiescenceLocked(uint32_t tpn,
     {
         assessment.AddBlocker(UbTpQuiescenceBlocker::ACTIVE_CHILD_LEASE);
     }
-    if (lifecycle.activeTransportUseLeases != 0)
-    {
-        assessment.AddBlocker(UbTpQuiescenceBlocker::ACTIVE_TRANSPORT_USE_LEASE);
-    }
-    if (lifecycle.activeBindingLeases != 0)
+    if (m_controller->ResolveRtpTpGroupForMember(assessment.identity) != nullptr)
     {
         assessment.AddBlocker(UbTpQuiescenceBlocker::ACTIVE_BINDING_LEASE);
     }
@@ -468,27 +413,6 @@ UbTransportChannelManager::AssessTpQuiescenceLocked(uint32_t tpn,
         if (assessment.diagnostics.pendingTransportWork)
         {
             assessment.AddBlocker(UbTpQuiescenceBlocker::PENDING_TRANSPORT_WORK);
-        }
-    }
-
-    if (intent == UbTeardownIntent::BACKING_RECLAIM)
-    {
-        Ptr<UbSwitch> sw = node->GetObject<UbSwitch>();
-        if (sw == nullptr)
-        {
-            assessment.AddBlocker(UbTpQuiescenceBlocker::SWITCH_UNAVAILABLE);
-        }
-        else if (sw->GetAllocator() == nullptr)
-        {
-            assessment.AddBlocker(UbTpQuiescenceBlocker::ALLOCATOR_UNAVAILABLE);
-        }
-        else
-        {
-            assessment.diagnostics.allocatorWork = sw->GetAllocator()->HasPendingOrActiveWork(tp);
-            if (assessment.diagnostics.allocatorWork)
-            {
-                assessment.AddBlocker(UbTpQuiescenceBlocker::ALLOCATOR_WORK);
-            }
         }
     }
 
@@ -526,74 +450,7 @@ UbTransportChannelManager::AssessTpQuiescenceLocked(uint32_t tpn,
     {
         assessment.AddBlocker(UbTpQuiescenceBlocker::RETRANSMISSION_TIMER);
     }
-    if (intent == UbTeardownIntent::BACKING_RECLAIM)
-    {
-        if (transport.outstandingRetransmissionState)
-        {
-            assessment.AddBlocker(UbTpQuiescenceBlocker::OUTSTANDING_RETRANSMISSION);
-        }
-        if (!transport.congestionControlPresent)
-        {
-            assessment.AddBlocker(UbTpQuiescenceBlocker::CONGESTION_CONTROL_UNAVAILABLE);
-        }
-        else if (transport.congestionControlDormancyEligibility !=
-                 UbCongestionControlDormancyEligibility::ELIGIBLE)
-        {
-            assessment.AddBlocker(UbTpQuiescenceBlocker::CONGESTION_CONTROL_INELIGIBLE);
-        }
-    }
     return assessment;
-}
-
-bool
-UbTransportChannelManager::ReclaimBackingStateLocked(uint32_t tpn)
-{
-    const auto it = m_endpoints.find(tpn);
-    if (it == m_endpoints.end())
-    {
-        return false;
-    }
-    EndpointRecord& record = it->second;
-    const UbTpQuiescenceAssessment assessment =
-        AssessTpQuiescenceLocked(tpn, record, UbTeardownIntent::BACKING_RECLAIM);
-    if (!assessment.IsAllowed())
-    {
-        return false;
-    }
-    if (record.state == EndpointState::DORMANT)
-    {
-        return true;
-    }
-
-    Ptr<Node> node = m_controller->GetObject<Node>();
-    Ptr<UbTransportChannel> tp = record.channel;
-    Ptr<UbTransaction> transaction = m_controller->GetUbTransaction();
-    Ptr<UbSwitch> sw = node->GetObject<UbSwitch>();
-
-    std::unique_ptr<UbTransportDormantState> dormantState = tp->SnapshotDormantState();
-    if (dormantState == nullptr)
-    {
-        return false;
-    }
-    Ptr<UbIngressQueue> placeholder = sw->ReplaceTpWithDormantPlaceholder(tp);
-    if (placeholder == nullptr)
-    {
-        return false;
-    }
-    if (!transaction->ReplaceTpBacking(tpn, tp, nullptr))
-    {
-        const bool rolledBack = sw->ReplaceDormantTpBacking(placeholder, tp);
-        NS_ABORT_MSG_IF(!rolledBack, "Failed to roll back TP allocator replacement");
-        return false;
-    }
-
-    tp->ReleaseBackingForDormancy();
-    record.channel = nullptr;
-    record.dormantState = std::move(dormantState);
-    record.allocatorPlaceholder = placeholder;
-    record.state = EndpointState::DORMANT;
-    utils::UbUtils::NotifyTpBackingReleased();
-    return true;
 }
 
 Ptr<UbTransportChannel>
@@ -602,6 +459,31 @@ UbTransportChannelManager::ResolveLiveTp(uint32_t tpn,
 {
     std::lock_guard<std::mutex> lock(TpConnectionManager::g_tpConnectionControlLock);
     return ResolveLiveTpLocked(tpn, expectedIdentity);
+}
+
+Ptr<UbTransportChannel>
+UbTransportChannelManager::ResolveTpForAcceptedWork(
+    uint32_t tpn,
+    const UbLifecycleResourceIdentity& expectedIdentity)
+{
+    if (m_controller == nullptr || m_controller->IsDisposing())
+    {
+        return nullptr;
+    }
+    Ptr<Node> node = m_controller->GetObject<Node>();
+    if (node == nullptr || expectedIdentity.ownerNodeId != node->GetId() ||
+        !IsTpBackingExecutionOwner(node->GetId()))
+    {
+        return nullptr;
+    }
+    const auto endpoint = m_endpoints.find(tpn);
+    if (endpoint == m_endpoints.end() || endpoint->second.channel == nullptr ||
+        endpoint->second.channel->GetLifecycleOwner() != expectedIdentity)
+    {
+        return nullptr;
+    }
+    Ptr<UbLifecycleCoordinator> coordinator = UbLifecycleCoordinator::GetOrCreate(node);
+    return coordinator->IsResourceActive(expectedIdentity) ? endpoint->second.channel : nullptr;
 }
 
 Ptr<UbTransportChannel>
@@ -623,57 +505,9 @@ UbTransportChannelManager::ResolveLiveTpLocked(uint32_t tpn,
     {
         return nullptr;
     }
-    EndpointRecord& record = it->second;
-    if (record.state == EndpointState::LIVE)
-    {
-        return record.channel != nullptr && record.channel->GetLifecycleOwner() == expectedIdentity
-                   ? record.channel
-                   : nullptr;
-    }
-    if (record.dormantState == nullptr || record.allocatorPlaceholder == nullptr ||
-        record.dormantState->lifecycleIdentity != expectedIdentity)
-    {
-        return nullptr;
-    }
-
-    Ptr<UbLifecycleCoordinator> coordinator = UbLifecycleCoordinator::GetOrCreate(node);
-    if (!coordinator->IsResourceActive(expectedIdentity))
-    {
-        return nullptr;
-    }
-
-    ObjectFactory factory;
-    factory.SetTypeId(record.dormantState->congestionControlType);
-    Ptr<UbCongestionControl> congestionCtrl = factory.Create<UbCongestionControl>();
-    Ptr<UbTransportChannel> tp = CreateObject<UbTransportChannel>();
-    if (!tp->RestoreDormantState(*record.dormantState, congestionCtrl))
-    {
-        return nullptr;
-    }
-    tp->SetLifecycleStateChangedCallback(
-        MakeCallback(&UbTransportChannelManager::NotifyStateChanged, this));
-
-    Ptr<UbSwitch> sw = node->GetObject<UbSwitch>();
-    if (sw == nullptr || !sw->ReplaceDormantTpBacking(record.allocatorPlaceholder, tp))
-    {
-        return nullptr;
-    }
-    Ptr<UbTransaction> transaction = m_controller->GetUbTransaction();
-    if (transaction == nullptr || !transaction->ReplaceTpBacking(tpn, nullptr, tp))
-    {
-        const bool rolledBack = sw->ReplaceDormantTpBacking(tp, record.allocatorPlaceholder);
-        NS_ABORT_MSG_IF(!rolledBack, "Failed to roll back dormant TP allocator resolution");
-        return nullptr;
-    }
-
-    record.channel = tp;
-    record.dormantState.reset();
-    record.allocatorPlaceholder = nullptr;
-    record.state = EndpointState::LIVE;
-    utils::UbUtils::Get()->SingleTpTraceConnect(tp->GetSrc(), tpn);
-    ++m_backingRehydrations;
-    utils::UbUtils::NotifyTpBackingMaterialized();
-    return tp;
+    const Ptr<UbTransportChannel>& channel = it->second.channel;
+    return channel != nullptr && channel->GetLifecycleOwner() == expectedIdentity ? channel
+                                                                                  : nullptr;
 }
 
 UbDestroyStatus
@@ -687,17 +521,6 @@ UbTransportChannelManager::DestroyTp(uint32_t tpn,
         return UbDestroyStatus::NOT_FOUND;
     }
     EndpointRecord& record = it->second;
-    if (record.state == EndpointState::DORMANT)
-    {
-        record.state = EndpointState::DRAINING;
-        record.reason = reason;
-        if (!callback.IsNull())
-        {
-            record.callbacks.push_back(callback);
-        }
-        FinalizeDestroy(tpn, false);
-        return UbDestroyStatus::COMPLETED;
-    }
     const bool beginDrain = record.state == EndpointState::LIVE;
     record.state = EndpointState::DRAINING;
     record.reason = reason;
@@ -729,9 +552,7 @@ UbTransportChannelManager::DestroyTp(uint32_t tpn,
 bool
 UbTransportChannelManager::CanFinalize(const EndpointRecord& record) const
 {
-    return record.channel != nullptr && AssessTpQuiescenceLocked(record.channel->GetTpn(),
-                                                                 record,
-                                                                 UbTeardownIntent::EXPLICIT_DESTROY)
+    return record.channel != nullptr && AssessTpQuiescenceLocked(record.channel->GetTpn(), record)
                                             .IsAllowed();
 }
 
@@ -743,15 +564,7 @@ UbTransportChannelManager::NotifyStateChanged(uint32_t tpn)
     {
         return;
     }
-    if (it->second.state == EndpointState::LIVE)
-    {
-        if (it->second.channel == nullptr || !it->second.channel->IsSafeForBackingReclaim())
-        {
-            return;
-        }
-        ReclaimBackingState(tpn);
-    }
-    else if (it->second.state == EndpointState::DRAINING && CanFinalize(it->second))
+    if (it->second.state == EndpointState::DRAINING && CanFinalize(it->second))
     {
         FinalizeDestroy(tpn, false);
     }
@@ -772,32 +585,7 @@ UbTransportChannelManager::FinalizeDestroy(uint32_t tpn, bool force)
 {
     const auto it = m_endpoints.find(tpn);
     NS_ABORT_MSG_IF(it == m_endpoints.end(), "Cannot finalize a missing TP endpoint");
-    if (it->second.channel == nullptr)
-    {
-        NS_ABORT_MSG_IF(it->second.dormantState == nullptr ||
-                            it->second.allocatorPlaceholder == nullptr,
-                        "Cannot finalize an invalid dormant TP endpoint");
-        const UbLifecycleResourceIdentity identity = it->second.dormantState->lifecycleIdentity;
-        std::vector<UbDestroyCallback> callbacks = std::move(it->second.callbacks);
-        if (!force)
-        {
-            m_controller->GetObject<Node>()->GetObject<UbSwitch>()->RemoveTpFromAllocator(
-                it->second.allocatorPlaceholder);
-            m_controller->GetUbTransaction()->TpDeinit(tpn, identity);
-            UbLifecycleCoordinator::GetOrCreate(m_controller->GetObject<Node>())
-                ->RetirePacketOwner(identity);
-        }
-        m_endpoints.erase(it);
-        if (m_transportsCount > 0)
-        {
-            --m_transportsCount;
-        }
-        for (const UbDestroyCallback& dormantCallback : callbacks)
-        {
-            dormantCallback(identity, UbDestroyStatus::COMPLETED);
-        }
-        return;
-    }
+    NS_ABORT_MSG_IF(it->second.channel == nullptr, "Cannot finalize TP without live endpoint state");
     NS_ABORT_MSG_IF(!force && !CanFinalize(it->second), "Cannot finalize a busy TP endpoint");
 
     Ptr<UbTransportChannel> tp = it->second.channel;
@@ -814,10 +602,9 @@ UbTransportChannelManager::FinalizeDestroy(uint32_t tpn, bool force)
     {
         m_controller->GetObject<Node>()->GetObject<UbSwitch>()->RemoveTpFromAllocator(tp);
         m_controller->GetUbTransaction()->TpDeinit(tpn);
-        coordinator->RetirePacketOwner(identity);
+        coordinator->RetireResource(identity);
     }
     m_endpoints.erase(it);
-    utils::UbUtils::NotifyTpBackingReleased();
     if (m_transportsCount > 0)
     {
         --m_transportsCount;
@@ -868,21 +655,6 @@ UbTransportChannelManager::GetTpnMap() const
         result.emplace(tpn, record.channel);
     }
     return result;
-}
-
-UbTransportEndpointStorageSnapshot
-UbTransportChannelManager::GetStorageSnapshot() const
-{
-    std::lock_guard<std::mutex> lock(TpConnectionManager::g_tpConnectionControlLock);
-    UbTransportEndpointStorageSnapshot snapshot;
-    for (const auto& [tpn, record] : m_endpoints)
-    {
-        (void)tpn;
-        snapshot.liveBackingObjects += record.channel != nullptr;
-        snapshot.dormantRecords += record.state == EndpointState::DORMANT;
-    }
-    snapshot.backingRehydrations = m_backingRehydrations;
-    return snapshot;
 }
 
 } // namespace ns3

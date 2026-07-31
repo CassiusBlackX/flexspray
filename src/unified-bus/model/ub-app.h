@@ -66,6 +66,15 @@ public:
         return m_routingType;
     }
 
+    /**
+     * @brief Return whether the standard driver should destroy its planned TP connections.
+     * @return True when planned driver-owned connections are destroyed after their last use.
+     */
+    bool IsPlannedTpConnectionDestroyEnabled() const
+    {
+        return m_enablePlannedTpConnectionDestroy;
+    }
+
     void SetGetTpnRule(GetTpnRuleT type)
     {
         m_getTpnRule = type;
@@ -93,7 +102,12 @@ protected:
 private:
     friend class UbTrafficGen;
 
-    void CleanupTaskScopedJetty(uint32_t taskId, uint32_t jettyNum);
+    void CleanupCompletedTask(
+        uint32_t taskId,
+        uint32_t jettyNum,
+        bool destroyTaskScopedJetty,
+        bool releasePlannedTpBinding,
+        const std::vector<UbLifecycleResourceIdentity>& plannedTpConnections);
 
     TracedCallback<uint32_t, uint32_t> m_traceMemTaskStartsNotify;
     TracedCallback<uint32_t, uint32_t> m_traceMemTaskCompletesNotify;
@@ -109,6 +123,8 @@ private:
 
     // 控制器
     bool m_multiPathEnable = false;
+    bool m_enableTaskScopedJettyDestroy = false;
+    bool m_enablePlannedTpConnectionDestroy = false;
 
     GetTpnRuleT m_getTpnRule = GetTpnRuleT::BY_PEERNODE_PRIORITY;
     RoutingType m_routingType{RoutingType::PER_FLOW_SHORTEST_PATHS};

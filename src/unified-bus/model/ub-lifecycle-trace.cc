@@ -27,7 +27,6 @@ struct EnumName
 constexpr std::array kRecordTypes = {
     EnumName{UbLifecycleTraceRecordType::RESOURCE_STATE, "RESOURCE_STATE"},
     EnumName{UbLifecycleTraceRecordType::LEDGER_DELTA, "LEDGER_DELTA"},
-    EnumName{UbLifecycleTraceRecordType::IDENTITY_LIFETIME, "IDENTITY_LIFETIME"},
     EnumName{UbLifecycleTraceRecordType::TERMINAL_OUTCOME, "TERMINAL_OUTCOME"},
     EnumName{UbLifecycleTraceRecordType::SUMMARY, "SUMMARY"},
 };
@@ -43,13 +42,11 @@ constexpr std::array kResourceKinds = {
     EnumName{UbLifecycleResourceKind::CTP_SERVICE, "CTP_SERVICE"},
     EnumName{UbLifecycleResourceKind::LDST_INSTANCE, "LDST_INSTANCE"},
     EnumName{UbLifecycleResourceKind::LDST_SEGMENT, "LDST_SEGMENT"},
-    EnumName{UbLifecycleResourceKind::DATALINK_PORT_VL, "DATALINK_PORT_VL"},
 };
 
 constexpr std::array kSubjectKinds = {
     EnumName{UbLifecycleTraceSubjectKind::NONE, "NONE"},
     EnumName{UbLifecycleTraceSubjectKind::RESOURCE, "RESOURCE"},
-    EnumName{UbLifecycleTraceSubjectKind::PACKET, "PACKET"},
     EnumName{UbLifecycleTraceSubjectKind::LEASE, "LEASE"},
     EnumName{UbLifecycleTraceSubjectKind::WORK, "WORK"},
 };
@@ -60,25 +57,6 @@ constexpr std::array kEvents = {
     EnumName{UbLifecycleTraceEvent::LEASE_ACQUIRE, "LEASE_ACQUIRE"},
     EnumName{UbLifecycleTraceEvent::LEASE_RELEASE, "LEASE_RELEASE"},
     EnumName{UbLifecycleTraceEvent::WORK_TERMINAL, "WORK_TERMINAL"},
-    EnumName{UbLifecycleTraceEvent::PACKET_BIRTH, "PACKET_BIRTH"},
-    EnumName{UbLifecycleTraceEvent::PACKET_TRANSFER, "PACKET_TRANSFER"},
-    EnumName{UbLifecycleTraceEvent::PACKET_TERMINAL, "PACKET_TERMINAL"},
-    EnumName{UbLifecycleTraceEvent::SUMMARY_IN_FLIGHT_PACKETS, "SUMMARY_IN_FLIGHT_PACKETS"},
-    EnumName{UbLifecycleTraceEvent::SUMMARY_REGISTERED_PACKETS, "SUMMARY_REGISTERED_PACKETS"},
-    EnumName{UbLifecycleTraceEvent::SUMMARY_TRANSFER_OBSERVATIONS,
-             "SUMMARY_TRANSFER_OBSERVATIONS"},
-    EnumName{UbLifecycleTraceEvent::SUMMARY_ENDPOINT_CONSUMED, "SUMMARY_ENDPOINT_CONSUMED"},
-    EnumName{UbLifecycleTraceEvent::SUMMARY_ROUTE_NOT_FOUND_DROPS,
-             "SUMMARY_ROUTE_NOT_FOUND_DROPS"},
-    EnumName{UbLifecycleTraceEvent::SUMMARY_EGRESS_QUEUE_FULL_DROPS,
-             "SUMMARY_EGRESS_QUEUE_FULL_DROPS"},
-    EnumName{UbLifecycleTraceEvent::SUMMARY_INGRESS_QUEUE_FULL_DROPS,
-             "SUMMARY_INGRESS_QUEUE_FULL_DROPS"},
-    EnumName{UbLifecycleTraceEvent::SUMMARY_FAULT_DROPS, "SUMMARY_FAULT_DROPS"},
-    EnumName{UbLifecycleTraceEvent::SUMMARY_CHANNEL_FAILURE_DROPS,
-             "SUMMARY_CHANNEL_FAILURE_DROPS"},
-    EnumName{UbLifecycleTraceEvent::SUMMARY_MALFORMED_PACKET_DROPS,
-             "SUMMARY_MALFORMED_PACKET_DROPS"},
     EnumName{UbLifecycleTraceEvent::SUMMARY_ACTIVE_WORK_LEASES, "SUMMARY_ACTIVE_WORK_LEASES"},
     EnumName{UbLifecycleTraceEvent::SUMMARY_ACTIVE_CHILD_LEASES, "SUMMARY_ACTIVE_CHILD_LEASES"},
     EnumName{UbLifecycleTraceEvent::SUMMARY_ACTIVE_TRANSPORT_USE_LEASES,
@@ -105,13 +83,6 @@ constexpr std::array kOutcomes = {
     EnumName{UbLifecycleTraceOutcome::FAILED, "FAILED"},
     EnumName{UbLifecycleTraceOutcome::CANCELED, "CANCELED"},
     EnumName{UbLifecycleTraceOutcome::FLUSHED, "FLUSHED"},
-    EnumName{UbLifecycleTraceOutcome::ENDPOINT_CONSUMED, "ENDPOINT_CONSUMED"},
-    EnumName{UbLifecycleTraceOutcome::ROUTE_NOT_FOUND, "ROUTE_NOT_FOUND"},
-    EnumName{UbLifecycleTraceOutcome::EGRESS_QUEUE_FULL, "EGRESS_QUEUE_FULL"},
-    EnumName{UbLifecycleTraceOutcome::INGRESS_QUEUE_FULL, "INGRESS_QUEUE_FULL"},
-    EnumName{UbLifecycleTraceOutcome::FAULT_DROP, "FAULT_DROP"},
-    EnumName{UbLifecycleTraceOutcome::CHANNEL_FAILURE, "CHANNEL_FAILURE"},
-    EnumName{UbLifecycleTraceOutcome::MALFORMED_PACKET, "MALFORMED_PACKET"},
 };
 
 constexpr std::array kReasons = {
@@ -122,9 +93,6 @@ constexpr std::array kReasons = {
     EnumName{UbLifecycleTraceReason::BINDING_LEASE, "BINDING_LEASE"},
     EnumName{UbLifecycleTraceReason::TRACKED_EVENT_LEASE, "TRACKED_EVENT_LEASE"},
     EnumName{UbLifecycleTraceReason::TRANSPORT_WORK_LEASE, "TRANSPORT_WORK_LEASE"},
-    EnumName{UbLifecycleTraceReason::EGRESS_QUEUE_ENQUEUE, "EGRESS_QUEUE_ENQUEUE"},
-    EnumName{UbLifecycleTraceReason::EGRESS_QUEUE_DEQUEUE, "EGRESS_QUEUE_DEQUEUE"},
-    EnumName{UbLifecycleTraceReason::LOCAL_LINK, "LOCAL_LINK"},
 };
 
 constexpr std::array kSites = {
@@ -133,9 +101,6 @@ constexpr std::array kSites = {
     EnumName{UbLifecycleTraceSite::COORDINATOR_ACQUIRE_LEASE, "COORDINATOR_ACQUIRE_LEASE"},
     EnumName{UbLifecycleTraceSite::COORDINATOR_RELEASE_LEASE, "COORDINATOR_RELEASE_LEASE"},
     EnumName{UbLifecycleTraceSite::COORDINATOR_WORK_TERMINAL, "COORDINATOR_WORK_TERMINAL"},
-    EnumName{UbLifecycleTraceSite::COORDINATOR_PACKET_BIRTH, "COORDINATOR_PACKET_BIRTH"},
-    EnumName{UbLifecycleTraceSite::COORDINATOR_PACKET_TRANSFER, "COORDINATOR_PACKET_TRANSFER"},
-    EnumName{UbLifecycleTraceSite::COORDINATOR_PACKET_TERMINAL, "COORDINATOR_PACKET_TERMINAL"},
     EnumName{UbLifecycleTraceSite::COORDINATOR_SUMMARY, "COORDINATOR_SUMMARY"},
 };
 
@@ -336,14 +301,6 @@ UbLifecycleTrace::SelectResource(const UbLifecycleResourceIdentity& identity)
 {
     return g_detailSampleStride == 1 ||
            (identity.localId + identity.generation - 1) % g_detailSampleStride ==
-               g_detailSampleOffset;
-}
-
-bool
-UbLifecycleTrace::SelectPacket(const UbPacketAttemptIdentity& identity)
-{
-    return g_detailSampleStride == 1 ||
-           (identity.attempt + identity.owner.generation - 1) % g_detailSampleStride ==
                g_detailSampleOffset;
 }
 

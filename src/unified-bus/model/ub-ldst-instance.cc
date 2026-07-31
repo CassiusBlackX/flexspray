@@ -58,7 +58,7 @@ void UbLdstInstance::Init(uint32_t nodeId)
     Ptr<Node> node = NodeList::GetNode(nodeId);
     Ptr<UbLifecycleCoordinator> coordinator = UbLifecycleCoordinator::GetOrCreate(node);
     m_lifecycleOwner =
-        coordinator->OpenPacketOwner(UbLifecycleResourceKind::LDST_INSTANCE, 0);
+        coordinator->OpenResource(UbLifecycleResourceKind::LDST_INSTANCE, 0);
     m_trackedActions.Init(coordinator);
     for (uint32_t threadId = 0; threadId < m_threadNum; threadId++) {
         auto ldstThread = CreateObject<UbLdstThread>();
@@ -84,7 +84,6 @@ void UbLdstInstance::DoDispose()
         m_lastForcedStopResidue.activeTasks = m_taskToSegmentMap.size();
         m_lastForcedStopResidue.activeSegments = m_taskSegmentsMap.size();
         m_lastForcedStopResidue.trackedActions = snapshot.activeTrackedEventLeases;
-        m_lastForcedStopResidue.inFlightPackets = snapshot.inFlightPackets;
 
         const std::vector<Callback<void>> cleanups =
             m_trackedActions.CancelPending(m_lifecycleOwner);
@@ -109,14 +108,12 @@ void UbLdstInstance::DoDispose()
         m_lastForcedStopResidue.activeSegments != 0 ||
         m_lastForcedStopResidue.waitingAcks != 0 ||
         m_lastForcedStopResidue.queuedSegments != 0 ||
-        m_lastForcedStopResidue.trackedActions != 0 ||
-        m_lastForcedStopResidue.inFlightPackets != 0) {
+        m_lastForcedStopResidue.trackedActions != 0) {
         NS_LOG_WARN("LDST forced stop residue: tasks=" << m_lastForcedStopResidue.activeTasks
                     << " segments=" << m_lastForcedStopResidue.activeSegments
                     << " waitingAcks=" << m_lastForcedStopResidue.waitingAcks
                     << " queuedSegments=" << m_lastForcedStopResidue.queuedSegments
-                    << " trackedActions=" << m_lastForcedStopResidue.trackedActions
-                    << " inFlightPackets=" << m_lastForcedStopResidue.inFlightPackets);
+                    << " trackedActions=" << m_lastForcedStopResidue.trackedActions);
     }
     m_taskToSegmentMap.clear();
     m_taskSegmentsMap.clear();
@@ -255,15 +252,6 @@ UbLdstInstance::ResolveTrackedAction(uint64_t token)
     if (m_disposed && m_trackedActions.IsEmpty()) {
         m_trackedActions.Clear();
     }
-}
-
-void UbLdstInstance::RegisterPacketBirth(Ptr<Packet> packet)
-{
-    NS_ABORT_MSG_IF(packet == nullptr, "LDST packet birth requires a packet");
-    NS_ABORT_MSG_IF(m_lifecycleOwner.generation == 0,
-                    "LDST packet birth requires an initialized owner");
-    UbLifecycleCoordinator::GetOrCreate(GetObject<Node>())
-        ->RegisterPacketAttempt(m_lifecycleOwner, packet);
 }
 
 size_t UbLdstInstance::GetActiveTaskCount() const

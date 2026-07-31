@@ -19,6 +19,7 @@
 namespace ns3
 {
 class UbController;
+class UbTpnAllocationBoundaryAccessor;
 class UbTransportChannelManager;
 }
 
@@ -125,6 +126,21 @@ public:
                                uint32_t peerNodeId,
                                uint32_t priority);
 
+    /**
+     * @brief Reserve connections owned by the standard driver's planned-destroy policy.
+     * @param useShortestPath Whether reserved paths must use shortest routes.
+     * @param localNodeId Local node identifier and lifecycle owner of the returned identities.
+     * @param peerNodeId Peer node identifier.
+     * @param priority Traffic priority associated with the reservation.
+     * @return Exact identities created by this call, or an empty vector when matching
+     *         reservations already exist. Existing reservations are never claimed.
+     */
+    std::vector<UbLifecycleResourceIdentity> ReservePlannedTpnsForTraffic(
+        bool useShortestPath,
+        uint32_t localNodeId,
+        uint32_t peerNodeId,
+        uint32_t priority);
+
     // 1. 获取节点相关的所有连接
     std::vector<Connection> GetNodeConnections(uint32_t nodeId) const;
 
@@ -195,6 +211,18 @@ public:
                                       UbDestroyReason reason = UbDestroyReason::EXPLICIT,
                                       UbDestroyCallback callback = {});
 
+    /**
+     * @brief Explicitly destroy the connection identified by an immutable lifecycle identity.
+     * @param identity Exact RTP connection identity returned by this manager.
+     * @param reason Network-semantic reason for the explicit destroy request.
+     * @param callback Callback invoked after destroy completes or fails asynchronously.
+     * @return REJECTED when the kind, owner, local ID, or generation does not match this manager;
+     *         otherwise the current explicit-destroy status.
+     */
+    UbDestroyStatus DestroyConnection(const UbLifecycleResourceIdentity& identity,
+                                      UbDestroyReason reason = UbDestroyReason::EXPLICIT,
+                                      UbDestroyCallback callback = {});
+
     static bool ApplyLifecycleControl(const UbLifecycleControlRecord& record);
 
     bool GetConnectionLifecycleSnapshot(uint32_t localTpn,
@@ -213,18 +241,11 @@ public:
     // 清空所有连接
     void Clear();
 
-    // 删除无用tp
-    void RemoveUselessTps(uint32_t jettyNum, uint32_t src, uint32_t dst, uint32_t priority);
-
     uint32_t GetNextTpn();
-
-    bool IsTpRemoveMode()
-    {
-        return m_removeUselessTp;
-    }
 private:
   friend class ns3::UbController;
-    friend class ns3::UbTransportChannelManager;
+  friend class ns3::UbTpnAllocationBoundaryAccessor;
+  friend class ns3::UbTransportChannelManager;
 
   static std::mutex g_tpConnectionControlLock;
 
@@ -268,15 +289,16 @@ private:
                                            UbDestroyCallback callback,
                                            uint32_t callbackNodeId = UINT32_MAX,
                                            uint64_t requestId = 0);
-    void RequestEndpointDestroy(const Connection& connection,
-                                const UbLifecycleResourceIdentity& identity,
-                                uint8_t slot,
-                                UbDestroyReason reason);
+    UbDestroyStatus DestroyConnectionLocked(
+        uint32_t localNodeId,
+        uint32_t localTpn,
+        const UbLifecycleResourceIdentity* expectedIdentity,
+        UbDestroyReason reason,
+        UbDestroyCallback callback);
     void RequestDestroyNotice(const Connection& connection,
                               const UbLifecycleResourceIdentity& identity,
                               uint8_t slot,
-                              UbDestroyReason reason,
-                              bool ownerObservedActive);
+                              UbDestroyReason reason);
     void OnLocalEndpointDestroyed(UbLifecycleResourceIdentity connectionIdentity,
                                   uint8_t slot,
                                   UbLifecycleResourceIdentity endpointIdentity,
@@ -309,6 +331,19 @@ private:
     };
 
     const Connection* ResolveConnectionRefLocked(const LocalConnectionRef& ref) const;
+    enum class InboundConnectionState : uint8_t
+    {
+        LIVE,
+        RETIRED_EXACT,
+        INVALID,
+    };
+    InboundConnectionState ResolveInboundConnection(uint32_t localNodeId,
+                                                    uint32_t srcTpn,
+                                                    uint32_t dstTpn,
+                                                    Ipv4Address sourceIp,
+                                                    Ipv4Address destinationIp,
+                                                    uint32_t priority,
+                                                    Connection& connection) const;
     void InvalidateAllConnectionsCacheLocked();
 
     // 为指定节点建立各种索引
@@ -362,16 +397,17 @@ private:
 
     // 索引6: (localNodeId, localTpn) -> generation-aware local view reference
     std::map<std::pair<uint32_t, uint32_t>, LocalConnectionRef> m_localTpnIndex;
+    std::map<std::pair<uint32_t, uint32_t>, Connection> m_retiredLocalConnectionViews;
     std::set<std::pair<uint32_t, uint32_t>> m_destroyRequestedViews;
 
     std::set<uint32_t> m_tpnList;
     std::set<uint32_t> m_reservedTpnList;
 
     uint32_t m_nextTpn = 0;
+    bool m_tpnSpaceExhausted{false};
 
     Ptr<UniformRandomVariable> m_random;
 
-    bool m_removeUselessTp = false;
 
     mutable std::mutex m_stateLock;
     uint32_t m_ownerNodeId{UINT32_MAX};

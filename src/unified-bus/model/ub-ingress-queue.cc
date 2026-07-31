@@ -2,6 +2,7 @@
 #include "ub-ingress-queue.h"
 
 #include "protocol/ub-header.h"
+#include "ub-switch-allocator.h"
 
 #include "ns3/simulator.h"
 
@@ -57,6 +58,49 @@ bool UbIngressQueue::IsGeneratedDataPacket()
     return m_ingressPriority != 0 && m_inPortId == m_outPortId;
 }
 
+void
+UbIngressQueue::BindAllocatorSummary(UbSwitchAllocator* allocator)
+{
+    NS_ABORT_MSG_IF(allocator == nullptr, "Cannot bind ingress summary to a null allocator");
+    NS_ABORT_MSG_IF(m_allocatorOwner != nullptr && m_allocatorOwner != allocator,
+                    "Ingress queue cannot be bound to multiple allocators");
+    m_allocatorOwner = allocator;
+    RefreshAllocatorSummary();
+}
+
+void
+UbIngressQueue::UnbindAllocatorSummary(UbSwitchAllocator* allocator)
+{
+    if (m_allocatorOwner == nullptr)
+    {
+        return;
+    }
+    NS_ABORT_MSG_IF(m_allocatorOwner != allocator,
+                    "Ingress summary must be unbound by its owning allocator");
+    if (m_reportedNonEmpty)
+    {
+        m_allocatorOwner->UpdateIngressSummary(this, false);
+    }
+    m_reportedNonEmpty = false;
+    m_allocatorOwner = nullptr;
+}
+
+void
+UbIngressQueue::RefreshAllocatorSummary()
+{
+    if (m_allocatorOwner == nullptr)
+    {
+        return;
+    }
+    const bool nonEmpty = !IsEmpty();
+    if (nonEmpty == m_reportedNonEmpty)
+    {
+        return;
+    }
+    m_allocatorOwner->UpdateIngressSummary(this, nonEmpty);
+    m_reportedNonEmpty = nonEmpty;
+}
+
 /*----------------------------------------- UbPacketQueue ----------------------------------------------*/
 bool UbPacketQueue::IsEmpty()
 {
@@ -102,13 +146,21 @@ IngressQueueType UbPacketQueue::GetIngressQueueType()
 void
 UbPacketQueue::Push(Ptr<Packet> p)
 {
-    if (m_packetCount == 0) {
+    const bool wasEmpty = m_packetCount == 0;
+    if (wasEmpty)
+    {
         m_headArrivalTime = Simulator::Now();
         m_frontPacket = p;
-    } else {
+    }
+    else
+    {
         m_overflowQueue.push(p);
     }
     ++m_packetCount;
+    if (wasEmpty)
+    {
+        RefreshAllocatorSummary();
+    }
 }
 
 void
@@ -119,6 +171,7 @@ UbPacketQueue::Pop()
     if (m_packetCount == 1) {
         m_frontPacket = nullptr;
         m_packetCount = 0;
+        RefreshAllocatorSummary();
         return;
     }
 

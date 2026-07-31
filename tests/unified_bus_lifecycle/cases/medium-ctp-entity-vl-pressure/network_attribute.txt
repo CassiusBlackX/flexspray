@@ -1,6 +1,7 @@
-default ns3::TpConnectionManager::RemoveUselessTp "false"
 default ns3::UbApp::CtpUseUnboundSourceJetty "true"
 default ns3::UbApp::EnableMultiPath "false"
+default ns3::UbApp::EnablePlannedTpConnectionDestroy "false"
+default ns3::UbApp::EnableTaskScopedJettyDestroy "false"
 default ns3::UbApp::LocalEntityId "0"
 default ns3::UbApp::PeerEntityId "0"
 default ns3::UbApp::TransportMode "CTP"

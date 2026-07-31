@@ -15,11 +15,13 @@
 #include "ns3/ub-ldst-api.h"
 
 #include <cstdint>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <set>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 
@@ -104,9 +106,13 @@ public:
 
     void AddTask(const TrafficRecord& record);
 
-    void AddTaskDuringInitialLoad(const TrafficRecord& record);
+    bool AddTaskDuringInitialLoad(const TrafficRecord& record);
 
-    void AddTaskDuringInitialLoad(const TrafficRecordView& record);
+    bool AddTaskDuringInitialLoad(const TrafficRecordView& record);
+
+    void RegisterPlannedTpConnections(
+        uint32_t taskId,
+        const std::vector<UbLifecycleResourceIdentity>& connections);
 
     void SetPhaseDepend(uint32_t phaseId, uint32_t taskId);
 
@@ -158,7 +164,11 @@ public:
      */
     void OnTaskCompleted(uint32_t taskId);
 
-    void OnTaskCompleted(uint32_t taskId, Ptr<UbApp> cleanupOwner, uint32_t jettyNum);
+    void OnTaskCompleted(uint32_t taskId,
+                         Ptr<UbApp> cleanupOwner,
+                         uint32_t jettyNum,
+                         bool destroyTaskScopedJetty,
+                         bool destroyPlannedTpConnections);
 
     /**
      * @brief 调度下一批可执行的任务
@@ -204,6 +214,17 @@ public:
         uint32_t ownerNodeId{0};
         uint32_t ownerApplicationIndex{0};
         uint32_t jettyNum{0};
+        bool destroyTaskScopedJetty{false};
+        bool destroyPlannedTpConnections{false};
+        std::vector<UbLifecycleResourceIdentity> plannedTpConnections{};
+    };
+
+    using PlannedTpConnectionKey = std::tuple<uint32_t, uint64_t, uint64_t>;
+
+    struct PlannedTpUseRecord
+    {
+        UbLifecycleResourceIdentity identity{};
+        uint32_t remainingUses{0};
     };
 
     void RecordCanonicalEvent(const std::string& type, const RuntimeTask& task);
@@ -241,6 +262,9 @@ public:
     uint32_t m_canonicalRank = 0;
     std::vector<CanonicalEvent> m_canonicalEvents;
     std::unordered_map<uint32_t, TaskCleanupRequest> m_pendingTaskCleanups{};
+    std::unordered_map<uint32_t, std::vector<UbLifecycleResourceIdentity>>
+        m_taskPlannedTpConnections{};
+    std::map<PlannedTpConnectionKey, PlannedTpUseRecord> m_plannedTpUses{};
     Time m_initialTaskStartOffsetWindow{Time(0)};
     uint32_t m_initialTaskStartOffsetSeed{1};
 
@@ -254,9 +278,9 @@ public:
 
     void RegisterTaskPhaseLocked(uint32_t phaseId, uint32_t taskId);
 
-    void AddTaskLocked(const TrafficRecord& record, bool phaseAlreadyIndexed);
+    bool AddTaskLocked(const TrafficRecord& record, bool phaseAlreadyIndexed);
 
-    void AddTaskLocked(const TrafficRecordView& record, bool phaseAlreadyIndexed);
+    bool AddTaskLocked(const TrafficRecordView& record, bool phaseAlreadyIndexed);
 
     void AddReadyTaskLocked(uint32_t taskId);
 
@@ -332,7 +356,10 @@ public:
     static void ApplyTaskCleanupOnOwner(uint32_t ownerNodeId,
                                         uint32_t ownerApplicationIndex,
                                         uint32_t taskId,
-                                        uint32_t jettyNum);
+                                        uint32_t jettyNum,
+                                        bool destroyTaskScopedJetty,
+                                        bool releasePlannedTpBinding,
+                                        std::vector<UbLifecycleResourceIdentity> plannedTpConnections);
 
     void ScheduleTaskCompletionVisibility(uint32_t taskId, Time completionVisibleTs);
 

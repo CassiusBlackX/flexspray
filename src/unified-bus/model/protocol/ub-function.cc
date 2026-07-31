@@ -351,13 +351,6 @@ UbFunction::RegisterJettyRtpBinding(
 }
 
 void
-UbFunction::ReleaseJettyRtpBindings(
-    const UbLifecycleResourceIdentity& transportIdentity)
-{
-    m_jettyManager->ReleaseRtpBindings(transportIdentity);
-}
-
-void
 UbFunction::RegisterJettyCtpBinding(uint32_t jettyNum,
                                     Ptr<UbCtpTransportService> service)
 {
@@ -530,41 +523,9 @@ UbJettyManager::ReplaceRtpBinding(
     auto it = m_records.find(jettyNum);
     NS_ABORT_MSG_IF(it == m_records.end() || it->second.state != UbJettyLifecycleState::ACTIVE,
                     "Cannot bind RTP transport to a missing or draining Jetty");
-    Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
-    for (const UbLifecycleLeaseIdentity& lease : it->second.bindingLeases)
-    {
-        coordinator->ReleaseLease(lease);
-    }
-    it->second.bindingLeases.clear();
     it->second.hasCtpBinding = false;
     NS_ABORT_MSG_IF(transportIdentity.generation == 0,
                     "Jetty RTP binding requires an exact transport generation");
-    it->second.bindingLeases.push_back(
-        coordinator->AcquireLease(it->second.identity,
-                                  UbLifecycleLeaseKind::BINDING,
-                                  transportIdentity));
-}
-
-void
-UbJettyManager::ReleaseRtpBindings(
-    const UbLifecycleResourceIdentity& transportIdentity)
-{
-    Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
-    for (auto& [jettyNum, record] : m_records)
-    {
-        (void)jettyNum;
-        for (auto lease = record.bindingLeases.begin();
-             lease != record.bindingLeases.end();)
-        {
-            if (lease->related != transportIdentity)
-            {
-                ++lease;
-                continue;
-            }
-            coordinator->ReleaseLease(*lease);
-            lease = record.bindingLeases.erase(lease);
-        }
-    }
 }
 
 void
@@ -585,11 +546,6 @@ UbJettyManager::RegisterCtpBinding(uint32_t jettyNum,
     }
     NS_ABORT_MSG_IF(m_ctpService != service,
                     "Jetty manager cannot bind multiple CTP services on one owner");
-    Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
-    it->second.bindingLeases.push_back(
-        coordinator->AcquireLease(it->second.identity,
-                                  UbLifecycleLeaseKind::BINDING,
-                                  it->second.identity));
     it->second.hasCtpBinding = true;
 }
 
@@ -832,11 +788,6 @@ UbJettyManager::FinalizeDestroy(uint32_t jettyNum)
         m_ctpService->ReleaseJetty(jettyNum);
     }
     Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
-    for (const UbLifecycleLeaseIdentity& lease : it->second.bindingLeases)
-    {
-        coordinator->ReleaseLease(lease);
-    }
-    it->second.bindingLeases.clear();
     coordinator->RecordSuccessfulTerminal(identity);
     coordinator->RetireResource(identity);
     m_records.erase(it);
