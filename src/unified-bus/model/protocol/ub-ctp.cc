@@ -288,6 +288,7 @@ UbCtpTxQueue::GetNextPacket()
     {
         m_headArrivalTime = Simulator::Now();
     }
+    RefreshAllocatorSummary();
     return packet;
 }
 
@@ -394,11 +395,16 @@ void
 UbCtpTxQueue::EnqueueToClass(UbCtpQueueClass queueClass, Ptr<Packet> packet)
 {
     NS_ABORT_MSG_IF(packet == nullptr, "Cannot enqueue null CTP packet");
-    if (IsEmpty())
+    const bool wasEmpty = IsEmpty();
+    if (wasEmpty)
     {
         m_headArrivalTime = Simulator::Now();
     }
     QueueForClass(queueClass).push(packet);
+    if (wasEmpty)
+    {
+        RefreshAllocatorSummary();
+    }
 }
 
 TypeId

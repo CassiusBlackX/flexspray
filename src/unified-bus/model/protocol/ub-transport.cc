@@ -486,6 +486,7 @@ UbTransportChannel::GetPsnRecvNxt() const
 void
 UbTransportChannel::TriggerTransportTransmit()
 {
+    RefreshAllocatorSummary();
     Ptr<UbPort> port = DynamicCast<UbPort>(NodeList::GetNode(m_nodeId)->GetDevice(m_sport));
     port->TriggerTransmit();
 }
@@ -819,14 +820,18 @@ UbTransportChannel::TryGetNextNewDataPacket()
 
 Ptr<Packet> UbTransportChannel::GetNextPacket()
 {
+    auto finish = [this](Ptr<Packet> packet) {
+        RefreshAllocatorSummary();
+        return packet;
+    };
     Ptr<Packet> packet = PopQueuedPacket(m_cnpQ);
     if (packet != nullptr) {
-        return packet;
+        return finish(packet);
     }
 
     packet = PopQueuedPacket(m_ackQ);
     if (packet != nullptr) {
-        return packet;
+        return finish(packet);
     }
 
     if (IsRetransEnabled()) {
@@ -835,17 +840,17 @@ Ptr<Packet> UbTransportChannel::GetNextPacket()
             if (HasPendingTransmitWork()) {
                 m_headArrivalTime = Simulator::Now();
             }
-            return packet;
+            return finish(packet);
         }
         if (m_retrans->HasPendingGbnRetransmission()) {
-            return nullptr;
+            return finish(nullptr);
         }
         if (HasPendingSelectiveRetransmissionWork()) {
-            return nullptr;
+            return finish(nullptr);
         }
     }
 
-    return TryGetNextNewDataPacket();
+    return finish(TryGetNextNewDataPacket());
 }
 
 void
@@ -872,6 +877,7 @@ UbTransportChannel::EnqueueDcqcnCnp(uint8_t ecn, bool location)
         m_headArrivalTime = Simulator::Now();
     }
     m_cnpQ.push(cnp);
+    RefreshAllocatorSummary();
 
     Ptr<UbPort> port = DynamicCast<UbPort>(NodeList::GetNode(m_nodeId)->GetDevice(m_sport));
     if (port != nullptr) {
@@ -1557,6 +1563,7 @@ UbTransportChannel::UpdateSenderAfterTransportAck(const TransportResponseContext
     }
 
     const bool transportIdle = !HasPendingTransmitWork();
+    RefreshAllocatorSummary();
     if (transportIdle) {
         m_congestionCtrl->OnSenderTransportIdle();
     }
@@ -2193,6 +2200,7 @@ UbTransportChannel::TryCancelUnsentWqeSegment(
     m_wqeSegmentVector.erase(retained);
     m_tpPsnCnt -= canceledPsnSize;
     --m_tpMsnCnt;
+    RefreshAllocatorSummary();
     return UbWqeSegmentTerminalDisposition::CANCELED_UNSENT;
 }
 
@@ -2232,6 +2240,7 @@ UbTransportChannel::ForceRemoveRetainedWqeSegment(
         m_retrans->CancelTimer();
         m_retrans->ClearRetainedState();
     }
+    RefreshAllocatorSummary();
     return UbWqeSegmentTerminalDisposition::FORCE_REMOVED;
 }
 
