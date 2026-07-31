@@ -606,44 +606,20 @@ BuildScenarioFromConfig(const QuickExampleOptions& options, const RuntimeSelecti
     }
 }
 
-void ConfigureTrafficDependencyVisibility(const QuickExampleOptions& options,
-                                          const RuntimeSelection& runtime)
+void ConfigureTrafficDependencyVisibility(const QuickExampleOptions& options)
 {
     if (!options.dependencyVisibilityDelay.empty())
     {
         UbTrafficGen::Get()->SetDependencyVisibilityDelay(Time(options.dependencyVisibilityDelay));
     }
-
-    const bool usePositiveLocalLinkDelays = ModeUsesMtp(runtime.mode);
-    for (uint32_t nodeIndex = 0; nodeIndex < NodeList::GetNNodes(); ++nodeIndex)
-    {
-        Ptr<Node> node = NodeList::GetNode(nodeIndex);
-        for (uint32_t deviceIndex = 0; deviceIndex < node->GetNDevices(); ++deviceIndex)
-        {
-            Ptr<UbPort> port = DynamicCast<UbPort>(node->GetDevice(deviceIndex));
-            if (port == nullptr)
-            {
-                continue;
-            }
-
-            Ptr<UbLink> link = DynamicCast<UbLink>(port->GetChannel());
-            if (link == nullptr)
-            {
-                continue;
-            }
-
-            const Time delay = link->GetDelay();
-            if (link->IsRemote() ||
-                (usePositiveLocalLinkDelays && delay.IsStrictlyPositive()))
-            {
-                UbTrafficGen::Get()->ConsiderAutomaticDependencyVisibilityDelay(delay);
-            }
-        }
-    }
 }
 
 void ApplyDependencyVisibilityLookaheadBound(const RuntimeSelection& runtime)
 {
+    if (UbTrafficGen::Get()->GetDependencyReferenceCount() == 0)
+    {
+        return;
+    }
     const Time delay = UbTrafficGen::Get()->GetDependencyVisibilityDelay();
     if (!delay.IsStrictlyPositive())
     {
@@ -839,9 +815,6 @@ uint32_t ActivateTrafficFromConfig(const std::string& configPath,
 
     UbTrafficGen::Get()->ValidateDependencyVisibilityDelay(
         requirePositiveDependencyVisibilityDelay);
-    UbTrafficGen::Get()->ScheduleNextTasks();
-    UbUtils::Get()->PrintTimestamp("[traffic] Scheduled local tasks: " +
-                                   std::to_string(localTaskCount));
     CheckExampleProcess();
     return localTaskCount;
 }
@@ -911,7 +884,7 @@ QuickExampleOptions ParseOptions(int argc, char* argv[])
     cmd.AddValue("stop-ms", "Optional simulation stop time in milliseconds", options.stopMs);
     cmd.AddValue("rng-run", "Random seed value passed to RngSeedManager::SetSeed", options.rngRun);
     cmd.AddValue("dependency-visibility-delay",
-                 "Advanced override for the dependency visibility delay inferred from UB links",
+                 "Application-level task dependency notification latency (default: 100ns)",
                  options.dependencyVisibilityDelay);
     cmd.AddValue("initial-task-start-offset-window",
                  "Add one deterministic per-source start offset to tasks with no phase "
@@ -1066,16 +1039,20 @@ PhaseTiming RunScenario(const QuickExampleOptions& options,
     timing.simulationStart = std::chrono::high_resolution_clock::now();
     UbUtils::ResetRuntimeDropDiagnostics();
     BuildScenarioFromConfig(options, runtime);
-    ConfigureTrafficDependencyVisibility(options, runtime);
-    ApplyDependencyVisibilityLookaheadBound(runtime);
+    ConfigureTrafficDependencyVisibility(options);
     ConfigureCanonicalOutput(options, runtime);
     ConfigureInitialTaskStartOffset(options, runtime);
     ResetDropAbortState();
     GetDropAbortState().retransEnabled = IsRetransEnabledForRun();
-    ActivateTrafficFromConfig(options.configPath,
-                              runtime.enableMpi,
-                              runtime.mpiRank,
-                              runtime.enableMpi || ModeUsesMtp(runtime.mode));
+    const uint32_t localTaskCount =
+        ActivateTrafficFromConfig(options.configPath,
+                                  runtime.enableMpi,
+                                  runtime.mpiRank,
+                                  runtime.enableMpi || ModeUsesMtp(runtime.mode));
+    ApplyDependencyVisibilityLookaheadBound(runtime);
+    UbTrafficGen::Get()->ScheduleNextTasks();
+    UbUtils::Get()->PrintTimestamp("[traffic] Scheduled local tasks: " +
+                                   std::to_string(localTaskCount));
     if (options.stopMs > 0)
     {
         Simulator::Stop(MilliSeconds(options.stopMs));

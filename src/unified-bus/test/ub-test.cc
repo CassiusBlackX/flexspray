@@ -1950,9 +1950,30 @@ class UbTrafficGenIntegerDelayParserTest : public TestCase
     }
 };
 
+class UbTrafficGenDependencyVisibilityDefaultTest : public TestCase
+{
+  public:
+    UbTrafficGenDependencyVisibilityDefaultTest()
+        : TestCase("UnifiedBus - traffic dependency visibility defaults to 100ns")
+    {
+    }
+
+    void DoRun() override
+    {
+        UbTrafficGen trafficGen;
+        NS_TEST_ASSERT_MSG_EQ(trafficGen.GetDependencyVisibilityDelay(),
+                              NanoSeconds(100),
+                              "The model default must match every quick-example runtime mode");
+        trafficGen.SetDependencyVisibilityDelay(NanoSeconds(20));
+        NS_TEST_ASSERT_MSG_EQ(trafficGen.GetDependencyVisibilityDelay(),
+                              NanoSeconds(20),
+                              "An explicit dependency visibility delay must replace the default");
+    }
+};
+
 class UbDcqcnFactoryCreatesHostAndSwitchTest : public TestCase
 {
-public:
+  public:
     UbDcqcnFactoryCreatesHostAndSwitchTest()
         : TestCase("UnifiedBus - DCQCN factory creates host and switch implementations")
     {
@@ -6996,6 +7017,27 @@ class UbCreateNodeDelayColumnsTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(node->GetSystemId(), 1u, "systemId should still parse after delay fields");
 
         fs::remove_all(caseDir, ec);
+    }
+};
+
+class UbSwitchAllocatorDefaultAllocationTimeTest : public TestCase
+{
+public:
+    UbSwitchAllocatorDefaultAllocationTimeTest()
+        : TestCase("UnifiedBus - switch allocator defaults to a 5ns scheduling round")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        Ptr<UbSwitchAllocator> allocator = CreateObject<UbSwitchAllocator>();
+        TimeValue allocationTime;
+        allocator->GetAttribute("AllocationTime", allocationTime);
+        NS_TEST_ASSERT_MSG_EQ(allocationTime.Get(),
+                              NanoSeconds(5),
+                              "The default models one 240-byte scheduling cell at about 400Gbps");
+        Config::Reset();
     }
 };
 
@@ -24436,6 +24478,7 @@ class UbAllocatorWakeupSelectionSurvivesAllocationDelayTest : public TestCase
     {
         Config::Reset();
         Config::SetDefault("ns3::UbSwitch::VlScheduler", StringValue(m_schedulerConfig));
+        Config::SetDefault("ns3::UbSwitchAllocator::AllocationTime", TimeValue(NanoSeconds(5)));
         auto fixture = CreateMultiPortSwitchFixture(FcType::NONE,
                                                     /*portsNum*/ 2,
                                                     /*reserveBytes*/ 256,
@@ -24460,7 +24503,7 @@ class UbAllocatorWakeupSelectionSurvivesAllocationDelayTest : public TestCase
                            kOutPort,
                            kHigherPriority);
         });
-        Simulator::Stop(NanoSeconds(11));
+        Simulator::Stop(NanoSeconds(6));
         Simulator::Run();
 
         const PacketEntry firstGrant = fixture.ports[kOutPort]->GetUbQueue()->Peekqueue();
@@ -24639,6 +24682,7 @@ class UbAllocatorDwrrCombinedBlockRestoresDeficitTest : public TestCase
     {
         Config::Reset();
         Config::SetDefault("ns3::UbSwitch::VlScheduler", StringValue("DWRR"));
+        Config::SetDefault("ns3::UbSwitchAllocator::AllocationTime", TimeValue(NanoSeconds(10)));
         auto fixture = CreateMultiPortSwitchFixture(FcType::NONE,
                                                     /*portsNum*/ 2,
                                                     /*reserveBytes*/ 512,
@@ -24682,9 +24726,9 @@ class UbAllocatorDwrrCombinedBlockRestoresDeficitTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(flowControl->egressEnqueueCount,
                               0u,
                               "The combined block must commit no packet before egress recovers");
-        NS_TEST_ASSERT_MSG_GT(flowControl->queryCount,
-                              1u,
-                              "The blocked commit must perform the post-selection flow-control scan");
+        NS_TEST_ASSERT_MSG_EQ(flowControl->queryCount,
+                              2u,
+                              "The blocked commit must perform exactly one post-selection flow-control scan");
 
         flowControl->limited = false;
         fixture.ports[kOutPort]->GetUbQueue()->SetAttribute(
@@ -25006,6 +25050,7 @@ class UbAllocatorSummaryPreservesBurstFollowupTest : public TestCase
     {
         Config::Reset();
         Config::SetDefault("ns3::UbSwitch::VlScheduler", StringValue(m_schedulerConfig));
+        Config::SetDefault("ns3::UbSwitchAllocator::AllocationTime", TimeValue(NanoSeconds(5)));
         auto fixture = CreateMultiPortSwitchFixture(FcType::NONE,
                                                     /*portsNum*/ 2,
                                                     /*reserveBytes*/ 4096,
@@ -25030,7 +25075,7 @@ class UbAllocatorSummaryPreservesBurstFollowupTest : public TestCase
         fixture.sw->SendPacket(Create<Packet>(kPacketBytes), kInPort, kOutPort, kPriority);
         allocator->ScheduleTriggerAllocator(fixture.ports[kOutPort]);
 
-        Simulator::Schedule(NanoSeconds(15), [this, fixture]() {
+        Simulator::Schedule(NanoSeconds(7), [this, fixture]() {
             NS_TEST_ASSERT_MSG_EQ(
                 fixture.sw->GetVoqPacketCountForTest(kOutPort, kPriority, kInPort),
                 1u,
@@ -28033,6 +28078,7 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbTrafficGenRecordViewDependencyTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTrafficGenReadyOrderTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTrafficGenIntegerDelayParserTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbTrafficGenDependencyVisibilityDefaultTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpHeaderEncodeDecodeTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpTransactionContextHolTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpReportsConstraintsWithoutMutatingJettyTest(),
@@ -28198,6 +28244,7 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbCreateNodeSystemIdTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCsvCrLfTrimTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCreateNodeDelayColumnsTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbSwitchAllocatorDefaultAllocationTimeTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCreateNodeForwardDelayDoesNotOverrideAllocationTimeTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbCreateNodeLegacyForwardDelayMapsToAllocationTimeTest(),
@@ -28983,6 +29030,7 @@ UbRuntimeToolsTestSuite::UbRuntimeToolsTestSuite()
     AddTestCase(new UbCreateNodeSystemIdTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCsvCrLfTrimTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCreateNodeDelayColumnsTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbSwitchAllocatorDefaultAllocationTimeTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCreateNodeForwardDelayDoesNotOverrideAllocationTimeTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbCreateNodeLegacyForwardDelayMapsToAllocationTimeTest(),
@@ -29071,6 +29119,7 @@ UbCreateNodeDelayMappingTestSuite::UbCreateNodeDelayMappingTestSuite()
     : TestSuite("unified-bus-create-node-delay-mapping", Type::UNIT)
 {
     AddTestCase(new UbCreateNodeDelayColumnsTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbSwitchAllocatorDefaultAllocationTimeTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCreateNodeForwardDelayDoesNotOverrideAllocationTimeTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbCreateNodeLegacyForwardDelayMapsToAllocationTimeTest(),
@@ -30676,8 +30725,7 @@ class UbQuickExampleLocalDependencyVisibilityDelaySystemTest : public TestCase
 
         auto [status, output] =
             RunQuickExampleAbsoluteCaseCommand(CreateTempDirFilename(GetName() + ".log"),
-                                               "--mtp-threads=1 --test "
-                                               "--dependency-visibility-delay=20ns",
+                                               "--mtp-threads=1 --test",
                                                "",
                                                caseDir);
 
@@ -30699,10 +30747,9 @@ class UbQuickExampleLocalDependencyVisibilityDelaySystemTest : public TestCase
         {
             return;
         }
-        NS_TEST_ASSERT_MSG_EQ((taskTimes.at(1).startNs >= taskTimes.at(0).finishNs + 20 + 10),
+        NS_TEST_ASSERT_MSG_EQ((taskTimes.at(1).startNs >= taskTimes.at(0).finishNs + 100 + 10),
                               true,
-                              "dependent task should start after finish, visibility delay, and "
-                              "task delay");
+                              "dependent task should use the default visibility and task delays");
     }
 };
 
@@ -30732,7 +30779,7 @@ class UbQuickExampleMtpDependencyVisibilityDelaySystemTest : public TestCase
 
         NS_TEST_ASSERT_MSG_EQ(status,
                               0,
-                              "MTP dependency visibility delay should be inferred from UB links");
+                              "MTP dependency visibility delay should use the application default");
         if (status != 0)
         {
             std::error_code ec;
@@ -30748,10 +30795,9 @@ class UbQuickExampleMtpDependencyVisibilityDelaySystemTest : public TestCase
         {
             return;
         }
-        NS_TEST_ASSERT_MSG_EQ((taskTimes.at(1).startNs >= taskTimes.at(0).finishNs + 20 + 10),
+        NS_TEST_ASSERT_MSG_EQ((taskTimes.at(1).startNs >= taskTimes.at(0).finishNs + 100 + 10),
                               true,
-                              "dependent task should start after finish, visibility delay, and "
-                              "task delay");
+                              "MTP dependency should use the default visibility and task delays");
     }
 };
 
@@ -30805,46 +30851,66 @@ class UbQuickExampleMpiDependencyVisibilityDelaySystemTest : public TestCase
     void DoRun() override
     {
         SetDataDir(NS_TEST_SOURCEDIR);
-        const std::string trafficCsv =
-            "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases\n"
-            "0,0,1,4096,URMA_WRITE,7,10ns,10,\n"
-            "1,1,0,4096,URMA_WRITE,7,10ns,20,10\n";
+        const std::string trafficCsv = "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,"
+                                       "delay,phaseId,dependOnPhases\n"
+                                       "0,0,1,4096,URMA_WRITE,7,10ns,10,\n"
+                                       "1,1,0,4096,URMA_WRITE,7,10ns,20,10\n";
         const std::filesystem::path caseDir =
             CopyCaseDirWithTrafficFile("scratch/ub-mpi-minimal", trafficCsv);
-        const std::filesystem::path canonicalBase =
-            CreateSafeTempBasename("ub-mpi-dependency-canonical");
+        const auto run = [this, &caseDir](const std::string& label,
+                                          const std::string& visibilityOption) {
+            const std::filesystem::path canonicalBase =
+                CreateSafeTempBasename("ub-mpi-dependency-canonical-" + label);
+            const auto result = RunQuickExampleAbsoluteCaseCommand(
+                CreateTempDirFilename(GetName() + "-" + label + ".log"),
+                "--mtp-threads=1 --test " + visibilityOption + " --canonical-output=\"" +
+                    canonicalBase.string() + "\"",
+                "mpirun -np 2",
+                caseDir);
+            return std::make_tuple(result.first,
+                                   result.second,
+                                   ExtractCanonicalTaskTimes(ReadCanonicalBytes(canonicalBase)));
+        };
 
-        auto [status, output] =
-            RunQuickExampleAbsoluteCaseCommand(CreateTempDirFilename(GetName() + ".log"),
-                                               "--mtp-threads=1 --test "
-                                               "--dependency-visibility-delay=20ns "
-                                               "--canonical-output=\"" +
-                                                   canonicalBase.string() + "\"",
-                                               "mpirun -np 2",
-                                               caseDir);
+        auto [defaultStatus, defaultOutput, defaultTaskTimes] = run("default", "");
+        auto [overrideStatus, overrideOutput, overrideTaskTimes] =
+            run("override", "--dependency-visibility-delay=20ns");
 
-        NS_TEST_ASSERT_MSG_EQ(status,
-                              0,
-                              "MPI dependency visibility delay case should exit successfully");
-        if (status != 0)
+        NS_TEST_ASSERT_MSG_EQ(
+            defaultStatus,
+            0,
+            "MPI default dependency visibility case should exit successfully: " << defaultOutput);
+        NS_TEST_ASSERT_MSG_EQ(
+            overrideStatus,
+            0,
+            "MPI dependency visibility override case should exit successfully: " << overrideOutput);
+        if (defaultStatus != 0 || overrideStatus != 0)
         {
             std::error_code ec;
             std::filesystem::remove_all(caseDir, ec);
             return;
         }
-        const std::string canonicalBytes = ReadCanonicalBytes(canonicalBase);
-        const auto taskTimes = ExtractCanonicalTaskTimes(canonicalBytes);
         std::error_code ec;
         std::filesystem::remove_all(caseDir, ec);
-        const bool hasTaskTimes = HasDependencyVisibilityTaskTimes(taskTimes);
-        NS_TEST_ASSERT_MSG_EQ(hasTaskTimes, true, "dependent tasks should have start/finish times");
-        if (!hasTaskTimes)
+        const bool defaultHasTaskTimes = HasDependencyVisibilityTaskTimes(defaultTaskTimes);
+        const bool overrideHasTaskTimes = HasDependencyVisibilityTaskTimes(overrideTaskTimes);
+        NS_TEST_ASSERT_MSG_EQ(defaultHasTaskTimes,
+                              true,
+                              "default MPI run should have dependent task times");
+        NS_TEST_ASSERT_MSG_EQ(overrideHasTaskTimes,
+                              true,
+                              "override MPI run should have dependent task times");
+        if (!defaultHasTaskTimes || !overrideHasTaskTimes)
         {
             return;
         }
-        NS_TEST_ASSERT_MSG_EQ((taskTimes.at(1).startNs >= taskTimes.at(0).finishNs + 10),
-                              true,
-                              "dependent task should start after dependency visibility and task delay");
+        NS_TEST_ASSERT_MSG_EQ(defaultTaskTimes.at(0).finishNs,
+                              overrideTaskTimes.at(0).finishNs + 80,
+                              "the 20ns override must replace the 100ns model default");
+        NS_TEST_ASSERT_MSG_EQ(
+            (overrideTaskTimes.at(1).startNs >= overrideTaskTimes.at(0).finishNs + 10),
+            true,
+            "dependent MPI task delay starts after completion becomes visible");
     }
 };
 
@@ -30907,7 +30973,6 @@ class UbQuickExampleHybridDependencyVisibilityDelaySystemTest : public TestCase
         auto [status, output] =
             RunQuickExampleAbsoluteCaseCommand(CreateTempDirFilename(GetName() + ".log"),
                                                "--mtp-threads=2 --test "
-                                               "--dependency-visibility-delay=20ns "
                                                "--canonical-output=\"" +
                                                    canonicalBase.string() + "\"",
                                                "mpirun -np 2",
@@ -30934,7 +30999,7 @@ class UbQuickExampleHybridDependencyVisibilityDelaySystemTest : public TestCase
         }
         NS_TEST_ASSERT_MSG_EQ((taskTimes.at(1).startNs >= taskTimes.at(0).finishNs + 10),
                               true,
-                              "hybrid dependent task should start after visibility and task delay");
+                              "hybrid task delay starts after default-delayed completion is visible");
         NS_TEST_ASSERT_MSG_NE(output.find("TEST : 00000 : PASSED"),
                               std::string::npos,
                               "hybrid dependency visibility delay case should report PASSED");
@@ -31036,7 +31101,6 @@ class UbQuickExampleCanonicalOutputMatchesMpiSystemTest : public TestCase
         auto [localStatus, localOutput] =
             RunQuickExampleAbsoluteCaseCommand(CreateTempDirFilename(GetName() + "-local.log"),
                                                "--mtp-threads=1 --test "
-                                               "--dependency-visibility-delay=20ns "
                                                "--canonical-output=\"" +
                                                    localBase.string() + "\"",
                                                "",
@@ -31044,7 +31108,6 @@ class UbQuickExampleCanonicalOutputMatchesMpiSystemTest : public TestCase
         auto [mtpStatus, mtpOutput] =
             RunQuickExampleAbsoluteCaseCommand(CreateTempDirFilename(GetName() + "-mtp.log"),
                                                "--mtp-threads=2 --test "
-                                               "--dependency-visibility-delay=20ns "
                                                "--canonical-output=\"" +
                                                    mtpBase.string() + "\"",
                                                "",
@@ -31052,7 +31115,6 @@ class UbQuickExampleCanonicalOutputMatchesMpiSystemTest : public TestCase
         auto [mpiStatus, mpiOutput] =
             RunQuickExampleAbsoluteCaseCommand(CreateTempDirFilename(GetName() + "-mpi.log"),
                                                "--mtp-threads=1 --test "
-                                               "--dependency-visibility-delay=20ns "
                                                "--canonical-output=\"" +
                                                    mpiBase.string() + "\"",
                                                "mpirun -np 2",
@@ -31060,7 +31122,6 @@ class UbQuickExampleCanonicalOutputMatchesMpiSystemTest : public TestCase
         auto [hybridStatus, hybridOutput] =
             RunQuickExampleAbsoluteCaseCommand(CreateTempDirFilename(GetName() + "-hybrid.log"),
                                                "--mtp-threads=2 --test "
-                                               "--dependency-visibility-delay=20ns "
                                                "--canonical-output=\"" +
                                                    hybridBase.string() + "\"",
                                                "mpirun -np 2",
@@ -31211,8 +31272,7 @@ class UbQuickExampleTimingOffsetRegressionSystemTest : public TestCase
             auto [status, output] =
                 RunQuickExampleCommand(CreateTempDirFilename(GetName() + "-" + label + ".log"),
                                        args +
-                                           " --test --dependency-visibility-delay=10ns "
-                                           "--canonical-output=\"" +
+                                           " --test --canonical-output=\"" +
                                            canonicalBase.string() + "\"",
                                        "",
                                        "scratch/ub_parallel_timing_offset_demo");
@@ -31395,6 +31455,8 @@ class UbQuickExampleMpiDependencyVisibilityFocusedTestSuite : public TestSuite
         : TestSuite("unified-bus-mpi-dependency-visibility", Type::SYSTEM)
     {
         AddTestCase(new UbQuickExampleMpiDependencyVisibilityDelaySystemTest(),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbQuickExampleHybridDependencyVisibilityDelaySystemTest(),
                     TestCase::Duration::QUICK);
     }
 };
