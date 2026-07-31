@@ -13,7 +13,6 @@
 #include "ns3/point-to-point-net-device.h"
 #include "ns3/ub-transport.h"
 #include "ns3/ub-link.h"
-#include "ns3/ub-lifecycle.h"
 #include "ns3/packet.h"
 #include "ns3/boolean.h"
 #include "ns3/uinteger.h"
@@ -150,9 +149,6 @@ public:
         return m_flowControl;
     }
 
-    void RegisterDatalinkControlPacket(Ptr<Packet> packet, uint32_t vlId);
-    const UbLifecycleResourceIdentity& GetDatalinkPacketOwnerForTest(uint32_t vlId) const;
-
     static const uint32_t qCnt = 16;
 
     static std::unordered_map<UbNodeType_t, std::string> g_node_type_map;
@@ -252,8 +248,6 @@ private:
     // pfc
     int32_t m_pfcUpThld;
     int32_t m_pfcLowThld;
-
-    std::map<uint32_t, UbLifecycleResourceIdentity> m_datalinkPacketOwners;
 
     bool m_pktTraceEnabled = false;
 };

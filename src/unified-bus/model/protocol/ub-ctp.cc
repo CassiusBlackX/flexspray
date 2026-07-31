@@ -288,6 +288,7 @@ UbCtpTxQueue::GetNextPacket()
     {
         m_headArrivalTime = Simulator::Now();
     }
+    RefreshAllocatorSummary();
     return packet;
 }
 
@@ -394,11 +395,16 @@ void
 UbCtpTxQueue::EnqueueToClass(UbCtpQueueClass queueClass, Ptr<Packet> packet)
 {
     NS_ABORT_MSG_IF(packet == nullptr, "Cannot enqueue null CTP packet");
-    if (IsEmpty())
+    const bool wasEmpty = IsEmpty();
+    if (wasEmpty)
     {
         m_headArrivalTime = Simulator::Now();
     }
     QueueForClass(queueClass).push(packet);
+    if (wasEmpty)
+    {
+        RefreshAllocatorSummary();
+    }
 }
 
 TypeId
@@ -518,8 +524,8 @@ UbCtpTransportService::SetNode(Ptr<Node> node)
                     "CTP service cannot move between owning nodes");
     m_node = node;
     Ptr<UbLifecycleCoordinator> coordinator = UbLifecycleCoordinator::GetOrCreate(node);
-    m_packetLifecycleOwner =
-        coordinator->OpenPacketOwner(UbLifecycleResourceKind::CTP_SERVICE, 0);
+    m_lifecycleOwner =
+        coordinator->OpenResource(UbLifecycleResourceKind::CTP_SERVICE, 0);
     m_delayedTaAckEvents.Init(coordinator);
 }
 
@@ -930,7 +936,6 @@ UbCtpTransportService::SendAdmittedFragment(Ptr<UbWqeSegment> segment,
                                                   taSsn,
                                                   progressBytes,
                                                   static_cast<uint8_t>(lbSalt & 0xff));
-    RegisterPacketBirth(packet);
     Ptr<UbCtpTxQueue> queue = GetOrCreateQueue(packetKey, outPort, packetKey.vl);
     RegisterQueueIfNeeded(queue, outPort, packetKey.vl);
     queue->EnqueueData(packet);
@@ -1344,11 +1349,11 @@ UbCtpTransportService::GetCongestionStateCountForTest() const
 }
 
 const UbLifecycleResourceIdentity&
-UbCtpTransportService::GetPacketLifecycleOwnerForTest() const
+UbCtpTransportService::GetLifecycleOwnerForTest() const
 {
-    NS_ABORT_MSG_IF(m_packetLifecycleOwner.generation == 0,
-                    "CTP packet lifecycle owner is not initialized");
-    return m_packetLifecycleOwner;
+    NS_ABORT_MSG_IF(m_lifecycleOwner.generation == 0,
+                    "CTP lifecycle owner is not initialized");
+    return m_lifecycleOwner;
 }
 
 uint32_t
@@ -1449,15 +1454,6 @@ UbCtpTransportService::RegisterQueueIfNeeded(Ptr<UbCtpTxQueue> queue,
     m_registeredQueues.insert(queue);
 }
 
-void
-UbCtpTransportService::RegisterPacketBirth(Ptr<Packet> packet)
-{
-    NS_ABORT_MSG_IF(m_node == nullptr || m_packetLifecycleOwner.generation == 0,
-                    "CTP packet birth requires an initialized service owner");
-    UbLifecycleCoordinator::GetOrCreate(m_node)->RegisterPacketAttempt(m_packetLifecycleOwner,
-                                                                       packet);
-}
-
 bool
 UbCtpTransportService::SendResponseSegment(Ptr<UbWqeSegment> response, UbCtpEntityState& state)
 {
@@ -1480,7 +1476,6 @@ UbCtpTransportService::SendResponseSegment(Ptr<UbWqeSegment> response, UbCtpEnti
                                                       taSsn,
                                                       0,
                                                       static_cast<uint8_t>(lbSalt & 0xff));
-        RegisterPacketBirth(packet);
         Ptr<UbCtpTxQueue> queue = GetOrCreateQueue(key, outPort, key.vl);
         RegisterQueueIfNeeded(queue, outPort, key.vl);
         queue->EnqueueAck(packet);
@@ -1502,7 +1497,6 @@ UbCtpTransportService::SendResponseSegment(Ptr<UbWqeSegment> response, UbCtpEnti
                                                       taSsn,
                                                       progressBytes,
                                                       static_cast<uint8_t>(lbSalt & 0xff));
-        RegisterPacketBirth(packet);
         Ptr<UbCtpTxQueue> queue = GetOrCreateQueue(key, outPort, key.vl);
         RegisterQueueIfNeeded(queue, outPort, key.vl);
         queue->EnqueueData(packet);
@@ -1525,7 +1519,7 @@ UbCtpTransportService::CompleteFromTaAck(const UbCtpEntityKey& key,
     {
         GetOrCreateEntityState(key);
         TraceWindowEvent(key, "taack-delay", taSsn, *GetOrCreateTransactionContext(key));
-        const uint64_t token = m_delayedTaAckEvents.Track(m_packetLifecycleOwner);
+        const uint64_t token = m_delayedTaAckEvents.Track(m_lifecycleOwner);
         GetTransactionOwner()->RetainCtpCompletionEvent(key);
         EventId event = Simulator::Schedule(m_delayTaAckTime,
                                             &UbCtpTransportService::RunTrackedCompleteFromTaAck,
@@ -1535,7 +1529,7 @@ UbCtpTransportService::CompleteFromTaAck(const UbCtpEntityKey& key,
                                             response,
                                             token);
         m_delayedTaAckEvents.Attach(
-            m_packetLifecycleOwner,
+            m_lifecycleOwner,
             token,
             event,
             MakeCallback(&UbCtpTransportService::CancelTrackedCompleteFromTaAck, this).Bind(key));
@@ -1563,12 +1557,12 @@ UbCtpTransportService::RunTrackedCompleteFromTaAck(UbCtpEntityKey key,
                                                    Ptr<UbWqeSegment> response,
                                                    uint64_t token)
 {
-    if (!m_delayedTaAckEvents.Begin(m_packetLifecycleOwner, token))
+    if (!m_delayedTaAckEvents.Begin(m_lifecycleOwner, token))
     {
         return;
     }
     CompleteFromTaAckNow(key, taSsn, response);
-    m_delayedTaAckEvents.Resolve(m_packetLifecycleOwner, token);
+    m_delayedTaAckEvents.Resolve(m_lifecycleOwner, token);
     GetTransactionOwner()->ReleaseCtpCompletionEvent(key);
     TryRetireTransactionState(key);
     const UbCtpEntityKey sourceGroupKey = MakeSourceGroupKeyForRequest(key);
@@ -1677,10 +1671,10 @@ UbCtpTransportService::CompleteFromTaAckNow(const UbCtpEntityKey& key,
 void
 UbCtpTransportService::DoDispose()
 {
-    if (m_packetLifecycleOwner.generation != 0)
+    if (m_lifecycleOwner.generation != 0)
     {
         const std::vector<Callback<void>> cleanups =
-            m_delayedTaAckEvents.CancelPending(m_packetLifecycleOwner);
+            m_delayedTaAckEvents.CancelPending(m_lifecycleOwner);
         for (const Callback<void>& cleanup : cleanups)
         {
             cleanup();

@@ -84,8 +84,6 @@ void UbLdstApi::LdstProcess(Ptr<UbLdstTaskSegment> taskSegment)
 {
     // genpacket
     auto packet = GenDataPacket(taskSegment);
-    auto ldstInstance = NodeList::GetNode(m_nodeId)->GetObject<UbLdstInstance>();
-    ldstInstance->RegisterPacketBirth(packet);
     // sendpacket
     SendPacket(taskSegment, packet);
 }
@@ -109,7 +107,6 @@ void UbLdstApi::SendPacket(Ptr<UbLdstTaskSegment> taskSegment, Ptr<Packet> packe
     // switch cannot consume the UB one-detour allowance again.
     if (outPort < 0) {
         // Route failed
-        UbLifecycleCoordinator::TerminatePacket(packet, UbPacketTerminal::ROUTE_NOT_FOUND);
         NS_ASSERT_MSG(0, "The route cannot be found");
         return;
     }
@@ -217,9 +214,6 @@ void UbLdstApi::RecvDataPacket(Ptr<Packet> packet)
     UbDataLink::GenPacketHeader(ackp, false, true, linkPacketHeader.GetCreditTargetVL(), linkPacketHeader.GetPacketVL(),
                                 linkPacketHeader.GetRoutingType(),
                                 UbDatalinkHeaderConfig::PACKET_UB_MEM);
-    auto ldstInstance = NodeList::GetNode(m_nodeId)->GetObject<UbLdstInstance>();
-    ldstInstance->RegisterPacketBirth(ackp);
-
     RoutingKey rtKey;
     rtKey.sip = utils::Cna16ToIp(cna16NetworkHeader.GetScna()).Get();
     rtKey.dip = utils::Cna16ToIp(cna16NetworkHeader.GetDcna()).Get();
@@ -238,7 +232,6 @@ void UbLdstApi::RecvDataPacket(Ptr<Packet> packet)
     // cannot consume the UB one-detour allowance again.
     if (destPort < 0) {
         // Route failed
-        UbLifecycleCoordinator::TerminatePacket(ackp, UbPacketTerminal::ROUTE_NOT_FOUND);
         NS_ASSERT_MSG(0, "The route cannot be found");
         return;
     }

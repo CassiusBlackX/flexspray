@@ -160,8 +160,8 @@ namespace ns3 {
         bool JettyBindTp(uint32_t src, uint32_t dest, uint32_t jettyNum, bool multiPath, std::vector<uint32_t> tpns);
 
         void DestroyJettyTpMap(uint32_t jettyNum);
-        void ReleaseRtpTpGroupBindingLeases(
-            const UbLifecycleResourceIdentity& groupIdentity);
+        /** Release one completed task's binding and optionally retire its now-unused TPG. */
+        void ReleaseCompletedJettyTransportBinding(uint32_t jettyNum, bool destroyTpGroup);
         void EraseRtpTpGroupBindings(
             const UbLifecycleResourceIdentity& groupIdentity);
 
@@ -201,12 +201,7 @@ namespace ns3 {
 
         void TpInit(Ptr<UbTransportChannel> tp);
 
-        bool ReplaceTpBacking(uint32_t tpn,
-                              Ptr<UbTransportChannel> expected,
-                              Ptr<UbTransportChannel> replacement);
-
         void TpDeinit(uint32_t tpn);
-        void TpDeinit(uint32_t tpn, const UbLifecycleResourceIdentity& dormantIdentity);
 
         // 判断wqe是否能发送
         bool IsOrderedByInitiator(uint32_t jettyNum, Ptr<UbWqe> wqe);
@@ -240,6 +235,8 @@ namespace ns3 {
                             const UbCtpEntityKey& key);
         bool HasWqeOperation(uint32_t jettyNum, uint32_t wqeId) const;
         bool HasLifecycleOperationForJetty(uint32_t jettyNum) const;
+        bool HasRtpTpGroupWork(
+            const UbLifecycleResourceIdentity& groupIdentity) const;
         uint32_t GetResidentOperationCount() const;
         uint64_t GetResidentSegmentCount() const;
         uint32_t GetActiveOperationCount() const;
@@ -447,7 +444,8 @@ namespace ns3 {
         void CompleteLocalRequestFromResponse(Ptr<UbWqeSegment> response);
         uint64_t DeriveRemoteAddress(const Ptr<UbWqeSegment>& request) const;
 
-        void ReleaseTransportUseLease(OperationRecord& operation);
+        void NotifyRtpTpGroupWorkChanged(
+            const UbRtpTransportReference& reference);
 
         uint32_t m_nodeId;
         UbController* m_ownerController{nullptr};
@@ -482,8 +480,6 @@ namespace ns3 {
             UbRtpTransportReference transportReference;
             uint32_t directTpn{UINT32_MAX};
             UbLifecycleLeaseIdentity workLease;
-            UbLifecycleLeaseIdentity transportUseLease;
-            bool transportUseLeaseHeld{false};
             bool rtpScheduleChainActive{false};
             bool readyQueued{false};
             bool terminalPending{false};

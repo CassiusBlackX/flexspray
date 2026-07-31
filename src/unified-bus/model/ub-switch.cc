@@ -10,7 +10,6 @@
 #include "ns3/ub-port.h"
 #include "ns3/ub-switch.h"
 #include "ns3/ub-controller.h"
-#include "ns3/ub-lifecycle.h"
 #include "ns3/ub-function.h"
 #include "ns3/ub-ctp.h"
 #include "ns3/ub-utils.h"
@@ -340,18 +339,6 @@ void UbSwitch::RemoveTpFromAllocator(Ptr<UbIngressQueue> tp)
     uint32_t outPort = tp->GetOutPortId();
     uint32_t priority = tp->GetIngressPriority();
     m_allocator->UnregisterUbIngressQueue(tp, outPort, priority);
-}
-
-Ptr<UbIngressQueue>
-UbSwitch::ReplaceTpWithDormantPlaceholder(Ptr<UbIngressQueue> tp)
-{
-    return m_allocator->ReplaceUbIngressQueueWithEmptyPlaceholder(tp);
-}
-
-bool
-UbSwitch::ReplaceDormantTpBacking(Ptr<UbIngressQueue> expected, Ptr<UbIngressQueue> replacement)
-{
-    return m_allocator->ReplaceUbIngressQueue(expected, replacement);
 }
 
 UbSwitch::UbSwitch()
@@ -700,8 +687,6 @@ void UbSwitch::SwitchHandlePacket(Ptr<UbPort> port, Ptr<Packet> packet)
     switch (packetType) {
         case UB_CONTROL_FRAME:
             port->GetFlowControl()->OnControlFrameReceived(packet);
-            UbLifecycleCoordinator::TerminatePacket(packet,
-                                                    UbPacketTerminal::ENDPOINT_CONSUMED);
             break;
         case UB_URMA_DATA_PACKET:
             if (IsCBFCEnable() || IsCBFCSharedEnable()) {
@@ -820,12 +805,20 @@ bool UbSwitch::SinkTpDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Pars
     const uint32_t srcTpn = headers.transportHeader.GetSrcTpn();
     uint32_t dstTpn = headers.transportHeader.GetDestTpn();
     Ptr<UbController> controller = GetObject<UbController>();
-    auto targetTp = controller->GetTransportChannelManager()->ResolveInboundTp(srcTpn,
-                                                 dstTpn,
-                                                 headers.ipv4Header.GetSource(),
-                                                 headers.ipv4Header.GetDestination(),
-                                                 headers.datalinkPacketHeader.GetPacketVL());
-    if (targetTp == nullptr) {
+    const UbInboundTpResolution resolution =
+        controller->GetTransportChannelManager()->ResolveInboundTp(
+            srcTpn,
+            dstTpn,
+            headers.ipv4Header.GetSource(),
+            headers.ipv4Header.GetDestination(),
+            headers.datalinkPacketHeader.GetPacketVL());
+    if (resolution.state == UbInboundTpState::RETIRED_EXACT)
+    {
+        NS_LOG_DEBUG("Ignoring stale packet for retired TP channel key");
+        return true;
+    }
+    Ptr<UbTransportChannel> targetTp = resolution.endpoint;
+    if (resolution.state != UbInboundTpState::LIVE || targetTp == nullptr) {
         NS_ABORT_MSG("Received unreserved or mismatched TP channel key. node="
                      << GetObject<Node>()->GetId() << " srcTpn=" << srcTpn << " dstTpn=" << dstTpn
                      << " sourceIp=" << headers.ipv4Header.GetSource()
@@ -850,13 +843,6 @@ bool UbSwitch::SinkTpDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Pars
         targetTp->RecvDataPacket(packet);
     } else {
         NS_LOG_WARN("Dropping reserved transport opcode " << static_cast<uint32_t>(tpOpcode));
-        UbLifecycleCoordinator::TerminatePacket(packet, UbPacketTerminal::MALFORMED_PACKET);
-    }
-    Ptr<UbTransportChannelManager> manager = controller->GetTransportChannelManager();
-    Ptr<UbTransportChannel> reclaimCandidate = manager->PeekLiveTp(dstTpn);
-    if (reclaimCandidate != nullptr && reclaimCandidate->IsSafeForBackingReclaim())
-    {
-        manager->ReclaimBackingState(dstTpn);
     }
     return true;
 }
@@ -899,7 +885,6 @@ bool UbSwitch::SinkLdstDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Pa
     } else {
         NS_ASSERT_MSG(0, "packet Ta Op code is wrong!");
     }
-    UbLifecycleCoordinator::TerminatePacket(packet, UbPacketTerminal::ENDPOINT_CONSUMED);
     return true;
 }
 
@@ -932,7 +917,6 @@ bool UbSwitch::SinkCtpDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
         }
     }
 
-    UbLifecycleCoordinator::TerminatePacket(packet, UbPacketTerminal::ENDPOINT_CONSUMED);
     NS_LOG_DEBUG("[UbPort recv] local CTP packet consumed");
     return true;
 }
@@ -954,8 +938,6 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
     int outPort = m_routingProcess->GetOutPort(rtKey, selectedShortestPath, port->GetIfIndex());
     if (outPort < 0) {
         utils::UbUtils::RecordRuntimePacketDrop("route cannot be found");
-        UbLifecycleCoordinator::TerminatePacket(packet,
-                                                UbPacketTerminal::ROUTE_NOT_FOUND);
         NS_LOG_WARN("The route cannot be found. Packet Dropped!");
         return;
     }
@@ -977,8 +959,6 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
         utils::UbUtils::RecordRuntimePacketDrop("ingress buffer full");
         NS_LOG_WARN("NodeId " << GetObject<Node>()->GetId() << " InPort " << inPort << " pri=" << (uint32_t)priority
                     << " buffer full. Packet Dropped!");
-        UbLifecycleCoordinator::TerminatePacket(packet,
-                                                UbPacketTerminal::INGRESS_QUEUE_FULL);
         return;
     }
 
@@ -999,8 +979,6 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
     int outPort = m_routingProcess->GetOutPort(rtKey, selectedShortestPath, port->GetIfIndex());
     if (outPort < 0) {
         utils::UbUtils::RecordRuntimePacketDrop("route cannot be found");
-        UbLifecycleCoordinator::TerminatePacket(packet,
-                                                UbPacketTerminal::ROUTE_NOT_FOUND);
         NS_LOG_WARN("The route cannot be found. Packet Dropped!");
         return;
     }
@@ -1022,8 +1000,6 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
         utils::UbUtils::RecordRuntimePacketDrop("ingress buffer full");
         NS_LOG_WARN("NodeId " << GetObject<Node>()->GetId() << " InPort " << inPort << " pri=" << (uint32_t)priority
                     << " buffer full. Packet Dropped!");
-        UbLifecycleCoordinator::TerminatePacket(packet,
-                                                UbPacketTerminal::INGRESS_QUEUE_FULL);
         return;
     }
 
@@ -1042,8 +1018,6 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
     int outPort = m_routingProcess->GetOutPort(rtKey, selectedShortestPath, port->GetIfIndex());
     if (outPort < 0) {
         utils::UbUtils::RecordRuntimePacketDrop("route cannot be found");
-        UbLifecycleCoordinator::TerminatePacket(packet,
-                                                UbPacketTerminal::ROUTE_NOT_FOUND);
         NS_LOG_WARN("The route cannot be found. Packet Dropped!");
         return;
     }
@@ -1063,8 +1037,6 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
         utils::UbUtils::RecordRuntimePacketDrop("ingress buffer full");
         NS_LOG_WARN("NodeId " << GetObject<Node>()->GetId() << " InPort " << inPort << " pri=" << (uint32_t)priority
                     << " buffer full. Packet Dropped!");
-        UbLifecycleCoordinator::TerminatePacket(packet,
-                                                UbPacketTerminal::INGRESS_QUEUE_FULL);
         return;
     }
 
@@ -1207,7 +1179,6 @@ void UbSwitch::SendControlFrame(Ptr<Packet> packet, uint32_t portId)
     uint32_t priority = 0;
     Ptr<Node> node = GetObject<Node>();
     Ptr<UbPort> port = DynamicCast<ns3::UbPort>(node->GetDevice(portId));
-    port->RegisterDatalinkControlPacket(packet, priority);
     GetOrCreateVoq(portId, priority, portId)->Push(packet);
     m_queueManager->PushToVoq(portId, portId, priority, packet->GetSize());
 

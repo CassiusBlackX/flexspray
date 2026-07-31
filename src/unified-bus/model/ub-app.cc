@@ -31,6 +31,17 @@ TypeId UbApp::GetTypeId(void)
                           BooleanValue(false),
                           MakeBooleanAccessor(&UbApp::m_multiPathEnable),
                           MakeBooleanChecker())
+            .AddAttribute("EnableTaskScopedJettyDestroy",
+                          "Destroy standard-driver task-scoped Jetties after task completion.",
+                          BooleanValue(false),
+                          MakeBooleanAccessor(&UbApp::m_enableTaskScopedJettyDestroy),
+                          MakeBooleanChecker())
+            .AddAttribute(
+                "EnablePlannedTpConnectionDestroy",
+                "Destroy exact standard-driver-owned TP connections after their last planned use.",
+                BooleanValue(false),
+                MakeBooleanAccessor(&UbApp::m_enablePlannedTpConnectionDestroy),
+                MakeBooleanChecker())
             .AddAttribute("RoutingType",
                           "UB routing type used by application-created transport channels.",
                           EnumValue(RoutingType::PER_FLOW_SHORTEST_PATHS),
@@ -403,33 +414,61 @@ void UbApp::OnTaskCompleted(uint32_t taskId, uint32_t jettyNum)
     {
         Ptr<UbFunction> function = GetNode()->GetObject<UbController>()->GetUbFunction();
         UbJettyLifetime lifetime = UbJettyLifetime::REUSABLE;
-        if (function->TryGetJettyLifetime(jettyNum, lifetime) &&
-            lifetime == UbJettyLifetime::TASK_SCOPED)
+        const bool destroyTaskScopedJetty =
+            m_enableTaskScopedJettyDestroy && function->TryGetJettyLifetime(jettyNum, lifetime) &&
+            lifetime == UbJettyLifetime::TASK_SCOPED;
+        if (destroyTaskScopedJetty || m_enablePlannedTpConnectionDestroy)
         {
-            UbTrafficGen::Get()->OnTaskCompleted(taskId, this, jettyNum);
+            UbTrafficGen::Get()->OnTaskCompleted(taskId,
+                                                 this,
+                                                 jettyNum,
+                                                 destroyTaskScopedJetty,
+                                                 m_enablePlannedTpConnectionDestroy);
             return;
         }
     }
     UbTrafficGen::Get()->OnTaskCompleted(taskId);
 }
 
-void UbApp::CleanupTaskScopedJetty(uint32_t taskId, uint32_t jettyNum)
+void
+UbApp::CleanupCompletedTask(
+    uint32_t taskId,
+    uint32_t jettyNum,
+    bool destroyTaskScopedJetty,
+    bool releasePlannedTpBinding,
+    const std::vector<UbLifecycleResourceIdentity>& plannedTpConnections)
 {
     if (m_transportMode == TransportMode::RTP)
     {
-        // 删除无用tp
-        auto cleanup = UbTrafficGen::Get()->GetTaskCleanupInfoById(taskId);
-        GetNode()->GetObject<UbController>()->GetTpConnManager()->RemoveUselessTps(
-            jettyNum, cleanup.sourceNode, cleanup.destNode, cleanup.priority);
+        Ptr<UbTransaction> transaction =
+            GetNode()->GetObject<UbController>()->GetUbTransaction();
+        if (releasePlannedTpBinding)
+        {
+            transaction->ReleaseCompletedJettyTransportBinding(
+                jettyNum,
+                !plannedTpConnections.empty());
+        }
+
         Ptr<UbFunction> function = GetNode()->GetObject<UbController>()->GetUbFunction();
         UbJettyLifetime lifetime = UbJettyLifetime::REUSABLE;
-        if (function->TryGetJettyLifetime(jettyNum, lifetime) &&
+        if (destroyTaskScopedJetty && function->TryGetJettyLifetime(jettyNum, lifetime) &&
             lifetime == UbJettyLifetime::TASK_SCOPED)
         {
             const UbDestroyStatus status =
                 function->DestroyJetty(jettyNum, UbDestroyReason::PROTOCOL_COMPLETE);
             NS_ABORT_MSG_IF(status == UbDestroyStatus::REJECTED,
                             "Task-scoped Jetty cleanup was rejected for task " << taskId);
+        }
+
+        Ptr<TpConnectionManager> manager =
+            GetNode()->GetObject<UbController>()->GetTpConnManager();
+        for (const auto& identity : plannedTpConnections)
+        {
+            const UbDestroyStatus status =
+                manager->DestroyConnection(identity, UbDestroyReason::PROTOCOL_COMPLETE);
+            NS_ABORT_MSG_IF(status == UbDestroyStatus::REJECTED,
+                            "Planned TP connection cleanup rejected a stale identity for task "
+                                << taskId);
         }
     }
 }

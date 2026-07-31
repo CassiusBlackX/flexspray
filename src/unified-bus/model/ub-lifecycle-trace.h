@@ -25,7 +25,6 @@ enum class UbLifecycleTraceRecordType : uint8_t
 {
     RESOURCE_STATE = 1,
     LEDGER_DELTA = 2,
-    IDENTITY_LIFETIME = 3,
     TERMINAL_OUTCOME = 4,
     SUMMARY = 5,
 };
@@ -34,7 +33,6 @@ enum class UbLifecycleTraceSubjectKind : uint8_t
 {
     NONE = 0,
     RESOURCE = 1,
-    PACKET = 2,
     LEASE = 3,
     WORK = 4,
 };
@@ -46,19 +44,6 @@ enum class UbLifecycleTraceEvent : uint16_t
     LEASE_ACQUIRE = 3,
     LEASE_RELEASE = 4,
     WORK_TERMINAL = 5,
-    PACKET_BIRTH = 6,
-    PACKET_TRANSFER = 7,
-    PACKET_TERMINAL = 8,
-    SUMMARY_IN_FLIGHT_PACKETS = 100,
-    SUMMARY_REGISTERED_PACKETS = 101,
-    SUMMARY_TRANSFER_OBSERVATIONS = 102,
-    SUMMARY_ENDPOINT_CONSUMED = 103,
-    SUMMARY_ROUTE_NOT_FOUND_DROPS = 104,
-    SUMMARY_EGRESS_QUEUE_FULL_DROPS = 105,
-    SUMMARY_INGRESS_QUEUE_FULL_DROPS = 106,
-    SUMMARY_FAULT_DROPS = 107,
-    SUMMARY_CHANNEL_FAILURE_DROPS = 108,
-    SUMMARY_MALFORMED_PACKET_DROPS = 109,
     SUMMARY_ACTIVE_WORK_LEASES = 110,
     SUMMARY_ACTIVE_CHILD_LEASES = 111,
     SUMMARY_ACTIVE_TRANSPORT_USE_LEASES = 112,
@@ -80,13 +65,6 @@ enum class UbLifecycleTraceOutcome : uint16_t
     FAILED = 2,
     CANCELED = 3,
     FLUSHED = 4,
-    ENDPOINT_CONSUMED = 10,
-    ROUTE_NOT_FOUND = 11,
-    EGRESS_QUEUE_FULL = 12,
-    INGRESS_QUEUE_FULL = 13,
-    FAULT_DROP = 14,
-    CHANNEL_FAILURE = 15,
-    MALFORMED_PACKET = 16,
 };
 
 enum class UbLifecycleTraceReason : uint16_t
@@ -98,9 +76,6 @@ enum class UbLifecycleTraceReason : uint16_t
     BINDING_LEASE = 4,
     TRACKED_EVENT_LEASE = 5,
     TRANSPORT_WORK_LEASE = 6,
-    EGRESS_QUEUE_ENQUEUE = 10,
-    EGRESS_QUEUE_DEQUEUE = 11,
-    LOCAL_LINK = 12,
 };
 
 enum class UbLifecycleTraceSite : uint16_t
@@ -110,9 +85,6 @@ enum class UbLifecycleTraceSite : uint16_t
     COORDINATOR_ACQUIRE_LEASE = 3,
     COORDINATOR_RELEASE_LEASE = 4,
     COORDINATOR_WORK_TERMINAL = 5,
-    COORDINATOR_PACKET_BIRTH = 6,
-    COORDINATOR_PACKET_TRANSFER = 7,
-    COORDINATOR_PACKET_TERMINAL = 8,
     COORDINATOR_SUMMARY = 9,
 };
 
@@ -159,8 +131,6 @@ class UbLifecycleTrace
     static bool IsEventEnabled();
     static bool IsDetailEnabled();
     static bool SelectResource(const UbLifecycleResourceIdentity& identity);
-    static bool SelectPacket(const UbPacketAttemptIdentity& identity);
-
     static void PrepareOwner(uint32_t ownerNode);
     static void EmitMetadata();
     static void Emit(const UbLifecycleTraceRecord& record);

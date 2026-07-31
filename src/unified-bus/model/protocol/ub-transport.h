@@ -32,58 +32,6 @@ class UbWqe;
 class UbWqeSegment;
 class UbJetty;
 
-struct UbTransportDormantState
-{
-    UbTransportDormantState() = default;
-    UbTransportDormantState(const UbTransportDormantState&) = delete;
-    UbTransportDormantState& operator=(const UbTransportDormantState&) = delete;
-    UbTransportDormantState(UbTransportDormantState&&) = default;
-    UbTransportDormantState& operator=(UbTransportDormantState&&) = default;
-
-    uint32_t nodeId{0};
-    uint32_t src{0};
-    uint32_t dest{0};
-    uint32_t tpn{0};
-    uint32_t dstTpn{0};
-    UbLifecycleResourceIdentity lifecycleIdentity;
-    uint64_t size{0};
-    uint16_t priority{0};
-    uint16_t sport{0};
-    uint16_t dport{0};
-    Ipv4Address sip;
-    Ipv4Address dip;
-    TypeId congestionControlType;
-    std::unique_ptr<UbCongestionControlDormancyState> congestionControlState;
-    uint64_t psnSndNxt{0};
-    uint64_t psnSndUna{0};
-    uint64_t psnRecvNxt{0};
-    uint64_t maxRcvPsn{0};
-    bool hasReceivedAnyPsn{false};
-    uint64_t tpMsnCnt{0};
-    uint64_t tpPsnCnt{0};
-    uint32_t psnOooThreshold{0};
-    uint64_t recvPsnWindowBase{0};
-    uint32_t recvPsnWindowSize{0};
-    std::vector<uint64_t> recvPsnWindowMarkedSequences;
-    std::map<uint32_t, uint64_t> inboundTpMsnReferences;
-    std::map<std::pair<uint32_t, uint32_t>, uint32_t> inboundTaSsnReferences;
-    bool tpFullFlag{false};
-    bool sendWindowLimited{false};
-    uint64_t defaultMaxWqeSegNum{0};
-    uint64_t defaultMaxInflightPacketSize{0};
-    RoutingType routingType{RoutingType::PER_FLOW_SHORTEST_PATHS};
-    uint16_t lbHashSalt{0};
-    bool retransEnabled{false};
-    Time baseRto;
-    uint16_t maxRetransAttempts{0};
-    uint16_t retransExponentFactor{0};
-    UbRetransTimeoutMode retransTimeoutMode{UbRetransTimeoutMode::DYNAMIC};
-    UbRetransmissionMode retransmissionMode{UbRetransmissionMode::GBN};
-    uint32_t selectiveAckBitmapBits{0};
-    bool fastRetransEnabled{false};
-    bool selectiveMarkPsnEnabled{false};
-};
-
 struct UbTransportQuiescenceSnapshot
 {
     uint64_t pendingAckPackets{0};
@@ -94,10 +42,6 @@ struct UbTransportQuiescenceSnapshot
     uint64_t bufferedInboundPackets{0};
     bool hasUnacknowledgedPsn{false};
     bool retransmissionTimerRunning{false};
-    bool outstandingRetransmissionState{false};
-    bool congestionControlPresent{false};
-    UbCongestionControlDormancyEligibility congestionControlDormancyEligibility{
-        UbCongestionControlDormancyEligibility::INELIGIBLE};
 };
 
 enum class UbTpgMemberMutationStatus : uint8_t
@@ -126,7 +70,6 @@ struct UbTransportGroupMember
 {
     uint32_t tpn{UINT32_MAX};
     UbLifecycleResourceIdentity tpIdentity;
-    UbLifecycleLeaseIdentity membershipLease;
     UbTransportGroupMemberState state{UbTransportGroupMemberState::ACTIVE};
 };
 
@@ -200,12 +143,7 @@ public:
     bool IsEmpty() override;
     bool IsLimited() override;
     bool IsSafeForExplicitDestroy() const;
-    bool IsSafeForBackingReclaim() const;
     UbTransportQuiescenceSnapshot GetQuiescenceSnapshot() const;
-    std::unique_ptr<UbTransportDormantState> SnapshotDormantState() const;
-    bool RestoreDormantState(const UbTransportDormantState& state,
-                             Ptr<UbCongestionControl> congestionCtrl);
-    void ReleaseBackingForDormancy();
     void FreezeNewWork();
     void PrepareForExplicitDestroy();
     void SetLifecycleStateChangedCallback(Callback<void, uint32_t> callback);
@@ -291,7 +229,7 @@ public:
 
     const UbLifecycleResourceIdentity& GetLifecycleOwner() const
     {
-        return m_packetLifecycleOwner;
+        return m_lifecycleOwner;
     }
 
     /**
@@ -388,10 +326,13 @@ public:
             m_headArrivalTime = Simulator::Now();
         }
         m_wqeSegmentVector.push_back(segment);
+        RefreshAllocatorSummary();
     }
 
     bool TryAdmitWqeSegment(Ptr<UbWqeSegment> segment);
     bool CanAdmitWqeSegment(Ptr<const UbWqeSegment> segment) const;
+    bool TryContinueAcceptedWqeSegment(Ptr<UbWqeSegment> segment);
+    bool CanContinueAcceptedWqeSegment(Ptr<const UbWqeSegment> segment) const;
     bool IsAcceptingNewWorkForTest() const { return m_isActive; }
     UbWqeSegmentTerminalDisposition TryCancelUnsentWqeSegment(
         Ptr<UbWqeSegment> segment,
@@ -407,21 +348,68 @@ public:
     uint32_t GetOutstandingUnackedSegmentCount() const;
     bool CanScheduleAnotherSegment() const;
 
-    Ptr<UbCongestionControl> GetCongestionCtrlForTest() const { return m_congestionCtrl; }
-    void SetCongestionControlForTest(Ptr<UbCongestionControl> cc) { m_congestionCtrl = cc; }
-    void EnqueueAckForTest(Ptr<Packet> p) { m_ackQ.push(p); }
-    void EnqueueCnpForTest(Ptr<Packet> p) { m_cnpQ.push(p); }
-    void ClearCnpForTest() { while (!m_cnpQ.empty()) { m_cnpQ.pop(); } }
-    void ClearWqeSegmentsForTest() { m_wqeSegmentVector.clear(); }
+    Ptr<UbCongestionControl> GetCongestionCtrlForTest() const
+    {
+        return m_congestionCtrl;
+    }
+
+    void SetCongestionControlForTest(Ptr<UbCongestionControl> cc)
+    {
+        m_congestionCtrl = cc;
+    }
+
+    void EnqueueAckForTest(Ptr<Packet> p)
+    {
+        m_ackQ.push(p);
+        RefreshAllocatorSummary();
+    }
+
+    void EnqueueCnpForTest(Ptr<Packet> p)
+    {
+        m_cnpQ.push(p);
+        RefreshAllocatorSummary();
+    }
+
+    void ClearCnpForTest()
+    {
+        while (!m_cnpQ.empty())
+        {
+            m_cnpQ.pop();
+        }
+        RefreshAllocatorSummary();
+    }
+
+    void ClearWqeSegmentsForTest()
+    {
+        m_wqeSegmentVector.clear();
+        RefreshAllocatorSummary();
+    }
+    void SetMaxQueueSizeForTest(uint64_t size) { m_maxQueueSize = size; }
     void AddRemoteRequestForTest(Ptr<UbWqeSegment> segment) { m_remoteRequest.push_back(segment); }
     void ClearRemoteRequestsForTest() { m_remoteRequest.clear(); }
     void AddInboundTaUnitForTest(uint32_t srcTpn, uint64_t msn);
     void ClearInboundTaUnitsForTest() { m_inboundTaUnits.clear(); }
     void AddBufferedInboundPacketForTest(uint64_t psn);
-    void ClearBufferedInboundPacketsForTest() { m_bufferedInboundPackets.clear(); }
-    Ptr<Packet> GetNextPacketForTest() { return GetNextPacket(); }
-    uint32_t GetPendingAckCountForTest() const { return static_cast<uint32_t>(m_ackQ.size()); }
-    Ptr<Packet> PopAckForTest() { return GetNextPacket(); }
+
+    void ClearBufferedInboundPacketsForTest()
+    {
+        m_bufferedInboundPackets.clear();
+    }
+
+    Ptr<Packet> GetNextPacketForTest()
+    {
+        return GetNextPacket();
+    }
+
+    uint32_t GetPendingAckCountForTest() const
+    {
+        return static_cast<uint32_t>(m_ackQ.size());
+    }
+
+    Ptr<Packet> PopAckForTest()
+    {
+        return GetNextPacket();
+    }
     uint32_t GetPendingCnpCountForTest() const { return static_cast<uint32_t>(m_cnpQ.size()); }
     uint64_t GetPsnSndUnaForTest() const { return m_psnSndUna; }
     void SetPsnSndUnaForTest(uint64_t psn) { m_psnSndUna = psn; }
@@ -681,7 +669,7 @@ private:
     uint32_t m_dest;
     uint32_t m_tpn;           // TP Number
     uint32_t m_dstTpn;
-    UbLifecycleResourceIdentity m_packetLifecycleOwner;
+    UbLifecycleResourceIdentity m_lifecycleOwner;
     uint64_t m_size;          // Size parameter
     uint16_t m_priority;      // Process group identifier
     uint16_t m_sport;
@@ -776,8 +764,6 @@ public:
     void RequestDestroy(UbTpgCleanupMode mode);
     bool IsDestroyPending() const;
     UbTpgCleanupMode GetCleanupMode() const;
-    bool AreBindingLeasesReleased() const;
-    void MarkBindingLeasesReleased();
 
 private:
     UbLifecycleResourceIdentity m_identity;
@@ -787,7 +773,6 @@ private:
     std::optional<UbLifecycleResourceIdentity> m_pendingLastMemberRemoval;
     bool m_destroyPending{false};
     UbTpgCleanupMode m_cleanupMode{UbTpgCleanupMode::GRACEFUL};
-    bool m_bindingLeasesReleased{false};
     uint64_t m_membershipVersion{1};
 };
 

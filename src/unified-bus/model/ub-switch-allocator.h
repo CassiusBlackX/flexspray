@@ -16,7 +16,6 @@ namespace ns3 {
 class UbSwitch;
 class UbIngressQueue;
 class UbPort;
-class UbTransportChannelManager;
 
 // outport, priority, voq/TpChannel/ctrlq
 typedef std::vector<std::vector<std::vector<Ptr<UbIngressQueue> > > > IngressSource_t;
@@ -26,7 +25,9 @@ typedef std::vector<bool> EgressStatus_t;
  * @brief 交换机调度器基类
  */
 class UbSwitchAllocator : public Object {
-public:
+    friend class UbIngressQueue;
+
+  public:
     UbSwitchAllocator();
     virtual ~UbSwitchAllocator();
     static TypeId GetTypeId (void);
@@ -37,8 +38,6 @@ public:
     void SetNodeId(uint32_t nodeId) {m_nodeId = nodeId;}
     void RegisterUbIngressQueue(Ptr<UbIngressQueue> ingressQueue, uint32_t outPort, uint32_t priority);
     void UnregisterUbIngressQueue(Ptr<UbIngressQueue> ingressQueue, uint32_t outPort, uint32_t priority);
-    Ptr<UbIngressQueue> ReplaceUbIngressQueueWithEmptyPlaceholder(Ptr<UbIngressQueue> ingressQueue);
-    bool ReplaceUbIngressQueue(Ptr<UbIngressQueue> expected, Ptr<UbIngressQueue> replacement);
     void RegisterEgressStauts(uint32_t portsNum);
     void SetEgressStatus(uint32_t portId, bool status);
     bool GetEgressStatus(uint32_t portId);
@@ -59,7 +58,6 @@ protected:
     {
         EventId allocation;
         bool allocationPending{false};
-        std::vector<std::pair<uint64_t, EventId>> retriggers;
         std::unordered_map<uint64_t, EventId> notifications;
         uint32_t schedulingWorkCount{0};
         Ptr<UbIngressQueue> activeIngressQueue;
@@ -72,25 +70,29 @@ protected:
                                                                  Ptr<UbPort> egressPort) const;
     void InitializePortEventState(uint32_t portsNum);
     void ScheduleAllocation(Ptr<UbPort> outPort);
-    void ScheduleOwnedRetrigger(uint32_t outPortId, Ptr<UbPort> outPort);
     void SchedulePortNotification(Ptr<UbPort> outPort);
     void ScheduleDeadlockCheck();
     void RunAllocation(Ptr<UbPort> outPort);
-    void RunOwnedRetrigger(uint32_t outPortId, uint64_t token, Ptr<UbPort> outPort);
     void RunPortNotification(uint32_t outPortId, uint64_t token, Ptr<UbPort> outPort);
     void RunDeadlockCheck();
     void FinalizeDisposeStorage();
     void NotifyAllocationFinish(Ptr<UbPort> outPort);
-    void TryReclaimReleasedTp(Ptr<UbIngressQueue> ingressQueue);
     void SetActiveIngressQueue(Ptr<UbIngressQueue> ingressQueue);
+    Ptr<UbIngressQueue> GetActiveIngressQueue(uint32_t outPortId) const;
     void ClearActiveIngressQueue(uint32_t outPortId);
+    void UpdateIngressSummary(UbIngressQueue* ingressQueue, bool nonEmpty);
+    bool HasNonEmptyIngress(uint32_t outPortId) const;
+    void BindIngressSummary(Ptr<UbIngressQueue> ingressQueue);
+    void UnbindIngressSummary(Ptr<UbIngressQueue> ingressQueue);
+    virtual Ptr<UbIngressQueue> PickNextIngressQueue(Ptr<UbPort> outPort);
 
     Time m_allocationTime;
     uint32_t m_nodeId;
     IngressSource_t m_ingressSources;
     EgressStatus_t m_egressStatus;
-    std::vector<bool> m_isRunning;	
-    std::vector<bool> m_oneMoreRound;
+    std::vector<bool> m_running;
+    std::vector<bool> m_runAgain;
+    std::vector<uint32_t> m_nonEmptyIngressCount;
     uint32_t m_voqIngressSlotCount = 0;
     bool m_enableDirectAllocationCompletion = true;
     std::vector<PortEventState> m_portEventState;
@@ -101,7 +103,6 @@ protected:
     uint32_t m_runningAllocationCallbacks{0};
     bool m_disposed{false};
     bool m_deferredDisposeCleanup{false};
-    Ptr<UbTransportChannelManager> m_transportChannelManager;
 };
 
 
@@ -119,8 +120,10 @@ public:
     virtual void AllocateNextPacket(Ptr<UbPort> outPort) override;
 
 private:
+    Ptr<UbIngressQueue> PickNextIngressQueue(Ptr<UbPort> outPort) override;
     std::vector<std::vector<uint32_t> > m_rrIdx;
     std::vector<std::vector<bool> > m_rrPhaseSeeded;
+    std::vector<uint32_t> m_selectedIngressQueueSlot;
 };
 
 
@@ -147,6 +150,7 @@ public:
     void SetQuantum(uint32_t outPort, uint32_t priority, uint32_t quantum);
 
 private:
+    Ptr<UbIngressQueue> PickNextIngressQueue(Ptr<UbPort> outPort) override;
     std::vector<std::vector<uint32_t> > m_rrIdx;
     std::vector<std::vector<bool> > m_rrPhaseSeeded;
     std::vector<std::vector<uint32_t> > m_quantum;
