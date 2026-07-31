@@ -966,7 +966,10 @@ void UbDwrrAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
                     break;
                 }
             }
-            if (vlanEmpty) {
+            // Preserve the wakeup grant's pre-selection deficit when its first
+            // commit is rejected by egress capacity; the rollback below must
+            // subtract the quantum that SelectNextIngressQueue added.
+            if (vlanEmpty && !egressBlocked) {
                 deficit = 0;
             }
         }

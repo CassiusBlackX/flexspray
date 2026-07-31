@@ -24626,6 +24626,90 @@ class UbAllocatorEgressBlockRollsBackSelectionTest : public TestCase
     std::string m_schedulerConfig;
 };
 
+class UbAllocatorDwrrCombinedBlockRestoresDeficitTest : public TestCase
+{
+  public:
+    UbAllocatorDwrrCombinedBlockRestoresDeficitTest()
+        : TestCase("UnifiedBus - DWRR restores deficit when flow control and egress block combine")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Config::Reset();
+        Config::SetDefault("ns3::UbSwitch::VlScheduler", StringValue("DWRR"));
+        auto fixture = CreateMultiPortSwitchFixture(FcType::NONE,
+                                                    /*portsNum*/ 2,
+                                                    /*reserveBytes*/ 512,
+                                                    /*sharedPoolBytes*/ 0,
+                                                    /*headroomPerPortBytes*/ 0,
+                                                    /*resumeGapBytes*/ 16,
+                                                    /*alphaShift*/ 0,
+                                                    {});
+        constexpr uint32_t kInPort = 0;
+        constexpr uint32_t kOutPort = 1;
+        constexpr uint32_t kPriority = 1;
+        constexpr uint32_t kPacketBytes = 64;
+        constexpr uint32_t kPacketCount = 3;
+
+        Ptr<UbDwrrAllocator> allocator = DynamicCast<UbDwrrAllocator>(fixture.sw->GetAllocator());
+        NS_TEST_ASSERT_MSG_NE(allocator,
+                              nullptr,
+                              "Combined block regression requires the DWRR allocator");
+        allocator->SetQuantum(kOutPort, kPriority, kPacketBytes);
+
+        Ptr<UbAllocatorMutableGateFlowControl> flowControl =
+            CreateObject<UbAllocatorMutableGateFlowControl>();
+        fixture.ports[kOutPort]->m_flowControl = flowControl;
+        fixture.ports[kOutPort]->GetUbQueue()->SetAttribute("MaxEgressBytes", UintegerValue(0));
+        fixture.ports[kOutPort]->NotifyLinkUp();
+        fixture.ports[kOutPort]->SetSendState(SendState::BUSY);
+
+        for (uint32_t i = 0; i < kPacketCount; ++i)
+        {
+            fixture.sw->SendPacket(Create<Packet>(kPacketBytes), kInPort, kOutPort, kPriority);
+        }
+        Simulator::Schedule(NanoSeconds(1), [this, flowControl]() {
+            NS_TEST_ASSERT_MSG_EQ(flowControl->queryCount,
+                                  1u,
+                                  "The DWRR wakeup grant must be selected before flow control changes");
+            flowControl->limited = true;
+        });
+        Simulator::Stop(NanoSeconds(11));
+        Simulator::Run();
+
+        NS_TEST_ASSERT_MSG_EQ(flowControl->egressEnqueueCount,
+                              0u,
+                              "The combined block must commit no packet before egress recovers");
+        NS_TEST_ASSERT_MSG_GT(flowControl->queryCount,
+                              1u,
+                              "The blocked commit must perform the post-selection flow-control scan");
+
+        flowControl->limited = false;
+        fixture.ports[kOutPort]->GetUbQueue()->SetAttribute(
+            "MaxEgressBytes", UintegerValue(kPacketCount * kPacketBytes));
+        allocator->TriggerAllocator(fixture.ports[kOutPort]);
+        Simulator::Stop(NanoSeconds(11));
+        Simulator::Run();
+
+        NS_TEST_ASSERT_MSG_EQ(flowControl->egressEnqueueCount,
+                              1u,
+                              "A rolled-back DWRR grant must not become an oversized burst");
+        NS_TEST_ASSERT_MSG_EQ(fixture.ports[kOutPort]->GetUbQueue()->GetCurrentBytes(),
+                              static_cast<uint64_t>(kPacketBytes),
+                              "DWRR must commit only one quantum after the combined block");
+        NS_TEST_ASSERT_MSG_EQ(fixture.sw->GetVoqPacketCountForTest(kOutPort,
+                                                                   kPriority,
+                                                                   kInPort),
+                              kPacketCount - 1,
+                              "The remaining packets must stay queued for later DWRR rounds");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
 class UbAllocatorNonEmptySummaryCountsTransitionsTest : public TestCase
 {
   public:
@@ -28172,6 +28256,7 @@ UbTestSuite::UbTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorEgressBlockRollsBackSelectionTest("DWRR", "DWRR"),
                 TestCase::Duration::QUICK);
+    AddTestCase(new UbAllocatorDwrrCombinedBlockRestoresDeficitTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorMultipleOutputPortsKeepOwnerLocalPendingWorkTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorRunningCallbackForcedStopReportsActiveResidueTest(),
@@ -28945,6 +29030,7 @@ UbSwitchVoqTestSuite::UbSwitchVoqTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorEgressBlockRollsBackSelectionTest("DWRR", "DWRR"),
                 TestCase::Duration::QUICK);
+    AddTestCase(new UbAllocatorDwrrCombinedBlockRestoresDeficitTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorMultipleOutputPortsKeepOwnerLocalPendingWorkTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorRunningCallbackForcedStopReportsActiveResidueTest(),
