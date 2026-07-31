@@ -23889,6 +23889,25 @@ class UbAllocatorIngressReleaseCounter : public UbFlowControl
     uint32_t m_priority{0};
 };
 
+class UbAllocatorMutableGateFlowControl : public UbFlowControl
+{
+  public:
+    bool IsFcLimited(Ptr<UbIngressQueue>) override
+    {
+        ++queryCount;
+        return limited;
+    }
+
+    void OnEgressEnqueued(const UbFlowControlEventContext&) override
+    {
+        ++egressEnqueueCount;
+    }
+
+    bool limited{false};
+    uint32_t queryCount{0};
+    uint32_t egressEnqueueCount{0};
+};
+
 class UbAllocatorMultipleOutputPortsKeepOwnerLocalPendingWorkTest : public TestCase
 {
   public:
@@ -24408,6 +24427,152 @@ class UbAllocatorWakeupSelectionSurvivesAllocationDelayTest : public TestCase
                                                                    kInPort),
                               1u,
                               "The later higher-priority packet must remain queued for the next round");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+    std::string m_schedulerConfig;
+};
+
+class UbAllocatorWakeupGrantSurvivesFlowControlChangeTest : public TestCase
+{
+  public:
+    UbAllocatorWakeupGrantSurvivesFlowControlChangeTest(const std::string& displayName,
+                                                        const std::string& schedulerConfig)
+        : TestCase("UnifiedBus - " + displayName +
+                   " allocator commits wakeup grant after flow-control changes"),
+          m_schedulerConfig(schedulerConfig)
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Config::Reset();
+        Config::SetDefault("ns3::UbSwitch::VlScheduler", StringValue(m_schedulerConfig));
+        auto fixture = CreateMultiPortSwitchFixture(FcType::NONE,
+                                                    /*portsNum*/ 2,
+                                                    /*reserveBytes*/ 256,
+                                                    /*sharedPoolBytes*/ 0,
+                                                    /*headroomPerPortBytes*/ 0,
+                                                    /*resumeGapBytes*/ 16,
+                                                    /*alphaShift*/ 0,
+                                                    {});
+        constexpr uint32_t kInPort = 0;
+        constexpr uint32_t kOutPort = 1;
+        constexpr uint32_t kPriority = 1;
+        constexpr uint32_t kPacketBytes = 64;
+
+        Ptr<UbAllocatorMutableGateFlowControl> flowControl =
+            CreateObject<UbAllocatorMutableGateFlowControl>();
+        fixture.ports[kOutPort]->m_flowControl = flowControl;
+        fixture.ports[kOutPort]->NotifyLinkUp();
+        fixture.ports[kOutPort]->SetSendState(SendState::BUSY);
+
+        fixture.sw->SendPacket(Create<Packet>(kPacketBytes), kInPort, kOutPort, kPriority);
+        Simulator::Schedule(NanoSeconds(1), [this, flowControl]() {
+            NS_TEST_ASSERT_MSG_EQ(
+                flowControl->queryCount,
+                1u,
+                "The wakeup decision must perform one flow-control eligibility check before AllocationTime");
+            flowControl->limited = true;
+        });
+        Simulator::Stop(NanoSeconds(11));
+        Simulator::Run();
+
+        NS_TEST_ASSERT_MSG_EQ(flowControl->egressEnqueueCount,
+                              1u,
+                              "A flow-control change during AllocationTime must not cancel the wakeup grant");
+        NS_TEST_ASSERT_MSG_EQ(fixture.ports[kOutPort]->GetUbQueue()->GetCurrentBytes(),
+                              static_cast<uint64_t>(kPacketBytes),
+                              "The wakeup grant must commit after AllocationTime");
+        NS_TEST_ASSERT_MSG_EQ(fixture.sw->GetVoqPacketCountForTest(kOutPort,
+                                                                   kPriority,
+                                                                   kInPort),
+                              0u,
+                              "The committed wakeup grant must leave the ingress queue");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+    std::string m_schedulerConfig;
+};
+
+class UbAllocatorEgressBlockRollsBackSelectionTest : public TestCase
+{
+  public:
+    UbAllocatorEgressBlockRollsBackSelectionTest(const std::string& displayName,
+                                                 const std::string& schedulerConfig)
+        : TestCase("UnifiedBus - " + displayName +
+                   " allocator rolls back selection after egress block"),
+          m_schedulerConfig(schedulerConfig)
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Config::Reset();
+        Config::SetDefault("ns3::UbSwitch::VlScheduler", StringValue(m_schedulerConfig));
+        constexpr uint32_t kPortsNum = 3;
+        constexpr uint32_t kOutPort = 2;
+        constexpr uint32_t kPriority = 1;
+        constexpr uint32_t kPacketBytes = 64;
+        auto fixture = CreateMultiPortSwitchFixture(FcType::NONE,
+                                                    kPortsNum,
+                                                    /*reserveBytes*/ 512,
+                                                    /*sharedPoolBytes*/ 0,
+                                                    /*headroomPerPortBytes*/ 0,
+                                                    /*resumeGapBytes*/ 16,
+                                                    /*alphaShift*/ 0,
+                                                    {});
+        Ptr<UbAllocatorMutableGateFlowControl> flowControl =
+            CreateObject<UbAllocatorMutableGateFlowControl>();
+        fixture.ports[kOutPort]->m_flowControl = flowControl;
+        fixture.ports[kOutPort]->GetUbQueue()->SetAttribute("MaxEgressBytes", UintegerValue(0));
+
+        for (uint32_t inPort = 0; inPort < kPortsNum; ++inPort) {
+            fixture.sw->SendPacket(Create<Packet>(kPacketBytes), inPort, kOutPort, kPriority);
+        }
+
+        fixture.ports[kOutPort]->NotifyLinkUp();
+        fixture.ports[kOutPort]->SetSendState(SendState::BUSY);
+        fixture.sw->GetAllocator()->TriggerAllocator(fixture.ports[kOutPort]);
+        Simulator::Stop(NanoSeconds(11));
+        Simulator::Run();
+
+        for (uint32_t inPort = 0; inPort < kPortsNum; ++inPort) {
+            NS_TEST_ASSERT_MSG_EQ(fixture.sw->GetVoqPacketCountForTest(kOutPort,
+                                                                       kPriority,
+                                                                       inPort),
+                                  1u,
+                                  "A blocked allocation must retain every ingress packet");
+        }
+        NS_TEST_ASSERT_MSG_EQ(flowControl->egressEnqueueCount,
+                              0u,
+                              "A zero-capacity egress must commit no grant");
+
+        const uint32_t expectedInPort = (fixture.node->GetId() + kOutPort) % kPortsNum;
+        fixture.ports[kOutPort]->GetUbQueue()->SetAttribute("MaxEgressBytes",
+                                                            UintegerValue(kPacketBytes));
+        fixture.sw->GetAllocator()->TriggerAllocator(fixture.ports[kOutPort]);
+        Simulator::Stop(NanoSeconds(11));
+        Simulator::Run();
+
+        const PacketEntry firstGrant = fixture.ports[kOutPort]->GetUbQueue()->Peekqueue();
+        NS_TEST_ASSERT_MSG_EQ(std::get<0>(firstGrant),
+                              expectedInPort,
+                              "Recovery must retry the wakeup selection rolled back on egress block");
+        NS_TEST_ASSERT_MSG_EQ(fixture.sw->GetVoqPacketCountForTest(kOutPort,
+                                                                   kPriority,
+                                                                   expectedInPort),
+                              0u,
+                              "The retried selection must be the first queue serviced");
+        NS_TEST_ASSERT_MSG_EQ(flowControl->egressEnqueueCount,
+                              1u,
+                              "Recovery with one-packet capacity must commit exactly one grant");
 
         Simulator::Destroy();
         Config::Reset();
@@ -27954,6 +28119,14 @@ UbTestSuite::UbTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorWakeupSelectionSurvivesAllocationDelayTest("DWRR", "DWRR"),
                 TestCase::Duration::QUICK);
+    AddTestCase(new UbAllocatorWakeupGrantSurvivesFlowControlChangeTest("RR", "SP"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbAllocatorWakeupGrantSurvivesFlowControlChangeTest("DWRR", "DWRR"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbAllocatorEgressBlockRollsBackSelectionTest("RR", "SP"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbAllocatorEgressBlockRollsBackSelectionTest("DWRR", "DWRR"),
+                TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorMultipleOutputPortsKeepOwnerLocalPendingWorkTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorRunningCallbackForcedStopReportsActiveResidueTest(),
@@ -28705,6 +28878,14 @@ UbSwitchVoqTestSuite::UbSwitchVoqTestSuite()
     AddTestCase(new UbAllocatorWakeupSelectionSurvivesAllocationDelayTest("RR", "SP"),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorWakeupSelectionSurvivesAllocationDelayTest("DWRR", "DWRR"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbAllocatorWakeupGrantSurvivesFlowControlChangeTest("RR", "SP"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbAllocatorWakeupGrantSurvivesFlowControlChangeTest("DWRR", "DWRR"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbAllocatorEgressBlockRollsBackSelectionTest("RR", "SP"),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbAllocatorEgressBlockRollsBackSelectionTest("DWRR", "DWRR"),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbAllocatorMultipleOutputPortsKeepOwnerLocalPendingWorkTest(),
                 TestCase::Duration::QUICK);

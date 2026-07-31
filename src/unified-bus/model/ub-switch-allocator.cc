@@ -864,15 +864,23 @@ void UbDwrrAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
             bool first = true;
 
             while (deficit > 0 && ingressQueueSlotCount > 0) {
-                auto candidate =
-                    FindNextEligibleIngressQueue(outPortId, pi, ingressQueueSlot, outPort);
-                if (!candidate.has_value()) {
-                    deficit = 0;
-                    break;
+                Ptr<UbIngressQueue> q;
+                if (first) {
+                    // The first grant was selected at wakeup; AllocationTime models the
+                    // computation of that decision, so later flow-control changes do not
+                    // revoke it. Subsequent packets in the burst are selected at commit time.
+                    q = ingressQueue;
+                } else {
+                    auto candidate =
+                        FindNextEligibleIngressQueue(outPortId, pi, ingressQueueSlot, outPort);
+                    if (!candidate.has_value()) {
+                        deficit = 0;
+                        break;
+                    }
+                    q = candidate->queue;
+                    ingressQueueSlot = candidate->ingressQueueSlot;
                 }
-                auto q = candidate->queue;
                 SetActiveIngressQueue(q);
-                ingressQueueSlot = candidate->ingressQueueSlot;
 
                 uint32_t pktSize = q->GetNextPacketSize();
                 if (!outPort->GetUbQueue()->CanEnqueue(pktSize)) {
