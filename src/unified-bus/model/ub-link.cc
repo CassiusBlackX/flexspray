@@ -16,7 +16,7 @@ TypeId UbLink::GetTypeId(void)
             .AddConstructor<UbLink>()
             .AddAttribute("Delay",
                           "Propagation delay of the point-to-point link.",
-                          TimeValue(Seconds(0)),
+                          TimeValue(NanoSeconds(100)),
                           MakeTimeAccessor(&UbLink::m_delay),
                           MakeTimeChecker());
     return tid;
