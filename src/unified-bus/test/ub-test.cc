@@ -21560,6 +21560,51 @@ class UbExplicitConnectionDestroyAggregatesBothEndpointsTest : public TestCase
     uint32_t m_callbackCount{0};
 };
 
+class UbExplicitConnectionDestroyForceDisposeSafetyTest : public TestCase
+{
+  public:
+    UbExplicitConnectionDestroyForceDisposeSafetyTest()
+        : TestCase("UnifiedBus - pending endpoint destroy is safe during controller disposal")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+
+        Ptr<UbController> senderController = topo.sender->GetObject<UbController>();
+        Ptr<UbTransportChannel> senderTp =
+            senderController->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
+        NS_TEST_ASSERT_MSG_NE(senderTp,
+                              nullptr,
+                              "Force-dispose fixture should materialize the source endpoint");
+        Ptr<UbLifecycleCoordinator> coordinator =
+            UbLifecycleCoordinator::GetOrCreate(topo.sender);
+        const UbLifecycleLeaseIdentity gate =
+            coordinator->AcquireLease(senderTp->GetLifecycleOwner(),
+                                      UbLifecycleLeaseKind::TRANSPORT_WORK,
+                                      senderTp->GetLifecycleOwner());
+
+        Ptr<TpConnectionManager> receiverManager =
+            topo.receiver->GetObject<UbController>()->GetTpConnManager();
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(receiverManager->DestroyConnection(
+                topo.receiver->GetId(),
+                kUrmaWriteRegressionReceiverTpn,
+                UbDestroyReason::EXPLICIT)),
+            static_cast<uint32_t>(UbDestroyStatus::PENDING),
+            "The held transport lease should leave endpoint destroy pending");
+
+        // The lease intentionally remains held. Controller disposal must not route the
+        // pending endpoint callback through NodeList after NodeList teardown has started.
+        (void)gate;
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
 class UbExplicitConnectionDestroyDrainsAdmittedWriteTest : public TestCase
 {
   public:
@@ -28303,6 +28348,19 @@ UbTpReservationTestSuite::UbTpReservationTestSuite()
 }
 
 static UbTpReservationTestSuite g_ubTpReservationTestSuite;
+
+class UbTpTeardownSafetyTestSuite : public TestSuite
+{
+  public:
+    UbTpTeardownSafetyTestSuite()
+        : TestSuite("unified-bus-tp-teardown", Type::UNIT)
+    {
+        AddTestCase(new UbExplicitConnectionDestroyForceDisposeSafetyTest(),
+                    TestCase::Duration::QUICK);
+    }
+};
+
+static UbTpTeardownSafetyTestSuite g_ubTpTeardownSafetyTestSuite;
 
 UbInitialTaskStartOffsetTestSuite::UbInitialTaskStartOffsetTestSuite()
     : TestSuite("unified-bus-initial-task-start-offset", Type::UNIT)

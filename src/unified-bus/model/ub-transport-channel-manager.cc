@@ -609,9 +609,15 @@ UbTransportChannelManager::FinalizeDestroy(uint32_t tpn, bool force)
     {
         --m_transportsCount;
     }
-    for (const UbDestroyCallback& callback : callbacks)
+    // Force disposal runs while NodeList teardown is already in progress. A pending
+    // endpoint callback may route lifecycle control through NodeList, which is no longer
+    // a valid dependency at this point. Normal drain/finalize still delivers callbacks.
+    if (!force)
     {
-        callback(identity, UbDestroyStatus::COMPLETED);
+        for (const UbDestroyCallback& callback : callbacks)
+        {
+            callback(identity, UbDestroyStatus::COMPLETED);
+        }
     }
 }
 
