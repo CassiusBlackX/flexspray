@@ -152,8 +152,10 @@ The following are the available use case directories and corresponding run comma
 
 - 2D FullMesh 4x4 (hierarchical broadcast):
   ```bash
-  python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2dfm4x4-hierarchical_broadcast --dependency-visibility-delay=1ns'
+  python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2dfm4x4-hierarchical_broadcast'
   ```
+  Task dependency notifications use a 100ns latency by default. Override it with
+  `--dependency-visibility-delay=<Time>` when the modeled control path differs.
 
 - Clos (32 hosts / 4 leafs / 8 spines, pod2pod):
   ```bash

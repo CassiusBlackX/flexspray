@@ -129,9 +129,11 @@ MPI + 多线程模式要求每个启动的 MPI 进程至少拥有一个节点。
 
 ## 配置 task 依赖
 
-如果 `traffic.csv` 使用 phase 依赖，并行运行会根据 UB 链路时延自动选择一个保守的正可见延迟，并用它约束并行同步步长。通常不需要额外配置。
+如果 `traffic.csv` 使用 phase 依赖，task completion notification 默认经过
+`100ns` 后对依赖 task 可见。单线程、MTP、MPI 和 hybrid 模式使用相同的模型时延；
+并行运行同时用它约束同步步长。没有 phase 依赖的 workload 不安装此同步步长上限。
 
-如需固定实验参数，可以显式覆盖自动值：
+如需模拟不同的控制路径，可以显式覆盖默认值：
 
 ```text
 --dependency-visibility-delay=<Time>
@@ -139,7 +141,7 @@ MPI + 多线程模式要求每个启动的 MPI 进程至少拥有一个节点。
 
 一个 task 完成后，依赖它的 task 会在该延迟之后看到完成状态。显式值在并行运行中必须大于零。
 
-显式覆盖主要用于需要固定该参数的对照实验。对比单线程与并行结果时，两边需使用相同的显式值。
+显式覆盖主要用于控制路径时延不同的实验。对比单线程与并行结果时，两边需使用相同的值。
 
 ## 对比单线程与并行结果
 
@@ -194,7 +196,7 @@ window 没有适用于所有 workload 的通用推荐值。使用能够满足实
 | --- | --- |
 | 传入 `--mtp-threads` 后提示 MTP 不可用 | 使用 `--enable-mtp` 重新配置并构建用户入口 |
 | `mpirun` 无法启动程序 | 检查 MPI 环境，并确认配置时使用了 `--enable-mpi` |
-| 带依赖的 traffic case 在仿真前退出 | 确认相关 UB 链路具有正时延；必要时显式设置正的 `--dependency-visibility-delay` |
+| 带依赖的 traffic case 在仿真前退出 | 并行运行不允许将 `--dependency-visibility-delay` 显式设为零 |
 | 节点被分配给不存在的进程 | 确认每个 `systemId` 都小于 `-np` 的值 |
 | 单线程与并行输出不同 | 检查 case 文件、依赖延迟、两个 offset window、seed 和其他模型参数是否一致 |
 | 日志提示多个对象获得相同 offset | 只有在实验能够接受更大时间改动时，才增大对应 window |

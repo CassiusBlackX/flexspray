@@ -832,26 +832,8 @@ UbTrafficGen::ValidateDependencyVisibilityDelay(bool requireStrictlyPositive) co
         return;
     }
 
-    NS_ABORT_MSG_IF(!m_dependencyVisibilityDelay.has_value() &&
-                        !m_automaticDependencyVisibilityDelay.has_value(),
-                    "traffic.csv contains task dependencies but no dependency visibility delay is "
-                    "available. Configure a positive UB link delay or pass "
-                    "--dependency-visibility-delay=<Time>.");
-    NS_ABORT_MSG_IF(requireStrictlyPositive && !ResolveCompletionVisibleDelayLocked().IsStrictlyPositive(),
+    NS_ABORT_MSG_IF(requireStrictlyPositive && !m_dependencyVisibilityDelay.IsStrictlyPositive(),
                     "parallel traffic.csv dependencies require a positive dependency visibility delay.");
-}
-
-void
-UbTrafficGen::ConsiderAutomaticDependencyVisibilityDelay(Time delay)
-{
-    NS_ABORT_MSG_IF(delay.IsStrictlyNegative(),
-                    "automatic dependency visibility delay must be non-negative");
-    std::lock_guard<std::mutex> lock(m_mutex);
-    if (!m_automaticDependencyVisibilityDelay.has_value() ||
-        delay < *m_automaticDependencyVisibilityDelay)
-    {
-        m_automaticDependencyVisibilityDelay = delay;
-    }
 }
 
 void
@@ -1280,14 +1262,7 @@ UbTrafficGen::HasDependenciesLocked() const
 Time
 UbTrafficGen::ResolveCompletionVisibleDelayLocked() const
 {
-    if (m_dependencyVisibilityDelay.has_value()) {
-        return *m_dependencyVisibilityDelay;
-    }
-    if (m_automaticDependencyVisibilityDelay.has_value())
-    {
-        return *m_automaticDependencyVisibilityDelay;
-    }
-    return Time(0);
+    return m_dependencyVisibilityDelay;
 }
 
 uint64_t

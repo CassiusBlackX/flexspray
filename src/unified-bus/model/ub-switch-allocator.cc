@@ -58,7 +58,7 @@ TypeId UbSwitchAllocator::GetTypeId(void)
         .AddConstructor<UbSwitchAllocator>()
         .AddAttribute("AllocationTime",
                       "Latency of the switch allocation pipeline per scheduling round.",
-                      TimeValue(NanoSeconds(10)),
+                      TimeValue(NanoSeconds(5)),
                       MakeTimeAccessor(&UbSwitchAllocator::m_allocationTime),
                       MakeTimeChecker())
         .AddAttribute("EnableDirectAllocationCompletion",
@@ -950,7 +950,7 @@ void UbDwrrAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
                 }
             }
 
-            bool vlanEmpty = true;
+            bool vlHasNoEligibleQueue = true;
             for (auto &qq : queues) {
                 if (qq->IsEmpty()) {
                     continue;
@@ -962,11 +962,14 @@ void UbDwrrAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
                     return;
                 }
                 if (!fcLimited) {
-                    vlanEmpty = false;
+                    vlHasNoEligibleQueue = false;
                     break;
                 }
             }
-            if (vlanEmpty) {
+            // Preserve the wakeup grant's pre-selection deficit when its first
+            // commit is rejected by egress capacity; the rollback below must
+            // subtract the quantum that SelectNextIngressQueue added.
+            if (vlHasNoEligibleQueue && !egressBlocked) {
                 deficit = 0;
             }
         }
