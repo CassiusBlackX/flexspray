@@ -43,15 +43,23 @@ def git(*args: str) -> str:
 
 
 def candidate_dirty_paths() -> list[str]:
-    output = git(
-        "status",
-        "--porcelain",
-        "--",
+    output = git("status", "--porcelain")
+    ignored_prefixes = (
+        "scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/",
+        "scratch/20260802-default-lifecycle-cleanup-compatibility/run-ledger.json",
+    )
+    candidate_prefixes = (
         "src/unified-bus/model/ub-app.cc",
         "src/unified-bus/test/ub-test.cc",
-        "scratch/20260802-default-lifecycle-cleanup-compatibility",
+        "scratch/20260802-default-lifecycle-cleanup-compatibility/",
     )
-    return [line for line in output.splitlines() if line]
+    result = []
+    for line in output.splitlines():
+        path = line[3:] if len(line) >= 3 else line
+        if not path.startswith(candidate_prefixes) or path.startswith(ignored_prefixes):
+            continue
+        result.append(line)
+    return result
 
 
 def load_matrix() -> dict[str, Any]:
