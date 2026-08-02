@@ -1,0 +1,18 @@
+{
+  "casePath": "/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S03-explicit-local/case",
+  "files": [
+    "node.csv",
+    "topology.csv"
+  ],
+  "format": "csv",
+  "routing": {
+    "routingTableRows": 9
+  },
+  "topology": {
+    "devices": 3,
+    "links": 3,
+    "nodes": 4,
+    "switches": 1
+  },
+  "trafficTasks": 4
+}

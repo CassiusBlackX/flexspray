@@ -1,0 +1,26 @@
+# S10-explicit-mtp8
+
+## Goal
+
+Verify explicit-on versus implicit-default lifecycle equivalence for `S10-dense-a2a-64`.
+
+## Frozen Scenario
+
+- Fixture: `../20260802-main-next-controlled-comparison/fixtures/S10-dense-a2a-64/legacy`.
+- Runtime mode: `legacy-csv`; transport-channel mode remains on-demand.
+- MTP threads: `8`; RNG run: `1`; dependency visibility delay: `100ns`.
+- Preserve the fixture topology, traffic, routing, allocation delay, forwarding delay, link rate and link delay.
+
+## Lifecycle Profile
+
+- Both cleanup attributes are explicitly set to `true`.
+- The paired row uses the same source revision, binary bytes and fixture bytes.
+
+## Oracle
+
+- Equal accepted/completed task counts, bytes, opcodes and terminal behavior.
+- No unplanned drop, deadlock, teardown error or stale driver-owned resource.
+
+## Execution
+
+- Status: pending; simulation execution requires the package approval gate.

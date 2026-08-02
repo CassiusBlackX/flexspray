@@ -44,13 +44,13 @@ TypeId UbApp::GetTypeId(void)
                           MakeBooleanChecker())
             .AddAttribute("EnableTaskScopedJettyDestroy",
                           "Destroy standard-driver task-scoped Jetties after task completion.",
-                          BooleanValue(false),
+                          BooleanValue(true),
                           MakeBooleanAccessor(&UbApp::m_enableTaskScopedJettyDestroy),
                           MakeBooleanChecker())
             .AddAttribute(
                 "EnablePlannedTpConnectionDestroy",
                 "Destroy exact standard-driver-owned TP connections after their last planned use.",
-                BooleanValue(false),
+                BooleanValue(true),
                 MakeBooleanAccessor(&UbApp::m_enablePlannedTpConnectionDestroy),
                 MakeBooleanChecker())
             .AddAttribute("RoutingType",

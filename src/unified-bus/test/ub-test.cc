@@ -15785,7 +15785,7 @@ class UbLifecycleAppDestroyPolicyDefaultsTest : public TestCase
 {
   public:
     UbLifecycleAppDestroyPolicyDefaultsTest()
-        : TestCase("UnifiedBus - app convenience destroy policies default off and stay independent")
+        : TestCase("UnifiedBus - app convenience destroy policies default on and stay independent")
     {
     }
 
@@ -15800,8 +15800,10 @@ class UbLifecycleAppDestroyPolicyDefaultsTest : public TestCase
         BooleanValue plannedTpPolicy;
         app->GetAttribute("EnableTaskScopedJettyDestroy", taskScopedPolicy);
         app->GetAttribute("EnablePlannedTpConnectionDestroy", plannedTpPolicy);
-        NS_TEST_ASSERT_MSG_EQ(taskScopedPolicy.Get(), false, "Jetty destroy must default off");
-        NS_TEST_ASSERT_MSG_EQ(plannedTpPolicy.Get(), false, "planned TP destroy must default off");
+        NS_TEST_ASSERT_MSG_EQ(taskScopedPolicy.Get(), true, "Jetty destroy must default on");
+        NS_TEST_ASSERT_MSG_EQ(plannedTpPolicy.Get(), true, "planned TP destroy must default on");
+
+        app->SetAttribute("EnableTaskScopedJettyDestroy", BooleanValue(false));
 
         constexpr uint32_t taskId = 900010;
         constexpr uint32_t jettyNum = 208;
@@ -15892,6 +15894,7 @@ class UbLifecyclePlannedTpPolicyTest : public TestCase
         constexpr uint32_t taskId = 900011;
         constexpr uint32_t jettyNum = 209;
         Ptr<UbApp> app = CreateObject<UbApp>();
+        app->SetAttribute("EnablePlannedTpConnectionDestroy", BooleanValue(false));
         topo.sender->AddApplication(app);
         Ptr<UbFunction> function = topo.sender->GetObject<UbController>()->GetUbFunction();
         function->CreateJetty(topo.sender->GetId(),
