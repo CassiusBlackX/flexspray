@@ -1,6 +1,6 @@
 version: 2
-status: ready-awaiting-user-execution-approval
-execution_approved: false
+status: approved-for-serial-execution
+execution_approved: true
 
 guard:
   manual_approval_gate: true
@@ -29,7 +29,7 @@ commands:
     cwd: .
     command: ".venv/bin/python scratch/20260802-default-lifecycle-cleanup-compatibility/scripts/run_experiment.py dry-run --allow-dirty"
   - id: run
-    enabled: false
+    enabled: true
     simulation: true
     cwd: .
     command: ".venv/bin/python scratch/20260802-default-lifecycle-cleanup-compatibility/scripts/run_experiment.py run"
