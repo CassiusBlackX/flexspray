@@ -1,6 +1,6 @@
 # Default Lifecycle Compatibility Results
 
-- Candidate source revision: `a6e1303bd7384b826ad01ecfebbdebfcbf1d78de`
+- Candidate source revision: `44acf477750a6a7d269045858b57202b2b281653`
 - Pairs analyzed: `9`
 - Status: `{'matched': 9, 'mismatched': 0}`
 - FCT source: trace-derived from canonical `START` and `COMPLETE_VISIBLE` events.

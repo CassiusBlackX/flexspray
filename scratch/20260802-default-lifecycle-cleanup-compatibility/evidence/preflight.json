@@ -9,6 +9,6 @@
     "ns3::UbApp::EnablePlannedTpConnectionDestroy": "true",
     "ns3::UbApp::EnableTaskScopedJettyDestroy": "true"
   },
-  "source_revision": "a6e1303bd7384b826ad01ecfebbdebfcbf1d78de",
-  "timestamp": "2026-08-02T08:26:37.248465+00:00"
+  "source_revision": "44acf477750a6a7d269045858b57202b2b281653",
+  "timestamp": "2026-08-02T08:35:12.315713+00:00"
 }
