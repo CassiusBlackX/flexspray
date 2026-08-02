@@ -133,6 +133,19 @@ def strip_lifecycle_lines(path: Path) -> None:
     path.write_text("\n".join(filtered) + "\n", encoding="utf-8")
 
 
+def set_global_value(path: Path, key: str, value: str) -> None:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    prefix = f"global {key} "
+    replacement = f'{prefix}"{value}"'
+    for index, line in enumerate(lines):
+        if line.startswith(prefix):
+            lines[index] = replacement
+            break
+    else:
+        lines.append(replacement)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def hash_case_inputs(case_dir: Path) -> dict[str, str]:
     return {
         path.name: sha256(path)
@@ -177,6 +190,8 @@ def materialize_row(row: dict[str, Any], overwrite: bool) -> dict[str, Any]:
         explicit_overrides=overrides,
         observability_overrides=source_materializer.observability("normalized-correctness"),
     )
+    set_global_value(case_dir / "network_attribute.txt", "UB_LIFECYCLE_TRACE_LEVEL", "OFF")
+    set_global_value(case_dir / "network_attribute.txt", "UB_PACKET_TRACE_ENABLE", "true")
     if row["profile"] == "implicit-default":
         strip_lifecycle_lines(case_dir / "network_attribute.txt")
 
