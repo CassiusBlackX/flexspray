@@ -864,6 +864,22 @@ TpConnectionManager::DestroyConnection(const UbLifecycleResourceIdentity& identi
     std::lock_guard<std::mutex> controlLock(g_tpConnectionControlLock);
     if (identity.ownerNodeId != m_ownerNodeId)
     {
+        if (UbParallelLifecycleAdapter::IsExecutionOwner(identity.ownerNodeId))
+        {
+            Ptr<ns3::UbController> ownerController =
+                NodeList::GetNode(identity.ownerNodeId)->GetObject<ns3::UbController>();
+            if (ownerController == nullptr)
+            {
+                return UbDestroyStatus::REJECTED;
+            }
+            Ptr<TpConnectionManager> ownerManager = ownerController->GetTpConnManager();
+            if (ownerManager == nullptr)
+            {
+                return UbDestroyStatus::REJECTED;
+            }
+            return ownerManager->DestroyConnectionOwned(identity, reason, callback);
+        }
+
         uint64_t requestId = 0;
         if (!callback.IsNull())
         {
@@ -1137,17 +1153,25 @@ TpConnectionManager::CompleteFinalizeConnection(const UbLifecycleResourceIdentit
         UbLifecycleControlRecord control;
         control.sourceNodeId = m_ownerNodeId;
         control.targetNodeId = callbackNodeId;
-        control.operation = UbLifecycleControlOperation::CONNECTION_DESTROY_COMPLETE;
+        control.operation = UbLifecycleControlOperation::CONNECTION_DESTROY_RESULT;
         control.resource = identity;
         control.requestId = requestId;
+        control.value = static_cast<uint64_t>(UbDestroyStatus::COMPLETED);
         UbParallelLifecycleAdapter::RouteControl(control);
     }
 }
 
 void
 TpConnectionManager::CompleteRemoteDestroy(const UbLifecycleResourceIdentity& identity,
-                                           uint64_t requestId)
+                                           uint64_t requestId,
+                                           UbDestroyStatus status)
 {
+    if (status != UbDestroyStatus::COMPLETED && status != UbDestroyStatus::NOT_FOUND &&
+        status != UbDestroyStatus::REJECTED)
+    {
+        return;
+    }
+
     UbDestroyCallback callback;
     {
         std::lock_guard<std::mutex> lock(m_stateLock);
@@ -1159,22 +1183,39 @@ TpConnectionManager::CompleteRemoteDestroy(const UbLifecycleResourceIdentity& id
         callback = pending->second.callback;
         m_pendingRemoteDestroyCallbacks.erase(pending);
     }
-    callback(identity, UbDestroyStatus::COMPLETED);
+    callback(identity, status);
 }
 
 bool
 TpConnectionManager::ApplyLifecycleControl(const UbLifecycleControlRecord& control)
 {
+    const auto rejectDestroyRequest = [&]() {
+        if (control.operation != UbLifecycleControlOperation::CONNECTION_DESTROY_REQUEST ||
+            control.requestId == 0)
+        {
+            return false;
+        }
+        UbLifecycleControlRecord result;
+        result.sourceNodeId = control.targetNodeId;
+        result.targetNodeId = control.sourceNodeId;
+        result.operation = UbLifecycleControlOperation::CONNECTION_DESTROY_RESULT;
+        result.resource = control.resource;
+        result.requestId = control.requestId;
+        result.value = static_cast<uint64_t>(UbDestroyStatus::REJECTED);
+        UbParallelLifecycleAdapter::RouteControl(result);
+        return true;
+    };
+
     Ptr<ns3::UbController> controller =
         NodeList::GetNode(control.targetNodeId)->GetObject<ns3::UbController>();
     if (controller == nullptr)
     {
-        return false;
+        return rejectDestroyRequest();
     }
     Ptr<TpConnectionManager> manager = controller->GetTpConnManager();
     if (manager == nullptr)
     {
-        return false;
+        return rejectDestroyRequest();
     }
 
     const auto matchesLocalView = [&]() {
@@ -1198,11 +1239,27 @@ TpConnectionManager::ApplyLifecycleControl(const UbLifecycleControlRecord& contr
             static_cast<EndpointSlotState>(control.value));
     }
     case UbLifecycleControlOperation::CONNECTION_DESTROY_REQUEST:
-        return manager->DestroyConnectionOwned(control.resource,
-                                               static_cast<UbDestroyReason>(control.value),
-                                               {},
-                                               control.sourceNodeId,
-                                               control.requestId) != UbDestroyStatus::NOT_FOUND;
+    {
+        const UbDestroyStatus status =
+            manager->DestroyConnectionOwned(control.resource,
+                                            static_cast<UbDestroyReason>(control.value),
+                                            {},
+                                            control.sourceNodeId,
+                                            control.requestId);
+        if (control.requestId != 0 &&
+            (status == UbDestroyStatus::NOT_FOUND || status == UbDestroyStatus::REJECTED))
+        {
+            UbLifecycleControlRecord result;
+            result.sourceNodeId = control.targetNodeId;
+            result.targetNodeId = control.sourceNodeId;
+            result.operation = UbLifecycleControlOperation::CONNECTION_DESTROY_RESULT;
+            result.resource = control.resource;
+            result.requestId = control.requestId;
+            result.value = static_cast<uint64_t>(status);
+            UbParallelLifecycleAdapter::RouteControl(result);
+        }
+        return true;
+    }
     case UbLifecycleControlOperation::CONNECTION_DESTROY_NOTICE:
     {
         Connection connection;
@@ -1287,8 +1344,17 @@ TpConnectionManager::ApplyLifecycleControl(const UbLifecycleControlRecord& contr
         }
         manager->OnConnectionViewErased(control.resource, static_cast<uint8_t>(control.value));
         return true;
-    case UbLifecycleControlOperation::CONNECTION_DESTROY_COMPLETE:
-        manager->CompleteRemoteDestroy(control.resource, control.requestId);
+    case UbLifecycleControlOperation::CONNECTION_DESTROY_RESULT:
+        if (control.sourceNodeId != control.resource.ownerNodeId ||
+            (control.value != static_cast<uint64_t>(UbDestroyStatus::COMPLETED) &&
+             control.value != static_cast<uint64_t>(UbDestroyStatus::NOT_FOUND) &&
+             control.value != static_cast<uint64_t>(UbDestroyStatus::REJECTED)))
+        {
+            return false;
+        }
+        manager->CompleteRemoteDestroy(control.resource,
+                                       control.requestId,
+                                       static_cast<UbDestroyStatus>(control.value));
         return true;
     default:
         return false;

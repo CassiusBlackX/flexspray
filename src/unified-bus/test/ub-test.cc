@@ -21889,6 +21889,127 @@ class UbExplicitConnectionDestroyAggregatesBothEndpointsTest : public TestCase
     uint32_t m_callbackCount{0};
 };
 
+class UbIdentityConnectionDestroyStatusTest : public TestCase
+{
+  public:
+    explicit UbIdentityConnectionDestroyStatusTest(bool remote)
+        : TestCase(remote
+                       ? "UnifiedBus - remote identity destroy reports stale and completed results"
+                       : "UnifiedBus - local identity destroy returns synchronous completion"),
+          m_remote(remote)
+    {
+    }
+
+  private:
+    void BeginDestroy()
+    {
+        m_initialStatuses.push_back(m_requestManager->DestroyConnection(
+            m_requestedIdentity,
+            UbDestroyReason::EXPLICIT,
+            MakeCallback(&UbIdentityConnectionDestroyStatusTest::OnDestroyed, this)));
+    }
+
+    void OnDestroyed(UbLifecycleResourceIdentity identity, UbDestroyStatus status)
+    {
+        NS_TEST_ASSERT_MSG_EQ(identity,
+                              m_requestedIdentity,
+                              "Identity destroy callback must preserve the requested generation");
+        m_callbackStatuses.push_back(status);
+        if (m_remote && status == UbDestroyStatus::NOT_FOUND)
+        {
+            m_requestedIdentity = m_validIdentity;
+            Simulator::ScheduleWithContext(m_requestNodeId, TimeStep(1), [this]() {
+                BeginDestroy();
+            });
+        }
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+#ifdef NS3_MTP
+        if (m_remote)
+        {
+            Config::SetDefault("ns3::UbLink::Delay", TimeValue(NanoSeconds(10)));
+            MtpInterface::Enable(2, 2);
+        }
+#endif
+        LocalTpTopology topo = BuildLocalTpTopology(true,
+                                                    m_remote ? 1u : 0u,
+                                                    m_remote ? 2u : 0u);
+
+        Ptr<TpConnectionManager> senderManager =
+            topo.sender->GetObject<UbController>()->GetTpConnManager();
+        Ptr<TpConnectionManager> receiverManager =
+            topo.receiver->GetObject<UbController>()->GetTpConnManager();
+        const std::vector<UbLifecycleResourceIdentity> identities =
+            senderManager->ReservePlannedTpnsForTraffic(true,
+                                                        topo.sender->GetId(),
+                                                        topo.receiver->GetId(),
+                                                        kUrmaWriteRegressionPriority);
+        NS_TEST_ASSERT_MSG_EQ(identities.size(),
+                              1u,
+                              "Identity destroy fixture requires one planned connection");
+        m_validIdentity = identities.front();
+        m_requestedIdentity = m_validIdentity;
+
+        m_requestManager = receiverManager;
+        m_requestNodeId = topo.receiver->GetId();
+        if (m_remote)
+        {
+            ++m_requestedIdentity.generation;
+            Simulator::ScheduleWithContext(topo.receiver->GetId(), TimeStep(1), [this]() {
+                BeginDestroy();
+            });
+            Simulator::Stop(MicroSeconds(1));
+            Simulator::Run();
+            NS_TEST_ASSERT_MSG_EQ(m_initialStatuses.size(),
+                                  2u,
+                                  "Remote stale and valid destroy requests must both execute");
+            NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_initialStatuses[0]),
+                                  static_cast<uint32_t>(UbDestroyStatus::PENDING),
+                                  "Cross-owner destroy must remain pending until the owner replies");
+            NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_initialStatuses[1]),
+                                  static_cast<uint32_t>(UbDestroyStatus::PENDING),
+                                  "Cross-owner valid destroy must wait for the owner result");
+            NS_TEST_ASSERT_MSG_EQ(m_callbackStatuses.size(),
+                                  2u,
+                                  "Remote stale and successful callbacks must each complete once");
+            NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_callbackStatuses[0]),
+                                  static_cast<uint32_t>(UbDestroyStatus::NOT_FOUND),
+                                  "Remote stale destroy must report the owner's terminal status");
+            NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_callbackStatuses[1]),
+                                  static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
+                                  "Remote successful destroy must report completion");
+        }
+        else
+        {
+            BeginDestroy();
+            NS_TEST_ASSERT_MSG_EQ(m_initialStatuses.size(), 1u, "Local destroy must execute once");
+            NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_initialStatuses.front()),
+                                  static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
+                                  "Execution-local identity destroy must return its actual status");
+            NS_TEST_ASSERT_MSG_EQ(m_callbackStatuses.size(),
+                                  1u,
+                                  "Synchronous identity destroy must invoke its callback once");
+            NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_callbackStatuses.front()),
+                                  static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
+                                  "Synchronous identity destroy callback must report completion");
+        }
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+    UbLifecycleResourceIdentity m_requestedIdentity;
+    UbLifecycleResourceIdentity m_validIdentity;
+    Ptr<TpConnectionManager> m_requestManager;
+    std::vector<UbDestroyStatus> m_initialStatuses;
+    std::vector<UbDestroyStatus> m_callbackStatuses;
+    uint32_t m_requestNodeId{UINT32_MAX};
+    bool m_remote{false};
+};
+
 class UbExplicitConnectionDestroyForceDisposeSafetyTest : public TestCase
 {
   public:
@@ -28981,6 +29102,22 @@ UbTpReservationTestSuite::UbTpReservationTestSuite()
 }
 
 static UbTpReservationTestSuite g_ubTpReservationTestSuite;
+
+class UbIdentityConnectionDestroyStatusTestSuite : public TestSuite
+{
+  public:
+    UbIdentityConnectionDestroyStatusTestSuite()
+        : TestSuite("unified-bus-identity-connection-destroy", Type::UNIT)
+    {
+#if defined(NS3_MTP) && !defined(_WIN32)
+        AddTestCase(new UbIdentityConnectionDestroyStatusTest(true), TestCase::Duration::QUICK);
+#endif
+        AddTestCase(new UbIdentityConnectionDestroyStatusTest(false), TestCase::Duration::QUICK);
+    }
+};
+
+static UbIdentityConnectionDestroyStatusTestSuite
+    g_ubIdentityConnectionDestroyStatusTestSuite;
 
 class UbTpTeardownSafetyTestSuite : public TestSuite
 {

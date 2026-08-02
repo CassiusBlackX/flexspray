@@ -346,7 +346,9 @@ private:
                                     uint8_t slot);
     void OnConnectionViewErased(const UbLifecycleResourceIdentity& identity, uint8_t slot);
     void CompleteFinalizeConnection(const UbLifecycleResourceIdentity& identity);
-    void CompleteRemoteDestroy(const UbLifecycleResourceIdentity& identity, uint64_t requestId);
+    void CompleteRemoteDestroy(const UbLifecycleResourceIdentity& identity,
+                               uint64_t requestId,
+                               UbDestroyStatus status);
     void EraseConnectionView(uint32_t localNodeId, uint32_t localTpn);
 
     struct LocalConnectionRef
