@@ -15733,7 +15733,7 @@ class UbLifecyclePlannedTpPolicyTest : public TestCase
         UbTrafficGen::Get()->RegisterPlannedTpConnections(taskId, identities);
         UbTrafficGen::Get()->ScheduleNextTasks();
         app->OnTaskCompleted(taskId, jettyNum);
-        Simulator::Stop(NanoSeconds(1));
+        Simulator::Stop(NanoSeconds(200));
         Simulator::Run();
 
         NS_TEST_ASSERT_MSG_EQ(manager->GetCanonicalConnectionCountForTest(),
@@ -15786,14 +15786,14 @@ class UbLifecyclePlannedTpPolicyTest : public TestCase
 
         const size_t initialCount = manager->GetCanonicalConnectionCountForTest();
         app->OnTaskCompleted(firstTaskId, firstJettyNum);
-        Simulator::Stop(NanoSeconds(1));
+        Simulator::Stop(NanoSeconds(200));
         Simulator::Run();
         NS_TEST_ASSERT_MSG_EQ(manager->GetCanonicalConnectionCountForTest(),
                               initialCount,
                               "first planned use must retain shared connections");
 
         app->OnTaskCompleted(secondTaskId, secondJettyNum);
-        Simulator::Stop(NanoSeconds(2));
+        Simulator::Stop(NanoSeconds(400));
         Simulator::Run();
         NS_TEST_ASSERT_MSG_EQ(manager->GetCanonicalConnectionCountForTest(),
                               0u,
@@ -15878,7 +15878,7 @@ class UbLifecycleTaskCompletionPrecedesJettyRetirementTest : public TestCase
             static_cast<uint32_t>(UbJettyLifecycleState::ACTIVE),
             "Task-scoped Jetty cleanup must not begin before completion is visible");
 
-        Simulator::Stop(NanoSeconds(1));
+        Simulator::Stop(NanoSeconds(200));
         Simulator::Run();
         NS_TEST_ASSERT_MSG_EQ(trafficGen->GetCompletedTaskCount(),
                               completedBefore + 1,
@@ -15952,6 +15952,7 @@ class UbLifecycleCtpCompletionDoesNotScheduleRtpCleanupTest : public TestCase
         record.priority = 1;
         record.delay = "1s";
         UbTrafficGen* trafficGen = UbTrafficGen::Get();
+        trafficGen->SetDependencyVisibilityDelay(TimeStep(0));
         trafficGen->AddTask(record);
         trafficGen->ScheduleNextTasks();
 
@@ -15960,7 +15961,7 @@ class UbLifecycleCtpCompletionDoesNotScheduleRtpCleanupTest : public TestCase
         Simulator::Run();
 
         const uint64_t eventsAfterVisibleCompletion = Simulator::GetEventCount();
-        Simulator::Stop(NanoSeconds(1));
+        Simulator::Stop(NanoSeconds(200));
         Simulator::Run();
 
         NS_TEST_ASSERT_MSG_EQ(Simulator::GetEventCount() - eventsAfterVisibleCompletion,
@@ -16072,7 +16073,7 @@ class UbLifecycleTaskCleanupSubmissionIsExactlyOnceTest : public TestCase
         Simulator::Run();
 
         const uint64_t eventsAfterVisibleCompletion = Simulator::GetEventCount();
-        Simulator::Stop(NanoSeconds(1));
+        Simulator::Stop(NanoSeconds(200));
         Simulator::Run();
         const uint64_t completionTailEvents =
             Simulator::GetEventCount() - eventsAfterVisibleCompletion;
@@ -16126,7 +16127,7 @@ class UbLifecyclePendingTaskCleanupDoesNotRetainAppTest : public TestCase
                               true,
                               "Public completion delivery must not resolve or retain the owner app");
 
-        Simulator::Stop(NanoSeconds(1));
+        Simulator::Stop(NanoSeconds(200));
         Simulator::Run();
         NS_TEST_ASSERT_MSG_EQ(function->IsJettyExists(jettyNum),
                               false,
@@ -30217,6 +30218,59 @@ class UbQuickExamplePlannedTpDestroySystemTest : public TestCase
     }
 };
 
+class UbQuickExamplePlannedTpDestroyReverseTrafficSystemTest : public TestCase
+{
+  public:
+    UbQuickExamplePlannedTpDestroyReverseTrafficSystemTest()
+        : TestCase("UnifiedBus - planned TP destroy counts reverse tasks on one connection")
+    {
+    }
+
+    void DoRun() override
+    {
+        SetDataDir(NS_TEST_SOURCEDIR);
+        const std::filesystem::path caseDir = CopyCaseDirWithTrafficFile(
+            "scratch/2nodes_single-tp",
+            "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases\n"
+            "0,0,1,64,URMA_WRITE,7,10ns,0,\n"
+            "1,1,0,64,URMA_WRITE,7,10ns,0,\n");
+        std::error_code ec;
+        std::filesystem::remove(caseDir / "transport_channel.csv", ec);
+        ReplaceInFile(caseDir / "network_attribute.txt",
+                      "default ns3::UbApp::EnableMultiPath \"false\"\n",
+                      "default ns3::UbApp::EnableMultiPath \"true\"\n"
+                      "default ns3::UbApp::EnableTaskScopedJettyDestroy \"true\"\n"
+                      "default ns3::UbApp::EnablePlannedTpConnectionDestroy \"true\"\n");
+        const std::filesystem::path snapshotPath =
+            CreateSafeTempBasename("ub-planned-tp-reverse").replace_extension(".csv");
+        auto [status, output] =
+            RunQuickExampleAbsoluteCaseCommand(CreateTempDirFilename(GetName() + ".log"),
+                                                "--runtime-storage-snapshot=\"" +
+                                                    snapshotPath.string() + "\"",
+                                                "",
+                                                caseDir.string());
+
+        std::ifstream input(snapshotPath);
+        std::ostringstream contents;
+        contents << input.rdbuf();
+        const std::string csv = contents.str();
+        std::filesystem::remove_all(caseDir, ec);
+        std::filesystem::remove(snapshotPath, ec);
+
+        NS_TEST_ASSERT_MSG_EQ(status,
+                              0,
+                              "reverse planned TP traffic should complete without teardown "
+                              "failure: "
+                                  << output);
+        NS_TEST_ASSERT_MSG_NE(csv.find("1,traffic,completed_tasks,,2\n"),
+                              std::string::npos,
+                              "both directions must complete before planned TP cleanup");
+        NS_TEST_ASSERT_MSG_NE(csv.find("1,runtime,canonical_connections,,0\n"),
+                              std::string::npos,
+                              "the shared bidirectional connection must close after both tasks");
+    }
+};
+
 class UbRuntimeStorageSnapshotSystemTestSuite : public TestSuite
 {
   public:
@@ -30226,6 +30280,8 @@ class UbRuntimeStorageSnapshotSystemTestSuite : public TestSuite
         AddTestCase(new UbQuickExampleRuntimeStorageSnapshotSystemTest(),
                     TestCase::Duration::QUICK);
         AddTestCase(new UbQuickExamplePlannedTpDestroySystemTest(),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbQuickExamplePlannedTpDestroyReverseTrafficSystemTest(),
                     TestCase::Duration::QUICK);
     }
 };

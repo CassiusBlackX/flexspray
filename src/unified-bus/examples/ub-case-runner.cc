@@ -715,8 +715,9 @@ uint32_t ActivateTrafficFromConfig(const std::string& configPath,
 
     uint32_t localTaskCount = 0;
     std::vector<Ptr<UbApp>> sourceApps;
-    using PlannedRouteKey = std::tuple<uint32_t, uint32_t, uint8_t>;
-    std::map<PlannedRouteKey, std::vector<UbLifecycleResourceIdentity>> driverOwnedConnections;
+    using PlannedConnectionKey = std::tuple<uint32_t, uint32_t, uint8_t>;
+    std::map<PlannedConnectionKey, std::vector<UbLifecycleResourceIdentity>>
+        driverOwnedConnections;
     Ptr<UbApp> appDefaults = CreateObject<UbApp>();
     UbUtils::Get()->PrintTimestamp("[traffic] Activate clients and enqueue tasks.");
     UbUtils::Get()->ForEachTrafficRecordView(trafficPath, [&](const TrafficRecordView& record) {
@@ -792,9 +793,11 @@ uint32_t ActivateTrafficFromConfig(const std::string& configPath,
         if (accepted && managePlannedConnections && reserveRtpConnections &&
             (record.opType == "URMA_WRITE" || record.opType == "URMA_READ"))
         {
-            const PlannedRouteKey routeKey{record.sourceNode,
-                                           record.destNode,
-                                           record.priority};
+            // A TP connection is bidirectional. Keep one ownership record for both traffic
+            // directions so a reverse task cannot outlive an uncounted planned use.
+            const PlannedConnectionKey routeKey{std::min(record.sourceNode, record.destNode),
+                                                std::max(record.sourceNode, record.destNode),
+                                                record.priority};
             auto planned = driverOwnedConnections.find(routeKey);
             if (planned == driverOwnedConnections.end())
             {
