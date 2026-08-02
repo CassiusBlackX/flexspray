@@ -1,6 +1,6 @@
 version: 2
-status: ready-for-materialization
-execution_approved: false
+status: completed
+execution_approved: true
 claim: omitted-cleanup-attributes-equal-explicit-on-under-candidate-defaults
 changed_variable: lifecycle-attributes-explicit-true-vs-omitted
 

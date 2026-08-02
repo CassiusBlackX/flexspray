@@ -1,0 +1,22 @@
+{
+  "binary_sha256": "c97bd8cbf4649d9b991281bd330059281031fe1b97f63bbc352fd729bd17e283",
+  "canonical_hashes": {
+    "canonical.rank0.txt": "fe0155f3417a06085ac482b5ad6c4908d2f856e05309671e1090fcf93015f71b"
+  },
+  "case_id": "S10-default-mtp8",
+  "command": [
+    "/Users/ytxing/workspace/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+    "--case-path=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S10-default-mtp8/case",
+    "--rng-run=1",
+    "--mtp-threads=8",
+    "--dependency-visibility-delay=100ns",
+    "--route-runtime-mode=legacy-csv",
+    "--canonical-output=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S10-default-mtp8/canonical",
+    "--runtime-storage-snapshot=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S10-default-mtp8/runtime-storage-snapshot.csv"
+  ],
+  "pair_status": "byte-identical",
+  "returncode": 0,
+  "source_revision": "a6e1303bd7384b826ad01ecfebbdebfcbf1d78de",
+  "status": "success",
+  "timed_out": false
+}

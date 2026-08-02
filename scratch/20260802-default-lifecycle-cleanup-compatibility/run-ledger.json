@@ -1,0 +1,362 @@
+{
+  "S01-default-local": {
+    "binary_sha256": "c97bd8cbf4649d9b991281bd330059281031fe1b97f63bbc352fd729bd17e283",
+    "canonical_hashes": {
+      "canonical.rank0.txt": "0b6911608650cef7cf7eac708c2dd451f87229145c5970c0abe494f7717ff74e"
+    },
+    "case_id": "S01-default-local",
+    "command": [
+      "/Users/ytxing/workspace/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+      "--case-path=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S01-default-local/case",
+      "--rng-run=1",
+      "--mtp-threads=0",
+      "--dependency-visibility-delay=100ns",
+      "--route-runtime-mode=legacy-csv",
+      "--canonical-output=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S01-default-local/canonical",
+      "--runtime-storage-snapshot=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S01-default-local/runtime-storage-snapshot.csv"
+    ],
+    "pair_status": "byte-identical",
+    "returncode": 0,
+    "source_revision": "a6e1303bd7384b826ad01ecfebbdebfcbf1d78de",
+    "status": "success",
+    "timed_out": false
+  },
+  "S01-explicit-local": {
+    "binary_sha256": "c97bd8cbf4649d9b991281bd330059281031fe1b97f63bbc352fd729bd17e283",
+    "case_id": "S01-explicit-local",
+    "command": [
+      "/Users/ytxing/workspace/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+      "--case-path=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S01-explicit-local/case",
+      "--rng-run=1",
+      "--mtp-threads=0",
+      "--dependency-visibility-delay=100ns",
+      "--route-runtime-mode=legacy-csv",
+      "--canonical-output=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S01-explicit-local/canonical",
+      "--runtime-storage-snapshot=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S01-explicit-local/runtime-storage-snapshot.csv"
+    ],
+    "returncode": 0,
+    "source_revision": "a6e1303bd7384b826ad01ecfebbdebfcbf1d78de",
+    "status": "success",
+    "timed_out": false
+  },
+  "S03-default-local": {
+    "binary_sha256": "c97bd8cbf4649d9b991281bd330059281031fe1b97f63bbc352fd729bd17e283",
+    "canonical_hashes": {
+      "canonical.rank0.txt": "2ca4f063f758eed0475be94baef42d955147dc09c6c9a01efee4683bc9a2a6d3"
+    },
+    "case_id": "S03-default-local",
+    "command": [
+      "/Users/ytxing/workspace/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+      "--case-path=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S03-default-local/case",
+      "--rng-run=1",
+      "--mtp-threads=0",
+      "--dependency-visibility-delay=100ns",
+      "--route-runtime-mode=legacy-csv",
+      "--canonical-output=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S03-default-local/canonical",
+      "--runtime-storage-snapshot=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S03-default-local/runtime-storage-snapshot.csv"
+    ],
+    "pair_status": "byte-identical",
+    "returncode": 0,
+    "source_revision": "a6e1303bd7384b826ad01ecfebbdebfcbf1d78de",
+    "status": "success",
+    "timed_out": false
+  },
+  "S03-default-mtp2": {
+    "binary_sha256": "c97bd8cbf4649d9b991281bd330059281031fe1b97f63bbc352fd729bd17e283",
+    "canonical_hashes": {
+      "canonical.rank0.txt": "2ca4f063f758eed0475be94baef42d955147dc09c6c9a01efee4683bc9a2a6d3"
+    },
+    "case_id": "S03-default-mtp2",
+    "command": [
+      "/Users/ytxing/workspace/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+      "--case-path=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S03-default-mtp2/case",
+      "--rng-run=1",
+      "--mtp-threads=2",
+      "--dependency-visibility-delay=100ns",
+      "--route-runtime-mode=legacy-csv",
+      "--canonical-output=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S03-default-mtp2/canonical",
+      "--runtime-storage-snapshot=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S03-default-mtp2/runtime-storage-snapshot.csv"
+    ],
+    "pair_status": "byte-identical",
+    "returncode": 0,
+    "source_revision": "a6e1303bd7384b826ad01ecfebbdebfcbf1d78de",
+    "status": "success",
+    "timed_out": false
+  },
+  "S03-explicit-local": {
+    "binary_sha256": "c97bd8cbf4649d9b991281bd330059281031fe1b97f63bbc352fd729bd17e283",
+    "case_id": "S03-explicit-local",
+    "command": [
+      "/Users/ytxing/workspace/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+      "--case-path=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S03-explicit-local/case",
+      "--rng-run=1",
+      "--mtp-threads=0",
+      "--dependency-visibility-delay=100ns",
+      "--route-runtime-mode=legacy-csv",
+      "--canonical-output=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S03-explicit-local/canonical",
+      "--runtime-storage-snapshot=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S03-explicit-local/runtime-storage-snapshot.csv"
+    ],
+    "returncode": 0,
+    "source_revision": "a6e1303bd7384b826ad01ecfebbdebfcbf1d78de",
+    "status": "success",
+    "timed_out": false
+  },
+  "S03-explicit-mtp2": {
+    "binary_sha256": "c97bd8cbf4649d9b991281bd330059281031fe1b97f63bbc352fd729bd17e283",
+    "case_id": "S03-explicit-mtp2",
+    "command": [
+      "/Users/ytxing/workspace/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+      "--case-path=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S03-explicit-mtp2/case",
+      "--rng-run=1",
+      "--mtp-threads=2",
+      "--dependency-visibility-delay=100ns",
+      "--route-runtime-mode=legacy-csv",
+      "--canonical-output=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S03-explicit-mtp2/canonical",
+      "--runtime-storage-snapshot=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S03-explicit-mtp2/runtime-storage-snapshot.csv"
+    ],
+    "returncode": 0,
+    "source_revision": "a6e1303bd7384b826ad01ecfebbdebfcbf1d78de",
+    "status": "success",
+    "timed_out": false
+  },
+  "S08-default-local": {
+    "binary_sha256": "c97bd8cbf4649d9b991281bd330059281031fe1b97f63bbc352fd729bd17e283",
+    "canonical_hashes": {
+      "canonical.rank0.txt": "a0990dcfd993ef852fb39d3f35816892ea66ab875e547943259016fa8cf70499"
+    },
+    "case_id": "S08-default-local",
+    "command": [
+      "/Users/ytxing/workspace/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+      "--case-path=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S08-default-local/case",
+      "--rng-run=1",
+      "--mtp-threads=0",
+      "--dependency-visibility-delay=100ns",
+      "--route-runtime-mode=legacy-csv",
+      "--canonical-output=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S08-default-local/canonical",
+      "--runtime-storage-snapshot=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S08-default-local/runtime-storage-snapshot.csv"
+    ],
+    "pair_status": "byte-identical",
+    "returncode": 0,
+    "source_revision": "a6e1303bd7384b826ad01ecfebbdebfcbf1d78de",
+    "status": "success",
+    "timed_out": false
+  },
+  "S08-explicit-local": {
+    "binary_sha256": "c97bd8cbf4649d9b991281bd330059281031fe1b97f63bbc352fd729bd17e283",
+    "case_id": "S08-explicit-local",
+    "command": [
+      "/Users/ytxing/workspace/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+      "--case-path=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S08-explicit-local/case",
+      "--rng-run=1",
+      "--mtp-threads=0",
+      "--dependency-visibility-delay=100ns",
+      "--route-runtime-mode=legacy-csv",
+      "--canonical-output=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S08-explicit-local/canonical",
+      "--runtime-storage-snapshot=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S08-explicit-local/runtime-storage-snapshot.csv"
+    ],
+    "returncode": 0,
+    "source_revision": "a6e1303bd7384b826ad01ecfebbdebfcbf1d78de",
+    "status": "success",
+    "timed_out": false
+  },
+  "S09-default-local": {
+    "binary_sha256": "c97bd8cbf4649d9b991281bd330059281031fe1b97f63bbc352fd729bd17e283",
+    "canonical_hashes": {
+      "canonical.rank0.txt": "3ca70c99a1826298c887deabde9c58978d15a4c6f0debcad72e58c7cb582e761"
+    },
+    "case_id": "S09-default-local",
+    "command": [
+      "/Users/ytxing/workspace/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+      "--case-path=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S09-default-local/case",
+      "--rng-run=1",
+      "--mtp-threads=0",
+      "--dependency-visibility-delay=100ns",
+      "--route-runtime-mode=legacy-csv",
+      "--canonical-output=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S09-default-local/canonical",
+      "--runtime-storage-snapshot=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S09-default-local/runtime-storage-snapshot.csv"
+    ],
+    "pair_status": "byte-identical",
+    "returncode": 0,
+    "source_revision": "a6e1303bd7384b826ad01ecfebbdebfcbf1d78de",
+    "status": "success",
+    "timed_out": false
+  },
+  "S09-default-mtp2": {
+    "binary_sha256": "c97bd8cbf4649d9b991281bd330059281031fe1b97f63bbc352fd729bd17e283",
+    "canonical_hashes": {
+      "canonical.rank0.txt": "3ca70c99a1826298c887deabde9c58978d15a4c6f0debcad72e58c7cb582e761"
+    },
+    "case_id": "S09-default-mtp2",
+    "command": [
+      "/Users/ytxing/workspace/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+      "--case-path=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S09-default-mtp2/case",
+      "--rng-run=1",
+      "--mtp-threads=2",
+      "--dependency-visibility-delay=100ns",
+      "--route-runtime-mode=legacy-csv",
+      "--canonical-output=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S09-default-mtp2/canonical",
+      "--runtime-storage-snapshot=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S09-default-mtp2/runtime-storage-snapshot.csv"
+    ],
+    "pair_status": "byte-identical",
+    "returncode": 0,
+    "source_revision": "a6e1303bd7384b826ad01ecfebbdebfcbf1d78de",
+    "status": "success",
+    "timed_out": false
+  },
+  "S09-explicit-local": {
+    "binary_sha256": "c97bd8cbf4649d9b991281bd330059281031fe1b97f63bbc352fd729bd17e283",
+    "case_id": "S09-explicit-local",
+    "command": [
+      "/Users/ytxing/workspace/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+      "--case-path=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S09-explicit-local/case",
+      "--rng-run=1",
+      "--mtp-threads=0",
+      "--dependency-visibility-delay=100ns",
+      "--route-runtime-mode=legacy-csv",
+      "--canonical-output=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S09-explicit-local/canonical",
+      "--runtime-storage-snapshot=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S09-explicit-local/runtime-storage-snapshot.csv"
+    ],
+    "returncode": 0,
+    "source_revision": "a6e1303bd7384b826ad01ecfebbdebfcbf1d78de",
+    "status": "success",
+    "timed_out": false
+  },
+  "S09-explicit-mtp2": {
+    "binary_sha256": "c97bd8cbf4649d9b991281bd330059281031fe1b97f63bbc352fd729bd17e283",
+    "case_id": "S09-explicit-mtp2",
+    "command": [
+      "/Users/ytxing/workspace/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+      "--case-path=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S09-explicit-mtp2/case",
+      "--rng-run=1",
+      "--mtp-threads=2",
+      "--dependency-visibility-delay=100ns",
+      "--route-runtime-mode=legacy-csv",
+      "--canonical-output=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S09-explicit-mtp2/canonical",
+      "--runtime-storage-snapshot=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S09-explicit-mtp2/runtime-storage-snapshot.csv"
+    ],
+    "returncode": 0,
+    "source_revision": "a6e1303bd7384b826ad01ecfebbdebfcbf1d78de",
+    "status": "success",
+    "timed_out": false
+  },
+  "S10-default-mtp8": {
+    "binary_sha256": "c97bd8cbf4649d9b991281bd330059281031fe1b97f63bbc352fd729bd17e283",
+    "canonical_hashes": {
+      "canonical.rank0.txt": "fe0155f3417a06085ac482b5ad6c4908d2f856e05309671e1090fcf93015f71b"
+    },
+    "case_id": "S10-default-mtp8",
+    "command": [
+      "/Users/ytxing/workspace/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+      "--case-path=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S10-default-mtp8/case",
+      "--rng-run=1",
+      "--mtp-threads=8",
+      "--dependency-visibility-delay=100ns",
+      "--route-runtime-mode=legacy-csv",
+      "--canonical-output=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S10-default-mtp8/canonical",
+      "--runtime-storage-snapshot=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S10-default-mtp8/runtime-storage-snapshot.csv"
+    ],
+    "pair_status": "byte-identical",
+    "returncode": 0,
+    "source_revision": "a6e1303bd7384b826ad01ecfebbdebfcbf1d78de",
+    "status": "success",
+    "timed_out": false
+  },
+  "S10-explicit-mtp8": {
+    "binary_sha256": "c97bd8cbf4649d9b991281bd330059281031fe1b97f63bbc352fd729bd17e283",
+    "case_id": "S10-explicit-mtp8",
+    "command": [
+      "/Users/ytxing/workspace/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+      "--case-path=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S10-explicit-mtp8/case",
+      "--rng-run=1",
+      "--mtp-threads=8",
+      "--dependency-visibility-delay=100ns",
+      "--route-runtime-mode=legacy-csv",
+      "--canonical-output=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S10-explicit-mtp8/canonical",
+      "--runtime-storage-snapshot=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S10-explicit-mtp8/runtime-storage-snapshot.csv"
+    ],
+    "returncode": 0,
+    "source_revision": "a6e1303bd7384b826ad01ecfebbdebfcbf1d78de",
+    "status": "success",
+    "timed_out": false
+  },
+  "S11-default-local": {
+    "binary_sha256": "c97bd8cbf4649d9b991281bd330059281031fe1b97f63bbc352fd729bd17e283",
+    "canonical_hashes": {
+      "canonical.rank0.txt": "84506cfec978464319f6154837bd7e52c0562a54c1e2b1b496b78a43d1f0d721"
+    },
+    "case_id": "S11-default-local",
+    "command": [
+      "/Users/ytxing/workspace/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+      "--case-path=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S11-default-local/case",
+      "--rng-run=1",
+      "--mtp-threads=0",
+      "--dependency-visibility-delay=100ns",
+      "--route-runtime-mode=legacy-csv",
+      "--canonical-output=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S11-default-local/canonical",
+      "--runtime-storage-snapshot=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S11-default-local/runtime-storage-snapshot.csv"
+    ],
+    "pair_status": "byte-identical",
+    "returncode": 0,
+    "source_revision": "a6e1303bd7384b826ad01ecfebbdebfcbf1d78de",
+    "status": "success",
+    "timed_out": false
+  },
+  "S11-explicit-local": {
+    "binary_sha256": "c97bd8cbf4649d9b991281bd330059281031fe1b97f63bbc352fd729bd17e283",
+    "case_id": "S11-explicit-local",
+    "command": [
+      "/Users/ytxing/workspace/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+      "--case-path=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S11-explicit-local/case",
+      "--rng-run=1",
+      "--mtp-threads=0",
+      "--dependency-visibility-delay=100ns",
+      "--route-runtime-mode=legacy-csv",
+      "--canonical-output=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S11-explicit-local/canonical",
+      "--runtime-storage-snapshot=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S11-explicit-local/runtime-storage-snapshot.csv"
+    ],
+    "returncode": 0,
+    "source_revision": "a6e1303bd7384b826ad01ecfebbdebfcbf1d78de",
+    "status": "success",
+    "timed_out": false
+  },
+  "S12-default-local": {
+    "binary_sha256": "c97bd8cbf4649d9b991281bd330059281031fe1b97f63bbc352fd729bd17e283",
+    "canonical_hashes": {
+      "canonical.rank0.txt": "a9a6ed6f020de29f8dc5e95c933e72d5a3df28e1936224248c5704b926b40b2c"
+    },
+    "case_id": "S12-default-local",
+    "command": [
+      "/Users/ytxing/workspace/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+      "--case-path=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S12-default-local/case",
+      "--rng-run=1",
+      "--mtp-threads=0",
+      "--dependency-visibility-delay=100ns",
+      "--route-runtime-mode=legacy-csv",
+      "--canonical-output=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S12-default-local/canonical",
+      "--runtime-storage-snapshot=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S12-default-local/runtime-storage-snapshot.csv"
+    ],
+    "pair_status": "byte-identical",
+    "returncode": 0,
+    "source_revision": "a6e1303bd7384b826ad01ecfebbdebfcbf1d78de",
+    "status": "success",
+    "timed_out": false
+  },
+  "S12-explicit-local": {
+    "binary_sha256": "c97bd8cbf4649d9b991281bd330059281031fe1b97f63bbc352fd729bd17e283",
+    "case_id": "S12-explicit-local",
+    "command": [
+      "/Users/ytxing/workspace/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+      "--case-path=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S12-explicit-local/case",
+      "--rng-run=1",
+      "--mtp-threads=0",
+      "--dependency-visibility-delay=100ns",
+      "--route-runtime-mode=legacy-csv",
+      "--canonical-output=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S12-explicit-local/canonical",
+      "--runtime-storage-snapshot=/Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S12-explicit-local/runtime-storage-snapshot.csv"
+    ],
+    "returncode": 0,
+    "source_revision": "a6e1303bd7384b826ad01ecfebbdebfcbf1d78de",
+    "status": "success",
+    "timed_out": false
+  }
+}

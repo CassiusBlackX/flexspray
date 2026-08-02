@@ -48,5 +48,5 @@
     "ns3::UbApp::EnableTaskScopedJettyDestroy": "true"
   },
   "scenario": "S10-dense-a2a-64",
-  "source_revision": "89c7bb2f791c25873dac929a457cad2e88ddbbc9"
+  "source_revision": "cfee6e6865985fb0daf2e277776e00fd482685aa"
 }

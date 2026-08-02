@@ -1,0 +1,20 @@
+[16:27:34] [case] Run case: /Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S11-explicit-local/case
+[16:27:34] [case] node.csv delay fields: allocationDelay -> AllocationTime; forwardDelay -> InPortProcessingDelay; legacy 4-column forwardDelay -> AllocationTime.
+[16:27:34] [setup] Load network_attribute.txt
+[16:27:34] [setup] Prepare runlog directory: /Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S11-explicit-local/case/runlog
+[16:27:34] [setup] Load node.csv
+[16:27:34] [setup] Load topology.csv
+[16:27:34] [setup] Load routing_table.csv
+[16:27:34] [setup] Skip transport_channel.csv (not found; traffic will reserve TP connections before endpoints materialize on demand).
+[16:27:34] [traffic] Index phase dependencies from traffic.csv
+[16:27:34] [traffic] Activate clients and enqueue tasks.
+[16:27:34] [traffic] Load traffic.csv
+[16:27:34] Simulation time progress: 0 us[16:27:34] [traffic] Scheduled local tasks: 3968
+[16:27:38] Simulation time progress: 100 us[16:27:41] Simulation time progress: 200 us[16:27:46] Simulation time progress: 300 us[16:27:49] Simulation time progress: 400 us[16:27:52] Simulation time progress: 500 us[16:27:56] Simulation time progress: 600 us[16:28:00] Simulation time progress: 700 us[16:28:05] Simulation time progress: 800 us[16:28:05] Simulation time progress: 900 us
+[16:28:05] [run] Simulation finished.
+[16:28:05] [summary] Program finished.
+[16:28:05] [summary] Wall-clock:
+[16:28:05] [summary]   config : 211 us
+[16:28:05] [summary]   run    : 30.892037 s
+[16:28:05] [summary]   trace  : 0 us
+[16:28:05] [summary]   total  : 31.088468 s

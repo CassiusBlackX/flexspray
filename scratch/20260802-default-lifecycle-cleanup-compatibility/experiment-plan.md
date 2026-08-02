@@ -3,8 +3,7 @@
 ## Status
 
 - Planning mode: `experiment-group`.
-- Case materialization and dry-run are allowed; simulation execution requires a separate approval.
-- The package contains 18 serial runs across seven scenarios.
+- The package contains 18 completed serial runs across seven scenarios.
 
 ## Claim
 
