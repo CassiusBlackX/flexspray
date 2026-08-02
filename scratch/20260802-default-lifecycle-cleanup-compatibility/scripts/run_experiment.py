@@ -42,6 +42,18 @@ def git(*args: str) -> str:
     return subprocess.check_output(["git", *args], cwd=REPO, text=True).strip()
 
 
+def candidate_dirty_paths() -> list[str]:
+    output = git(
+        "status",
+        "--porcelain",
+        "--",
+        "src/unified-bus/model/ub-app.cc",
+        "src/unified-bus/test/ub-test.cc",
+        "scratch/20260802-default-lifecycle-cleanup-compatibility",
+    )
+    return [line for line in output.splitlines() if line]
+
+
 def load_matrix() -> dict[str, Any]:
     return yaml.safe_load((PACKAGE / "matrix.yaml").read_text(encoding="utf-8"))
 
@@ -218,9 +230,10 @@ def verify_pairs() -> None:
 
 
 def preflight(allow_dirty: bool, persist: bool = True) -> dict[str, Any]:
-    dirty = bool(git("status", "--porcelain"))
+    dirty_paths = candidate_dirty_paths()
+    dirty = bool(dirty_paths)
     if dirty and not allow_dirty:
-        raise RuntimeError("execution requires a clean candidate worktree")
+        raise RuntimeError(f"execution requires a clean candidate worktree: {dirty_paths}")
     if not BINARY.is_file():
         raise RuntimeError(f"candidate binary is missing: {BINARY}")
     defaults, catalog_path = require_runtime_defaults()
@@ -228,6 +241,7 @@ def preflight(allow_dirty: bool, persist: bool = True) -> dict[str, Any]:
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "source_revision": git("rev-parse", "HEAD"),
         "dirty": dirty,
+        "dirty_paths": dirty_paths,
         "binary": str(BINARY),
         "binary_sha256": sha256(BINARY),
         "catalog": str(catalog_path),
