@@ -777,12 +777,44 @@ TpConnectionManager::DestroyConnection(const UbLifecycleResourceIdentity& identi
                                        UbDestroyCallback callback)
 {
     if (identity.kind != UbLifecycleResourceKind::RTP_CONNECTION ||
-        identity.ownerNodeId != m_ownerNodeId ||
+        identity.ownerNodeId >= NodeList::GetNNodes() ||
         identity.localId > std::numeric_limits<uint32_t>::max())
     {
         return UbDestroyStatus::REJECTED;
     }
     std::lock_guard<std::mutex> controlLock(g_tpConnectionControlLock);
+    if (identity.ownerNodeId != m_ownerNodeId)
+    {
+        uint64_t requestId = 0;
+        if (!callback.IsNull())
+        {
+            std::lock_guard<std::mutex> lock(m_stateLock);
+            NS_ABORT_MSG_IF(m_nextRemoteDestroyRequestId == std::numeric_limits<uint64_t>::max(),
+                            "Remote connection destroy request identity exhausted");
+            requestId = ++m_nextRemoteDestroyRequestId;
+            m_pendingRemoteDestroyCallbacks.emplace(requestId,
+                                                    PendingRemoteDestroy{identity, callback});
+        }
+
+        UbLifecycleControlRecord control;
+        control.sourceNodeId = m_ownerNodeId;
+        control.targetNodeId = identity.ownerNodeId;
+        control.operation = UbLifecycleControlOperation::CONNECTION_DESTROY_REQUEST;
+        control.resource = identity;
+        control.tpn = static_cast<uint32_t>(identity.localId);
+        control.requestId = requestId;
+        control.value = static_cast<uint64_t>(reason);
+        if (!UbParallelLifecycleAdapter::RouteControl(control))
+        {
+            if (requestId != 0)
+            {
+                std::lock_guard<std::mutex> lock(m_stateLock);
+                m_pendingRemoteDestroyCallbacks.erase(requestId);
+            }
+            return UbDestroyStatus::REJECTED;
+        }
+        return UbDestroyStatus::PENDING;
+    }
     return DestroyConnectionLocked(identity.ownerNodeId,
                                    static_cast<uint32_t>(identity.localId),
                                    &identity,

@@ -213,11 +213,11 @@ public:
 
     /**
      * @brief Explicitly destroy the connection identified by an immutable lifecycle identity.
-     * @param identity Exact RTP connection identity returned by this manager.
+     * @param identity Exact RTP connection identity returned by a reservation manager.
      * @param reason Network-semantic reason for the explicit destroy request.
      * @param callback Callback invoked after destroy completes or fails asynchronously.
-     * @return REJECTED when the kind, owner, local ID, or generation does not match this manager;
-     *         otherwise the current explicit-destroy status.
+     * @return REJECTED when the kind or local ID is invalid, or when an in-process owner rejects
+     *         the identity; otherwise the current explicit-destroy status.
      */
     UbDestroyStatus DestroyConnection(const UbLifecycleResourceIdentity& identity,
                                       UbDestroyReason reason = UbDestroyReason::EXPLICIT,
