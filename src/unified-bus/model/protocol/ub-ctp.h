@@ -157,6 +157,7 @@ class UbCtpTransportService : public Object
     bool SendSegment(Ptr<UbWqeSegment> segment, const UbCtpEntityKey& key);
     void PrepareJetty(Ptr<UbJetty> jetty);
     void StartJetty(Ptr<UbJetty> jetty, const UbCtpEntityKey& key);
+    void TryContinueJettyTransmission(const UbCtpEntityKey& relatedEntityKey);
     void ReleaseJetty(uint32_t jettyNum);
     bool HasJettyBindingForTest(uint32_t jettyNum) const;
     UbCtpEntityKey MakeSourceGroupKeyForRequest(const UbCtpEntityKey& key) const;
@@ -213,7 +214,6 @@ class UbCtpTransportService : public Object
                                               uint32_t payloadBytes,
                                               uint32_t flowId,
                                               uint32_t flowSize);
-    void DrainJettys(UbCtpEntityState& state);
     uint32_t SelectOutPort(UbCtpEntityState& state,
                            const UbCtpEntityKey& routeKey,
                            uint16_t loadBalanceSalt);

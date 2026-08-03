@@ -182,9 +182,9 @@ public:
     void RecvDataPacket(Ptr<Packet> p);
 
     /**
-     * @brief apply ta for next wqesegment
+     * @brief Ask the transaction owner to continue RTP WQE transmission after TP capacity changes.
      */
-    void ApplyNextWqeSegment();
+    void TryContinueJettyTransmission();
     void MarkOwnerControllerDisposing()
     {
         m_ownerControllerDisposing = true;

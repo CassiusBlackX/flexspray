@@ -845,7 +845,7 @@ UbCtpTransportService::StartJetty(Ptr<UbJetty> jetty, const UbCtpEntityKey& key)
         Ptr<UbCtpTransportService>(this));
     UbCtpEntityState& state = GetOrCreateEntityState(key);
     state.Tx().routing.routingType = m_defaultRoutingPolicy.routingType;
-    DrainJettys(state);
+    TryContinueJettyTransmission(key);
 }
 
 void
@@ -986,8 +986,10 @@ UbCtpTransportService::SendResponseSegmentForTest(Ptr<UbWqeSegment> response,
 }
 
 void
-UbCtpTransportService::DrainJettys(UbCtpEntityState& state)
+UbCtpTransportService::TryContinueJettyTransmission(
+    const UbCtpEntityKey& relatedEntityKey)
 {
+    UbCtpEntityState& state = GetOrCreateEntityState(relatedEntityKey);
     const UbCtpEntityKey& key = state.GetKey();
     auto jettysIt = m_keyJettys.find(key);
     if (jettysIt == m_keyJettys.end() || jettysIt->second.empty())
@@ -1690,7 +1692,7 @@ UbCtpTransportService::CompleteFromTaAckNow(const UbCtpEntityKey& key,
     }
     if (context->GetCompleteUna() != oldCompleteUna)
     {
-        DrainJettys(*state);
+        TryContinueJettyTransmission(state->GetKey());
     }
 }
 

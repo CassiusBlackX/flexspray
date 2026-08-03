@@ -407,7 +407,7 @@ UbController::FinalizeRtpTpGroupDestroy(Ptr<UbTransportGroup> group)
                     "TPG destroy finalize requires drained group work");
     if (m_transaction != nullptr)
     {
-        m_transaction->RetireRtpAdmissionDomain(identity);
+        m_transaction->RetireRtpTxQueue(identity);
         m_transaction->EraseRtpTpGroupBindings(identity);
     }
     while (group->GetMemberCount() != 0)

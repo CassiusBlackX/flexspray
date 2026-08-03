@@ -173,9 +173,11 @@ namespace ns3 {
         void TriggerScheduleWqeSegment(uint32_t jettyNum,
                                        Ptr<UbWqe> originatingWqe,
                                        bool lifecycleOperation);
+        void TryContinueJettyTransmission(uint32_t relatedJettyNum);
+        void TryContinueJettyTransmission(Ptr<UbTransportChannel> relatedTp);
+        void TryContinueJettyTransmission(Ptr<UbTransportGroup> relatedTpGroup);
 
         // tp调用
-        void ApplyScheduleWqeSegment(Ptr<UbTransportChannel> tp);
         Ptr<UbWqeSegment> PrepareNextCtpWqeSegment(Ptr<UbJetty> jetty,
                                                    uint32_t maxSegmentBytes);
         void CommitCtpWqeSegment(Ptr<UbWqeSegment> segment);
@@ -196,8 +198,6 @@ namespace ns3 {
         {
             return DeriveRemoteAddress(request);
         }
-
-        void TriggerTpTransmit(uint32_t jettyNum);
 
         void TpInit(Ptr<UbTransportChannel> tp);
 
@@ -240,13 +240,13 @@ namespace ns3 {
         uint32_t GetResidentOperationCount() const;
         uint64_t GetResidentSegmentCount() const;
         uint32_t GetActiveOperationCount() const;
-        uint32_t GetAdmissionDomainReadySourceCountForTest(
+        uint32_t GetRtpTxQueuePendingEntryCountForTest(
             const UbLifecycleResourceIdentity& identity) const;
-        bool IsAdmissionDomainBlockedForTest(
+        bool IsRtpTxQueueWaitingForTransportForTest(
             const UbLifecycleResourceIdentity& identity) const;
-        uint64_t GetAdmissionDomainCapacityWakeCountForTest(
+        uint64_t GetRtpTxQueueCapacityRecoveryCountForTest(
             const UbLifecycleResourceIdentity& identity) const;
-        uint32_t GetAdmissionDomainCountForTest() const;
+        uint32_t GetRtpTxQueueCountForTest() const;
         void ResetRtpResolutionCountersForTest();
         uint64_t GetRtpResolutionCountForTest() const;
         uint64_t GetRtpTpgMaterializationCountForTest() const;
@@ -256,7 +256,7 @@ namespace ns3 {
             const UbLifecycleResourceIdentity& groupIdentity,
             UbWorkOutcome outcome,
             bool forceDrain);
-        void RetireRtpAdmissionDomain(
+        void RetireRtpTxQueue(
             const UbLifecycleResourceIdentity& identity);
         bool TryGetOperationSnapshot(uint32_t jettyNum,
                                      uint32_t wqeId,
@@ -296,15 +296,15 @@ namespace ns3 {
 
         void DoDispose() override;
 
-        struct AdmissionDomainKey;
+        struct RtpTxQueueKey;
         struct OperationRecord;
         void RunTrackedPrepareRtpWqeSegment(uint32_t jettyNum,
                                             Ptr<UbWqe> originatingWqe,
-                                            AdmissionDomainKey domainKey,
+                                            RtpTxQueueKey queueKey,
                                             uint64_t eventToken);
         void RunTrackedAdmitRtpWqeSegment(Ptr<UbWqeSegment> segment,
                                           Ptr<UbWqe> originatingWqe,
-                                          AdmissionDomainKey domainKey,
+                                          RtpTxQueueKey queueKey,
                                           uint64_t eventToken);
         enum class RtpSegmentAdmissionResult : uint8_t
         {
@@ -318,14 +318,14 @@ namespace ns3 {
             Ptr<UbWqe> originatingWqe,
             Ptr<UbWqeSegment> segment,
             Ptr<UbTransportChannel>& admittedTp);
-        void ClearRtpScheduleChain(uint32_t jettyNum, Ptr<UbWqe> originatingWqe);
-        struct AdmissionDomainKey
+        void ClearRtpWqeSegmentTxState(uint32_t jettyNum, Ptr<UbWqe> originatingWqe);
+        struct RtpTxQueueKey
         {
             UbRtpTransportReferenceKind kind{UbRtpTransportReferenceKind::DIRECT_TP};
             UbLifecycleResourceIdentity identity;
 
-            bool operator==(const AdmissionDomainKey&) const = default;
-            bool operator<(const AdmissionDomainKey& other) const
+            bool operator==(const RtpTxQueueKey&) const = default;
+            bool operator<(const RtpTxQueueKey& other) const
             {
                 return std::tie(kind,
                                 identity.ownerNodeId,
@@ -339,26 +339,26 @@ namespace ns3 {
                                 other.identity.generation);
             }
         };
-        struct ReadySourceKey
+        struct RtpTxQueueEntry
         {
             enum class Kind : uint8_t
             {
-                LOCAL_OPERATION,
-                REMOTE_ORIGIN,
+                LOCAL_WQE,
+                REMOTE_WQE_SEGMENT,
             };
 
-            Kind kind{Kind::LOCAL_OPERATION};
+            Kind kind{Kind::LOCAL_WQE};
             uint32_t jettyNum{0};
             uint32_t wqeId{0};
             UbLifecycleResourceIdentity operationIdentity;
         };
-        struct RemoteSourceKey
+        struct RemoteRtpWqeSegmentKey
         {
             uint32_t originJettyNum{0};
             uint32_t taskId{0};
             UbLifecycleResourceIdentity operationIdentity;
 
-            bool operator<(const RemoteSourceKey& other) const
+            bool operator<(const RemoteRtpWqeSegmentKey& other) const
             {
                 return std::tie(originJettyNum,
                                 taskId,
@@ -374,45 +374,44 @@ namespace ns3 {
                                 other.operationIdentity.generation);
             }
         };
-        struct RemoteSourceState
+        struct RemoteRtpWqeSegmentState
         {
             std::deque<Ptr<UbWqeSegment>> segments;
-            bool readyQueued{false};
+            bool txEntryQueued{false};
         };
-        struct AdmissionDomainState
+        struct RtpTxQueue
         {
-            std::deque<ReadySourceKey> readySources;
-            bool blocked{false};
-            bool eventPending{false};
-            bool sourceActive{false};
+            std::deque<RtpTxQueueEntry> pendingTxEntries;
+            bool waitingForTransportCapacity{false};
+            bool txEventPending{false};
+            bool txEntryActive{false};
             EventId pendingEvent;
-            std::optional<ReadySourceKey> activeSource;
-            uint64_t capacityWakeEvents{0};
+            std::optional<RtpTxQueueEntry> activeTxEntry;
+            uint64_t transportCapacityRecoveryEvents{0};
         };
-        static AdmissionDomainKey MakeAdmissionDomainKey(
+        static RtpTxQueueKey MakeRtpTxQueueKey(
             const UbRtpTransportReference& reference);
-        void StartRtpScheduleChain(uint32_t jettyNum, Ptr<UbWqe> originatingWqe);
-        void EnqueueRtpSource(uint32_t jettyNum,
+        void StartRtpWqeSegmentTx(uint32_t jettyNum, Ptr<UbWqe> originatingWqe);
+        void EnqueueRtpWqe(uint32_t jettyNum,
                               Ptr<UbWqe> originatingWqe,
-                              bool restoreBlockedFront);
-        void EnqueueRemoteRtpSource(uint32_t tpn, Ptr<UbWqeSegment> segment);
-        void RunRemoteRtpSource(const AdmissionDomainKey& domainKey,
-                                const ReadySourceKey& source);
-        void ScheduleAdmissionDomain(const AdmissionDomainKey& domainKey);
-        void CompleteAdmissionDomainAttempt(uint32_t jettyNum, Ptr<UbWqe> originatingWqe);
-        void CancelRtpScheduleChain(AdmissionDomainKey domainKey,
+                              bool restoreWaitingFront);
+        void EnqueueRemoteRtpWqeSegment(uint32_t tpn, Ptr<UbWqeSegment> segment);
+        void RunRemoteRtpWqeSegmentTx(const RtpTxQueueKey& queueKey,
+                                      const RtpTxQueueEntry& entry);
+        void ScheduleRtpTx(const RtpTxQueueKey& queueKey);
+        void FinishActiveRtpTxEntry(uint32_t jettyNum, Ptr<UbWqe> originatingWqe);
+        void CancelRtpWqeSegmentTx(RtpTxQueueKey queueKey,
                                     uint32_t jettyNum,
                                     Ptr<UbWqe> originatingWqe);
-        void DetachRtpSource(OperationRecord& operation);
+        void DetachRtpTxEntry(OperationRecord& operation);
         void FinishWqe(uint32_t jettyNum,
                        Ptr<UbWqe> wqe,
                        UbWorkOutcome outcome,
                        WqeTerminalMode terminalMode);
         void ForceDrainTerminalPendingOperation(uint32_t jettyNum, uint32_t wqeId);
-        void DeferRtpSource(uint32_t jettyNum, Ptr<UbWqe> originatingWqe);
-        void WakeDeferredRtpSources(Ptr<UbTransportChannel> tp);
-        void WakeAdmissionDomain(const AdmissionDomainKey& key, bool capacityTransition);
-        void RunAdmissionDomainWake(AdmissionDomainKey domainKey);
+        void EnqueueRtpWqeAfterBackpressure(uint32_t jettyNum, Ptr<UbWqe> originatingWqe);
+        void TryContinueRtpTxQueue(const RtpTxQueueKey& key, bool capacityTransition);
+        void RunRtpTx(RtpTxQueueKey queueKey);
         bool IsCurrentWqeOperation(uint32_t jettyNum, Ptr<UbWqe> wqe) const;
         bool RecordSegmentSuccess(uint32_t jettyNum,
                                   uint32_t wqeId,
@@ -460,7 +459,7 @@ namespace ns3 {
         std::map<uint32_t, uint32_t> m_jettyTpNextIndex;
         // 新 Jetty 的初始 TP 轮转位置；一任务一 Jetty 的短流也能展开到多 TP。
         uint32_t m_nextJettyTpStartIndex = 0;
-        std::map<uint32_t, std::map<RemoteSourceKey, RemoteSourceState>>
+        std::map<uint32_t, std::map<RemoteRtpWqeSegmentKey, RemoteRtpWqeSegmentState>>
             m_tpRelatedRemoteRequests;
 
         std::map<uint32_t, uint32_t> m_tpRRIndex;
@@ -480,8 +479,8 @@ namespace ns3 {
             UbRtpTransportReference transportReference;
             uint32_t directTpn{UINT32_MAX};
             UbLifecycleLeaseIdentity workLease;
-            bool rtpScheduleChainActive{false};
-            bool readyQueued{false};
+            bool rtpWqeSegmentTxActive{false};
+            bool txEntryQueued{false};
             bool terminalPending{false};
             bool ctp{false};
             UbCtpEntityKey ctpKey;
@@ -499,7 +498,7 @@ namespace ns3 {
         std::map<std::pair<uint32_t, uint32_t>, OperationRecord> m_operations;
         std::map<UbCtpEntityKey, UbCtpTransactionState> m_ctpTransactionStates;
         std::map<UbCtpEntityKey, uint32_t> m_ctpNextTaSsn;
-        std::map<AdmissionDomainKey, AdmissionDomainState> m_admissionDomains;
+        std::map<RtpTxQueueKey, RtpTxQueue> m_rtpTxQueues;
         std::vector<UbLifecycleResourceIdentity> m_suppressedTpgOwnerProgress;
         bool m_collectRtpResolutionCountersForTest{false};
         mutable uint64_t m_rtpResolutionCount{0};

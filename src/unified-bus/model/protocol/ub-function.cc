@@ -1089,6 +1089,10 @@ UbJetty::ApplyWqeSegmentTerminalProgress(const std::vector<uint32_t>& taSsns)
     m_taSsnSndUna += m_ssnAckWindow.AdvanceContiguous();
     NS_ABORT_MSG_IF(m_ssnAckWindow.GetBase() != m_taSsnSndUna,
                     "Jetty terminal progress advanced ACK-window state inconsistently");
+    if (m_transaction != nullptr)
+    {
+        m_transaction->TryContinueJettyTransmission(m_jettyNum);
+    }
 }
 
 Ptr<UbWqeSegment> UbJetty::GenWqeSegment(Ptr<UbWqe> wqe, uint32_t segmentSize)
@@ -1228,10 +1232,6 @@ bool UbJetty::ProcessWqeSegmentComplete(uint32_t taSsnAck)
         return false;
     }
 
-    if (IsLimited()) {
-        GetTransaction()->TriggerTpTransmit(m_jettyNum);
-    }
-
     // 计算在 bitset 中的相对位置
     uint32_t bitIndex = taSsnAck - m_taSsnSndUna;
 
@@ -1273,6 +1273,10 @@ bool UbJetty::ProcessWqeSegmentComplete(uint32_t taSsnAck)
         // 检查并移除已完成的 WQE
         CheckAndRemoveCompletedWqe();
     }
+    if (m_transaction != nullptr)
+    {
+        m_transaction->TryContinueJettyTransmission(m_jettyNum);
+    }
     return true;
 }
 
@@ -1309,8 +1313,6 @@ void UbJetty::CheckAndRemoveCompletedWqe()
             if (!FinishCallback.IsNull()) {
                 FinishCallback(wqeId, m_jettyNum); // 调用应用层的回调
             }
-            // trigger tp
-            ubTa->TriggerTpTransmit(m_jettyNum);
             NodeList::GetNode(m_nodeId)
                 ->GetObject<UbController>()
                 ->GetUbFunction()
@@ -1344,7 +1346,10 @@ UbJetty::ApplyWqeTerminal(uint32_t wqeId, UbWorkOutcome outcome)
                     "Transaction outcome references an unknown or terminal WQE");
     Ptr<UbJetty> keepAlive(this);
     m_wqeVector.erase(it);
-    GetTransaction()->TriggerTpTransmit(m_jettyNum);
+    if (m_transaction != nullptr)
+    {
+        m_transaction->TryContinueJettyTransmission(m_jettyNum);
+    }
     if (!m_wqeCompletionCallback.IsNull())
     {
         m_wqeCompletionCallback({m_jettyNum, wqeId, outcome});

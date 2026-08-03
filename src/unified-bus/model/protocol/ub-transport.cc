@@ -761,7 +761,7 @@ UbTransportChannel::AdvanceNewDataSendState(const NewDataSendContext& ctx,
 
     // Shallow pipeline keeps a small active and unacked segment budget.
     if (ctx.segment->IsSentCompleted() && CanScheduleAnotherSegment()) {
-        ApplyNextWqeSegment();
+        TryContinueJettyTransmission();
     }
     if (HasPendingTransmitWork()) {
         m_headArrivalTime = Simulator::Now();
@@ -1545,7 +1545,7 @@ UbTransportChannel::CompleteAckedWqeSegments(const TransportResponseContext& ctx
 
         m_wqeSegmentVector.erase(m_wqeSegmentVector.begin() + i);
         if (CanScheduleAnotherSegment()) {
-            ApplyNextWqeSegment();
+            TryContinueJettyTransmission();
         }
     }
 }
@@ -1556,7 +1556,7 @@ UbTransportChannel::UpdateSenderAfterTransportAck(const TransportResponseContext
 {
     if (m_tpFullFlag && IsWqeSegmentLimited() == false) {
         m_tpFullFlag = false;
-        ApplyNextWqeSegment();
+        TryContinueJettyTransmission();
     }
     if (IsRetransEnabled() && m_wqeSegmentVector.size() == 0) {
         m_retrans->CancelTimer();
@@ -2336,7 +2336,7 @@ Ptr<UbTransaction> UbTransportChannel::GetTransaction()
     return NodeList::GetNode(m_nodeId)->GetObject<UbController>()->GetUbTransaction();
 }
 
-void UbTransportChannel::ApplyNextWqeSegment()
+void UbTransportChannel::TryContinueJettyTransmission()
 {
     if (m_ownerControllerDisposing)
     {
@@ -2353,7 +2353,7 @@ void UbTransportChannel::ApplyNextWqeSegment()
     Ptr<UbTransaction> transaction = controller->GetUbTransaction();
     NS_ABORT_MSG_IF(transaction == nullptr,
                     "TP capacity wake requires the Controller Transaction facade");
-    transaction->ApplyScheduleWqeSegment(this);
+    transaction->TryContinueJettyTransmission(this);
 }
 
 bool UbTransportChannel::IsEmpty()
