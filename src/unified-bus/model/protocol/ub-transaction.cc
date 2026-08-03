@@ -2166,6 +2166,32 @@ UbTransaction::IsRtpTxQueueWaitingForTransportForTest(
     return domain != m_rtpTxQueues.end() && domain->second.waitingForTransportCapacity;
 }
 
+bool
+UbTransaction::IsRtpTxQueueEntryActiveForTest(
+    const UbLifecycleResourceIdentity& identity) const
+{
+    const RtpTxQueueKey key{
+        identity.kind == UbLifecycleResourceKind::RTP_TPG
+            ? UbRtpTransportReferenceKind::TPG
+            : UbRtpTransportReferenceKind::DIRECT_TP,
+        identity};
+    const auto domain = m_rtpTxQueues.find(key);
+    return domain != m_rtpTxQueues.end() && domain->second.txEntryActive;
+}
+
+bool
+UbTransaction::IsRtpTxQueueEventPendingForTest(
+    const UbLifecycleResourceIdentity& identity) const
+{
+    const RtpTxQueueKey key{
+        identity.kind == UbLifecycleResourceKind::RTP_TPG
+            ? UbRtpTransportReferenceKind::TPG
+            : UbRtpTransportReferenceKind::DIRECT_TP,
+        identity};
+    const auto domain = m_rtpTxQueues.find(key);
+    return domain != m_rtpTxQueues.end() && domain->second.txEventPending;
+}
+
 uint64_t
 UbTransaction::GetRtpTxQueueCapacityRecoveryCountForTest(
     const UbLifecycleResourceIdentity& identity) const

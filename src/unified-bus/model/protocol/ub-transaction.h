@@ -244,6 +244,10 @@ namespace ns3 {
             const UbLifecycleResourceIdentity& identity) const;
         bool IsRtpTxQueueWaitingForTransportForTest(
             const UbLifecycleResourceIdentity& identity) const;
+        bool IsRtpTxQueueEntryActiveForTest(
+            const UbLifecycleResourceIdentity& identity) const;
+        bool IsRtpTxQueueEventPendingForTest(
+            const UbLifecycleResourceIdentity& identity) const;
         uint64_t GetRtpTxQueueCapacityRecoveryCountForTest(
             const UbLifecycleResourceIdentity& identity) const;
         uint32_t GetRtpTxQueueCountForTest() const;

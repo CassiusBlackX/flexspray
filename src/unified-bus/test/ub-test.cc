@@ -9884,8 +9884,7 @@ class UbJettyInflightRepeatedKickIsIdempotentTest : public TestCase
         Ptr<UbController> controller = topo.sender->GetObject<UbController>();
         Ptr<UbFunction> function = controller->GetUbFunction();
         m_transaction = controller->GetUbTransaction();
-        Ptr<UbTransportChannel> tp =
-            controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
+        m_tp = controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
 
         function->CreateJetty(topo.sender->GetId(),
                               topo.receiver->GetId(),
@@ -9902,7 +9901,7 @@ class UbJettyInflightRepeatedKickIsIdempotentTest : public TestCase
         m_jetty->SetTaSegmentBytes(64);
         m_jetty->SetWqeCompletionCallback(
             MakeCallback(&UbJettyInflightRepeatedKickIsIdempotentTest::OnCompletion, this));
-        tp->TraceConnectWithoutContext(
+        m_tp->TraceConnectWithoutContext(
             "WqeSegmentSendsNotify",
             MakeCallback(&UbJettyInflightRepeatedKickIsIdempotentTest::OnAdmission, this));
 
@@ -9931,12 +9930,12 @@ class UbJettyInflightRepeatedKickIsIdempotentTest : public TestCase
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
             "Second WQE should enter the same lifecycle queue");
         NS_TEST_ASSERT_MSG_EQ(m_transaction->GetRtpTxQueuePendingEntryCountForTest(
-                                  tp->GetLifecycleOwner()),
+                                  m_tp->GetLifecycleOwner()),
                               1u,
                               "Second WQE should remain as one pending RTP Tx entry");
         KickRepeatedly();
         NS_TEST_ASSERT_MSG_EQ(m_transaction->GetRtpTxQueuePendingEntryCountForTest(
-                                  tp->GetLifecycleOwner()),
+                                  m_tp->GetLifecycleOwner()),
                               1u,
                               "Repeated kicks must not duplicate the queued WQE entry");
 
@@ -9961,6 +9960,12 @@ class UbJettyInflightRepeatedKickIsIdempotentTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(m_jetty->GetTaSsnSndUnaForTest(),
                               3u,
                               "All real segments should complete exactly once");
+        NS_TEST_ASSERT_MSG_EQ(m_observedActiveKick,
+                              true,
+                              "Repeated kicks should run while an RTP Tx entry is active");
+        NS_TEST_ASSERT_MSG_EQ(m_observedEventPendingKick,
+                              true,
+                              "Repeated kicks should run while an RTP Tx event is pending");
 
         Simulator::Destroy();
         Config::Reset();
@@ -9969,8 +9974,13 @@ class UbJettyInflightRepeatedKickIsIdempotentTest : public TestCase
   private:
     void KickRepeatedly()
     {
+        const auto identity = m_tp->GetLifecycleOwner();
         for (uint32_t i = 0; i < 3; ++i)
         {
+            m_observedActiveKick =
+                m_observedActiveKick || m_transaction->IsRtpTxQueueEntryActiveForTest(identity);
+            m_observedEventPendingKick = m_observedEventPendingKick ||
+                                         m_transaction->IsRtpTxQueueEventPendingForTest(identity);
             m_transaction->TryContinueJettyTransmission(kUrmaWriteRegressionJettyNum);
         }
     }
@@ -9998,10 +10008,13 @@ class UbJettyInflightRepeatedKickIsIdempotentTest : public TestCase
     }
 
     Ptr<UbTransaction> m_transaction;
+    Ptr<UbTransportChannel> m_tp;
     Ptr<UbJetty> m_jetty;
     uint32_t m_firstTask{0};
     uint32_t m_secondTask{0};
     uint32_t m_completions{0};
+    bool m_observedActiveKick{false};
+    bool m_observedEventPendingKick{false};
     std::vector<uint32_t> m_admittedTaSsns;
 };
 
