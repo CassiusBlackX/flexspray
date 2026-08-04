@@ -9420,51 +9420,84 @@ class UbLifecycleRtpTxQueueRoundRobinReportsFairnessTest : public TestCase
     std::vector<uint32_t> m_admissionOrder;
 };
 
-class UbJettyInflightAckWakeCompletesMultiSegmentWqeTest : public TestCase
+class UbJettyInflightTestCase : public TestCase
+{
+  protected:
+    explicit UbJettyInflightTestCase(const std::string& name)
+        : TestCase(name)
+    {
+    }
+
+    void SetUpRtpFixture()
+    {
+        Config::Reset();
+        m_topo = BuildLocalTpTopology();
+        InstallStaticTpPair(m_topo);
+        m_controller = m_topo.sender->GetObject<UbController>();
+        m_function = m_controller->GetUbFunction();
+        m_transaction = m_controller->GetUbTransaction();
+        m_primaryTp =
+            m_controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
+    }
+
+    Ptr<UbJetty> CreateAndBindInflightJetty(uint32_t jettyNum,
+                                            uint32_t inflightMax = 1,
+                                            bool multiPath = false,
+                                            const std::vector<uint32_t>& tpns = {
+                                                kUrmaWriteRegressionSenderTpn})
+    {
+        m_function->CreateJetty(m_topo.sender->GetId(), m_topo.receiver->GetId(), jettyNum);
+        const bool bound = m_transaction->JettyBindTp(m_topo.sender->GetId(),
+                                                      m_topo.receiver->GetId(),
+                                                      jettyNum,
+                                                      multiPath,
+                                                      tpns);
+        NS_ABORT_MSG_IF(!bound, "Jetty inflight fixture could not bind its RTP transport");
+        Ptr<UbJetty> jetty = m_function->GetJetty(jettyNum);
+        jetty->SetAttribute("UbJettyInflightMax", UintegerValue(inflightMax));
+        jetty->SetTaSegmentBytes(64);
+        return jetty;
+    }
+
+    void TearDownRtpFixture()
+    {
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+    LocalTpTopology m_topo;
+    Ptr<UbController> m_controller;
+    Ptr<UbFunction> m_function;
+    Ptr<UbTransaction> m_transaction;
+    Ptr<UbTransportChannel> m_primaryTp;
+};
+
+class UbJettyInflightAckWakeCompletesMultiSegmentWqeTest : public UbJettyInflightTestCase
 {
   public:
     UbJettyInflightAckWakeCompletesMultiSegmentWqeTest()
-        : TestCase("UnifiedBus - Jetty inflight ACK wake completes a multi-segment WQE")
+        : UbJettyInflightTestCase(
+              "UnifiedBus - Jetty inflight ACK wake completes a multi-segment WQE")
     {
     }
 
     void DoRun() override
     {
-        Config::Reset();
-        LocalTpTopology topo = BuildLocalTpTopology();
-        InstallStaticTpPair(topo);
-        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
-        Ptr<UbFunction> function = controller->GetUbFunction();
-        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
-        Ptr<UbTransportChannel> tp =
-            controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
-
-        function->CreateJetty(topo.sender->GetId(),
-                              topo.receiver->GetId(),
-                              kUrmaWriteRegressionJettyNum);
-        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
-                                                       topo.receiver->GetId(),
-                                                       kUrmaWriteRegressionJettyNum,
-                                                       false,
-                                                       {kUrmaWriteRegressionSenderTpn}),
-                              true,
-                              "Jetty should bind to the direct TP");
-        Ptr<UbJetty> jetty = function->GetJetty(kUrmaWriteRegressionJettyNum);
-        jetty->SetAttribute("UbJettyInflightMax", UintegerValue(1));
-        jetty->SetTaSegmentBytes(64);
+        SetUpRtpFixture();
+        Ptr<UbJetty> jetty = CreateAndBindInflightJetty(kUrmaWriteRegressionJettyNum);
         jetty->SetWqeCompletionCallback(
             MakeCallback(&UbJettyInflightAckWakeCompletesMultiSegmentWqeTest::OnCompletion, this));
-        tp->TraceConnectWithoutContext(
+        m_primaryTp->TraceConnectWithoutContext(
             "WqeSegmentSendsNotify",
             MakeCallback(&UbJettyInflightAckWakeCompletesMultiSegmentWqeTest::OnAdmission, this));
 
-        Ptr<UbWqe> wqe = function->CreateWqe(topo.sender->GetId(),
-                                             topo.receiver->GetId(),
-                                             128,
-                                             kUrmaWriteRegressionTaskId,
-                                             TaOpcode::TA_OPCODE_WRITE);
+        Ptr<UbWqe> wqe = m_function->CreateWqe(m_topo.sender->GetId(),
+                                               m_topo.receiver->GetId(),
+                                               128,
+                                               kUrmaWriteRegressionTaskId,
+                                               TaOpcode::TA_OPCODE_WRITE);
         NS_TEST_ASSERT_MSG_EQ(
-            static_cast<uint32_t>(function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status),
+            static_cast<uint32_t>(m_function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
             "Two-segment WQE should enter lifecycle admission");
 
@@ -9484,15 +9517,14 @@ class UbJettyInflightAckWakeCompletesMultiSegmentWqeTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(jetty->GetActiveWqeCount(),
                               0u,
                               "Completed WQE should leave the Jetty");
-        NS_TEST_ASSERT_MSG_EQ(transaction->GetResidentOperationCount(),
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->GetResidentOperationCount(),
                               0u,
                               "Completed WQE should retire its operation");
-        NS_TEST_ASSERT_MSG_EQ(transaction->GetResidentSegmentCount(),
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->GetResidentSegmentCount(),
                               0u,
                               "Completed WQE should retire all segments");
 
-        Simulator::Destroy();
-        Config::Reset();
+        TearDownRtpFixture();
     }
 
   private:
@@ -9517,66 +9549,51 @@ class UbJettyInflightAckWakeCompletesMultiSegmentWqeTest : public TestCase
     uint32_t m_completions{0};
 };
 
-class UbJettyInflightDoesNotBlockSharedTpPeerTest : public TestCase
+class UbJettyInflightDoesNotBlockSharedTpPeerTest : public UbJettyInflightTestCase
 {
   public:
     UbJettyInflightDoesNotBlockSharedTpPeerTest()
-        : TestCase("UnifiedBus - Jetty inflight wait does not block a shared TP peer")
+        : UbJettyInflightTestCase(
+              "UnifiedBus - Jetty inflight wait does not block a shared TP peer")
     {
     }
 
     void DoRun() override
     {
-        Config::Reset();
-        LocalTpTopology topo = BuildLocalTpTopology();
-        InstallStaticTpPair(topo);
-        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
-        Ptr<UbFunction> function = controller->GetUbFunction();
-        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
-        Ptr<UbTransportChannel> tp =
-            controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
+        SetUpRtpFixture();
 
         constexpr uint32_t firstJetty = kUrmaWriteRegressionJettyNum;
         constexpr uint32_t secondJetty = kUrmaWriteRegressionJettyNum + 1;
         for (uint32_t jettyNum : {firstJetty, secondJetty})
         {
-            function->CreateJetty(topo.sender->GetId(), topo.receiver->GetId(), jettyNum);
-            NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
-                                                           topo.receiver->GetId(),
-                                                           jettyNum,
-                                                           false,
-                                                           {kUrmaWriteRegressionSenderTpn}),
-                                  true,
-                                  "Both Jetties should share one direct TP");
-            Ptr<UbJetty> jetty = function->GetJetty(jettyNum);
-            jetty->SetAttribute("UbJettyInflightMax", UintegerValue(1));
-            jetty->SetTaSegmentBytes(64);
+            Ptr<UbJetty> jetty = CreateAndBindInflightJetty(jettyNum);
             jetty->SetWqeCompletionCallback(
                 MakeCallback(&UbJettyInflightDoesNotBlockSharedTpPeerTest::OnCompletion, this));
         }
-        tp->TraceConnectWithoutContext(
+        m_primaryTp->TraceConnectWithoutContext(
             "WqeSegmentSendsNotify",
             MakeCallback(&UbJettyInflightDoesNotBlockSharedTpPeerTest::OnAdmission, this));
 
         m_firstTask = kUrmaWriteRegressionTaskId + 100;
         m_secondTask = kUrmaWriteRegressionTaskId + 101;
-        Ptr<UbWqe> first = function->CreateWqe(topo.sender->GetId(),
-                                               topo.receiver->GetId(),
-                                               128,
-                                               m_firstTask,
-                                               TaOpcode::TA_OPCODE_WRITE);
-        Ptr<UbWqe> second = function->CreateWqe(topo.sender->GetId(),
-                                                topo.receiver->GetId(),
-                                                64,
-                                                m_secondTask,
-                                                TaOpcode::TA_OPCODE_WRITE);
+        Ptr<UbWqe> first = m_function->CreateWqe(m_topo.sender->GetId(),
+                                                 m_topo.receiver->GetId(),
+                                                 128,
+                                                 m_firstTask,
+                                                 TaOpcode::TA_OPCODE_WRITE);
+        Ptr<UbWqe> second = m_function->CreateWqe(m_topo.sender->GetId(),
+                                                  m_topo.receiver->GetId(),
+                                                  64,
+                                                  m_secondTask,
+                                                  TaOpcode::TA_OPCODE_WRITE);
         first->SetOrderType(OrderType::ORDER_NO);
         second->SetOrderType(OrderType::ORDER_NO);
-        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(function->SubmitWqe(first, firstJetty).status),
-                              static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
-                              "First Jetty should accept its multi-segment WQE");
         NS_TEST_ASSERT_MSG_EQ(
-            static_cast<uint32_t>(function->SubmitWqe(second, secondJetty).status),
+            static_cast<uint32_t>(m_function->SubmitWqe(first, firstJetty).status),
+            static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+            "First Jetty should accept its multi-segment WQE");
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(m_function->SubmitWqe(second, secondJetty).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
             "Peer Jetty should accept its WQE");
 
@@ -9599,8 +9616,7 @@ class UbJettyInflightDoesNotBlockSharedTpPeerTest : public TestCase
                               1u,
                               "Shared TP peer should complete exactly once");
 
-        Simulator::Destroy();
-        Config::Reset();
+        TearDownRtpFixture();
     }
 
   private:
@@ -9623,54 +9639,43 @@ class UbJettyInflightDoesNotBlockSharedTpPeerTest : public TestCase
     std::vector<uint32_t> m_admittedTasks;
 };
 
-class UbJettyInflightDoesNotBlockSharedTpgPeerTest : public TestCase
+class UbJettyInflightDoesNotBlockSharedTpgPeerTest : public UbJettyInflightTestCase
 {
   public:
     UbJettyInflightDoesNotBlockSharedTpgPeerTest()
-        : TestCase("UnifiedBus - Jetty inflight wait does not block a shared TPG peer")
+        : UbJettyInflightTestCase(
+              "UnifiedBus - Jetty inflight wait does not block a shared TPG peer")
     {
     }
 
     void DoRun() override
     {
-        Config::Reset();
-        LocalTpTopology topo = BuildLocalTpTopology();
-        InstallStaticTpPair(topo);
+        SetUpRtpFixture();
         constexpr uint32_t secondSenderTpn = 303;
         constexpr uint32_t secondReceiverTpn = 404;
-        InstallAdditionalTpPair(topo, secondSenderTpn, secondReceiverTpn);
+        InstallAdditionalTpPair(m_topo, secondSenderTpn, secondReceiverTpn);
 
-        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
-        Ptr<UbFunction> function = controller->GetUbFunction();
-        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
-        Ptr<UbTransportChannel> firstTp =
-            controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         Ptr<UbTransportChannel> secondTp =
-            controller->GetTransportChannelManager()->GetTp(secondSenderTpn);
+            m_controller->GetTransportChannelManager()->GetTp(secondSenderTpn);
 
         constexpr uint32_t firstJetty = kUrmaWriteRegressionJettyNum + 2;
         constexpr uint32_t secondJetty = kUrmaWriteRegressionJettyNum + 3;
         for (uint32_t jettyNum : {firstJetty, secondJetty})
         {
-            function->CreateJetty(topo.sender->GetId(), topo.receiver->GetId(), jettyNum);
-            NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
-                                                            topo.receiver->GetId(),
-                                                            jettyNum,
-                                                            true,
-                                                            {kUrmaWriteRegressionSenderTpn,
-                                                             secondSenderTpn}),
-                                  true,
-                                  "Both Jetties should share one TPG");
-            Ptr<UbJetty> jetty = function->GetJetty(jettyNum);
-            jetty->SetAttribute("UbJettyInflightMax", UintegerValue(1));
-            jetty->SetTaSegmentBytes(64);
+            Ptr<UbJetty> jetty =
+                CreateAndBindInflightJetty(jettyNum,
+                                           1,
+                                           true,
+                                           {kUrmaWriteRegressionSenderTpn, secondSenderTpn});
             jetty->SetWqeCompletionCallback(
                 MakeCallback(&UbJettyInflightDoesNotBlockSharedTpgPeerTest::OnCompletion, this));
         }
-        const auto* firstReference = transaction->FindRtpTransportReference(firstJetty);
-        const auto* secondReference = transaction->FindRtpTransportReference(secondJetty);
+        const auto* firstReference = m_transaction->FindRtpTransportReference(firstJetty);
+        const auto* secondReference = m_transaction->FindRtpTransportReference(secondJetty);
         NS_TEST_ASSERT_MSG_NE(firstReference, nullptr, "First Jetty should retain its TPG binding");
-        NS_TEST_ASSERT_MSG_NE(secondReference, nullptr, "Second Jetty should retain its TPG binding");
+        NS_TEST_ASSERT_MSG_NE(secondReference,
+                              nullptr,
+                              "Second Jetty should retain its TPG binding");
         if (firstReference != nullptr && secondReference != nullptr)
         {
             NS_TEST_ASSERT_MSG_EQ(firstReference->IsDirectTp(),
@@ -9680,7 +9685,7 @@ class UbJettyInflightDoesNotBlockSharedTpgPeerTest : public TestCase
                                   firstReference->GetIdentity(),
                                   "Both Jetties should resolve the same TPG generation");
         }
-        firstTp->TraceConnectWithoutContext(
+        m_primaryTp->TraceConnectWithoutContext(
             "WqeSegmentSendsNotify",
             MakeCallback(&UbJettyInflightDoesNotBlockSharedTpgPeerTest::OnAdmission, this));
         secondTp->TraceConnectWithoutContext(
@@ -9689,23 +9694,24 @@ class UbJettyInflightDoesNotBlockSharedTpgPeerTest : public TestCase
 
         m_firstTask = kUrmaWriteRegressionTaskId + 130;
         m_secondTask = kUrmaWriteRegressionTaskId + 131;
-        Ptr<UbWqe> first = function->CreateWqe(topo.sender->GetId(),
-                                               topo.receiver->GetId(),
-                                               128,
-                                               m_firstTask,
-                                               TaOpcode::TA_OPCODE_WRITE);
-        Ptr<UbWqe> second = function->CreateWqe(topo.sender->GetId(),
-                                                topo.receiver->GetId(),
-                                                64,
-                                                m_secondTask,
-                                                TaOpcode::TA_OPCODE_WRITE);
+        Ptr<UbWqe> first = m_function->CreateWqe(m_topo.sender->GetId(),
+                                                 m_topo.receiver->GetId(),
+                                                 128,
+                                                 m_firstTask,
+                                                 TaOpcode::TA_OPCODE_WRITE);
+        Ptr<UbWqe> second = m_function->CreateWqe(m_topo.sender->GetId(),
+                                                  m_topo.receiver->GetId(),
+                                                  64,
+                                                  m_secondTask,
+                                                  TaOpcode::TA_OPCODE_WRITE);
         first->SetOrderType(OrderType::ORDER_NO);
         second->SetOrderType(OrderType::ORDER_NO);
-        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(function->SubmitWqe(first, firstJetty).status),
-                              static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
-                              "First TPG Jetty should accept its multi-segment WQE");
         NS_TEST_ASSERT_MSG_EQ(
-            static_cast<uint32_t>(function->SubmitWqe(second, secondJetty).status),
+            static_cast<uint32_t>(m_function->SubmitWqe(first, firstJetty).status),
+            static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+            "First TPG Jetty should accept its multi-segment WQE");
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(m_function->SubmitWqe(second, secondJetty).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
             "Peer TPG Jetty should accept its WQE");
 
@@ -9731,8 +9737,7 @@ class UbJettyInflightDoesNotBlockSharedTpgPeerTest : public TestCase
                               1u,
                               "Shared TPG peer should complete exactly once");
 
-        Simulator::Destroy();
-        Config::Reset();
+        TearDownRtpFixture();
     }
 
   private:
@@ -9764,41 +9769,22 @@ class UbJettyInflightDoesNotBlockSharedTpgPeerTest : public TestCase
     std::vector<uint32_t> m_admittedTasks;
 };
 
-class UbJettyInflightTerminalProgressWakesWaitingWqeTest : public TestCase
+class UbJettyInflightTerminalProgressWakesWaitingWqeTest : public UbJettyInflightTestCase
 {
   public:
     UbJettyInflightTerminalProgressWakesWaitingWqeTest()
-        : TestCase("UnifiedBus - Jetty terminal progress wakes an inflight-window waiter")
+        : UbJettyInflightTestCase(
+              "UnifiedBus - Jetty terminal progress wakes an inflight-window waiter")
     {
     }
 
     void DoRun() override
     {
-        Config::Reset();
-        LocalTpTopology topo = BuildLocalTpTopology();
-        InstallStaticTpPair(topo);
-        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
-        Ptr<UbFunction> function = controller->GetUbFunction();
-        m_transaction = controller->GetUbTransaction();
-        Ptr<UbTransportChannel> tp =
-            controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
-
-        function->CreateJetty(topo.sender->GetId(),
-                              topo.receiver->GetId(),
-                              kUrmaWriteRegressionJettyNum);
-        NS_TEST_ASSERT_MSG_EQ(m_transaction->JettyBindTp(topo.sender->GetId(),
-                                                         topo.receiver->GetId(),
-                                                         kUrmaWriteRegressionJettyNum,
-                                                         false,
-                                                         {kUrmaWriteRegressionSenderTpn}),
-                              true,
-                              "Jetty should bind to the direct TP");
-        Ptr<UbJetty> jetty = function->GetJetty(kUrmaWriteRegressionJettyNum);
-        jetty->SetAttribute("UbJettyInflightMax", UintegerValue(1));
-        jetty->SetTaSegmentBytes(64);
+        SetUpRtpFixture();
+        Ptr<UbJetty> jetty = CreateAndBindInflightJetty(kUrmaWriteRegressionJettyNum);
         jetty->SetWqeCompletionCallback(
             MakeCallback(&UbJettyInflightTerminalProgressWakesWaitingWqeTest::OnCompletion, this));
-        tp->TraceConnectWithoutContext(
+        m_primaryTp->TraceConnectWithoutContext(
             "WqeSegmentSendsNotify",
             MakeCallback(&UbJettyInflightTerminalProgressWakesWaitingWqeTest::OnAdmission, this));
 
@@ -9806,15 +9792,15 @@ class UbJettyInflightTerminalProgressWakesWaitingWqeTest : public TestCase
         m_waitingTask = kUrmaWriteRegressionTaskId + 111;
         for (uint32_t taskId : {m_firstTask, m_waitingTask})
         {
-            Ptr<UbWqe> wqe = function->CreateWqe(topo.sender->GetId(),
-                                                 topo.receiver->GetId(),
-                                                 64,
-                                                 taskId,
-                                                 TaOpcode::TA_OPCODE_WRITE);
+            Ptr<UbWqe> wqe = m_function->CreateWqe(m_topo.sender->GetId(),
+                                                   m_topo.receiver->GetId(),
+                                                   64,
+                                                   taskId,
+                                                   TaOpcode::TA_OPCODE_WRITE);
             wqe->SetOrderType(OrderType::ORDER_NO);
             NS_TEST_ASSERT_MSG_EQ(
                 static_cast<uint32_t>(
-                    function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status),
+                    m_function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status),
                 static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
                 "Each WQE should enter lifecycle admission");
         }
@@ -9838,8 +9824,7 @@ class UbJettyInflightTerminalProgressWakesWaitingWqeTest : public TestCase
                               1u,
                               "Waiting WQE should complete after terminal window release");
 
-        Simulator::Destroy();
-        Config::Reset();
+        TearDownRtpFixture();
     }
 
   private:
@@ -9860,7 +9845,6 @@ class UbJettyInflightTerminalProgressWakesWaitingWqeTest : public TestCase
         }
     }
 
-    Ptr<UbTransaction> m_transaction;
     uint32_t m_firstTask{0};
     uint32_t m_waitingTask{0};
     uint32_t m_waitingAdmissions{0};
@@ -9868,37 +9852,19 @@ class UbJettyInflightTerminalProgressWakesWaitingWqeTest : public TestCase
     std::vector<uint32_t> m_admittedTasks;
 };
 
-class UbJettyInflightRepeatedKickIsIdempotentTest : public TestCase
+class UbJettyInflightRepeatedKickIsIdempotentTest : public UbJettyInflightTestCase
 {
   public:
     UbJettyInflightRepeatedKickIsIdempotentTest()
-        : TestCase("UnifiedBus - repeated Jetty transmission kicks are idempotent")
+        : UbJettyInflightTestCase("UnifiedBus - repeated Jetty transmission kicks are idempotent")
     {
     }
 
     void DoRun() override
     {
-        Config::Reset();
-        LocalTpTopology topo = BuildLocalTpTopology();
-        InstallStaticTpPair(topo);
-        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
-        Ptr<UbFunction> function = controller->GetUbFunction();
-        m_transaction = controller->GetUbTransaction();
-        m_tp = controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
-
-        function->CreateJetty(topo.sender->GetId(),
-                              topo.receiver->GetId(),
-                              kUrmaWriteRegressionJettyNum);
-        NS_TEST_ASSERT_MSG_EQ(m_transaction->JettyBindTp(topo.sender->GetId(),
-                                                         topo.receiver->GetId(),
-                                                         kUrmaWriteRegressionJettyNum,
-                                                         false,
-                                                         {kUrmaWriteRegressionSenderTpn}),
-                              true,
-                              "Jetty should bind to the direct TP");
-        m_jetty = function->GetJetty(kUrmaWriteRegressionJettyNum);
-        m_jetty->SetAttribute("UbJettyInflightMax", UintegerValue(2));
-        m_jetty->SetTaSegmentBytes(64);
+        SetUpRtpFixture();
+        m_tp = m_primaryTp;
+        m_jetty = CreateAndBindInflightJetty(kUrmaWriteRegressionJettyNum, 2);
         m_jetty->SetWqeCompletionCallback(
             MakeCallback(&UbJettyInflightRepeatedKickIsIdempotentTest::OnCompletion, this));
         m_tp->TraceConnectWithoutContext(
@@ -9907,37 +9873,37 @@ class UbJettyInflightRepeatedKickIsIdempotentTest : public TestCase
 
         m_firstTask = kUrmaWriteRegressionTaskId + 120;
         m_secondTask = kUrmaWriteRegressionTaskId + 121;
-        Ptr<UbWqe> first = function->CreateWqe(topo.sender->GetId(),
-                                               topo.receiver->GetId(),
-                                               128,
-                                               m_firstTask,
-                                               TaOpcode::TA_OPCODE_WRITE);
-        Ptr<UbWqe> second = function->CreateWqe(topo.sender->GetId(),
-                                                topo.receiver->GetId(),
-                                                64,
-                                                m_secondTask,
-                                                TaOpcode::TA_OPCODE_WRITE);
+        Ptr<UbWqe> first = m_function->CreateWqe(m_topo.sender->GetId(),
+                                                 m_topo.receiver->GetId(),
+                                                 128,
+                                                 m_firstTask,
+                                                 TaOpcode::TA_OPCODE_WRITE);
+        Ptr<UbWqe> second = m_function->CreateWqe(m_topo.sender->GetId(),
+                                                  m_topo.receiver->GetId(),
+                                                  64,
+                                                  m_secondTask,
+                                                  TaOpcode::TA_OPCODE_WRITE);
         first->SetOrderType(OrderType::ORDER_NO);
         second->SetOrderType(OrderType::ORDER_NO);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(
-                function->SubmitWqe(first, kUrmaWriteRegressionJettyNum).status),
+                m_function->SubmitWqe(first, kUrmaWriteRegressionJettyNum).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
             "First WQE should enter lifecycle admission");
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(
-                function->SubmitWqe(second, kUrmaWriteRegressionJettyNum).status),
+                m_function->SubmitWqe(second, kUrmaWriteRegressionJettyNum).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
             "Second WQE should enter the same lifecycle queue");
-        NS_TEST_ASSERT_MSG_EQ(m_transaction->GetRtpTxQueuePendingEntryCountForTest(
-                                  m_tp->GetLifecycleOwner()),
-                              1u,
-                              "Second WQE should remain as one pending RTP Tx entry");
+        NS_TEST_ASSERT_MSG_EQ(
+            m_transaction->GetRtpTxQueuePendingEntryCountForTest(m_tp->GetLifecycleOwner()),
+            1u,
+            "Second WQE should remain as one pending RTP Tx entry");
         KickRepeatedly();
-        NS_TEST_ASSERT_MSG_EQ(m_transaction->GetRtpTxQueuePendingEntryCountForTest(
-                                  m_tp->GetLifecycleOwner()),
-                              1u,
-                              "Repeated kicks must not duplicate the queued WQE entry");
+        NS_TEST_ASSERT_MSG_EQ(
+            m_transaction->GetRtpTxQueuePendingEntryCountForTest(m_tp->GetLifecycleOwner()),
+            1u,
+            "Repeated kicks must not duplicate the queued WQE entry");
 
         Simulator::Stop(MilliSeconds(1));
         Simulator::Run();
@@ -9967,8 +9933,7 @@ class UbJettyInflightRepeatedKickIsIdempotentTest : public TestCase
                               true,
                               "Repeated kicks should run while an RTP Tx event is pending");
 
-        Simulator::Destroy();
-        Config::Reset();
+        TearDownRtpFixture();
     }
 
   private:
@@ -9993,8 +9958,7 @@ class UbJettyInflightRepeatedKickIsIdempotentTest : public TestCase
         }
         m_admittedTaSsns.push_back(taSsn);
         KickRepeatedly();
-        Simulator::ScheduleNow(
-            &UbJettyInflightRepeatedKickIsIdempotentTest::KickRepeatedly, this);
+        Simulator::ScheduleNow(&UbJettyInflightRepeatedKickIsIdempotentTest::KickRepeatedly, this);
     }
 
     void OnCompletion(UbWqeCompletion completion)
@@ -10007,7 +9971,6 @@ class UbJettyInflightRepeatedKickIsIdempotentTest : public TestCase
         }
     }
 
-    Ptr<UbTransaction> m_transaction;
     Ptr<UbTransportChannel> m_tp;
     Ptr<UbJetty> m_jetty;
     uint32_t m_firstTask{0};
@@ -11603,7 +11566,7 @@ class UbLifecycleRepeatedDeferredTpgDestroyRetiresExactDomainTest : public TestC
                 "Terminal blocked operation should let exact group destroy complete");
             NS_TEST_ASSERT_MSG_EQ(transaction->GetRtpTxQueueCountForTest(),
                                   0u,
-                                  "TPG finalize must erase its pending event and stale source domain");
+                                  "TPG finalize must erase its pending event and stale RTP Tx queue");
         }
 
         Simulator::Destroy();
@@ -27549,6 +27512,104 @@ class UbCtpWireTaAckCompletesJettyTest : public TestCase
     bool m_completed{false};
 };
 
+class UbCtpWireTaAckContinuesInflightLimitedWqeTest : public TestCase
+{
+  public:
+    UbCtpWireTaAckContinuesInflightLimitedWqeTest()
+        : TestCase("UnifiedBus - CTP wire TAACK continues an inflight-limited WQE")
+    {
+    }
+
+  private:
+    static constexpr uint32_t kJettyNum = 5;
+    static constexpr uint32_t kTaskId = 90;
+
+    void DoRun() override
+    {
+        Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<Node> remoteNode = CreateObject<Node>();
+        Ptr<UbController> controller = node->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
+        UbCtpEntityKey key{.srcEntityId = 0, .dstNodeId = 1, .dstEntityId = 0, .vl = 7};
+
+        function->CreateJetty(0, key.dstNodeId, kJettyNum);
+        Ptr<UbJetty> jetty = function->GetJetty(kJettyNum);
+        jetty->SetAttribute("UbJettyInflightMax", UintegerValue(1));
+        jetty->SetWqeCompletionCallback(
+            MakeCallback(&UbCtpWireTaAckContinuesInflightLimitedWqeTest::OnCompletion, this));
+
+        Ptr<UbWqe> wqe = function->CreateWqe(0,
+                                             key.dstNodeId,
+                                             2u * UbCtpTransportConstraints{}.maxSegmentBytes,
+                                             kTaskId,
+                                             TaOpcode::TA_OPCODE_WRITE);
+        wqe->SetPriority(key.vl);
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(function->SubmitCtpWqe(wqe, kJettyNum, key).status),
+            static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+            "Multi-segment CTP WQE should enter the inflight-limited Jetty");
+
+        service->SetSourcePortHint(key, 0);
+        service->StartJetty(jetty, key);
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndNxtForTest(),
+                              1u,
+                              "Only the first CTP WQE segment should enter the Jetty window");
+        NS_TEST_ASSERT_MSG_EQ(service->GetOrCreateTransactionContext(key)->GetOutstandingCount(),
+                              1u,
+                              "Only the first CTP segment should occupy the entity window");
+
+        UbCtpEntityKey ackWireKey{.srcEntityId = 0, .dstNodeId = 0, .dstEntityId = 0, .vl = key.vl};
+        NS_TEST_ASSERT_MSG_EQ(service->HandleReceivedPacket(
+                                  BuildCtpResponsePacketFromNode(remoteNode,
+                                                                 CreateCtpTaAckResponseSegment(0),
+                                                                 ackWireKey)),
+                              true,
+                              "First wire TAACK should be accepted");
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndUnaForTest(),
+                              1u,
+                              "First wire TAACK should release one Jetty window slot");
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndNxtForTest(),
+                              2u,
+                              "First wire TAACK should admit the next WQE segment exactly once");
+        NS_TEST_ASSERT_MSG_EQ(service->GetOrCreateTransactionContext(key)->GetOutstandingCount(),
+                              1u,
+                              "The continued CTP segment should occupy the released entity slot");
+
+        NS_TEST_ASSERT_MSG_EQ(service->HandleReceivedPacket(
+                                  BuildCtpResponsePacketFromNode(remoteNode,
+                                                                 CreateCtpTaAckResponseSegment(1),
+                                                                 ackWireKey)),
+                              true,
+                              "Second wire TAACK should be accepted");
+        NS_TEST_ASSERT_MSG_EQ(m_completions,
+                              1u,
+                              "The multi-segment CTP WQE should complete exactly once");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetResidentOperationCount(),
+                              0u,
+                              "The CTP operation should retire after both TAACKs");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetResidentSegmentCount(),
+                              0u,
+                              "Both CTP segments should retire after their TAACKs");
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetActiveWqeCount(),
+                              0u,
+                              "The completed CTP WQE should leave the Jetty");
+
+        Simulator::Destroy();
+    }
+
+    void OnCompletion(UbWqeCompletion completion)
+    {
+        if (completion.wqeId == kTaskId && completion.outcome == UbWorkOutcome::COMPLETED)
+        {
+            ++m_completions;
+        }
+    }
+
+    uint32_t m_completions{0};
+};
+
 class UbCtpOutOfOrderWireTaAckCompletesContiguousJettyRangeTest : public TestCase
 {
   public:
@@ -29697,6 +29758,8 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbCtpCompactQueueCarriesLocalGenerationMetadataTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbCtpWireTaAckCompletesJettyTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpWireTaAckContinuesInflightLimitedWqeTest(),
+                TestCase::Duration::QUICK);
     AddTestCase(new UbCtpTerminalRecoveryWithoutTaAckContinuesWaitingJettyWqeTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbCtpOutOfOrderWireTaAckCompletesContiguousJettyRangeTest(),
@@ -29988,6 +30051,8 @@ UbCtpTransactionTestSuite::UbCtpTransactionTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbCtpServiceDoesNotCreateRtpTpTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpPortHintsDoNotCreateEntityStateTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpWireTaAckContinuesInflightLimitedWqeTest(),
+                TestCase::Duration::QUICK);
     AddTestCase(new UbCtpCnpDoesNotAckTransactionTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpCongestionKeyUsesDestinationAndVlTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpTaAckCompletionHelperTest(), TestCase::Duration::QUICK);

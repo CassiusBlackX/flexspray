@@ -1095,22 +1095,19 @@ UbTransaction::StartRtpWqeSegmentTx(uint32_t jettyNum, Ptr<UbWqe> originatingWqe
 void
 UbTransaction::ScheduleRtpTx(const RtpTxQueueKey& queueKey)
 {
-    const auto domain = m_rtpTxQueues.find(queueKey);
-    if (domain == m_rtpTxQueues.end() || domain->second.waitingForTransportCapacity ||
-        domain->second.pendingTxEntries.empty() || domain->second.txEventPending ||
-        domain->second.txEntryActive)
+    const auto queueIt = m_rtpTxQueues.find(queueKey);
+    if (queueIt == m_rtpTxQueues.end() || queueIt->second.waitingForTransportCapacity ||
+        queueIt->second.pendingTxEntries.empty() || queueIt->second.txEventPending ||
+        queueIt->second.txEntryActive)
     {
         return;
     }
-    domain->second.txEventPending = true;
-    domain->second.pendingEvent =
-        Simulator::ScheduleNow(&UbTransaction::RunRtpTx, this, queueKey);
+    queueIt->second.txEventPending = true;
+    queueIt->second.pendingEvent = Simulator::ScheduleNow(&UbTransaction::RunRtpTx, this, queueKey);
 }
 
 void
-UbTransaction::EnqueueRtpWqe(uint32_t jettyNum,
-                                Ptr<UbWqe> originatingWqe,
-                                bool restoreWaitingFront)
+UbTransaction::EnqueueRtpWqe(uint32_t jettyNum, Ptr<UbWqe> originatingWqe, bool restoreWaitingFront)
 {
     if (originatingWqe == nullptr)
     {
@@ -1124,26 +1121,25 @@ UbTransaction::EnqueueRtpWqe(uint32_t jettyNum,
     }
 
     const RtpTxQueueKey key = MakeRtpTxQueueKey(operation->second.transportReference);
-    RtpTxQueue& domain =
-        m_rtpTxQueues[key];
+    RtpTxQueue& queue = m_rtpTxQueues[key];
     if (!operation->second.txEntryQueued)
     {
-        const RtpTxQueueEntry entry{
-            RtpTxQueueEntry::Kind::LOCAL_WQE,
-            jettyNum,
-            originatingWqe->GetWqeId(),
-            operation->second.operationIdentity};
+        const RtpTxQueueEntry entry{RtpTxQueueEntry::Kind::LOCAL_WQE,
+                                    jettyNum,
+                                    originatingWqe->GetWqeId(),
+                                    operation->second.operationIdentity};
         if (restoreWaitingFront)
         {
-            domain.pendingTxEntries.push_front(entry);
+            queue.pendingTxEntries.push_front(entry);
         }
         else
         {
-            domain.pendingTxEntries.push_back(entry);
+            queue.pendingTxEntries.push_back(entry);
         }
         operation->second.txEntryQueued = true;
     }
-    if (!restoreWaitingFront && !domain.txEntryActive && !domain.txEventPending && !domain.waitingForTransportCapacity)
+    if (!restoreWaitingFront && !queue.txEntryActive && !queue.txEventPending &&
+        !queue.waitingForTransportCapacity)
     {
         RunRtpTx(key);
     }
@@ -1190,38 +1186,37 @@ UbTransaction::EnqueueRemoteRtpWqeSegment(uint32_t tpn, Ptr<UbWqeSegment> segmen
     }
     else
     {
-        operationIdentity = {
-            segment->GetSrc(),
-            UbLifecycleResourceKind::TRANSACTION_OPERATION,
-            (static_cast<uint64_t>(segment->GetOriginJettyNum()) << 32) |
-                segment->GetTaskId(),
-            0};
+        operationIdentity = {segment->GetSrc(),
+                             UbLifecycleResourceKind::TRANSACTION_OPERATION,
+                             (static_cast<uint64_t>(segment->GetOriginJettyNum()) << 32) |
+                                 segment->GetTaskId(),
+                             0};
     }
-    const RemoteRtpWqeSegmentKey remoteKey{
-        segment->GetOriginJettyNum(), segment->GetTaskId(), operationIdentity};
+    const RemoteRtpWqeSegmentKey remoteKey{segment->GetOriginJettyNum(),
+                                           segment->GetTaskId(),
+                                           operationIdentity};
     RemoteRtpWqeSegmentState& remote = m_tpRelatedRemoteRequests[tpn][remoteKey];
     remote.segments.push_back(segment);
 
     const RtpTxQueueKey queueKey{UbRtpTransportReferenceKind::DIRECT_TP,
-                                       transport->GetLifecycleOwner()};
-    RtpTxQueue& domain = m_rtpTxQueues[queueKey];
+                                 transport->GetLifecycleOwner()};
+    RtpTxQueue& queue = m_rtpTxQueues[queueKey];
     if (!remote.txEntryQueued)
     {
-        domain.pendingTxEntries.push_back({RtpTxQueueEntry::Kind::REMOTE_WQE_SEGMENT,
-                                       remoteKey.originJettyNum,
-                                       remoteKey.taskId,
-                                       remoteKey.operationIdentity});
+        queue.pendingTxEntries.push_back({RtpTxQueueEntry::Kind::REMOTE_WQE_SEGMENT,
+                                          remoteKey.originJettyNum,
+                                          remoteKey.taskId,
+                                          remoteKey.operationIdentity});
         remote.txEntryQueued = true;
     }
-    if (!domain.txEntryActive && !domain.txEventPending && !domain.waitingForTransportCapacity)
+    if (!queue.txEntryActive && !queue.txEventPending && !queue.waitingForTransportCapacity)
     {
         RunRtpTx(queueKey);
     }
 }
 
 void
-UbTransaction::RunRemoteRtpWqeSegmentTx(const RtpTxQueueKey& queueKey,
-                                  const RtpTxQueueEntry& entry)
+UbTransaction::RunRemoteRtpWqeSegmentTx(const RtpTxQueueKey& queueKey, const RtpTxQueueEntry& entry)
 {
     const uint32_t tpn = static_cast<uint32_t>(queueKey.identity.localId);
     Ptr<UbController> controller = GetOwnerController();
@@ -1266,10 +1261,10 @@ UbTransaction::RunRemoteRtpWqeSegmentTx(const RtpTxQueueKey& queueKey,
     Ptr<UbWqeSegment> segment = remote->second.segments.front();
     if (!transport->TryContinueAcceptedWqeSegment(segment))
     {
-        RtpTxQueue& domain = m_rtpTxQueues[queueKey];
-        domain.pendingTxEntries.push_front(entry);
+        RtpTxQueue& queue = m_rtpTxQueues[queueKey];
+        queue.pendingTxEntries.push_front(entry);
         remote->second.txEntryQueued = true;
-        domain.waitingForTransportCapacity = true;
+        queue.waitingForTransportCapacity = true;
         return;
     }
 
@@ -1304,31 +1299,30 @@ UbTransaction::EnqueueRtpWqeAfterBackpressure(uint32_t jettyNum, Ptr<UbWqe> orig
     const auto operation = m_operations.find({jettyNum, originatingWqe->GetWqeId()});
     if (operation != m_operations.end())
     {
-        m_rtpTxQueues[MakeRtpTxQueueKey(operation->second.transportReference)].waitingForTransportCapacity =
-            true;
+        m_rtpTxQueues[MakeRtpTxQueueKey(operation->second.transportReference)]
+            .waitingForTransportCapacity = true;
     }
 }
 
 void
 UbTransaction::TryContinueRtpTxQueue(const RtpTxQueueKey& key, bool capacityTransition)
 {
-    const auto domain = m_rtpTxQueues.find(key);
-    if (domain == m_rtpTxQueues.end() || !domain->second.waitingForTransportCapacity ||
-        domain->second.pendingTxEntries.empty() || domain->second.txEventPending)
+    const auto queueIt = m_rtpTxQueues.find(key);
+    if (queueIt == m_rtpTxQueues.end() || !queueIt->second.waitingForTransportCapacity ||
+        queueIt->second.pendingTxEntries.empty() || queueIt->second.txEventPending)
     {
         return;
     }
-    domain->second.waitingForTransportCapacity = false;
+    queueIt->second.waitingForTransportCapacity = false;
     ScheduleRtpTx(key);
-    if (capacityTransition && domain->second.txEventPending)
+    if (capacityTransition && queueIt->second.txEventPending)
     {
-        ++domain->second.transportCapacityRecoveryEvents;
+        ++queueIt->second.transportCapacityRecoveryEvents;
     }
 }
 
 void
-UbTransaction::NotifyRtpTpGroupMemberAvailable(
-    const UbLifecycleResourceIdentity& groupIdentity)
+UbTransaction::NotifyRtpTpGroupMemberAvailable(const UbLifecycleResourceIdentity& groupIdentity)
 {
     Ptr<UbController> controller = GetOwnerController();
     Ptr<UbTransportGroup> group =
@@ -1401,22 +1395,22 @@ UbTransaction::TerminateRtpTpGroupOperations(
 void
 UbTransaction::RunRtpTx(RtpTxQueueKey queueKey)
 {
-    const auto domain = m_rtpTxQueues.find(queueKey);
-    if (domain == m_rtpTxQueues.end())
+    const auto queueIt = m_rtpTxQueues.find(queueKey);
+    if (queueIt == m_rtpTxQueues.end())
     {
         return;
     }
-    domain->second.txEventPending = false;
-    domain->second.pendingEvent = EventId();
-    if (domain->second.txEntryActive || domain->second.waitingForTransportCapacity)
+    queueIt->second.txEventPending = false;
+    queueIt->second.pendingEvent = EventId();
+    if (queueIt->second.txEntryActive || queueIt->second.waitingForTransportCapacity)
     {
         return;
     }
 
-    while (!domain->second.pendingTxEntries.empty())
+    while (!queueIt->second.pendingTxEntries.empty())
     {
-        const RtpTxQueueEntry entry = domain->second.pendingTxEntries.front();
-        domain->second.pendingTxEntries.pop_front();
+        const RtpTxQueueEntry entry = queueIt->second.pendingTxEntries.front();
+        queueIt->second.pendingTxEntries.pop_front();
         if (entry.kind == RtpTxQueueEntry::Kind::REMOTE_WQE_SEGMENT)
         {
             RunRemoteRtpWqeSegmentTx(queueKey, entry);
@@ -1431,8 +1425,8 @@ UbTransaction::RunRtpTx(RtpTxQueueKey queueKey)
         operation->second.txEntryQueued = false;
         if (!operation->second.terminalPending)
         {
-            domain->second.txEntryActive = true;
-            domain->second.activeTxEntry = entry;
+            queueIt->second.txEntryActive = true;
+            queueIt->second.activeTxEntry = entry;
             StartRtpWqeSegmentTx(entry.jettyNum, operation->second.wqe);
         }
         break;
@@ -1451,30 +1445,30 @@ UbTransaction::FinishActiveRtpTxEntry(uint32_t jettyNum, Ptr<UbWqe> originatingW
     {
         return;
     }
-    const auto domain =
+    const auto queueIt =
         m_rtpTxQueues.find(MakeRtpTxQueueKey(operation->second.transportReference));
-    if (domain != m_rtpTxQueues.end() && domain->second.activeTxEntry.has_value() &&
-        domain->second.activeTxEntry->kind == RtpTxQueueEntry::Kind::LOCAL_WQE &&
-        domain->second.activeTxEntry->jettyNum == jettyNum &&
-        domain->second.activeTxEntry->wqeId == originatingWqe->GetWqeId() &&
-        domain->second.activeTxEntry->operationIdentity == operation->second.operationIdentity)
+    if (queueIt != m_rtpTxQueues.end() && queueIt->second.activeTxEntry.has_value() &&
+        queueIt->second.activeTxEntry->kind == RtpTxQueueEntry::Kind::LOCAL_WQE &&
+        queueIt->second.activeTxEntry->jettyNum == jettyNum &&
+        queueIt->second.activeTxEntry->wqeId == originatingWqe->GetWqeId() &&
+        queueIt->second.activeTxEntry->operationIdentity == operation->second.operationIdentity)
     {
-        domain->second.txEntryActive = false;
-        domain->second.activeTxEntry.reset();
+        queueIt->second.txEntryActive = false;
+        queueIt->second.activeTxEntry.reset();
     }
 }
 
 void
 UbTransaction::CancelRtpWqeSegmentTx(RtpTxQueueKey queueKey,
-                                      uint32_t jettyNum,
-                                      Ptr<UbWqe> originatingWqe)
+                                     uint32_t jettyNum,
+                                     Ptr<UbWqe> originatingWqe)
 {
     ClearRtpWqeSegmentTxState(jettyNum, originatingWqe);
-    const auto domain = m_rtpTxQueues.find(queueKey);
-    if (domain != m_rtpTxQueues.end())
+    const auto queueIt = m_rtpTxQueues.find(queueKey);
+    if (queueIt != m_rtpTxQueues.end())
     {
-        domain->second.txEntryActive = false;
-        domain->second.activeTxEntry.reset();
+        queueIt->second.txEntryActive = false;
+        queueIt->second.activeTxEntry.reset();
         ScheduleRtpTx(queueKey);
     }
 }
@@ -1483,46 +1477,44 @@ void
 UbTransaction::DetachRtpTxEntry(OperationRecord& operation)
 {
     const RtpTxQueueKey key = MakeRtpTxQueueKey(operation.transportReference);
-    const auto domain = m_rtpTxQueues.find(key);
+    const auto queueIt = m_rtpTxQueues.find(key);
     operation.txEntryQueued = false;
     operation.rtpWqeSegmentTxActive = false;
-    if (domain == m_rtpTxQueues.end())
+    if (queueIt == m_rtpTxQueues.end())
     {
         return;
     }
-    if (domain->second.activeTxEntry.has_value())
+    if (queueIt->second.activeTxEntry.has_value())
     {
-        const RtpTxQueueEntry& active = *domain->second.activeTxEntry;
+        const RtpTxQueueEntry& active = *queueIt->second.activeTxEntry;
         if (active.kind == RtpTxQueueEntry::Kind::LOCAL_WQE &&
             active.operationIdentity == operation.operationIdentity)
         {
-            domain->second.txEntryActive = false;
-            domain->second.activeTxEntry.reset();
+            queueIt->second.txEntryActive = false;
+            queueIt->second.activeTxEntry.reset();
         }
     }
-    domain->second.waitingForTransportCapacity = false;
+    queueIt->second.waitingForTransportCapacity = false;
     ScheduleRtpTx(key);
 }
 
 void
-UbTransaction::RetireRtpTxQueue(
-    const UbLifecycleResourceIdentity& identity)
+UbTransaction::RetireRtpTxQueue(const UbLifecycleResourceIdentity& identity)
 {
-    const UbRtpTransportReferenceKind kind =
-        identity.kind == UbLifecycleResourceKind::RTP_TPG
-            ? UbRtpTransportReferenceKind::TPG
-            : UbRtpTransportReferenceKind::DIRECT_TP;
+    const UbRtpTransportReferenceKind kind = identity.kind == UbLifecycleResourceKind::RTP_TPG
+                                                 ? UbRtpTransportReferenceKind::TPG
+                                                 : UbRtpTransportReferenceKind::DIRECT_TP;
     const RtpTxQueueKey key{kind, identity};
-    const auto domain = m_rtpTxQueues.find(key);
-    if (domain == m_rtpTxQueues.end())
+    const auto queueIt = m_rtpTxQueues.find(key);
+    if (queueIt == m_rtpTxQueues.end())
     {
         return;
     }
-    if (domain->second.txEventPending)
+    if (queueIt->second.txEventPending)
     {
-        Simulator::Cancel(domain->second.pendingEvent);
+        Simulator::Cancel(queueIt->second.pendingEvent);
     }
-    for (const RtpTxQueueEntry& entry : domain->second.pendingTxEntries)
+    for (const RtpTxQueueEntry& entry : queueIt->second.pendingTxEntries)
     {
         if (entry.kind == RtpTxQueueEntry::Kind::LOCAL_WQE)
         {
@@ -1540,8 +1532,8 @@ UbTransaction::RetireRtpTxQueue(
             if (remoteByTp != m_tpRelatedRemoteRequests.end())
             {
                 const RemoteRtpWqeSegmentKey remoteKey{entry.jettyNum,
-                                                entry.wqeId,
-                                                entry.operationIdentity};
+                                                       entry.wqeId,
+                                                       entry.operationIdentity};
                 const auto remote = remoteByTp->second.find(remoteKey);
                 if (remote != remoteByTp->second.end())
                 {
@@ -1550,13 +1542,12 @@ UbTransaction::RetireRtpTxQueue(
             }
         }
     }
-    if (domain->second.txEntryActive)
+    if (queueIt->second.txEntryActive)
     {
-        NS_ABORT_MSG_IF(!domain->second.activeTxEntry.has_value() ||
-                            domain->second.activeTxEntry->kind !=
-                                RtpTxQueueEntry::Kind::LOCAL_WQE,
+        NS_ABORT_MSG_IF(!queueIt->second.activeTxEntry.has_value() ||
+                            queueIt->second.activeTxEntry->kind != RtpTxQueueEntry::Kind::LOCAL_WQE,
                         "Cannot retire an RTP Tx queue with unknown active entry");
-        const RtpTxQueueEntry& active = *domain->second.activeTxEntry;
+        const RtpTxQueueEntry& active = *queueIt->second.activeTxEntry;
         const auto operation = m_operations.find({active.jettyNum, active.wqeId});
         NS_ABORT_MSG_IF(operation != m_operations.end() &&
                             (operation->second.operationIdentity != active.operationIdentity ||
@@ -1567,10 +1558,10 @@ UbTransaction::RetireRtpTxQueue(
         {
             operation->second.txEntryQueued = false;
         }
-        domain->second.txEntryActive = false;
-        domain->second.activeTxEntry.reset();
+        queueIt->second.txEntryActive = false;
+        queueIt->second.activeTxEntry.reset();
     }
-    m_rtpTxQueues.erase(domain);
+    m_rtpTxQueues.erase(queueIt);
 }
 
 bool
@@ -2142,67 +2133,60 @@ uint32_t
 UbTransaction::GetRtpTxQueuePendingEntryCountForTest(
     const UbLifecycleResourceIdentity& identity) const
 {
-    const RtpTxQueueKey key{
-        identity.kind == UbLifecycleResourceKind::RTP_TPG
-            ? UbRtpTransportReferenceKind::TPG
-            : UbRtpTransportReferenceKind::DIRECT_TP,
-        identity};
-    const auto domain = m_rtpTxQueues.find(key);
-    return domain == m_rtpTxQueues.end()
+    const RtpTxQueueKey key{identity.kind == UbLifecycleResourceKind::RTP_TPG
+                                ? UbRtpTransportReferenceKind::TPG
+                                : UbRtpTransportReferenceKind::DIRECT_TP,
+                            identity};
+    const auto queueIt = m_rtpTxQueues.find(key);
+    return queueIt == m_rtpTxQueues.end()
                ? 0
-               : static_cast<uint32_t>(domain->second.pendingTxEntries.size());
+               : static_cast<uint32_t>(queueIt->second.pendingTxEntries.size());
 }
 
 bool
 UbTransaction::IsRtpTxQueueWaitingForTransportForTest(
     const UbLifecycleResourceIdentity& identity) const
 {
-    const RtpTxQueueKey key{
-        identity.kind == UbLifecycleResourceKind::RTP_TPG
-            ? UbRtpTransportReferenceKind::TPG
-            : UbRtpTransportReferenceKind::DIRECT_TP,
-        identity};
-    const auto domain = m_rtpTxQueues.find(key);
-    return domain != m_rtpTxQueues.end() && domain->second.waitingForTransportCapacity;
+    const RtpTxQueueKey key{identity.kind == UbLifecycleResourceKind::RTP_TPG
+                                ? UbRtpTransportReferenceKind::TPG
+                                : UbRtpTransportReferenceKind::DIRECT_TP,
+                            identity};
+    const auto queueIt = m_rtpTxQueues.find(key);
+    return queueIt != m_rtpTxQueues.end() && queueIt->second.waitingForTransportCapacity;
 }
 
 bool
-UbTransaction::IsRtpTxQueueEntryActiveForTest(
-    const UbLifecycleResourceIdentity& identity) const
+UbTransaction::IsRtpTxQueueEntryActiveForTest(const UbLifecycleResourceIdentity& identity) const
 {
-    const RtpTxQueueKey key{
-        identity.kind == UbLifecycleResourceKind::RTP_TPG
-            ? UbRtpTransportReferenceKind::TPG
-            : UbRtpTransportReferenceKind::DIRECT_TP,
-        identity};
-    const auto domain = m_rtpTxQueues.find(key);
-    return domain != m_rtpTxQueues.end() && domain->second.txEntryActive;
+    const RtpTxQueueKey key{identity.kind == UbLifecycleResourceKind::RTP_TPG
+                                ? UbRtpTransportReferenceKind::TPG
+                                : UbRtpTransportReferenceKind::DIRECT_TP,
+                            identity};
+    const auto queueIt = m_rtpTxQueues.find(key);
+    return queueIt != m_rtpTxQueues.end() && queueIt->second.txEntryActive;
 }
 
 bool
-UbTransaction::IsRtpTxQueueEventPendingForTest(
-    const UbLifecycleResourceIdentity& identity) const
+UbTransaction::IsRtpTxQueueEventPendingForTest(const UbLifecycleResourceIdentity& identity) const
 {
-    const RtpTxQueueKey key{
-        identity.kind == UbLifecycleResourceKind::RTP_TPG
-            ? UbRtpTransportReferenceKind::TPG
-            : UbRtpTransportReferenceKind::DIRECT_TP,
-        identity};
-    const auto domain = m_rtpTxQueues.find(key);
-    return domain != m_rtpTxQueues.end() && domain->second.txEventPending;
+    const RtpTxQueueKey key{identity.kind == UbLifecycleResourceKind::RTP_TPG
+                                ? UbRtpTransportReferenceKind::TPG
+                                : UbRtpTransportReferenceKind::DIRECT_TP,
+                            identity};
+    const auto queueIt = m_rtpTxQueues.find(key);
+    return queueIt != m_rtpTxQueues.end() && queueIt->second.txEventPending;
 }
 
 uint64_t
 UbTransaction::GetRtpTxQueueCapacityRecoveryCountForTest(
     const UbLifecycleResourceIdentity& identity) const
 {
-    const RtpTxQueueKey key{
-        identity.kind == UbLifecycleResourceKind::RTP_TPG
-            ? UbRtpTransportReferenceKind::TPG
-            : UbRtpTransportReferenceKind::DIRECT_TP,
-        identity};
-    const auto domain = m_rtpTxQueues.find(key);
-    return domain == m_rtpTxQueues.end() ? 0 : domain->second.transportCapacityRecoveryEvents;
+    const RtpTxQueueKey key{identity.kind == UbLifecycleResourceKind::RTP_TPG
+                                ? UbRtpTransportReferenceKind::TPG
+                                : UbRtpTransportReferenceKind::DIRECT_TP,
+                            identity};
+    const auto queueIt = m_rtpTxQueues.find(key);
+    return queueIt == m_rtpTxQueues.end() ? 0 : queueIt->second.transportCapacityRecoveryEvents;
 }
 
 uint32_t
@@ -2581,15 +2565,16 @@ UbTransaction::ForceDrainTerminalPendingOperations(uint32_t jettyNum)
     }
 }
 
-void UbTransaction::DoDispose()
+void
+UbTransaction::DoDispose()
 {
     NS_LOG_FUNCTION(this);
-    for (auto& [key, domain] : m_rtpTxQueues)
+    for (auto& [key, queue] : m_rtpTxQueues)
     {
         (void)key;
-        if (domain.txEventPending)
+        if (queue.txEventPending)
         {
-            Simulator::Cancel(domain.pendingEvent);
+            Simulator::Cancel(queue.pendingEvent);
         }
     }
     m_rtpTxQueues.clear();

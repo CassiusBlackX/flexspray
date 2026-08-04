@@ -393,15 +393,12 @@ namespace ns3 {
             std::optional<RtpTxQueueEntry> activeTxEntry;
             uint64_t transportCapacityRecoveryEvents{0};
         };
-        static RtpTxQueueKey MakeRtpTxQueueKey(
-            const UbRtpTransportReference& reference);
+
+        static RtpTxQueueKey MakeRtpTxQueueKey(const UbRtpTransportReference& reference);
         void StartRtpWqeSegmentTx(uint32_t jettyNum, Ptr<UbWqe> originatingWqe);
-        void EnqueueRtpWqe(uint32_t jettyNum,
-                              Ptr<UbWqe> originatingWqe,
-                              bool restoreWaitingFront);
+        void EnqueueRtpWqe(uint32_t jettyNum, Ptr<UbWqe> originatingWqe, bool restoreWaitingFront);
         void EnqueueRemoteRtpWqeSegment(uint32_t tpn, Ptr<UbWqeSegment> segment);
-        void RunRemoteRtpWqeSegmentTx(const RtpTxQueueKey& queueKey,
-                                      const RtpTxQueueEntry& entry);
+        void RunRemoteRtpWqeSegmentTx(const RtpTxQueueKey& queueKey, const RtpTxQueueEntry& entry);
         void ScheduleRtpTx(const RtpTxQueueKey& queueKey);
         void FinishActiveRtpTxEntry(uint32_t jettyNum, Ptr<UbWqe> originatingWqe);
         void CancelRtpWqeSegmentTx(RtpTxQueueKey queueKey,
