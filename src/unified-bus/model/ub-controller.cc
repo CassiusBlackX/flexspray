@@ -27,14 +27,14 @@ TypeId UbController::GetTypeId()
 UbController::UbController()
 {
     NS_LOG_FUNCTION(this);
-    m_tpnConn = CreateObject<TpConnectionManager>();
+    m_tpConnectionManager = CreateObject<TpConnectionManager>();
     m_transportChannelManager = CreateObject<UbTransportChannelManager>();
     m_transportChannelManager->Init(this);
 }
 
 void UbController::CreateUbFunction()
 {
-    m_tpnConn->SetOwnerNodeId(GetObject<Node>()->GetId());
+    m_tpConnectionManager->SetOwnerNodeId(GetObject<Node>()->GetId());
     m_function = CreateObject<UbFunction>();
     m_function->Init(GetObject<Node>()->GetId());
 }
@@ -59,7 +59,7 @@ UbController::~UbController()
                   "UbController must force-clean canonical TPs in DoDispose");
     m_rtpTpGroups.clear();
     m_rtpTpGroupByTpn.clear();
-    m_destinationToPortsMap.clear();
+    m_portsByDestination.clear();
 }
 
 void
@@ -104,8 +104,8 @@ UbController::DoDispose()
     m_transaction = nullptr;
     m_function = nullptr;
     m_transportChannelManager = nullptr;
-    m_destinationToPortsMap.clear();
-    m_tpnConn = nullptr;
+    m_portsByDestination.clear();
+    m_tpConnectionManager = nullptr;
     Object::DoDispose();
 }
 
@@ -363,11 +363,11 @@ UbController::RemoveRtpTpGroupMember(
             group->FreezeNewOperations();
             if (m_transaction != nullptr)
             {
-                const bool forceDrain = reason == UbDestroyReason::SIMULATION_STOP;
+                const bool discardRetainedSegments = reason == UbDestroyReason::SIMULATION_STOP;
                 m_transaction->TerminateRtpTpGroupOperations(
                     groupIdentity,
-                    forceDrain ? UbWorkOutcome::FLUSHED : UbWorkOutcome::FAILED,
-                    forceDrain);
+                    discardRetainedSegments ? UbWorkOutcome::FLUSHED : UbWorkOutcome::FAILED,
+                    discardRetainedSegments);
             }
             const auto canonical = m_rtpTpGroups.find(groupIdentity.localId);
             if (canonical == m_rtpTpGroups.end() || canonical->second != group ||
@@ -452,11 +452,11 @@ UbController::DestroyRtpTpGroup(const UbLifecycleResourceIdentity& groupIdentity
     group->FreezeNewOperations();
     if (group->GetCleanupMode() != UbTpgCleanupMode::GRACEFUL && m_transaction != nullptr)
     {
-        const bool forceDrain = group->GetCleanupMode() == UbTpgCleanupMode::FORCE;
-        m_transaction->TerminateRtpTpGroupOperations(groupIdentity,
-                                                     forceDrain ? UbWorkOutcome::FLUSHED
-                                                                : UbWorkOutcome::FAILED,
-                                                     forceDrain);
+        const bool discardRetainedSegments = group->GetCleanupMode() == UbTpgCleanupMode::FORCE;
+        m_transaction->TerminateRtpTpGroupOperations(
+            groupIdentity,
+            discardRetainedSegments ? UbWorkOutcome::FLUSHED : UbWorkOutcome::FAILED,
+            discardRetainedSegments);
         const auto canonical = m_rtpTpGroups.find(groupIdentity.localId);
         if (canonical == m_rtpTpGroups.end() || canonical->second != group)
         {
@@ -507,7 +507,7 @@ void UbController::AddPortDestination(Ptr<UbPort> port, uint32_t destination)
         return;
     }
 
-    m_destinationToPortsMap[destination].push_back(port);
+    m_portsByDestination[destination].push_back(port);
     NS_LOG_DEBUG("Added port to destination " << destination);
 }
 
@@ -519,13 +519,14 @@ void UbController::RemovePortDestination(Ptr<UbPort> port, uint32_t destination)
         return;
     }
 
-    auto it = m_destinationToPortsMap.find(destination);
-    if (it != m_destinationToPortsMap.end()) {
+    auto it = m_portsByDestination.find(destination);
+    if (it != m_portsByDestination.end())
+    {
         std::vector<Ptr<UbPort>>& ports = it->second;
         ports.erase(std::remove(ports.begin(), ports.end(), port), ports.end());
 
         if (ports.empty()) {
-            m_destinationToPortsMap.erase(it);
+            m_portsByDestination.erase(it);
         }
         NS_LOG_DEBUG("Removed port from destination " << destination);
     }
@@ -535,8 +536,9 @@ std::vector<Ptr<UbPort>> UbController::GetAvailablePorts(uint32_t destination) c
 {
     NS_LOG_FUNCTION(this << destination);
 
-    auto it = m_destinationToPortsMap.find(destination);
-    if (it != m_destinationToPortsMap.end()) {
+    auto it = m_portsByDestination.find(destination);
+    if (it != m_portsByDestination.end())
+    {
         return it->second;
     }
 

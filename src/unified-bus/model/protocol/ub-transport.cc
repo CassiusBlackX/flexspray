@@ -865,7 +865,7 @@ UbTransportChannel::EnqueueDcqcnCnp(uint8_t ecn, bool location)
     UbIpBasedNetworkHeader networkHeader;
     cnp->AddHeader(networkHeader);
 
-    UbDataLink::GenPacketHeader(cnp,
+    UbDataLink::AddPacketHeader(cnp,
                                 false,
                                 false,
                                 packetVl,
@@ -1025,7 +1025,7 @@ UbTransportChannel::BuildRtpDataPacket(const UbGbnPacketDescriptor& descriptor)
     m_congestionCtrl->OnSenderPrepareIpBasedNetworkHeader(networkHeader);
     p->AddHeader(networkHeader);
     // add dl header
-    UbDataLink::GenPacketHeader(p,
+    UbDataLink::AddPacketHeader(p,
                                 false,
                                 false,
                                 m_priority,
@@ -1792,7 +1792,7 @@ UbTransportChannel::BuildTransportResponsePacket(const ReceivedDataPacketContext
                           ctx.ipv4Header.GetDestination(),
                           ctx.ipv4Header.GetSource());
     responsePacket->AddHeader(ctx.networkHeader);
-    UbDataLink::GenPacketHeader(responsePacket,
+    UbDataLink::AddPacketHeader(responsePacket,
                                 false,
                                 true,
                                 ctx.dataLinkHeader.GetCreditTargetVL(),
@@ -2727,9 +2727,9 @@ UbTransportGroup::ClearPendingLastMemberRemoval()
 void
 UbTransportGroup::RequestDestroy(UbTpgCleanupMode mode)
 {
-    const bool changed = !m_destroyPending ||
-                         static_cast<uint8_t>(mode) > static_cast<uint8_t>(m_cleanupMode);
-    m_destroyPending = true;
+    const bool changed =
+        !m_destroyRequested || static_cast<uint8_t>(mode) > static_cast<uint8_t>(m_cleanupMode);
+    m_destroyRequested = true;
     if (static_cast<uint8_t>(mode) > static_cast<uint8_t>(m_cleanupMode))
     {
         m_cleanupMode = mode;
@@ -2743,7 +2743,7 @@ UbTransportGroup::RequestDestroy(UbTpgCleanupMode mode)
 bool
 UbTransportGroup::IsDestroyPending() const
 {
-    return m_destroyPending;
+    return m_destroyRequested;
 }
 
 UbTpgCleanupMode

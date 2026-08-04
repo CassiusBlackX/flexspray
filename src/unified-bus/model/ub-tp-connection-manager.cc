@@ -1551,8 +1551,8 @@ void TpConnectionManager::Clear()
     m_peerNodeLocalPortIndex.clear();
     m_bothPortsIndex.clear();
     m_localTpnIndex.clear();
-    m_tpnList.clear();
-    m_reservedTpnList.clear();
+    m_allocatedTpns.clear();
+    m_reservedTpns.clear();
     m_nextTpn = 0;
     m_tpnSpaceExhausted = false;
     InvalidateAllConnectionsCacheLocked();
@@ -1611,10 +1611,12 @@ TpConnectionManager::BuildIndexesForNode(uint32_t localNodeId, Connection conn)
     // 索引6: 本地 TPN
     m_localTpnIndex[{localNodeId, localTpn}] = ref;
 
-    if (m_reservedTpnList.erase(localTpn) == 0) {
-        NS_ASSERT_MSG(m_tpnList.find(localTpn) == m_tpnList.end(), "Tpn already exists!");
+    if (m_reservedTpns.erase(localTpn) == 0)
+    {
+        NS_ASSERT_MSG(m_allocatedTpns.find(localTpn) == m_allocatedTpns.end(),
+                      "Tpn already exists!");
     }
-    m_tpnList.insert(localTpn);
+    m_allocatedTpns.insert(localTpn);
     return ref;
 }
 
@@ -1816,15 +1818,16 @@ uint32_t TpConnectionManager::ReserveNextTpnLocked()
 {
     constexpr uint32_t kMaxWireTpn = 0xFFFFFF;
     NS_ABORT_MSG_IF(m_tpnSpaceExhausted, "Exhausted the 24-bit TPN space without safe reuse");
-    while (m_tpnList.find(m_nextTpn) != m_tpnList.end() ||
-           m_reservedTpnList.find(m_nextTpn) != m_reservedTpnList.end()) {
+    while (m_allocatedTpns.find(m_nextTpn) != m_allocatedTpns.end() ||
+           m_reservedTpns.find(m_nextTpn) != m_reservedTpns.end())
+    {
         NS_ABORT_MSG_IF(m_nextTpn == kMaxWireTpn,
                         "Exhausted the 24-bit TPN space without safe reuse");
         ++m_nextTpn;
     }
 
     const uint32_t reservedTpn = m_nextTpn;
-    m_reservedTpnList.insert(reservedTpn);
+    m_reservedTpns.insert(reservedTpn);
     if (m_nextTpn == kMaxWireTpn)
     {
         m_tpnSpaceExhausted = true;

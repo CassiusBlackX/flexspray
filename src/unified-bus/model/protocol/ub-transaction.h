@@ -165,17 +165,29 @@ namespace ns3 {
         void EraseRtpTpGroupBindings(
             const UbLifecycleResourceIdentity& groupIdentity);
 
-        const std::vector<Ptr<UbTransportChannel>> GetJettyRelatedTpVec(uint32_t jettyNum);
+        const std::vector<Ptr<UbTransportChannel>> GetJettyLiveTps(uint32_t jettyNum);
 
-        std::vector<Ptr<UbJetty>> GetTpRelatedJettyVec(uint32_t tpn);
+        [[deprecated("use GetJettyLiveTps")]] const std::vector<Ptr<UbTransportChannel>>
+        GetJettyRelatedTpVec(uint32_t jettyNum)
+        {
+            return GetJettyLiveTps(jettyNum);
+        }
+
+        std::vector<Ptr<UbJetty>> GetJettiesUsingTpn(uint32_t tpn);
+
+        [[deprecated("use GetJettiesUsingTpn")]] std::vector<Ptr<UbJetty>> GetTpRelatedJettyVec(
+            uint32_t tpn)
+        {
+            return GetJettiesUsingTpn(tpn);
+        }
 
         // function层调用
         void TriggerScheduleWqeSegment(uint32_t jettyNum,
                                        Ptr<UbWqe> originatingWqe,
                                        bool lifecycleOperation);
-        void TryContinueJettyTransmission(uint32_t relatedJettyNum);
-        void TryContinueJettyTransmission(Ptr<UbTransportChannel> relatedTp);
-        void TryContinueJettyTransmission(Ptr<UbTransportGroup> relatedTpGroup);
+        void TryContinueJettyTransmission(uint32_t jettyNum);
+        void TryContinueJettyTransmission(Ptr<UbTransportChannel> tp);
+        void TryContinueJettyTransmission(Ptr<UbTransportGroup> tpGroup);
 
         // tp调用
         Ptr<UbWqeSegment> PrepareNextCtpWqeSegment(Ptr<UbJetty> jetty,
@@ -256,10 +268,9 @@ namespace ns3 {
         uint64_t GetRtpTpgMaterializationCountForTest() const;
         void NotifyRtpTpGroupMemberAvailable(
             const UbLifecycleResourceIdentity& groupIdentity);
-        void TerminateRtpTpGroupOperations(
-            const UbLifecycleResourceIdentity& groupIdentity,
-            UbWorkOutcome outcome,
-            bool forceDrain);
+        void TerminateRtpTpGroupOperations(const UbLifecycleResourceIdentity& groupIdentity,
+                                           UbWorkOutcome outcome,
+                                           bool discardRetainedSegments);
         void RetireRtpTxQueue(
             const UbLifecycleResourceIdentity& identity);
         bool TryGetOperationSnapshot(uint32_t jettyNum,
@@ -272,7 +283,8 @@ namespace ns3 {
         {
             CONTINUE_ACCEPTED = 0,
             STOP_ACCEPTED = 1,
-            FORCE_DRAIN = 2,
+            SIMULATION_STOP = 2,
+            FORCE_DRAIN [[deprecated("use SIMULATION_STOP")]] = SIMULATION_STOP,
         };
 
         // 某个wqe完成，刷新状态
@@ -286,7 +298,13 @@ namespace ns3 {
                                           uint32_t wqeId,
                                           UbWorkOutcome outcome,
                                           WqeTerminalMode terminalMode);
-        void ForceDrainTerminalPendingOperations(uint32_t jettyNum);
+        void DiscardJettyRetainedWqeSegmentsForSimulationStop(uint32_t jettyNum);
+
+        [[deprecated("use DiscardJettyRetainedWqeSegmentsForSimulationStop")]] void
+        ForceDrainTerminalPendingOperations(uint32_t jettyNum)
+        {
+            DiscardJettyRetainedWqeSegmentsForSimulationStop(jettyNum);
+        }
 
         // 判断本地tp是否处于使用状态
         bool IsTpInUse(uint32_t tpn);
@@ -409,7 +427,7 @@ namespace ns3 {
                        Ptr<UbWqe> wqe,
                        UbWorkOutcome outcome,
                        WqeTerminalMode terminalMode);
-        void ForceDrainTerminalPendingOperation(uint32_t jettyNum, uint32_t wqeId);
+        void DiscardRetainedWqeSegmentsForSimulationStop(uint32_t jettyNum, uint32_t wqeId);
         void EnqueueRtpWqeAfterBackpressure(uint32_t jettyNum, Ptr<UbWqe> originatingWqe);
         void TryContinueRtpTxQueue(const RtpTxQueueKey& key, bool capacityTransition);
         void RunRtpTx(RtpTxQueueKey queueKey);
@@ -453,7 +471,7 @@ namespace ns3 {
         Ptr<UbLifecycleCoordinator> m_coordinator;
 
         // Tpn和Tp的对应map
-        std::map<uint32_t, Ptr<UbTransportChannel>> m_tpnMap;
+        std::map<uint32_t, Ptr<UbTransportChannel>> m_transportByTpn;
         std::map<uint32_t, UbRtpTransportReference> m_jettyRtpReferences;
         std::map<uint32_t, RtpTpgMaterialization> m_jettyTpgMaterializations;
         // 每个 Jetty 下次从哪个 TP 开始调度，避免短 WQE 总被第一个 TP 抢占。
@@ -461,7 +479,7 @@ namespace ns3 {
         // 新 Jetty 的初始 TP 轮转位置；一任务一 Jetty 的短流也能展开到多 TP。
         uint32_t m_nextJettyTpStartIndex = 0;
         std::map<uint32_t, std::map<RemoteRtpWqeSegmentKey, RemoteRtpWqeSegmentState>>
-            m_tpRelatedRemoteRequests;
+            m_remoteRtpWqeSegmentsByTpn;
 
         std::map<uint32_t, uint32_t> m_tpRRIndex;
         Ptr<UniformRandomVariable> m_random;        //随机数产生工具，伪随机，多次仿真可复现
@@ -469,7 +487,7 @@ namespace ns3 {
         // 记录每个jetty对应的serviceMode
         std::map<uint32_t, TransactionServiceMode> m_serviceMode;
         // 每个jetty存储wqe的id顺序
-        std::map<uint32_t, std::vector<uint32_t>> m_jettyOrderedWqe;
+        std::map<uint32_t, std::vector<uint32_t>> m_orderedWqeIdsByJetty;
         std::map<std::pair<uint32_t, uint64_t>, uint32_t> m_memoryStore;
 
         struct OperationRecord
@@ -482,7 +500,7 @@ namespace ns3 {
             UbLifecycleLeaseIdentity workLease;
             bool rtpWqeSegmentTxActive{false};
             bool txEntryQueued{false};
-            bool terminalPending{false};
+            bool awaitingTpSegmentCleanup{false};
             bool ctp{false};
             UbCtpEntityKey ctpKey;
             struct SegmentRecord
@@ -498,9 +516,9 @@ namespace ns3 {
 
         std::map<std::pair<uint32_t, uint32_t>, OperationRecord> m_operations;
         std::map<UbCtpEntityKey, UbCtpTransactionState> m_ctpTransactionStates;
-        std::map<UbCtpEntityKey, uint32_t> m_ctpNextTaSsn;
+        std::map<UbCtpEntityKey, uint32_t> m_nextCtpTaSsnByEntity;
         std::map<RtpTxQueueKey, RtpTxQueue> m_rtpTxQueues;
-        std::vector<UbLifecycleResourceIdentity> m_suppressedTpgOwnerProgress;
+        std::vector<UbLifecycleResourceIdentity> m_tpgsBlockingJettyRetry;
         bool m_collectRtpResolutionCountersForTest{false};
         mutable uint64_t m_rtpResolutionCount{0};
         uint64_t m_rtpTpgMaterializationCount{0};

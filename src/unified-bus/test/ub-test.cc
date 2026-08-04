@@ -81,7 +81,7 @@ class UbTpnAllocationBoundaryAccessor
 
     static void OccupyTpn(Ptr<TpConnectionManager> manager, uint32_t tpn)
     {
-        manager->m_tpnList.insert(tpn);
+        manager->m_allocatedTpns.insert(tpn);
     }
 };
 
@@ -155,7 +155,7 @@ BuildCtpCnpPacket(uint32_t srcNodeId, const UbCtpEntityKey& key)
     cnaHeader.SetNlp(UB_CNA_NLP_CTPH);
     packet->AddHeader(cnaHeader);
 
-    UbDataLink::GenPacketHeader(packet,
+    UbDataLink::AddPacketHeader(packet,
                                 false,
                                 false,
                                 key.vl,
@@ -520,7 +520,7 @@ BuildReceiverDataPacketWithSequences(const LocalTpTopology& topo,
 
     UbIpBasedNetworkHeader networkHeader;
     data->AddHeader(networkHeader);
-    UbDataLink::GenPacketHeader(data,
+    UbDataLink::AddPacketHeader(data,
                                 false,
                                 false,
                                 kUrmaWriteRegressionPriority,
@@ -571,7 +571,7 @@ BuildInboundTpPacket(const LocalTpTopology& topo,
 
     UbIpBasedNetworkHeader networkHeader;
     packet->AddHeader(networkHeader);
-    UbDataLink::GenPacketHeader(packet,
+    UbDataLink::AddPacketHeader(packet,
                                 false,
                                 false,
                                 priority,
@@ -3120,8 +3120,12 @@ public:
             packet->AddHeader(UdpHeader());
             UbPort::AddIpv4Header(packet, NodeIdToIp(0), NodeIdToIp(1));
             packet->AddHeader(UbIpBasedNetworkHeader());
-            UbDataLink::GenPacketHeader(packet, false, true, UB_PRIORITY_DEFAULT,
-                                        UB_PRIORITY_DEFAULT, RoutingType::PER_FLOW_SHORTEST_PATHS,
+            UbDataLink::AddPacketHeader(packet,
+                                        false,
+                                        true,
+                                        UB_PRIORITY_DEFAULT,
+                                        UB_PRIORITY_DEFAULT,
+                                        RoutingType::PER_FLOW_SHORTEST_PATHS,
                                         UbDatalinkHeaderConfig::PACKET_IPV4);
             return packet;
         };
@@ -3335,7 +3339,7 @@ public:
 
         UbIpBasedNetworkHeader networkHeader;
         data->AddHeader(networkHeader);
-        UbDataLink::GenPacketHeader(data,
+        UbDataLink::AddPacketHeader(data,
                                     false,
                                     false,
                                     kUrmaWriteRegressionPriority,
@@ -3799,7 +3803,7 @@ public:
                               NodeIdToIp(topo.sender->GetId(), topo.senderPort->GetIfIndex()));
         UbIpBasedNetworkHeader networkHeader;
         packet->AddHeader(networkHeader);
-        UbDataLink::GenPacketHeader(packet,
+        UbDataLink::AddPacketHeader(packet,
                                     false,
                                     true,
                                     kUrmaWriteRegressionPriority,
@@ -8833,9 +8837,9 @@ class UbRtpTpgMaterializationReuseTest : public TestCase
 
         transaction->ResetRtpResolutionCountersForTest();
         const std::vector<Ptr<UbTransportChannel>> first =
-            transaction->GetJettyRelatedTpVec(kUrmaWriteRegressionJettyNum);
+            transaction->GetJettyLiveTps(kUrmaWriteRegressionJettyNum);
         const std::vector<Ptr<UbTransportChannel>> second =
-            transaction->GetJettyRelatedTpVec(kUrmaWriteRegressionJettyNum);
+            transaction->GetJettyLiveTps(kUrmaWriteRegressionJettyNum);
         NS_TEST_ASSERT_MSG_EQ(first.size(), 2u, "First materialization should retain both members");
         NS_TEST_ASSERT_MSG_EQ(second.size(), first.size(), "Cache hit should preserve member count");
         NS_TEST_ASSERT_MSG_EQ(second[0], first[0], "Cache hit should preserve first member order");
@@ -8859,7 +8863,7 @@ class UbRtpTpgMaterializationReuseTest : public TestCase
             static_cast<uint32_t>(UbTpgMemberMutationStatus::ADDED),
             "Adding a live member should update the canonical group");
         const std::vector<Ptr<UbTransportChannel>> afterAdd =
-            transaction->GetJettyRelatedTpVec(kUrmaWriteRegressionJettyNum);
+            transaction->GetJettyLiveTps(kUrmaWriteRegressionJettyNum);
         NS_TEST_ASSERT_MSG_EQ(afterAdd.size(), 3u, "Add should rebuild all three members");
         NS_TEST_ASSERT_MSG_EQ(afterAdd[0], first[0], "Add should preserve first member order");
         NS_TEST_ASSERT_MSG_EQ(afterAdd[1], first[1], "Add should preserve second member order");
@@ -8877,7 +8881,7 @@ class UbRtpTpgMaterializationReuseTest : public TestCase
             static_cast<uint32_t>(UbTpgMemberMutationStatus::REMOVED),
             "Removing a non-last member should update the canonical group");
         const std::vector<Ptr<UbTransportChannel>> afterRemove =
-            transaction->GetJettyRelatedTpVec(kUrmaWriteRegressionJettyNum);
+            transaction->GetJettyLiveTps(kUrmaWriteRegressionJettyNum);
         NS_TEST_ASSERT_MSG_EQ(afterRemove.size(), 2u, "Remove should rebuild the two survivors");
         NS_TEST_ASSERT_MSG_EQ(afterRemove[0], first[0], "Remove should preserve first member order");
         NS_TEST_ASSERT_MSG_EQ(afterRemove[1], first[1], "Remove should preserve second member order");
@@ -8886,12 +8890,12 @@ class UbRtpTpgMaterializationReuseTest : public TestCase
                               "Member remove should rebuild the cached materialization once");
 
         group->FreezeNewOperations();
-        transaction->GetJettyRelatedTpVec(kUrmaWriteRegressionJettyNum);
+        transaction->GetJettyLiveTps(kUrmaWriteRegressionJettyNum);
         NS_TEST_ASSERT_MSG_EQ(transaction->GetRtpTpgMaterializationCountForTest(),
                               4u,
                               "Drain freeze should invalidate the cached materialization");
         group->ResumeNewOperations();
-        transaction->GetJettyRelatedTpVec(kUrmaWriteRegressionJettyNum);
+        transaction->GetJettyLiveTps(kUrmaWriteRegressionJettyNum);
         NS_TEST_ASSERT_MSG_EQ(transaction->GetRtpTpgMaterializationCountForTest(),
                               5u,
                               "Drain resume should invalidate the cached materialization");
@@ -8901,10 +8905,9 @@ class UbRtpTpgMaterializationReuseTest : public TestCase
                                                                 UbDestroyReason::EXPLICIT)),
             static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
             "Idle group destroy should complete synchronously");
-        NS_TEST_ASSERT_MSG_EQ(
-            transaction->GetJettyRelatedTpVec(kUrmaWriteRegressionJettyNum).empty(),
-            true,
-            "Group destroy should erase the binding-owned materialization");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetJettyLiveTps(kUrmaWriteRegressionJettyNum).empty(),
+                              true,
+                              "Group destroy should erase the binding-owned materialization");
 
         Simulator::Destroy();
         Config::Reset();
@@ -14053,37 +14056,40 @@ class UbLifecycleStartedTerminalRetainsCorrelationUntilResponseTest : public Tes
                                                 m_outcome);
         }
 
-        UbTransactionOperationSnapshot terminalPending;
-        NS_TEST_ASSERT_MSG_EQ(m_transaction->TryGetOperationSnapshot(
-                                  kUrmaWriteRegressionJettyNum,
-                                  kUrmaWriteRegressionTaskId,
-                                  terminalPending),
+        UbTransactionOperationSnapshot awaitingTpSegmentCleanup;
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->TryGetOperationSnapshot(kUrmaWriteRegressionJettyNum,
+                                                                     kUrmaWriteRegressionTaskId,
+                                                                     awaitingTpSegmentCleanup),
                               true,
                               "Started terminal A must remain as lifecycle cleanup work");
-        NS_TEST_ASSERT_MSG_EQ(terminalPending.operationIdentity,
-                              beforeTerminal.operationIdentity,
-                              "Terminal-pending A must retain its exact operation generation");
-        NS_TEST_ASSERT_MSG_EQ(terminalPending.segmentIdentities.size(),
-                              1u,
-                              "Terminal-pending A must retain one exact segment generation");
-        NS_TEST_ASSERT_MSG_EQ(terminalPending.resolvedTpIdentities.size(),
-                              1u,
-                              "Terminal-pending A must retain one exact resolved TP generation");
-        if (terminalPending.segmentIdentities.size() == 1 &&
+        NS_TEST_ASSERT_MSG_EQ(
+            awaitingTpSegmentCleanup.operationIdentity,
+            beforeTerminal.operationIdentity,
+            "A awaiting TP Segment cleanup must retain its exact operation generation");
+        NS_TEST_ASSERT_MSG_EQ(
+            awaitingTpSegmentCleanup.segmentIdentities.size(),
+            1u,
+            "A awaiting TP Segment cleanup must retain one exact segment generation");
+        NS_TEST_ASSERT_MSG_EQ(
+            awaitingTpSegmentCleanup.resolvedTpIdentities.size(),
+            1u,
+            "A awaiting TP Segment cleanup must retain one exact resolved TP generation");
+        if (awaitingTpSegmentCleanup.segmentIdentities.size() == 1 &&
             beforeTerminal.segmentIdentities.size() == 1 &&
-            terminalPending.resolvedTpIdentities.size() == 1 &&
+            awaitingTpSegmentCleanup.resolvedTpIdentities.size() == 1 &&
             beforeTerminal.resolvedTpIdentities.size() == 1)
         {
-            NS_TEST_ASSERT_MSG_EQ(terminalPending.segmentIdentities[0],
+            NS_TEST_ASSERT_MSG_EQ(awaitingTpSegmentCleanup.segmentIdentities[0],
                                   beforeTerminal.segmentIdentities[0],
-                                  "Terminal-pending A must keep its segment identity");
-            NS_TEST_ASSERT_MSG_EQ(terminalPending.resolvedTpIdentities[0],
-                                  beforeTerminal.resolvedTpIdentities[0],
-                                  "Terminal-pending A must keep its resolved TP identity");
+                                  "A awaiting TP Segment cleanup must keep its segment identity");
+            NS_TEST_ASSERT_MSG_EQ(
+                awaitingTpSegmentCleanup.resolvedTpIdentities[0],
+                beforeTerminal.resolvedTpIdentities[0],
+                "A awaiting TP Segment cleanup must keep its resolved TP identity");
         }
-        NS_TEST_ASSERT_MSG_EQ(terminalPending.activeTransportWorkLeases,
+        NS_TEST_ASSERT_MSG_EQ(awaitingTpSegmentCleanup.activeTransportWorkLeases,
                               1u,
-                              "Terminal-pending A must retain its TP work lease");
+                              "A awaiting TP Segment cleanup must retain its TP work lease");
         NS_TEST_ASSERT_MSG_EQ(
             m_coordinator->GetSnapshot(m_tp->GetLifecycleOwner()).activeTransportWorkLeases,
             2u,
@@ -16301,8 +16307,7 @@ class UbLifecycleIdleJettyDestroyTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(function->GetJetty(kUrmaWriteRegressionJettyNum),
                               nullptr,
                               "Synchronous destroy should erase the Jetty collection entry");
-        NS_TEST_ASSERT_MSG_EQ(transaction->GetJettyRelatedTpVec(
-                                  kUrmaWriteRegressionJettyNum).empty(),
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetJettyLiveTps(kUrmaWriteRegressionJettyNum).empty(),
                               true,
                               "Jetty RTP binding should be released before retirement");
         const UbLifecycleResourceSnapshot retired = coordinator->GetSnapshot(jettyIdentity);
@@ -17134,8 +17139,7 @@ class UbLifecycleForcedJettyDisposalTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
                               0u,
                               "Forced disposal should release Transaction references");
-        NS_TEST_ASSERT_MSG_EQ(transaction->GetJettyRelatedTpVec(
-                                  kUrmaWriteRegressionJettyNum).empty(),
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetJettyLiveTps(kUrmaWriteRegressionJettyNum).empty(),
                               true,
                               "Forced disposal should release RTP binding references");
         const UbLifecycleResourceSnapshot jettySnapshot =
@@ -17283,8 +17287,7 @@ class UbLifecyclePendingJettyDestroyTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(m_function->GetJetty(kUrmaWriteRegressionJettyNum),
                               nullptr,
                               "Jetty should erase after accepted work and tracked events drain");
-        NS_TEST_ASSERT_MSG_EQ(m_transaction->GetJettyRelatedTpVec(
-                                  kUrmaWriteRegressionJettyNum).empty(),
+        NS_TEST_ASSERT_MSG_EQ(m_transaction->GetJettyLiveTps(kUrmaWriteRegressionJettyNum).empty(),
                               true,
                               "RTP binding should be released before callbacks");
         NS_TEST_ASSERT_MSG_EQ(m_firstCallbackCount,
@@ -17312,7 +17315,7 @@ class UbLifecyclePendingJettyDestroyTest : public TestCase
             m_function->GetJetty(kUrmaWriteRegressionJettyNum) == nullptr;
         m_callbackObservedBindingRelease =
             m_callbackObservedBindingRelease ||
-            m_transaction->GetJettyRelatedTpVec(kUrmaWriteRegressionJettyNum).empty();
+            m_transaction->GetJettyLiveTps(kUrmaWriteRegressionJettyNum).empty();
     }
 
     void OnFirstDestroyed(UbLifecycleResourceIdentity, UbDestroyStatus status)
@@ -18654,7 +18657,7 @@ class UbLifecycleFaultParserViewPreservesPacketTest : public TestCase
         UbPort::AddIpv4Header(packet, NodeIdToIp(0), NodeIdToIp(1));
         UbIpBasedNetworkHeader networkHeader;
         packet->AddHeader(networkHeader);
-        UbDataLink::GenPacketHeader(packet,
+        UbDataLink::AddPacketHeader(packet,
                                     false,
                                     false,
                                     UB_PRIORITY_DEFAULT,
@@ -19180,7 +19183,7 @@ class UbControlFrameUsesDedicatedAccountingTest : public TestCase
 
         uint8_t credits[16] = {};
         credits[0] = 1;
-        Ptr<Packet> controlPacket = UbDataLink::GenControlCreditPacket(credits);
+        Ptr<Packet> controlPacket = UbDataLink::BuildControlCreditPacket(credits);
         uint32_t controlBytes = controlPacket->GetSize();
         fixture.sw->SendControlFrame(controlPacket, 0);
 
@@ -19224,7 +19227,7 @@ class UbDataPacketHeaderRejectsPriorityZeroTest : public TestCase
     {
         int status = RunInChildProcess([]() {
             Ptr<Packet> packet = Create<Packet>(0);
-            UbDataLink::GenPacketHeader(packet,
+            UbDataLink::AddPacketHeader(packet,
                                         false,
                                         false,
                                         0,
@@ -19264,7 +19267,7 @@ class UbSendControlFrameRejectsDataPacketTest : public TestCase
                                                         {});
 
             Ptr<Packet> dataPacket = Create<Packet>(0);
-            UbDataLink::GenPacketHeader(dataPacket,
+            UbDataLink::AddPacketHeader(dataPacket,
                                         false,
                                         false,
                                         1,
@@ -20093,7 +20096,7 @@ class UbSwitchControlFramesBypassProcessingDelayTest : public TestCase
 
         uint8_t credits[16] = {};
         credits[0] = 1;
-        Ptr<Packet> controlPacket = UbDataLink::GenControlCreditPacket(credits);
+        Ptr<Packet> controlPacket = UbDataLink::BuildControlCreditPacket(credits);
         const uint32_t controlBytes = controlPacket->GetSize();
 
         fixture.sw->SendControlFrame(controlPacket, 0);
@@ -20420,11 +20423,11 @@ class UbCbfcPiggybackTargetVlCanDifferFromPacketVlTest : public TestCase
         }
 
         Ptr<Packet> packet = Create<Packet>(256);
-        UbDataLink::GenPacketHeader(packet,
+        UbDataLink::AddPacketHeader(packet,
                                     false,
                                     false,
-                                    /*crdVl*/ 1,
-                                    /*pktVl*/ 2,
+                                    /*creditTargetVl*/ 1,
+                                    /*packetVl*/ 2,
                                     RoutingType::PER_FLOW_ALL_PATHS,
                                     UbDatalinkHeaderConfig::PACKET_IPV4);
         Ptr<UbPacketQueue> ingressQueue = CreateObject<UbPacketQueue>();
@@ -20487,11 +20490,11 @@ class UbCbfcPiggybackRestoreClearsLocalCreditBitTest : public TestCase
 
         const int32_t before = probe->GetTxFreeCells(6);
         Ptr<Packet> packet = Create<Packet>(128);
-        UbDataLink::GenPacketHeader(packet,
+        UbDataLink::AddPacketHeader(packet,
                                     true,
                                     false,
-                                    /*crdVl*/ 6,
-                                    /*pktVl*/ 3,
+                                    /*creditTargetVl*/ 6,
+                                    /*packetVl*/ 3,
                                     RoutingType::PER_FLOW_ALL_PATHS,
                                     UbDatalinkHeaderConfig::PACKET_IPV4);
 
@@ -20788,11 +20791,11 @@ class UbCbfcForwardedReleaseUsesIngressPortThresholdStateTest : public TestCase
                               "egress-side flow control should stay below the ctrl-credit-return threshold in this setup");
 
         Ptr<Packet> packet = Create<Packet>(128);
-        UbDataLink::GenPacketHeader(packet,
+        UbDataLink::AddPacketHeader(packet,
                                     false,
                                     false,
-                                    /*crdVl*/ 1,
-                                    /*pktVl*/ 5,
+                                    /*creditTargetVl*/ 1,
+                                    /*packetVl*/ 5,
                                     RoutingType::PER_FLOW_ALL_PATHS,
                                     UbDatalinkHeaderConfig::PACKET_IPV4);
         Ptr<UbPacketQueue> ingressQueue = CreateObject<UbPacketQueue>();
@@ -20862,11 +20865,11 @@ class UbCbfcForwardedIngressEnqueueDoesNotAccumulateReturnCreditTest : public Te
         fixture.ports[kIngressPort]->m_flowControl = ingressProbe;
 
         Ptr<Packet> packet = Create<Packet>(kPayloadBytes);
-        UbDataLink::GenPacketHeader(packet,
+        UbDataLink::AddPacketHeader(packet,
                                     false,
                                     false,
-                                    /*crdVl*/ kPriority,
-                                    /*pktVl*/ kPriority,
+                                    /*creditTargetVl*/ kPriority,
+                                    /*packetVl*/ kPriority,
                                     RoutingType::PER_FLOW_ALL_PATHS,
                                     UbDatalinkHeaderConfig::PACKET_IPV4);
 
@@ -26515,7 +26518,7 @@ class UbDwrrAllocatorPreservesIngressQueueSlotsAcrossVlTest : public TestCase
 
         uint8_t credits[16] = {};
         credits[0] = 1;
-        sw->SendControlFrame(UbDataLink::GenControlCreditPacket(credits), kOutPort);
+        sw->SendControlFrame(UbDataLink::BuildControlCreditPacket(credits), kOutPort);
         sw->PushPacketToVoq(Create<Packet>(64), kOutPort, 1, 1);
         sw->PushPacketToVoq(Create<Packet>(64), kOutPort, 1, 3);
         sw->PushPacketToVoq(Create<Packet>(64), kOutPort, 2, 0);
@@ -28914,7 +28917,7 @@ class UbSwitchLdstRoutingKeyKeepsLegacySourcePortTest : public TestCase
         cnaHeader.SetNlp(UB_CNA_NLP_RTPH);
         packet->AddHeader(cnaHeader);
 
-        UbDataLink::GenPacketHeader(packet,
+        UbDataLink::AddPacketHeader(packet,
                                     false,
                                     false,
                                     priority,
@@ -28972,7 +28975,7 @@ class UbSwitchClassifiesCtpCnaPacketTest : public TestCase
         cna24Header.SetServiceLevel(key.vl);
         cna24Header.SetNlp(UB_CNA_NLP_CTPH);
         ctp24Packet->AddHeader(cna24Header);
-        UbDataLink::GenPacketHeader(ctp24Packet,
+        UbDataLink::AddPacketHeader(ctp24Packet,
                                     false,
                                     false,
                                     key.vl,

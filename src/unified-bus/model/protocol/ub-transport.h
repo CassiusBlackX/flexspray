@@ -771,7 +771,7 @@ private:
     uint32_t m_selectionCursor{0};
     bool m_acceptingNewOperations{true};
     std::optional<UbLifecycleResourceIdentity> m_pendingLastMemberRemoval;
-    bool m_destroyPending{false};
+    bool m_destroyRequested{false};
     UbTpgCleanupMode m_cleanupMode{UbTpgCleanupMode::GRACEFUL};
     uint64_t m_membershipVersion{1};
 };

@@ -182,7 +182,7 @@ BuildCtpPacket(Ptr<UbWqeSegment> segment,
     cnaHeader.SetNlp(UB_CNA_NLP_CTPH);
     packet->AddHeader(cnaHeader);
 
-    UbDataLink::GenPacketHeader(packet,
+    UbDataLink::AddPacketHeader(packet,
                                 false,
                                 false,
                                 key.vl,
@@ -986,10 +986,9 @@ UbCtpTransportService::SendResponseSegmentForTest(Ptr<UbWqeSegment> response,
 }
 
 void
-UbCtpTransportService::TryContinueJettyTransmission(
-    const UbCtpEntityKey& relatedEntityKey)
+UbCtpTransportService::TryContinueJettyTransmission(const UbCtpEntityKey& entityKey)
 {
-    UbCtpEntityState& state = GetOrCreateEntityState(relatedEntityKey);
+    UbCtpEntityState& state = GetOrCreateEntityState(entityKey);
     const UbCtpEntityKey& key = state.GetKey();
     auto jettysIt = m_keyJettys.find(key);
     if (jettysIt == m_keyJettys.end() || jettysIt->second.empty())

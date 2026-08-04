@@ -265,8 +265,13 @@ Ptr<Packet> UbLdstApi::GenDataPacket(Ptr<UbLdstTaskSegment> taskSegment)
     packet->AddHeader(cna16NetworkHeader);
 
     // add dl header
-    UbDataLink::GenPacketHeader(packet, false, false, taskSegment->GetPriority(), taskSegment->GetPriority(),
-                                m_routingType, UbDatalinkHeaderConfig::PACKET_UB_MEM);
+    UbDataLink::AddPacketHeader(packet,
+                                false,
+                                false,
+                                taskSegment->GetPriority(),
+                                taskSegment->GetPriority(),
+                                m_routingType,
+                                UbDatalinkHeaderConfig::PACKET_UB_MEM);
     UbFlowTag flowTag(taskSegment->GetTaskId(), taskSegment->GetSize());
     packet->AddPacketTag(flowTag);
     NS_LOG_DEBUG("[UbLdstApi GenDataPacket] packetUid: " << packet->GetUid() << " payload size:" << payloadSize);
@@ -317,7 +322,11 @@ void UbLdstApi::RecvDataPacket(Ptr<Packet> packet)
 
     ackp->AddHeader(caTaHeader);
     ackp->AddHeader(cna16NetworkHeader);
-    UbDataLink::GenPacketHeader(ackp, false, true, linkPacketHeader.GetCreditTargetVL(), linkPacketHeader.GetPacketVL(),
+    UbDataLink::AddPacketHeader(ackp,
+                                false,
+                                true,
+                                linkPacketHeader.GetCreditTargetVL(),
+                                linkPacketHeader.GetPacketVL(),
                                 linkPacketHeader.GetRoutingType(),
                                 UbDatalinkHeaderConfig::PACKET_UB_MEM);
     RoutingKey rtKey;

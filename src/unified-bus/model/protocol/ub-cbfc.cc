@@ -248,7 +248,8 @@ bool UbCbfc::CbfcRestoreCrd(Ptr<Packet> p)
 
     NS_LOG_DEBUG("NodeId: " << m_nodeId << " PortId: " << m_portId);
     port->ResetCredits();
-    UbDatalinkControlCreditHeader crdHeader = UbDataLink::ParseCreditHeader(p, port);
+    UbDatalinkControlCreditHeader crdHeader =
+        UbDataLink::ConsumeCreditHeaderAndRestoreCredits(p, port);
 
     uint32_t resumeCellGrainNum = 0;
     bool ret = false;
@@ -371,7 +372,7 @@ Ptr<Packet> UbCbfc::BuildControlReturnPacket(uint32_t targetPortId,
         minPendingCells,
         pendingSnapshot,
         sendCredits);
-    return UbDataLink::GenControlCreditPacket(port->m_credits);
+    return UbDataLink::BuildControlCreditPacket(port->m_credits);
 }
 
 Ptr<Packet>
@@ -466,8 +467,10 @@ UbCbfc::RestoreDataPacketCredit(Ptr<Packet> p)
 bool
 UbCbfc::ShouldForceControlReturn() const
 {
-    for (int32_t pending : m_crdToReturn) {
-        if (pending >= m_cbfcCfg.m_ctrlCrdRtrThldCells) {
+    for (int32_t creditsToReturn : m_crdToReturn)
+    {
+        if (creditsToReturn >= m_cbfcCfg.m_ctrlCrdRtrThldCells)
+        {
             return true;
         }
     }
@@ -637,7 +640,8 @@ bool UbCbfcSharedCredit::CbfcSharedRestoreCrd(Ptr<Packet> p)
 
     NS_LOG_DEBUG("NodeId: " << m_nodeId << " PortId: " << m_portId);
     port->ResetCredits();
-    UbDatalinkControlCreditHeader crdHeader = UbDataLink::ParseCreditHeader(p, port);
+    UbDatalinkControlCreditHeader crdHeader =
+        UbDataLink::ConsumeCreditHeaderAndRestoreCredits(p, port);
 
     uint32_t resumeCellGrainNum = 0;
     bool ret = false;

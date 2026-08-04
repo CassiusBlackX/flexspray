@@ -113,9 +113,13 @@ public:
 
     void SetTpConnManager(Ptr<TpConnectionManager> conn)
     {
-        m_tpnConn = conn;
+        m_tpConnectionManager = conn;
     }
-    Ptr<TpConnectionManager> GetTpConnManager() { return m_tpnConn; }
+
+    Ptr<TpConnectionManager> GetTpConnManager()
+    {
+        return m_tpConnectionManager;
+    }
 
     uint32_t GetActiveSenderFlowCount() const { return m_activeSenderFlowCount; }
     bool IsDisposing() const { return m_disposing; }
@@ -142,9 +146,9 @@ private:
   uint64_t m_nextRtpTpGroupId{0};
   std::map<uint64_t, Ptr<UbTransportGroup>> m_rtpTpGroups{};
   std::map<uint32_t, uint64_t> m_rtpTpGroupByTpn{};
-  std::unordered_map<uint32_t, std::vector<Ptr<UbPort>>> m_destinationToPortsMap{};
+  std::unordered_map<uint32_t, std::vector<Ptr<UbPort>>> m_portsByDestination{};
 
-  Ptr<TpConnectionManager> m_tpnConn; // 当前节点维护的tpnConn
+  Ptr<TpConnectionManager> m_tpConnectionManager;
   uint32_t m_activeSenderFlowCount{0};
   bool m_disposing{false};
 };

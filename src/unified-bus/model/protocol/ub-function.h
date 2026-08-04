@@ -192,7 +192,7 @@ namespace ns3 {
         UbDestroyStatus DestroyJetty(uint32_t jettyNum,
                                      UbDestroyReason reason,
                                      UbDestroyCallback callback);
-        void NotifyProgress(uint32_t jettyNum);
+        void TryFinalizeJettyDestroy(uint32_t jettyNum);
         bool IsDrainReady(uint32_t jettyNum) const;
         uint64_t GetResidentWqeCount() const;
         UbJettyStorageSnapshot GetStorageSnapshot() const;
@@ -241,8 +241,8 @@ namespace ns3 {
         Ptr<UbLifecycleCoordinator> m_coordinator;
         Ptr<UbTransaction> m_transaction;
         Ptr<UbCtpTransportService> m_ctpService;
-        UbTrackedEventSet m_trackedEvents;
-        std::map<uint32_t, JettyRecord> m_records;
+        UbTrackedEventSet m_jettyEvents;
+        std::map<uint32_t, JettyRecord> m_jettyRecordsByNum;
     };
 
     /**
@@ -263,7 +263,13 @@ namespace ns3 {
         bool CanCommitWqeSegmentAdmission(Ptr<UbWqeSegment> segment,
                                           Ptr<UbWqe> expectedWqe) const;
         void CommitWqeSegmentAdmission(Ptr<UbWqeSegment> segment);
-        void ApplyWqeSegmentTerminalProgress(const std::vector<uint32_t>& taSsns);
+        void AdvanceTaSsnForWqeCleanup(const std::vector<uint32_t>& taSsns);
+
+        [[deprecated("use AdvanceTaSsnForWqeCleanup")]] void ApplyWqeSegmentTerminalProgress(
+            const std::vector<uint32_t>& taSsns)
+        {
+            AdvanceTaSsnForWqeCleanup(taSsns);
+        }
         bool ProcessWqeSegmentComplete(uint32_t taSsnFin);
         void RightShiftBitset(uint32_t shiftCount);
         void SetTaSegmentBytes(uint32_t bytes);
