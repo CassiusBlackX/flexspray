@@ -1,44 +1,48 @@
 // SPDX-License-Identifier: GPL-2.0-only
+#include "ns3/ub-ldst-api.h"
+
 #include "ns3/abort.h"
 #include "ns3/log.h"
 #include "ns3/simulator.h"
-
-#include "ns3/ub-datatype.h"
 #include "ns3/ub-controller.h"
-#include "ns3/ub-ldst-api.h"
+#include "ns3/ub-datatype.h"
 #include "ns3/ub-ldst-endpoint.h"
 
+#include <algorithm>
 #include <limits>
 #include <memory>
 
 #include <algorithm>
 
-namespace ns3 {
+namespace ns3
+{
 NS_LOG_COMPONENT_DEFINE("UbLdstApi");
 
 NS_OBJECT_ENSURE_REGISTERED(UbLdstApi);
 
-TypeId UbLdstApi::GetTypeId(void)
+TypeId
+UbLdstApi::GetTypeId(void)
 {
-    static TypeId tid = TypeId("ns3::UbLdstApi")
-                            .SetParent<Object>()
-                            .SetGroupName("UnifiedBus")
-                            .AddAttribute("RoutingType",
-                                          "UB routing type used by LDST packets.",
-                                          EnumValue(RoutingType::PER_FLOW_SHORTEST_PATHS),
-                                          MakeEnumAccessor<RoutingType>(&UbLdstApi::m_routingType),
-                                          MakeEnumChecker(RoutingType::PER_FLOW_ALL_PATHS,
-                                                          "PER_FLOW_ALL_PATHS",
-                                                          RoutingType::PER_PACKET_ALL_PATHS,
-                                                          "PER_PACKET_ALL_PATHS",
-                                                          RoutingType::PER_FLOW_SHORTEST_PATHS,
-                                                          "PER_FLOW_SHORTEST_PATHS",
-                                                          RoutingType::PER_PACKET_SHORTEST_PATHS,
-                                                          "PER_PACKET_SHORTEST_PATHS"))
-                            .AddTraceSource("LdstRecvNotify",
-                                            "Fires on Ldst data or ACK reception (provides info and trace tags).",
-                                            MakeTraceSourceAccessor(&UbLdstApi::m_ldstRecvNotify),
-                                            "ns3::UbLdstApi::LdstRecvNotify");
+    static TypeId tid =
+        TypeId("ns3::UbLdstApi")
+            .SetParent<Object>()
+            .SetGroupName("UnifiedBus")
+            .AddAttribute("RoutingType",
+                          "UB routing type used by LDST packets.",
+                          EnumValue(RoutingType::PER_FLOW_SHORTEST_PATHS),
+                          MakeEnumAccessor<RoutingType>(&UbLdstApi::m_routingType),
+                          MakeEnumChecker(RoutingType::PER_FLOW_ALL_PATHS,
+                                          "PER_FLOW_ALL_PATHS",
+                                          RoutingType::PER_PACKET_ALL_PATHS,
+                                          "PER_PACKET_ALL_PATHS",
+                                          RoutingType::PER_FLOW_SHORTEST_PATHS,
+                                          "PER_FLOW_SHORTEST_PATHS",
+                                          RoutingType::PER_PACKET_SHORTEST_PATHS,
+                                          "PER_PACKET_SHORTEST_PATHS"))
+            .AddTraceSource("LdstRecvNotify",
+                            "Fires on Ldst data or ACK reception (provides info and trace tags).",
+                            MakeTraceSourceAccessor(&UbLdstApi::m_ldstRecvNotify),
+                            "ns3::UbLdstApi::LdstRecvNotify");
 
     return tid;
 }
@@ -46,10 +50,13 @@ TypeId UbLdstApi::GetTypeId(void)
 UbLdstApi::UbLdstApi()
 {
     BooleanValue val;
-    if (GlobalValue::GetValueByNameFailSafe("UB_RECORD_PKT_TRACE", val)) {
+    if (GlobalValue::GetValueByNameFailSafe("UB_RECORD_PKT_TRACE", val))
+    {
         GlobalValue::GetValueByName("UB_RECORD_PKT_TRACE", val);
         m_pktTraceEnabled = val.Get();
-    } else {
+    }
+    else
+    {
         m_pktTraceEnabled = false;
     }
 }
@@ -58,7 +65,8 @@ UbLdstApi::~UbLdstApi()
 {
 }
 
-void UbLdstApi::SetNodeId(uint32_t nodeId)
+void
+UbLdstApi::SetNodeId(uint32_t nodeId)
 {
     m_nodeId = nodeId;
     ValidateRoutingConfiguration();
@@ -103,7 +111,8 @@ UbLdstApi::HasRemoteRequestProcessor() const
     return !m_remoteRequestProcessor.IsNull();
 }
 
-void UbLdstApi::LdstProcess(Ptr<UbLdstTaskSegment> taskSegment)
+void
+UbLdstApi::LdstProcess(Ptr<UbLdstTaskSegment> taskSegment)
 {
     // genpacket
     auto packet = GenDataPacket(taskSegment);
@@ -139,15 +148,15 @@ UbLdstApi::SelectOutPort(RoutingKey routingKey,
     std::vector<uint16_t> shortestCandidates;
     std::vector<uint16_t> nonShortestCandidates;
     uint32_t routeDip = routingKey.dip;
-    const bool handledByRule = hasDestinationPort
-                                   ? routing->TryGetRuleCandidatesExact(routeDip,
-                                                                        shortestCandidates,
-                                                                        nonShortestCandidates)
-                                   : routing->TryGetRuleCandidatesWithPrimaryFallback(
-                                         routeDip,
-                                         UINT16_MAX,
-                                         shortestCandidates,
-                                         nonShortestCandidates);
+    const bool handledByRule =
+        hasDestinationPort
+            ? routing->TryGetRuleCandidatesExact(routeDip,
+                                                 shortestCandidates,
+                                                 nonShortestCandidates)
+            : routing->TryGetRuleCandidatesWithPrimaryFallback(routeDip,
+                                                               UINT16_MAX,
+                                                               shortestCandidates,
+                                                               nonShortestCandidates);
     if (!handledByRule)
     {
         if (hasDestinationPort)
@@ -220,7 +229,8 @@ UbLdstApi::SendPacket(Ptr<UbLdstTaskSegment> taskSegment, Ptr<Packet> packet)
     // TODO: Source injection currently ignores selectedShortestPath. If this lookup selects a
     // non-shortest port, mark the packet shortest-only before enqueueing it so a downstream
     // switch cannot consume the UB one-detour allowance again.
-    if (outPort < 0) {
+    if (outPort < 0)
+    {
         // Route failed
         NS_ASSERT_MSG(0, "The route cannot be found");
     }
@@ -230,7 +240,8 @@ UbLdstApi::SendPacket(Ptr<UbLdstTaskSegment> taskSegment, Ptr<Packet> packet)
     Simulator::ScheduleNow(&UbPort::TriggerTransmit, port);
 }
 
-Ptr<Packet> UbLdstApi::GenDataPacket(Ptr<UbLdstTaskSegment> taskSegment)
+Ptr<Packet>
+UbLdstApi::GenDataPacket(Ptr<UbLdstTaskSegment> taskSegment)
 {
     // Store/load request: DLH cNTH cTAH(0x03/0x06) [cMAETAH] Payload
     UbCompactMAExtTah cMAETah;
@@ -240,18 +251,25 @@ Ptr<Packet> UbLdstApi::GenDataPacket(Ptr<UbLdstTaskSegment> taskSegment)
     uint32_t payloadSize = 0;
     uint32_t dataSize = taskSegment->PeekNextDataSize();
     // add cTAH (Compact Transaction Header)
-    if (taskSegment->GetType() == UbMemOperationType::STORE) {
+    if (taskSegment->GetType() == UbMemOperationType::STORE)
+    {
         cTaHeader.SetTaOpcode(TaOpcode::TA_OPCODE_WRITE);
         payloadSize = dataSize;
-    } else if (taskSegment->GetType() == UbMemOperationType::LOAD) {
+    }
+    else if (taskSegment->GetType() == UbMemOperationType::LOAD)
+    {
         cTaHeader.SetTaOpcode(TaOpcode::TA_OPCODE_READ);
         payloadSize = taskSegment->GetPacketSize();
     }
 
-    if (RoutingTypeIsPerPacket(m_routingType)) {
-        if (m_lbHashSalt == MAX_LB) {
+    if (RoutingTypeIsPerPacket(m_routingType))
+    {
+        if (m_lbHashSalt == MAX_LB)
+        {
             m_lbHashSalt = MIN_LB;
-        } else {
+        }
+        else
+        {
             m_lbHashSalt++;
         }
     }
@@ -260,21 +278,21 @@ Ptr<Packet> UbLdstApi::GenDataPacket(Ptr<UbLdstTaskSegment> taskSegment)
     // Gen Headers
     cMAETah.SetLength((uint8_t)length);
     cTaHeader.SetIniTaSsn(taskSegment->GetTaskSegmentId()); // taskid
-    NS_ABORT_MSG_IF(taskSegment->HasSrcPortId() && taskSegment->GetSrcPortId() >= 15,
-                    "LDST source endpoint port cannot be encoded as CNA16: "
-                        << taskSegment->GetSrcPortId());
+    NS_ABORT_MSG_IF(
+        taskSegment->HasSrcPortId() && taskSegment->GetSrcPortId() >= 15,
+        "LDST source endpoint port cannot be encoded as CNA16: " << taskSegment->GetSrcPortId());
     NS_ABORT_MSG_IF(taskSegment->HasDstPortId() && taskSegment->GetDstPortId() >= 15,
                     "LDST destination endpoint port cannot be encoded as CNA16: "
                         << taskSegment->GetDstPortId());
-    uint16_t scna = static_cast<uint16_t>(taskSegment->HasSrcPortId()
-                                              ? utils::NodeIdToCna16(taskSegment->GetSrc(),
-                                                                     taskSegment->GetSrcPortId())
-                                              : utils::NodeIdToCna16(taskSegment->GetSrc()));
+    uint16_t scna = static_cast<uint16_t>(
+        taskSegment->HasSrcPortId()
+            ? utils::NodeIdToCna16(taskSegment->GetSrc(), taskSegment->GetSrcPortId())
+            : utils::NodeIdToCna16(taskSegment->GetSrc()));
     cna16NetworkHeader.SetScna(scna);
-    uint16_t dcna = static_cast<uint16_t>(taskSegment->HasDstPortId()
-                                              ? utils::NodeIdToCna16(taskSegment->GetDest(),
-                                                                     taskSegment->GetDstPortId())
-                                              : utils::NodeIdToCna16(taskSegment->GetDest()));
+    uint16_t dcna = static_cast<uint16_t>(
+        taskSegment->HasDstPortId()
+            ? utils::NodeIdToCna16(taskSegment->GetDest(), taskSegment->GetDstPortId())
+            : utils::NodeIdToCna16(taskSegment->GetDest()));
     cna16NetworkHeader.SetDcna(dcna);
     cna16NetworkHeader.SetLb(m_lbHashSalt);
     cna16NetworkHeader.SetServiceLevel(taskSegment->GetPriority());
@@ -293,7 +311,8 @@ Ptr<Packet> UbLdstApi::GenDataPacket(Ptr<UbLdstTaskSegment> taskSegment)
                                 UbDatalinkHeaderConfig::PACKET_UB_MEM);
     UbFlowTag flowTag(taskSegment->GetTaskId(), taskSegment->GetSize());
     packet->AddPacketTag(flowTag);
-    NS_LOG_DEBUG("[UbLdstApi GenDataPacket] packetUid: " << packet->GetUid() << " payload size:" << payloadSize);
+    NS_LOG_DEBUG("[UbLdstApi GenDataPacket] packetUid: " << packet->GetUid()
+                                                         << " payload size:" << payloadSize);
     return packet;
 }
 
@@ -328,6 +347,16 @@ UbLdstApi::BuildRemoteRequestContext(Ptr<Packet> packet,
     context.requestId = cTaHeader.GetIniTaSsn();
     context.srcNode = utils::Cna16ToNodeId(cna16NetworkHeader.GetScna());
     context.destNode = utils::Cna16ToNodeId(cna16NetworkHeader.GetDcna());
+    context.hasSrcPortId = (cna16NetworkHeader.GetScna() & 0xF) != 0;
+    context.hasDstPortId = (cna16NetworkHeader.GetDcna() & 0xF) != 0;
+    if (context.hasSrcPortId)
+    {
+        context.srcPortId = utils::Cna16ToPortId(cna16NetworkHeader.GetScna());
+    }
+    if (context.hasDstPortId)
+    {
+        context.dstPortId = utils::Cna16ToPortId(cna16NetworkHeader.GetDcna());
+    }
     context.type = opcode == static_cast<uint8_t>(TaOpcode::TA_OPCODE_READ)
                        ? UbMemOperationType::LOAD
                        : UbMemOperationType::STORE;
@@ -371,8 +400,12 @@ UbLdstApi::SendRemoteResponse(const UbLdstRemoteRequestContext& context,
     caTaHeader.SetIniTaSsn(context.requestId);
 
     UbCna16NetworkHeader cna16NetworkHeader;
-    cna16NetworkHeader.SetScna(static_cast<uint16_t>(utils::NodeIdToCna16(context.destNode)));
-    cna16NetworkHeader.SetDcna(static_cast<uint16_t>(utils::NodeIdToCna16(context.srcNode)));
+    cna16NetworkHeader.SetScna(static_cast<uint16_t>(
+        context.hasDstPortId ? utils::NodeIdToCna16(context.destNode, context.dstPortId)
+                             : utils::NodeIdToCna16(context.destNode)));
+    cna16NetworkHeader.SetDcna(static_cast<uint16_t>(
+        context.hasSrcPortId ? utils::NodeIdToCna16(context.srcNode, context.srcPortId)
+                             : utils::NodeIdToCna16(context.srcNode)));
     cna16NetworkHeader.SetLb(context.lb);
     cna16NetworkHeader.SetServiceLevel(context.priority);
 
@@ -389,28 +422,29 @@ UbLdstApi::SendRemoteResponse(const UbLdstRemoteRequestContext& context,
                                 UbDatalinkHeaderConfig::PACKET_UB_MEM);
 
     RoutingKey rtKey;
-    rtKey.sip = utils::NodeIdToIp(context.destNode).Get();
-    rtKey.dip = utils::NodeIdToIp(context.srcNode).Get();
+    rtKey.sip = context.hasDstPortId ? utils::NodeIdToIp(context.destNode, context.dstPortId).Get()
+                                     : utils::NodeIdToIp(context.destNode).Get();
+    rtKey.dip = context.hasSrcPortId ? utils::NodeIdToIp(context.srcNode, context.srcPortId).Get()
+                                     : utils::NodeIdToIp(context.srcNode).Get();
     rtKey.sport = context.lb;
-    rtKey.dport = 0;
+    rtKey.dport = context.hasSrcPortId ? static_cast<uint16_t>(context.srcPortId) : 0;
     rtKey.priority = context.packetVl;
     rtKey.routingType = responseRoutingType;
 
     auto node = NodeList::GetNode(m_nodeId);
     auto sw = node->GetObject<UbSwitch>();
 
-    bool selectedShortestPath = false;
-    int destPort = sw->GetRoutingProcess()->GetOutPort(rtKey, selectedShortestPath);
+    int destPort =
+        SelectOutPort(rtKey, context.hasDstPortId, context.dstPortId, context.hasSrcPortId);
     if (destPort < 0)
     {
         NS_ASSERT_MSG(0, "The route cannot be found");
     }
 
     sw->PushPacketToVoq(ackp, destPort, context.packetVl, destPort);
-    NS_LOG_DEBUG("[UbLdstApi SendRemoteResponse] NodeId: " << m_nodeId
-                  << " PacketUid: " << ackp->GetUid()
-                  << " packetSize: " << ackp->GetSize()
-                  << " destPort: " << destPort);
+    NS_LOG_DEBUG("[UbLdstApi SendRemoteResponse] NodeId: "
+                 << m_nodeId << " PacketUid: " << ackp->GetUid()
+                 << " packetSize: " << ackp->GetSize() << " destPort: " << destPort);
 
     if (m_pktTraceEnabled)
     {
@@ -444,16 +478,19 @@ UbLdstApi::SendBoundRemoteResponse(Ptr<UbLdstApi> api,
 /**
  * 接收到一个数据包，调用此函数处理，产生ack
  */
-void UbLdstApi::RecvDataPacket(Ptr<Packet> packet, uint32_t ingressPort)
+void
+UbLdstApi::RecvDataPacket(Ptr<Packet> packet, uint32_t ingressPort)
 {
     // Store/load request: DLH cNTH cTAH(0x03/0x06) [cMAETAH] Payload
     // Store/load response: DLH cNTH cATAH(0x11/0x12) Payload
-    if (packet == nullptr) {
+    if (packet == nullptr)
+    {
         NS_LOG_ERROR("Null packet received");
         return;
     }
 
-    NS_LOG_DEBUG("[UbLdstApi RecvDataPacket] nodeId: " << m_nodeId << " packetUid: " << packet->GetUid());
+    NS_LOG_DEBUG("[UbLdstApi RecvDataPacket] nodeId: " << m_nodeId
+                                                       << " packetUid: " << packet->GetUid());
     UbDatalinkPacketHeader linkPacketHeader;
     UbCna16NetworkHeader cna16NetworkHeader;
     UbCompactTransactionHeader cTaHeader;
@@ -478,8 +515,7 @@ void UbLdstApi::RecvDataPacket(Ptr<Packet> packet, uint32_t ingressPort)
         if (!accepted)
         {
             NS_LOG_WARN("LDST remote processor rejected requestId "
-                        << static_cast<uint32_t>(context.requestId)
-                        << " nodeId " << m_nodeId);
+                        << static_cast<uint32_t>(context.requestId) << " nodeId " << m_nodeId);
         }
         return;
     }
@@ -490,9 +526,11 @@ void UbLdstApi::RecvDataPacket(Ptr<Packet> packet, uint32_t ingressPort)
     SendRemoteResponse(context, responseOpcode, context.responseBytes, nullptr);
 }
 
-void UbLdstApi::RecvResponse(Ptr<Packet> packet)
+void
+UbLdstApi::RecvResponse(Ptr<Packet> packet)
 {
-    if (packet == nullptr) {
+    if (packet == nullptr)
+    {
         NS_LOG_ERROR("in RecvResponse, packet is null");
         return;
     }
@@ -505,14 +543,19 @@ void UbLdstApi::RecvResponse(Ptr<Packet> packet)
     packet->RemoveHeader(cna16NetworkHeader);
     packet->RemoveHeader(caTaHeader);
 
-    if (m_pktTraceEnabled) {
+    if (m_pktTraceEnabled)
+    {
         UbFlowTag flowTag;
         packet->PeekPacketTag(flowTag);
         UbPacketTraceTag traceTag;
         packet->PeekPacketTag(traceTag);
-        LdstRecvNotify(packet->GetUid(), utils::Cna16ToNodeId(cna16NetworkHeader.GetDcna()),
+        LdstRecvNotify(packet->GetUid(),
+                       utils::Cna16ToNodeId(cna16NetworkHeader.GetDcna()),
                        utils::Cna16ToNodeId(cna16NetworkHeader.GetScna()),
-                       PacketType::ACK, packet->GetSize(), flowTag.GetFlowId(), traceTag);
+                       PacketType::ACK,
+                       packet->GetSize(),
+                       flowTag.GetFlowId(),
+                       traceTag);
     }
     uint16_t requestId = caTaHeader.GetIniTaSsn();
     TaOpcode responseOpcode = static_cast<TaOpcode>(caTaHeader.GetTaOpcode());
@@ -536,18 +579,25 @@ void UbLdstApi::RecvResponse(Ptr<Packet> packet)
         return;
     }
 
-    NS_LOG_WARN("LDST response requestId " << requestId
-                                           << " has no endpoint inflight entry or legacy task segment");
+    NS_LOG_WARN("LDST response requestId "
+                << requestId << " has no endpoint inflight entry or legacy task segment");
 }
 
-void UbLdstApi::SetRoutingType(RoutingType routingType)
+void
+UbLdstApi::SetRoutingType(RoutingType routingType)
 {
     ValidateRoutingType(routingType);
     m_routingType = routingType;
 }
 
-void UbLdstApi::LdstRecvNotify(uint32_t packetUid, uint32_t src, uint32_t dst,
-                               PacketType type, uint32_t size, uint32_t taskId, UbPacketTraceTag traceTag)
+void
+UbLdstApi::LdstRecvNotify(uint32_t packetUid,
+                          uint32_t src,
+                          uint32_t dst,
+                          PacketType type,
+                          uint32_t size,
+                          uint32_t taskId,
+                          UbPacketTraceTag traceTag)
 {
     m_ldstRecvNotify(packetUid, src, dst, type, size, taskId, traceTag);
 }

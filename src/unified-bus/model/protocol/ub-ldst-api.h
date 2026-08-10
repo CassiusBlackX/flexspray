@@ -2,18 +2,19 @@
 #ifndef UB_LDST_API_H
 #define UB_LDST_API_H
 
-#include <ns3/node.h>
-#include <ns3/ub-ldst-thread.h>
+#include "ns3/node-list.h"
 #include "ns3/ub-datatype.h"
 #include "ns3/ub-header.h"
 #include "ns3/ub-network-address.h"
-#include "ns3/node-list.h"
 #include "ns3/ub-tag.h"
+#include <ns3/node.h>
+#include <ns3/ub-ldst-thread.h>
 
 #include <limits>
 #include <memory>
 
-namespace ns3 {
+namespace ns3
+{
 constexpr int MAX_LB = 255;
 constexpr int MIN_LB = 0;
 struct RoutingKey;
@@ -24,6 +25,10 @@ struct UbLdstRemoteRequestContext
     uint16_t requestId{0};
     uint32_t srcNode{0};
     uint32_t destNode{0};
+    uint32_t srcPortId{0};
+    uint32_t dstPortId{0};
+    bool hasSrcPortId{false};
+    bool hasDstPortId{false};
     UbMemOperationType type{UbMemOperationType::STORE};
     uint32_t requestBytes{0};
     uint32_t responseBytes{0};
@@ -47,13 +52,14 @@ using UbLdstResponseSender = Callback<void, TaOpcode, uint32_t, Ptr<Packet>>;
 using UbLdstRemoteRequestProcessor =
     Callback<bool, const UbLdstRemoteRequestContext&, UbLdstResponseSender>;
 
-class UbLdstApi : public Object {
-public:
+class UbLdstApi : public Object
+{
+  public:
     static TypeId GetTypeId(void);
     UbLdstApi();
     virtual ~UbLdstApi();
 
-public:
+  public:
     void SetNodeId(uint32_t nodeId);
     void RecvResponse(Ptr<Packet> packet);
     void SetRoutingType(RoutingType routingType);
@@ -65,7 +71,7 @@ public:
     void ClearRemoteRequestProcessor();
     bool HasRemoteRequestProcessor() const;
 
-private:
+  private:
     void ValidateRoutingType(RoutingType routingType) const;
     void SendPacket(Ptr<UbLdstTaskSegment> taskSegment, Ptr<Packet> packet);
     int SelectOutPort(RoutingKey routingKey,
@@ -93,10 +99,15 @@ private:
     RoutingType m_routingType{RoutingType::PER_FLOW_SHORTEST_PATHS};
     bool m_pktTraceEnabled = false;
     UbLdstRemoteRequestProcessor m_remoteRequestProcessor;
-    void LdstRecvNotify(uint32_t packetUid, uint32_t src, uint32_t dst,
-                        PacketType type, uint32_t size, uint32_t taskId, UbPacketTraceTag traceTag);
-    TracedCallback<uint32_t, uint32_t, uint32_t,
-                   PacketType, uint32_t, uint32_t, UbPacketTraceTag> m_ldstRecvNotify;
+    void LdstRecvNotify(uint32_t packetUid,
+                        uint32_t src,
+                        uint32_t dst,
+                        PacketType type,
+                        uint32_t size,
+                        uint32_t taskId,
+                        UbPacketTraceTag traceTag);
+    TracedCallback<uint32_t, uint32_t, uint32_t, PacketType, uint32_t, uint32_t, UbPacketTraceTag>
+        m_ldstRecvNotify;
 };
 } // namespace ns3
 
