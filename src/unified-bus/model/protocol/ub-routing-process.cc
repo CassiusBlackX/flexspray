@@ -204,6 +204,27 @@ UbRoutingProcess::TryGetRuleCandidates(
 }
 
 bool
+UbRoutingProcess::TryGetRuleCandidatesExact(
+    uint32_t dip,
+    std::vector<uint16_t>& shortestPorts,
+    std::vector<uint16_t>& nonShortestPorts) const
+{
+    if (m_ruleRoutingTable == nullptr)
+    {
+        return false;
+    }
+    const uint32_t destinationNodeId = utils::IpToNodeId(Ipv4Address(dip));
+    const uint32_t lastByte = dip & 0xff;
+    const uint32_t destinationPortId =
+        lastByte == 0 ? UbRuleDestination::ANY_PORT : lastByte - 1;
+    return m_ruleRoutingTable->TryLookupExact(m_nodeId,
+                                              destinationNodeId,
+                                              destinationPortId,
+                                              shortestPorts,
+                                              nonShortestPorts);
+}
+
+bool
 UbRoutingProcess::TryGetRuleCandidatesWithPrimaryFallback(
     uint32_t dip,
     uint16_t inPort,
@@ -438,6 +459,41 @@ UbRoutingProcess::GetOutPort(RoutingKey& key,
         return -1;
     }
 
+    return SelectCandidate(key, candidates, selectedShortestPath, inPort);
+}
+
+int
+UbRoutingProcess::GetOutPortForEndpoint(RoutingKey& key,
+                                        bool& selectedShortestPath,
+                                        uint16_t inPort)
+{
+    ValidateRoutingType(key.routingType, "endpoint packet forwarding");
+    std::vector<uint16_t> shortestPorts;
+    std::vector<uint16_t> nonShortestPorts;
+    const bool handledByRule = TryGetRuleCandidatesExact(key.dip, shortestPorts, nonShortestPorts);
+    const bool handledByIndex =
+        !handledByRule && TryGetIndexedCandidates(key.dip, shortestPorts, nonShortestPorts);
+
+    if (!handledByRule && !handledByIndex)
+    {
+        GetShortestOutPorts(key.dip, shortestPorts);
+        if (!RoutingTypeUsesShortestPaths(key.routingType))
+        {
+            GetOtherOutPorts(key.dip, nonShortestPorts);
+        }
+    }
+    if (RoutingTypeUsesShortestPaths(key.routingType))
+    {
+        nonShortestPorts.clear();
+    }
+
+    const UbRoutingCandidateView candidates{shortestPorts, nonShortestPorts, inPort};
+    if (UbRoutingPolicy::Count(candidates) == 0)
+    {
+        NS_LOG_ERROR("No exact endpoint candidate ports found for dip: "
+                     << Ipv4Address(key.dip));
+        return -1;
+    }
     return SelectCandidate(key, candidates, selectedShortestPath, inPort);
 }
 

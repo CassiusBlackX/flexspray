@@ -910,7 +910,7 @@
     {
       "id": "medium-ctp-entity-vl-pressure",
       "tier": "medium",
-      "intent": "Four concurrent CTP READ/WRITE operations span two Entities and two VL priorities with queue sampling enabled.",
+      "intent": "Four concurrent CTP READ/WRITE operations cover wildcard and explicit endpoint-port pairs across two VL priorities with queue sampling enabled.",
       "runtime": "local-single",
       "comparison_profiles": [
         "medium-ctp-entity-vl-pressure"
@@ -920,7 +920,7 @@
         "tests/unified_bus_lifecycle/cases/medium-ctp-entity-vl-pressure/node.csv": "cd06746eacfe49c5727adeaf3110c60931df1063211d397dcc1f06367b559f60",
         "tests/unified_bus_lifecycle/cases/medium-ctp-entity-vl-pressure/routing_table.csv": "d0b8280fece127140e7396393e6d61f1b357a07500d23104be4f78b704cae515",
         "tests/unified_bus_lifecycle/cases/medium-ctp-entity-vl-pressure/topology.csv": "3733e8323d0d63f7cc86ccbc05e52282ff8e103a1cae828f0046668a2332defb",
-        "tests/unified_bus_lifecycle/cases/medium-ctp-entity-vl-pressure/traffic.csv": "e067f51d6e648e3e0b911e7666c84b3d5658703a5b4beb4ca64c78a353cb0b38"
+        "tests/unified_bus_lifecycle/cases/medium-ctp-entity-vl-pressure/traffic.csv": "f64f3ea95be916e2bad7c809155b241dad36ab0c4d466ca06ebf2814e1efb7c3"
       },
       "canonical_only_artifacts": [],
       "reference_outputs": [

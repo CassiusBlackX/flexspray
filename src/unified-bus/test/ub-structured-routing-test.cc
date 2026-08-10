@@ -213,6 +213,17 @@ class UbRuleRoutingTableTest : public TestCase
                               true,
                               "alternate ports");
 
+        handled = rules->TryLookupExact(7, 42, 3, shortestPorts, nonShortestPorts);
+        NS_TEST_ASSERT_MSG_EQ(handled,
+                              false,
+                              "exact endpoint lookup must not consume an ANY_PORT rule");
+        NS_TEST_ASSERT_MSG_EQ(shortestPorts.empty(),
+                              true,
+                              "exact lookup should clear shortest ports");
+        NS_TEST_ASSERT_MSG_EQ(nonShortestPorts.empty(),
+                              true,
+                              "exact lookup should clear non-shortest ports");
+
         handled = rules->TryLookup(7, 120, 2, shortestPorts, nonShortestPorts);
         NS_TEST_ASSERT_MSG_EQ(handled, true, "range should own an in-range lookup");
         NS_TEST_ASSERT_MSG_EQ((shortestPorts == std::vector<uint16_t>({2, 3})),
@@ -238,6 +249,11 @@ class UbRuleRoutingTableTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(routing->GetOutPort(key, selectedShortestPath),
                               9,
                               "rule source should feed the existing selector");
+
+        key.dip = utils::NodeIdToIp(42, 3).Get();
+        NS_TEST_ASSERT_MSG_EQ(routing->GetOutPortForEndpoint(key, selectedShortestPath),
+                              -1,
+                              "endpoint lookup must reject a missing exact destination-port rule");
 
         key.dip = utils::NodeIdToIp(43).Get();
         NS_TEST_ASSERT_MSG_EQ(routing->GetOutPort(key, selectedShortestPath),

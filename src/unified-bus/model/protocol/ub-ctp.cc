@@ -110,6 +110,7 @@ Ptr<Packet>
 BuildCtpPacket(Ptr<UbWqeSegment> segment,
                uint32_t srcNodeId,
                const UbCtpEntityKey& key,
+               uint32_t srcPortHint,
                uint32_t dstPortHint,
                uint32_t taSsn,
                uint32_t progressBytes,
@@ -168,7 +169,10 @@ BuildCtpPacket(Ptr<UbWqeSegment> segment,
     packet->AddHeader(ctpHeader);
 
     UbCna16NetworkHeader cnaHeader;
-    cnaHeader.SetScna(static_cast<uint16_t>(utils::NodeIdToCna16(srcNodeId)));
+    const uint32_t srcCna = srcPortHint == UINT32_MAX
+                                ? utils::NodeIdToCna16(srcNodeId)
+                                : utils::NodeIdToCna16(srcNodeId, srcPortHint);
+    cnaHeader.SetScna(static_cast<uint16_t>(srcCna));
     const uint32_t dstCna =
         dstPortHint == UINT32_MAX ? utils::NodeIdToCna16(key.dstNodeId)
                                   : utils::NodeIdToCna16(key.dstNodeId, dstPortHint);
@@ -715,6 +719,7 @@ UbCtpTransportService::BuildDataPacketWithTaSsn(Ptr<UbWqeSegment> segment,
     Ptr<Packet> packet = BuildCtpPacket(segment,
                                         m_node->GetId(),
                                         packetKey,
+                                        ResolveSourcePortHint(packetKey),
                                         ResolveDestinationPortHint(packetKey),
                                         taSsn,
                                         progressBytes,
@@ -767,6 +772,7 @@ UbCtpTransportService::AddCtpNetworkHeaders(Ptr<Packet> packet,
     Ptr<Packet> headers = BuildCtpPacket(empty,
                                          m_node->GetId(),
                                          key,
+                                         ResolveSourcePortHint(key),
                                          ResolveDestinationPortHint(key),
                                          0,
                                          packet->GetSize(),
@@ -1233,9 +1239,17 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t receive
     }
     ++localState.Rx().generatedResponses;
 
-    if (!RoutingTypeIsPerPacket(linkHeader.GetRoutingType()) && receivePort < 15)
+    const bool requestDestinationPortExplicit = (cnaHeader.GetDcna() & 0xF) != 0;
+    if (receivePort < 15 &&
+        (!RoutingTypeIsPerPacket(linkHeader.GetRoutingType()) || requestDestinationPortExplicit))
     {
         SetSourcePortHint(localKey, receivePort);
+    }
+    const bool requestSourcePortExplicit = (cnaHeader.GetScna() & 0xF) != 0;
+    if (requestSourcePortExplicit)
+    {
+        const uint32_t sourcePort = utils::Cna16ToPortId(cnaHeader.GetScna());
+        SetDestinationPortHint(localKey, sourcePort);
     }
     localState.Tx().routing.routingType = linkHeader.GetRoutingType();
     const bool sent = SendResponseSegment(response, localState);
@@ -1363,11 +1377,10 @@ UbCtpTransportService::SelectOutPort(UbCtpEntityState& state,
 {
     NS_ABORT_MSG_IF(m_node == nullptr, "CTP send requires a source node");
 
-    auto sourceHint = m_srcPortHints.find(routeKey);
-    if (!RoutingTypeIsPerPacket(state.Tx().routing.routingType) &&
-        sourceHint != m_srcPortHints.end())
+    const uint32_t sourcePortHint = ResolveSourcePortHint(routeKey);
+    if (sourcePortHint != UINT32_MAX)
     {
-        const uint32_t outPort = sourceHint->second;
+        const uint32_t outPort = sourcePortHint;
         NS_ABORT_MSG_IF(outPort >= m_node->GetNDevices(),
                         "CTP source port hint is outside the node device range");
         NS_ABORT_MSG_IF(DynamicCast<UbPort>(m_node->GetDevice(outPort)) == nullptr,
@@ -1393,7 +1406,9 @@ UbCtpTransportService::SelectOutPort(UbCtpEntityState& state,
     rtKey.routingType = state.Tx().routing.routingType;
 
     bool selectedShortestPath = false;
-    const int outPort = routing->GetOutPort(rtKey, selectedShortestPath);
+    const int outPort = dstPort == UINT32_MAX
+                            ? routing->GetOutPort(rtKey, selectedShortestPath)
+                            : routing->GetOutPortForEndpoint(rtKey, selectedShortestPath);
     // TODO: Source routing currently ignores selectedShortestPath. Propagate a non-shortest
     // selection into the transmit routing policy before building the packet header so a
     // downstream switch cannot consume the UB one-detour allowance again.
@@ -1426,9 +1441,20 @@ UbCtpTransportService::ResolveDestinationPortHint(const UbCtpEntityKey& key) con
         return it->second;
     }
 
-    UbCtpEntityKey sourceGroupKey = MakeSourceGroupKeyForRequest(key);
+    const UbCtpEntityKey sourceGroupKey = MakeSourceGroupKeyForRequest(key);
     it = m_dstPortHints.find(sourceGroupKey);
     if (it != m_dstPortHints.end())
+    {
+        return it->second;
+    }
+    return UINT32_MAX;
+}
+
+uint32_t
+UbCtpTransportService::ResolveSourcePortHint(const UbCtpEntityKey& key) const
+{
+    auto it = m_srcPortHints.find(key);
+    if (it != m_srcPortHints.end())
     {
         return it->second;
     }

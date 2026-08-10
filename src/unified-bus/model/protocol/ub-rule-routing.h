@@ -106,6 +106,11 @@ class UbRuleRoutingTable
                    uint32_t destinationPortId,
                    std::vector<uint16_t>& shortestPorts,
                    std::vector<uint16_t>& nonShortestPorts) const;
+    bool TryLookupExact(uint32_t currentNodeId,
+                        uint32_t destinationNodeId,
+                        uint32_t destinationPortId,
+                        std::vector<uint16_t>& shortestPorts,
+                        std::vector<uint16_t>& nonShortestPorts) const;
     bool TryLookupWithPrimaryFallback(uint32_t currentNodeId,
                                       uint32_t destinationNodeId,
                                       uint32_t destinationPortId,
@@ -164,6 +169,9 @@ class UbRuleRoutingTable
     const ResolvedRule* FindRule(uint32_t currentNodeId,
                                  uint32_t destinationNodeId,
                                  uint32_t destinationPortId) const;
+    const ResolvedRule* FindExactRule(uint32_t currentNodeId,
+                                      uint32_t destinationNodeId,
+                                      uint32_t destinationPortId) const;
     static const ResolvedRule* FindRangeRule(const NodeRules& nodeRules,
                                              uint32_t destinationNodeId,
                                              uint32_t destinationPortId);
