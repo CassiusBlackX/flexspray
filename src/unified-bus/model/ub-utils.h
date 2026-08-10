@@ -473,7 +473,9 @@ private:
        PRIORITY,
        DELAY,
        PHASEID,
-       DEPENDONPHASES
+       DEPENDONPHASES,
+       SRCPORTID,
+       DSTPORTID
     };
 
     struct NodeEle {

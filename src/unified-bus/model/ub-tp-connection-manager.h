@@ -124,7 +124,9 @@ public:
     void ReserveTpnsForTraffic(bool useShortestPath,
                                uint32_t localNodeId,
                                uint32_t peerNodeId,
-                               uint32_t priority);
+                               uint32_t priority,
+                               uint32_t localPort = UINT32_MAX,
+                               uint32_t peerPort = UINT32_MAX);
 
     /**
      * @brief Reserve connections owned by the standard driver's planned-destroy policy.
@@ -132,14 +134,16 @@ public:
      * @param localNodeId Local node identifier and lifecycle owner of the returned identities.
      * @param peerNodeId Peer node identifier.
      * @param priority Traffic priority associated with the reservation.
-     * @return Exact identities created by this call, or an empty vector when matching
-     *         reservations already exist. Existing reservations are never claimed.
+     * @return Identities created by this call. Returns empty when a matching reservation already
+     *         exists; existing reservations are never claimed.
      */
     std::vector<UbLifecycleResourceIdentity> ReservePlannedTpnsForTraffic(
         bool useShortestPath,
         uint32_t localNodeId,
         uint32_t peerNodeId,
-        uint32_t priority);
+        uint32_t priority,
+        uint32_t localPort = UINT32_MAX,
+        uint32_t peerPort = UINT32_MAX);
 
     // 1. 获取节点相关的所有连接
     std::vector<Connection> GetNodeConnections(uint32_t nodeId) const;
@@ -169,6 +173,14 @@ public:
                                                uint32_t localPort,
                                                uint32_t peerPort,
                                                uint32_t priority) const;
+
+    // Query the local connection view with optional endpoint-port constraints and priority.
+    std::vector<std::pair<uint32_t, uint32_t>>
+    GetTpnsByTrafficCriteria(uint32_t localNodeId,
+                             uint32_t peerNodeId,
+                             uint32_t localPort,
+                             uint32_t peerPort,
+                             uint32_t priority) const;
 
     // 获取某个节点的所有TPN
     std::vector<uint32_t> GetAllTpnsForNode(uint32_t nodeId) const;
@@ -356,7 +368,9 @@ private:
     std::vector<std::pair<uint32_t, uint32_t>> ReserveNewTpConnections(uint32_t src,
                                                                        uint32_t dst,
                                                                        uint32_t priority,
-                                                                       bool useShortestPath);
+                                                                       bool useShortestPath,
+                                                                       uint32_t localPort,
+                                                                       uint32_t peerPort);
 
     // 重建tp对
     std::vector<uint32_t> ReconstructTPs(std::vector<uint32_t> tpns,

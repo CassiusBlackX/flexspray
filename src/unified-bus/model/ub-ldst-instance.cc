@@ -129,8 +129,19 @@ void UbLdstInstance::SetClientCallback(Callback<void, uint32_t> cb)
     FinishCallback = cb;
 }
 
-void UbLdstInstance::HandleLdstTask(uint32_t src, uint32_t dest, uint32_t length, uint32_t taskId, uint32_t priority,
-                                    UbMemOperationType type, const std::vector<uint32_t> &threadIds, uint64_t address)
+void
+UbLdstInstance::HandleLdstTask(uint32_t src,
+                               uint32_t dest,
+                               uint32_t length,
+                               uint32_t taskId,
+                               uint32_t priority,
+                               UbMemOperationType type,
+                               const std::vector<uint32_t>& threadIds,
+                               uint64_t address,
+                               uint32_t srcPortId,
+                               bool hasSrcPortId,
+                               uint32_t dstPortId,
+                               bool hasDstPortId)
 {
     uint32_t threadsNum = threadIds.size();
     // 将数据均分下发给thread
@@ -148,6 +159,14 @@ void UbLdstInstance::HandleLdstTask(uint32_t src, uint32_t dest, uint32_t length
         auto taskSegment = CreateObject<UbLdstTaskSegment>();
         taskSegment->SetSrc(src);
         taskSegment->SetDest(dest);
+        if (hasSrcPortId)
+        {
+            taskSegment->SetSrcPortId(srcPortId);
+        }
+        if (hasDstPortId)
+        {
+            taskSegment->SetDstPortId(dstPortId);
+        }
         taskSegment->SetPriority(static_cast<uint8_t>(priority)); 
         taskSegment->SetSize(segmentSize);
         taskSegment->SetTaskId(taskId);

@@ -861,6 +861,11 @@ bool UbSwitch::SinkLdstDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Pa
     if (dnode != GetObject<Node>()->GetId()) {
         return false;
     }
+    if ((dCna & 0xF) != 0)
+    {
+        NS_ABORT_MSG_IF(utils::Cna16ToPortId(dCna) != port->GetIfIndex(),
+                        "LDST destination endpoint port does not match the receiving UB port");
+    }
     // Sink Packet
     if (IsCBFCEnable() || IsCBFCSharedEnable()) {
         port->GetFlowControl()->OnIngressEnqueued(
@@ -899,6 +904,13 @@ bool UbSwitch::SinkCtpDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
     if (dnode != GetObject<Node>()->GetId()) {
         return false;
     }
+    if (!headers.isCna24 && (headers.cna16NetworkHeader.GetDcna() & 0xF) != 0)
+    {
+        NS_ABORT_MSG_IF(utils::Cna16ToPortId(headers.cna16NetworkHeader.GetDcna()) !=
+                            port->GetIfIndex(),
+                        "CTP destination endpoint port does not match the receiving UB "
+                        "port");
+    }
 
     if (IsCBFCEnable() || IsCBFCSharedEnable()) {
         port->GetFlowControl()->OnIngressEnqueued(
@@ -935,7 +947,13 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
 
     // Route
     bool selectedShortestPath = false;
-    int outPort = m_routingProcess->GetOutPort(rtKey, selectedShortestPath, port->GetIfIndex());
+    const bool hasExplicitDestinationPort = (rtKey.dip & 0xff) != 0;
+    int outPort = hasExplicitDestinationPort
+                      ? m_routingProcess->GetOutPortForEndpoint(
+                            rtKey, selectedShortestPath, port->GetIfIndex())
+                      : m_routingProcess->GetOutPort(rtKey,
+                                                     selectedShortestPath,
+                                                     port->GetIfIndex());
     if (outPort < 0) {
         utils::UbUtils::RecordRuntimePacketDrop("route cannot be found");
         NS_LOG_WARN("The route cannot be found. Packet Dropped!");
@@ -976,7 +994,13 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
 
     // Route
     bool selectedShortestPath = false;
-    int outPort = m_routingProcess->GetOutPort(rtKey, selectedShortestPath, port->GetIfIndex());
+    const bool hasExplicitDestinationPort = (rtKey.dip & 0xff) != 0;
+    int outPort = hasExplicitDestinationPort
+                      ? m_routingProcess->GetOutPortForEndpoint(
+                            rtKey, selectedShortestPath, port->GetIfIndex())
+                      : m_routingProcess->GetOutPort(rtKey,
+                                                     selectedShortestPath,
+                                                     port->GetIfIndex());
     if (outPort < 0) {
         utils::UbUtils::RecordRuntimePacketDrop("route cannot be found");
         NS_LOG_WARN("The route cannot be found. Packet Dropped!");
@@ -1015,7 +1039,15 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
     GetCtpRoutingKey(headers, rtKey);
 
     bool selectedShortestPath = false;
-    int outPort = m_routingProcess->GetOutPort(rtKey, selectedShortestPath, port->GetIfIndex());
+    const bool hasExplicitDestinationPort = headers.isCna24
+                                                ? (headers.cna24NetworkHeader.GetDcna() & 0xff) != 0
+                                                : (headers.cna16NetworkHeader.GetDcna() & 0xf) != 0;
+    int outPort = hasExplicitDestinationPort
+                      ? m_routingProcess->GetOutPortForEndpoint(
+                            rtKey, selectedShortestPath, port->GetIfIndex())
+                      : m_routingProcess->GetOutPort(rtKey,
+                                                     selectedShortestPath,
+                                                     port->GetIfIndex());
     if (outPort < 0) {
         utils::UbUtils::RecordRuntimePacketDrop("route cannot be found");
         NS_LOG_WARN("The route cannot be found. Packet Dropped!");
@@ -1116,11 +1148,15 @@ void UbSwitch::GetLdstRoutingKey(const ParsedLdstHeaders &headers, RoutingKey &r
     uint16_t sCna = headers.cna16NetworkHeader.GetScna();
     uint32_t snode = utils::Cna16ToNodeId(sCna);
     uint32_t dnode = utils::Cna16ToNodeId(dCna);
-    uint16_t sport = utils::Cna16ToPortId(sCna);
-    uint16_t dport = 0;
+    const bool sourcePortExplicit = (sCna & 0xF) != 0;
+    const bool destinationPortExplicit = (dCna & 0xF) != 0;
+    uint16_t sport = sourcePortExplicit ? utils::Cna16ToPortId(sCna) : 0;
+    uint16_t dport = destinationPortExplicit ? utils::Cna16ToPortId(dCna) : 0;
     uint16_t lb = headers.cna16NetworkHeader.GetLb();
-    rtKey.sip = utils::NodeIdToIp(snode, sport).Get();
-    rtKey.dip = utils::NodeIdToIp(dnode, dport).Get();
+    rtKey.sip = sourcePortExplicit ? utils::NodeIdToIp(snode, sport).Get()
+                                   : utils::NodeIdToIp(snode).Get();
+    rtKey.dip = destinationPortExplicit ? utils::NodeIdToIp(dnode, dport).Get()
+                                        : utils::NodeIdToIp(dnode).Get();
     rtKey.sport = lb;
     rtKey.dport = dport;
     rtKey.priority = headers.datalinkPacketHeader.GetPacketVL();
@@ -1147,12 +1183,21 @@ void UbSwitch::GetCtpRoutingKey(const ParsedCtpHeaders &headers, RoutingKey &rtK
         const uint16_t sCna = headers.cna16NetworkHeader.GetScna();
         snode = utils::Cna16ToNodeId(sCna);
         dnode = utils::Cna16ToNodeId(dCna);
-        sport = utils::Cna16ToPortId(sCna);
-        dport = (dCna & 0xF) == 0 ? 0 : utils::Cna16ToPortId(dCna);
+        const bool sourcePortExplicit = (sCna & 0xF) != 0;
+        const bool destinationPortExplicit = (dCna & 0xF) != 0;
+        sport = sourcePortExplicit ? utils::Cna16ToPortId(sCna) : 0;
+        dport = destinationPortExplicit ? utils::Cna16ToPortId(dCna) : 0;
         lb = headers.cna16NetworkHeader.GetLb();
+        rtKey.sip = sourcePortExplicit ? utils::NodeIdToIp(snode, sport).Get()
+                                       : utils::NodeIdToIp(snode).Get();
+        rtKey.dip = destinationPortExplicit ? utils::NodeIdToIp(dnode, dport).Get()
+                                            : utils::NodeIdToIp(dnode).Get();
     }
-    rtKey.sip = utils::NodeIdToIp(snode, sport).Get();
-    rtKey.dip = utils::NodeIdToIp(dnode, dport).Get();
+    if (headers.isCna24)
+    {
+        rtKey.sip = utils::NodeIdToIp(snode, sport).Get();
+        rtKey.dip = utils::NodeIdToIp(dnode, dport).Get();
+    }
     rtKey.sport = lb;
     rtKey.dport = dport;
     rtKey.priority = headers.datalinkPacketHeader.GetPacketVL();

@@ -33,7 +33,7 @@ class UbTrafficGenDuplicateDependencyPhaseTest;
 class UbTrafficGenRecordViewDependencyTest;
 class UbTrafficGenReadyOrderTest;
 class UbTrafficGenIntegerDelayParserTest;
-class UbTrafficGenRuntimeTaskEntityFieldsTest;
+class UbTrafficGenRuntimeTaskEndpointPortFieldsTest;
 class UbTrafficGenInitialTaskStartOffsetTest;
 
 using namespace utils;
@@ -78,10 +78,10 @@ public:
         uint8_t priority{0};
         RuntimeTaskOp op{RuntimeTaskOp::UNKNOWN};
         Time delay{Time(0)};
-        uint32_t srcEntityId{0};
-        uint32_t dstEntityId{0};
-        bool hasSrcEntityId{false};
-        bool hasDstEntityId{false};
+        uint32_t srcPortId{0};
+        uint32_t dstPortId{0};
+        bool hasSrcPortId{false};
+        bool hasDstPortId{false};
         bool hasPhaseDependencies{false};
     };
 
@@ -182,7 +182,7 @@ public:
     friend class ::UbTrafficGenRecordViewDependencyTest;
     friend class ::UbTrafficGenReadyOrderTest;
     friend class ::UbTrafficGenIntegerDelayParserTest;
-    friend class ::UbTrafficGenRuntimeTaskEntityFieldsTest;
+    friend class ::UbTrafficGenRuntimeTaskEndpointPortFieldsTest;
     friend class ::UbTrafficGenInitialTaskStartOffsetTest;
 
     enum class TaskState {

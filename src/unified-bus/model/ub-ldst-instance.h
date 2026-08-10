@@ -33,8 +33,18 @@ public:
     void DoDispose(void) override;
     void Init(uint32_t nodeId);
     // 接收任务接口，分配给thread
-    void HandleLdstTask(uint32_t src, uint32_t dest, uint32_t size, uint32_t taskId, uint32_t priority,
-                        UbMemOperationType type, const std::vector<uint32_t> &threadIds, uint64_t address);
+    void HandleLdstTask(uint32_t src,
+                        uint32_t dest,
+                        uint32_t size,
+                        uint32_t taskId,
+                        uint32_t priority,
+                        UbMemOperationType type,
+                        const std::vector<uint32_t>& threadIds,
+                        uint64_t address,
+                        uint32_t srcPortId = 0,
+                        bool hasSrcPortId = false,
+                        uint32_t dstPortId = 0,
+                        bool hasDstPortId = false);
 
     void SetClientCallback(Callback<void, uint32_t> cb);
     Ptr<UbLdstThread> GetLdstThread(uint32_t threadId);

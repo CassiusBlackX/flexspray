@@ -867,9 +867,9 @@ UbRuleRoutingTable::HasUpstreamSource(const IndexedTopologyRule& rule,
 }
 
 const UbRuleRoutingTable::ResolvedRule*
-UbRuleRoutingTable::FindRule(uint32_t currentNodeId,
-                             uint32_t destinationNodeId,
-                             uint32_t destinationPortId) const
+UbRuleRoutingTable::FindExactRule(uint32_t currentNodeId,
+                                  uint32_t destinationNodeId,
+                                  uint32_t destinationPortId) const
 {
     if (currentNodeId >= m_nodeRules.size() || m_nodeRules[currentNodeId] == nullptr)
     {
@@ -882,13 +882,32 @@ UbRuleRoutingTable::FindRule(uint32_t currentNodeId,
     {
         return &exact->second;
     }
+    return FindRangeRule(nodeRules, destinationNodeId, destinationPortId);
+}
+
+const UbRuleRoutingTable::ResolvedRule*
+UbRuleRoutingTable::FindRule(uint32_t currentNodeId,
+                             uint32_t destinationNodeId,
+                             uint32_t destinationPortId) const
+{
+    const ResolvedRule* exact = FindExactRule(currentNodeId, destinationNodeId, destinationPortId);
+    if (exact != nullptr)
+    {
+        return exact;
+    }
+
+    if (currentNodeId >= m_nodeRules.size() || m_nodeRules[currentNodeId] == nullptr)
+    {
+        return nullptr;
+    }
+    const NodeRules& nodeRules = *m_nodeRules[currentNodeId];
     if (destinationPortId != UbRuleDestination::ANY_PORT)
     {
-        exact = nodeRules.exactRules.find(
+        const auto wildcard = nodeRules.exactRules.find(
             MakeDestinationKey(destinationNodeId, UbRuleDestination::ANY_PORT));
-        if (exact != nodeRules.exactRules.end())
+        if (wildcard != nodeRules.exactRules.end())
         {
-            return &exact->second;
+            return &wildcard->second;
         }
     }
 
@@ -1089,6 +1108,35 @@ UbRuleRoutingTable::TryLookup(uint32_t currentNodeId,
     shortestPorts.clear();
     nonShortestPorts.clear();
     const ResolvedRule* rule = FindRule(currentNodeId, destinationNodeId, destinationPortId);
+    if (rule == nullptr)
+    {
+        return TryLookupTopology(currentNodeId,
+                                 destinationNodeId,
+                                 destinationPortId,
+                                 shortestPorts);
+    }
+
+    if (rule->shortestPorts != nullptr)
+    {
+        shortestPorts = *rule->shortestPorts;
+    }
+    if (rule->nonShortestPorts != nullptr)
+    {
+        nonShortestPorts = *rule->nonShortestPorts;
+    }
+    return true;
+}
+
+bool
+UbRuleRoutingTable::TryLookupExact(uint32_t currentNodeId,
+                                   uint32_t destinationNodeId,
+                                   uint32_t destinationPortId,
+                                   std::vector<uint16_t>& shortestPorts,
+                                   std::vector<uint16_t>& nonShortestPorts) const
+{
+    shortestPorts.clear();
+    nonShortestPorts.clear();
+    const ResolvedRule* rule = FindExactRule(currentNodeId, destinationNodeId, destinationPortId);
     if (rule == nullptr)
     {
         return TryLookupTopology(currentNodeId,
