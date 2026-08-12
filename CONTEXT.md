@@ -548,6 +548,30 @@ _Avoid_: topology, traffic
 The set of application-level tasks injected into a simulation.
 _Avoid_: topology, packet trace
 
+**MegaMoE workload model**:
+A simulator-local workload model that represents token-to-expert routing, variable-size dispatch
+and combine transfers, token-block computation, and expert-wave scheduling over a UB system. Its
+scheduling parameters are explicit model inputs; they are not claims about one vendor's native
+kernel implementation.
+_Avoid_: Ascend MegaMoE implementation, DeepGEMM replica, model layer
+
+**Token block**:
+The simulator-local compute unit formed by dividing one source rank's input tokens into bounded
+groups before their routed assignments are grouped by expert owner and wave. A token block is not a
+Transformer model layer and is not an internal GEMM tile.
+_Avoid_: model block, compute tile, arbitrary repeated stage
+
+**Expert wave**:
+A simulator-local scheduling group of local experts. Within one owner-local token block, the next
+wave's L1 waits for the previous wave's L2; independent blocks can still compete for the bounded
+UBPU compute resource.
+_Avoid_: token batch, model layer, network wave
+
+**Compute resource**:
+The bounded processing capacity of one simulated UBPU. A compute task can run only after it acquires
+this resource; otherwise it waits while independent UB communication can continue.
+_Avoid_: delay-only task, unlimited parallel compute, UB link capacity
+
 **Task**:
 One application-level transfer or operation in a traffic workload.
 _Avoid_: packet, flow unless the discussion is explicitly flow-level

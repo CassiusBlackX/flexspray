@@ -2341,6 +2341,27 @@ inline void UbUtils::DagMemTaskCompletesNotify(uint32_t nodeId, uint32_t taskId)
     PrintTraceInfo(fileName, info);
 }
 
+inline void UbUtils::DagComputeTaskQueuedNotify(uint32_t nodeId, uint32_t taskId)
+{
+    string info = "COMPUTE Task Queued, taskId: " + std::to_string(taskId);
+    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".tr";
+    PrintTraceInfo(fileName, info);
+}
+
+inline void UbUtils::DagComputeTaskStartsNotify(uint32_t nodeId, uint32_t taskId)
+{
+    string info = "COMPUTE Task Starts, taskId: " + std::to_string(taskId);
+    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".tr";
+    PrintTraceInfo(fileName, info);
+}
+
+inline void UbUtils::DagComputeTaskCompletesNotify(uint32_t nodeId, uint32_t taskId)
+{
+    string info = "COMPUTE Task Completes, taskId: " + std::to_string(taskId);
+    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".tr";
+    PrintTraceInfo(fileName, info);
+}
+
 inline void UbUtils::DagWqeTaskStartsNotify(uint32_t nodeId, uint32_t jettyNum, uint32_t taskId)
 {
     std::ostringstream oss;
@@ -4425,6 +4446,9 @@ void UbUtils::ClientTraceConnect(int srcNode)
     Ptr<ns3::UbApp> client = DynamicCast<ns3::UbApp>(NodeList::GetNode(srcNode)->GetApplication(0));
     client->TraceConnectWithoutContext("MemTaskStartsNotify", MakeCallback(DagMemTaskStartsNotify));
     client->TraceConnectWithoutContext("MemTaskCompletesNotify", MakeCallback(DagMemTaskCompletesNotify));
+    client->TraceConnectWithoutContext("ComputeTaskQueuedNotify", MakeCallback(DagComputeTaskQueuedNotify));
+    client->TraceConnectWithoutContext("ComputeTaskStartsNotify", MakeCallback(DagComputeTaskStartsNotify));
+    client->TraceConnectWithoutContext("ComputeTaskCompletesNotify", MakeCallback(DagComputeTaskCompletesNotify));
     client->TraceConnectWithoutContext("WqeTaskStartsNotify", MakeCallback(DagWqeTaskStartsNotify));
     client->TraceConnectWithoutContext("WqeTaskCompletesNotify", MakeCallback(DagWqeTaskCompletesNotify));
 }

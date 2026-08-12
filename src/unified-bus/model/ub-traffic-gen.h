@@ -15,6 +15,7 @@
 #include "ns3/ub-ldst-api.h"
 
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -65,7 +66,9 @@ public:
         URMA_WRITE,
         URMA_READ,
         MEM_STORE,
-        MEM_LOAD
+        MEM_LOAD,
+        COMPUTE,
+        LOCAL_READY
     };
 
     struct RuntimeTask
@@ -162,6 +165,16 @@ public:
      */
     void OnTaskCompleted(uint32_t taskId);
 
+    /**
+     * @brief Submit a COMPUTE task to the source node's single UBPU compute slot.
+     */
+    void SubmitComputeTask(Ptr<UbApp> app, RuntimeTask task);
+
+    /**
+     * @brief Complete a locally running COMPUTE task and release its UBPU slot.
+     */
+    void OnComputeTaskCompleted(uint32_t taskId);
+
     void OnTaskCompleted(uint32_t taskId,
                          Ptr<UbApp> cleanupOwner,
                          uint32_t jettyNum,
@@ -188,6 +201,7 @@ public:
     enum class TaskState {
         PENDING,
         READY,
+        QUEUED,
         RUNNING,
         COMPLETED
     };
@@ -233,6 +247,12 @@ public:
 
     void StartTask(Ptr<UbApp> app, RuntimeTask task);
 
+    struct ComputeTaskRequest
+    {
+        Ptr<UbApp> app{};
+        RuntimeTask task{};
+    };
+
     struct ReadyTaskBatch
     {
         std::vector<RuntimeTask> tasks{};
@@ -252,6 +272,9 @@ public:
     std::vector<uint32_t> m_readyTasks{};
     bool m_readyTasksSorted{true};
     std::vector<Ptr<UbApp>> m_sourceApps{};
+    std::unordered_map<uint32_t, uint32_t> m_computeRunningTasks{};
+    std::unordered_map<uint32_t, Ptr<UbApp>> m_computeRunningApps{};
+    std::unordered_map<uint32_t, std::deque<ComputeTaskRequest>> m_computeQueues{};
     std::unordered_map<std::string, Time> m_delayParseCache{};
     Time m_dependencyVisibilityDelay{NanoSeconds(100)};
     bool m_canonicalOutputEnabled = false;

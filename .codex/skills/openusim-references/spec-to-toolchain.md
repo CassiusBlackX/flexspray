@@ -202,7 +202,7 @@ Use the Write tool to create the CSV. Verify:
 - `taskId` is 0-indexed and sequential
 - `sourceNode` and `destNode` are valid host IDs for the topology (0 to `host_num - 1`)
 - `srcPortId` and `dstPortId`, when present, are valid endpoint ports; each may be empty independently, and an explicit `0` means port 0
-- `opType` is a valid value from `TaOpcodeMap` (see `workload-options.md` "Valid `opType` values" or grep `TaOpcodeMap` in `src/unified-bus/model/ub-app.h`)
+- `opType` is a valid value from the runtime traffic-op parser (see `workload-options.md` "Valid `opType` values" and `ParseOpLocked` in `src/unified-bus/model/ub-traffic-gen.cc`); MegaMoE cases may additionally use `COMPUTE` and `LOCAL_READY`
 - `dependOnPhases` is empty string for first-phase tasks, space-separated phaseIds otherwise
 
 ### Multi-collective composition
@@ -299,7 +299,7 @@ For values not discoverable from the catalog, check the C++ source:
 | GlobalValue enum values (UB_CC_ALGO, ...) | `MakeEnumChecker(...)` in `GlobalValue(...)` definitions | Grep for `GlobalValue.*UB_` in `src/unified-bus/` |
 | Boolean attributes | `MakeBooleanChecker()` in `GetTypeId()` | Values are always `true` / `false` |
 | Integer attributes with range | `MakeUintegerChecker<T>()` or `MakeIntegerChecker<T>(min, max)` | Grep for the attribute name in `src/unified-bus/` |
-| traffic.csv `opType` values | `TaOpcodeMap` in `src/unified-bus/model/ub-app.h` | Grep for `TaOpcodeMap` |
+| traffic.csv `opType` values | `UbTrafficGen::ParseOpLocked` in `src/unified-bus/model/ub-traffic-gen.cc` plus `UbApp::SendTraffic` | Grep for `ParseOpLocked` and `RuntimeTaskOp` |
 
 #### Risk mitigation during planning
 

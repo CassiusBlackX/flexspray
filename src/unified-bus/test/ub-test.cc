@@ -2054,6 +2054,159 @@ class UbTrafficGenInitialTaskStartOffsetTest : public TestCase
     }
 };
 
+class UbTrafficGenComputeResourceQueueTest : public TestCase
+{
+  public:
+    UbTrafficGenComputeResourceQueueTest()
+        : TestCase("UnifiedBus - compute resources serialize per UBPU and overlap communication")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+
+        Ptr<UbApp> senderApp = CreateObject<UbApp>();
+        Ptr<UbApp> receiverApp = CreateObject<UbApp>();
+        topo.sender->AddApplication(senderApp);
+        topo.receiver->AddApplication(receiverApp);
+        senderApp->TraceConnectWithoutContext(
+            "ComputeTaskQueuedNotify",
+            MakeCallback(&UbTrafficGenComputeResourceQueueTest::OnComputeQueued, this));
+        senderApp->TraceConnectWithoutContext(
+            "ComputeTaskStartsNotify",
+            MakeCallback(&UbTrafficGenComputeResourceQueueTest::OnComputeStarted, this));
+        senderApp->TraceConnectWithoutContext(
+            "ComputeTaskCompletesNotify",
+            MakeCallback(&UbTrafficGenComputeResourceQueueTest::OnComputeCompleted, this));
+        receiverApp->TraceConnectWithoutContext(
+            "ComputeTaskStartsNotify",
+            MakeCallback(&UbTrafficGenComputeResourceQueueTest::OnComputeStarted, this));
+        senderApp->TraceConnectWithoutContext(
+            "WqeTaskStartsNotify",
+            MakeCallback(&UbTrafficGenComputeResourceQueueTest::OnWqeStarted, this));
+
+        UbTrafficGen* trafficGen = UbTrafficGen::Get();
+        const Time oldVisibilityDelay = trafficGen->GetDependencyVisibilityDelay();
+        constexpr uint32_t firstSenderCompute = 920001;
+        constexpr uint32_t secondSenderCompute = 920002;
+        constexpr uint32_t receiverCompute = 920003;
+        constexpr uint32_t networkTask = 920004;
+
+        const auto makeTask = [](uint32_t taskId,
+                                 uint32_t sourceNode,
+                                 uint32_t destNode,
+                                 const char* opType,
+                                 uint32_t dataSize) {
+            TrafficRecord record;
+            record.taskId = taskId;
+            record.phaseId = taskId;
+            record.sourceNode = sourceNode;
+            record.destNode = destNode;
+            record.dataSize = dataSize;
+            record.opType = opType;
+            record.priority = 1;
+            record.delay = "0ns";
+            return record;
+        };
+
+        trafficGen->AddTask(makeTask(firstSenderCompute,
+                                     topo.sender->GetId(),
+                                     topo.sender->GetId(),
+                                     "COMPUTE",
+                                     5));
+        trafficGen->AddTask(makeTask(secondSenderCompute,
+                                     topo.sender->GetId(),
+                                     topo.sender->GetId(),
+                                     "COMPUTE",
+                                     5));
+        trafficGen->AddTask(makeTask(receiverCompute,
+                                     topo.receiver->GetId(),
+                                     topo.receiver->GetId(),
+                                     "COMPUTE",
+                                     5));
+        trafficGen->AddTask(makeTask(networkTask,
+                                     topo.sender->GetId(),
+                                     topo.receiver->GetId(),
+                                     "URMA_WRITE",
+                                     64));
+        trafficGen->ScheduleNextTasks();
+
+        Simulator::Stop(NanoSeconds(500));
+        Simulator::Run();
+
+        NS_TEST_ASSERT_MSG_EQ(m_computeQueued.size(),
+                              1u,
+                              "the second same-UBPU compute task should queue once");
+        NS_TEST_ASSERT_MSG_EQ(m_computeQueued.front(),
+                              secondSenderCompute,
+                              "same-UBPU FIFO should queue the later compute task");
+        NS_TEST_ASSERT_MSG_EQ(m_computeStarts.count(firstSenderCompute),
+                              1u,
+                              "first sender compute should start");
+        NS_TEST_ASSERT_MSG_EQ(m_computeStarts.count(secondSenderCompute),
+                              1u,
+                              "second sender compute should start after release");
+        NS_TEST_ASSERT_MSG_EQ(m_computeStarts.count(receiverCompute),
+                              1u,
+                              "different UBPU compute should start");
+        NS_TEST_ASSERT_MSG_EQ(m_computeCompletes.count(firstSenderCompute),
+                              1u,
+                              "first sender compute should complete");
+        NS_TEST_ASSERT_MSG_EQ(m_computeCompletes.count(secondSenderCompute),
+                              1u,
+                              "second sender compute should complete");
+        NS_TEST_ASSERT_MSG_LT(m_computeStarts[firstSenderCompute],
+                              m_computeStarts[secondSenderCompute],
+                              "same-UBPU compute intervals must not overlap");
+        NS_TEST_ASSERT_MSG_EQ((m_computeStarts[secondSenderCompute] >=
+                               m_computeCompletes[firstSenderCompute]),
+                              true,
+                              "FIFO successor cannot start before the slot is released");
+        NS_TEST_ASSERT_MSG_LT(m_computeStarts[receiverCompute],
+                              m_computeCompletes[firstSenderCompute],
+                              "different UBPUs may compute concurrently");
+        NS_TEST_ASSERT_MSG_EQ(m_wqeStarts.count(networkTask),
+                              1u,
+                              "communication should start while compute is active");
+        NS_TEST_ASSERT_MSG_LT(m_wqeStarts[networkTask],
+                              m_computeCompletes[firstSenderCompute],
+                              "network traffic must not wait for the compute queue");
+
+        trafficGen->SetDependencyVisibilityDelay(oldVisibilityDelay);
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    void OnComputeQueued(uint32_t, uint32_t taskId)
+    {
+        m_computeQueued.push_back(taskId);
+    }
+
+    void OnComputeStarted(uint32_t, uint32_t taskId)
+    {
+        m_computeStarts[taskId] = Simulator::Now();
+    }
+
+    void OnComputeCompleted(uint32_t, uint32_t taskId)
+    {
+        m_computeCompletes[taskId] = Simulator::Now();
+    }
+
+    void OnWqeStarted(uint32_t, uint32_t, uint32_t taskId)
+    {
+        m_wqeStarts[taskId] = Simulator::Now();
+    }
+
+    std::vector<uint32_t> m_computeQueued;
+    std::map<uint32_t, Time> m_computeStarts;
+    std::map<uint32_t, Time> m_computeCompletes;
+    std::map<uint32_t, Time> m_wqeStarts;
+};
+
 class UbLinkDelayOffsetTest : public TestCase
 {
   public:
@@ -30422,6 +30575,7 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbTrafficGenDuplicateDependencyPhaseTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTrafficGenRecordViewDependencyTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTrafficGenReadyOrderTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbTrafficGenComputeResourceQueueTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTrafficGenIntegerDelayParserTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTrafficGenDependencyVisibilityDefaultTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpHeaderEncodeDecodeTest(), TestCase::Duration::QUICK);

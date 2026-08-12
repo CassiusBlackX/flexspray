@@ -284,7 +284,9 @@ Use toolchain-native parameter names in the spec to avoid translation ambiguity:
 The skill-layer toolchain validates parameter **keys** against the runtime catalog but does not validate parameter **values**. To reduce the risk of invalid values reaching ns-3:
 
 - For enum parameters (e.g. `FlowControl`, `RoutingType`, `MultipathSelector`, `VlScheduler`), verify the value against the catalog entry's `description` field or the C++ source `MakeEnumChecker(...)`. See `spec-to-toolchain.md` "Parameter value validation boundary" for the source-of-truth table.
-- For `traffic.csv` `opType` values, verify against `TaOpcodeMap` in `src/unified-bus/model/ub-app.h`.
+- For `traffic.csv` `opType` values, verify against `UbTrafficGen::ParseOpLocked` in
+  `src/unified-bus/model/ub-traffic-gen.cc` and the matching `UbApp::SendTraffic` dispatch.
+  Simulator-local MegaMoE stages may additionally use `COMPUTE` and `LOCAL_READY`.
 - Do not hardcode a fixed list of valid values in the spec or in agent logic — always consult the code or catalog as the authoritative source.
 
 ## Readiness rule

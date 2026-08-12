@@ -86,6 +86,18 @@ TypeId UbApp::GetTypeId(void)
                             "MEM Task Completes, taskId",
                             MakeTraceSourceAccessor(&UbApp::m_traceMemTaskCompletesNotify),
                             "ns3::UbApp::MemTaskCompletesNotify")
+            .AddTraceSource("ComputeTaskQueuedNotify",
+                            "COMPUTE Task Queued, taskId",
+                            MakeTraceSourceAccessor(&UbApp::m_traceComputeTaskQueuedNotify),
+                            "ns3::UbApp::ComputeTaskQueuedNotify")
+            .AddTraceSource("ComputeTaskStartsNotify",
+                            "COMPUTE Task Starts, taskId",
+                            MakeTraceSourceAccessor(&UbApp::m_traceComputeTaskStartsNotify),
+                            "ns3::UbApp::ComputeTaskStartsNotify")
+            .AddTraceSource("ComputeTaskCompletesNotify",
+                            "COMPUTE Task Completes, taskId",
+                            MakeTraceSourceAccessor(&UbApp::m_traceComputeTaskCompletesNotify),
+                            "ns3::UbApp::ComputeTaskCompletesNotify")
             .AddTraceSource("WqeTaskStartsNotify",
                             "WQE Task Starts, taskId",
                             MakeTraceSourceAccessor(&UbApp::m_traceWqeTaskStartsNotify),
@@ -152,6 +164,10 @@ void UbApp::SendTraffic(TrafficRecord record)
         task.op = UbTrafficGen::RuntimeTaskOp::MEM_STORE;
     } else if (record.opType == "MEM_LOAD") {
         task.op = UbTrafficGen::RuntimeTaskOp::MEM_LOAD;
+    } else if (record.opType == "COMPUTE") {
+        task.op = UbTrafficGen::RuntimeTaskOp::COMPUTE;
+    } else if (record.opType == "LOCAL_READY") {
+        task.op = UbTrafficGen::RuntimeTaskOp::LOCAL_READY;
     } else {
         NS_ASSERT_MSG(0, "TaOpcode Not Exist");
     }
@@ -332,6 +348,20 @@ UbApp::GetOrCreateCtpUnboundJetty(uint32_t sourceNode,
 
 void UbApp::SendTraffic(UbTrafficGen::RuntimeTask task)
 {
+    if (task.op == UbTrafficGen::RuntimeTaskOp::LOCAL_READY)
+    {
+        UbTrafficGen::Get()->MarkTaskCompleted(task.taskId);
+        return;
+    }
+    if (task.op == UbTrafficGen::RuntimeTaskOp::COMPUTE) {
+        NS_LOG_INFO("COMPUTE task starts, taskId: " << task.taskId << ", duration(ns): "
+                                                     << task.dataSize);
+        Simulator::Schedule(NanoSeconds(task.dataSize),
+                            &UbApp::CompleteComputeTask,
+                            this,
+                            task.taskId);
+        return;
+    }
     if (task.priority == 0) {
         NS_LOG_DEBUG("Task uses the highest priority, not recommended.");
     }
@@ -406,6 +436,12 @@ void UbApp::SendTraffic(UbTrafficGen::RuntimeTask task)
     } else {
             NS_ASSERT_MSG(0, "TaOpcode Not Exist");
     }
+}
+
+void
+UbApp::CompleteComputeTask(uint32_t taskId)
+{
+    UbTrafficGen::Get()->OnComputeTaskCompleted(taskId);
 }
 
 void UbApp::OnTaskCompleted(uint32_t taskId, uint32_t jettyNum)
@@ -504,6 +540,21 @@ void UbApp::MemTaskStartsNotify(uint32_t nodeId, uint32_t taskId)
 void UbApp::MemTaskCompletesNotify(uint32_t nodeId, uint32_t taskId)
 {
     m_traceMemTaskCompletesNotify(nodeId, taskId);
+}
+
+void UbApp::ComputeTaskQueuedNotify(uint32_t nodeId, uint32_t taskId)
+{
+    m_traceComputeTaskQueuedNotify(nodeId, taskId);
+}
+
+void UbApp::ComputeTaskStartsNotify(uint32_t nodeId, uint32_t taskId)
+{
+    m_traceComputeTaskStartsNotify(nodeId, taskId);
+}
+
+void UbApp::ComputeTaskCompletesNotify(uint32_t nodeId, uint32_t taskId)
+{
+    m_traceComputeTaskCompletesNotify(nodeId, taskId);
 }
 
 void UbApp::WqeTaskStartsNotify(uint32_t nodeId, uint32_t jettyNum, uint32_t taskId)

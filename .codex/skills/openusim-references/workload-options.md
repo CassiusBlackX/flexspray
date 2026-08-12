@@ -45,7 +45,7 @@ The nine-column header omits endpoint constraints. The eleven-column header adds
 |--------|------|-------------|-------------|
 | `taskId` | int | Unique task identifier | 0-indexed, monotonically increasing |
 | `sourceNode` | int | Source host node ID | Must be a valid host ID in the topology (`0 .. host_num-1`) |
-| `destNode` | int | Destination host node ID | Must be a valid host ID; `sourceNode != destNode` |
+| `destNode` | int | Destination host node ID | Must be a valid host ID for network tasks; local `COMPUTE` and `LOCAL_READY` rows use `destNode = sourceNode` |
 | `dataSize(Byte)` | int | Data size in bytes | > 0 |
 | `opType` | string | Operation type | See valid values below |
 | `priority` | int | Task priority | 0 is highest (not recommended); typical value: `7` |
@@ -62,7 +62,7 @@ not contain Entity IDs.
 
 ### Valid `opType` values
 
-**Source of truth:** `TaOpcodeMap` in `src/unified-bus/model/ub-app.h` and `src/unified-bus/model/ub-traffic-gen.h`. Grep for `TaOpcodeMap` to verify the current set.
+**Source of truth:** `UbTrafficGen::ParseOpLocked` in `src/unified-bus/model/ub-traffic-gen.cc` and the matching `UbApp::SendTraffic` dispatch. The ordinary network opTypes remain the TA op map; simulator-local workload stages may use the additional entries below.
 
 Snapshot (verify against code before relying on this list):
 
@@ -70,11 +70,16 @@ Snapshot (verify against code before relying on this list):
 |--------|-----------|
 | `URMA_WRITE` | Remote write (most common, default for collective generators) |
 | `URMA_READ` | Remote read (data returned from destination) |
-| `URMA_WRITE_NOTIFY` | Remote write with completion notification |
 | `MEM_STORE` | Memory-semantic store (maps to TA_OPCODE_WRITE via LdstInstance path) |
 | `MEM_LOAD` | Memory-semantic load (maps to TA_OPCODE_READ via LdstInstance path) |
+| `COMPUTE` | Local compute task; `dataSize(Byte)` is interpreted as duration in nanoseconds and is serialized per source UBPU |
+| `LOCAL_READY` | Zero-cost local phase marker used for local-only workload edges; execution is immediate, normal phase visibility delay still applies, and it does not consume a compute slot |
 
-**`build_traffic.py` only generates `URMA_WRITE`.** For other opTypes, use `reference traffic.csv` or `custom-traffic-skeleton`.
+**`build_traffic.py` only generates `URMA_WRITE`.** For `COMPUTE` and `LOCAL_READY`, use the MegaMoE generator or a reference `traffic.csv`.
+
+`URMA_WRITE_NOTIFY` is present in some legacy case files but is not accepted by the active
+`UbTrafficGen::ParseOpLocked` parser; do not use it for new cases without an explicit compatibility
+adapter.
 
 ### Phase dependency rules
 
@@ -83,6 +88,17 @@ Snapshot (verify against code before relying on this list):
 - First-phase tasks should have an empty `dependOnPhases` field (empty string, not `0`).
 - Cross-phase dependency example: task in phase 20 depends on phase 10 → `dependOnPhases` = `10`.
 - Multiple dependencies: `dependOnPhases` = `10 20` (space-separated).
+
+### MegaMoE local phase markers
+
+`scratch/dsv4-megamoe/generate_traffic.py` emits routing-derived variable-size
+Dispatch/Combine rows and local block/wave compute tasks. A local owner does not
+need a network transfer, so the generator emits `LOCAL_READY` in the phase to
+preserve the all-of DAG without charging the UBPU compute resource. Its local
+execution is zero-cost, but the ordinary phase visibility delay still controls
+when dependent phases become visible. `COMPUTE` rows use `dataSize(Byte)` as a
+duration in nanoseconds and are serialized by source node; network rows remain
+independent of that compute queue.
 
 ## Supported planning modes
 

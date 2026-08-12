@@ -740,6 +740,12 @@ private:
 
     static void DagMemTaskCompletesNotify(uint32_t nodeId, uint32_t taskId);
 
+    static void DagComputeTaskQueuedNotify(uint32_t nodeId, uint32_t taskId);
+
+    static void DagComputeTaskStartsNotify(uint32_t nodeId, uint32_t taskId);
+
+    static void DagComputeTaskCompletesNotify(uint32_t nodeId, uint32_t taskId);
+
     static void DagWqeTaskStartsNotify(uint32_t nodeId, uint32_t jettyNum, uint32_t taskId);
 
     static void DagWqeTaskCompletesNotify(uint32_t nodeId, uint32_t jettyNum, uint32_t taskId);

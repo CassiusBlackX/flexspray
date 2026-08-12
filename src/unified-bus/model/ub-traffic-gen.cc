@@ -405,6 +405,12 @@ UbTrafficGen::ParseOpLocked(std::string_view opType)
     if (opType == "MEM_LOAD") {
         return RuntimeTaskOp::MEM_LOAD;
     }
+    if (opType == "COMPUTE") {
+        return RuntimeTaskOp::COMPUTE;
+    }
+    if (opType == "LOCAL_READY") {
+        return RuntimeTaskOp::LOCAL_READY;
+    }
     return RuntimeTaskOp::UNKNOWN;
 }
 
@@ -1223,7 +1229,13 @@ UbTrafficGen::CollectReadyTaskBatchLocked()
                     continue;
                 }
 
-                *state = TaskState::RUNNING;
+                // COMPUTE acquires its UBPU only when its scheduled start event fires. Keep it
+                // READY during a non-zero task delay so resource ownership starts at execution,
+                // while communication retains the existing scheduled RUNNING transition.
+                if (task->op != RuntimeTaskOp::COMPUTE)
+                {
+                    *state = TaskState::RUNNING;
+                }
                 batch.tasks.push_back(*task);
                 batch.sourceApps.push_back(GetSourceAppLocked(task->sourceNode));
             }
@@ -1393,12 +1405,139 @@ void UbTrafficGen::ScheduleTasks(const ReadyTaskBatch& batch)
 void
 UbTrafficGen::StartTask(Ptr<UbApp> app, RuntimeTask task)
 {
+    if (task.op == RuntimeTaskOp::LOCAL_READY)
+    {
+        RecordCanonicalEvent("START", task);
+        MarkTaskCompleted(task.taskId);
+        return;
+    }
+    if (task.op == RuntimeTaskOp::COMPUTE)
+    {
+        SubmitComputeTask(app, task);
+        return;
+    }
+
+    RecordCanonicalEvent("START", task);
+    app->SendTraffic(task);
+}
+
+void
+UbTrafficGen::SubmitComputeTask(Ptr<UbApp> app, RuntimeTask task)
+{
+    NS_ABORT_MSG_IF(app == nullptr, "COMPUTE task requires a source application");
+
+    bool queued = false;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        TaskState* state = FindTaskStateLocked(task.taskId);
+        NS_ABORT_MSG_IF(state == nullptr || *state != TaskState::READY,
+                        "COMPUTE task must be READY before it can acquire or queue: "
+                            << task.taskId);
+        const auto running = m_computeRunningTasks.find(task.sourceNode);
+        if (running == m_computeRunningTasks.end())
+        {
+            m_computeRunningTasks.emplace(task.sourceNode, task.taskId);
+            m_computeRunningApps.emplace(task.sourceNode, app);
+            *state = TaskState::RUNNING;
+        }
+        else
+        {
+            m_computeQueues[task.sourceNode].push_back(ComputeTaskRequest{app, task});
+            *state = TaskState::QUEUED;
+            queued = true;
+        }
+    }
+
+    if (queued)
+    {
+        app->ComputeTaskQueuedNotify(task.sourceNode, task.taskId);
+        NS_LOG_DEBUG("Queued COMPUTE task " << task.taskId << " on UBPU " << task.sourceNode);
+        return;
+    }
+
+    app->ComputeTaskStartsNotify(task.sourceNode, task.taskId);
     RecordCanonicalEvent("START", task);
     app->SendTraffic(task);
 }
 
 void UbTrafficGen::OnTaskCompleted(uint32_t taskId)
 {
+    bool isCompute = false;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        const RuntimeTask* task = FindTaskLocked(taskId);
+        isCompute = task != nullptr && task->op == RuntimeTaskOp::COMPUTE;
+    }
+    if (isCompute)
+    {
+        OnComputeTaskCompleted(taskId);
+        return;
+    }
+    MarkTaskCompleted(taskId);
+}
+
+void
+UbTrafficGen::OnComputeTaskCompleted(uint32_t taskId)
+{
+    RuntimeTask completedTask;
+    Ptr<UbApp> completedApp;
+    std::optional<ComputeTaskRequest> nextTask;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        const RuntimeTask* task = FindTaskLocked(taskId);
+        if (task == nullptr || task->op != RuntimeTaskOp::COMPUTE)
+        {
+            return;
+        }
+
+        const auto running = m_computeRunningTasks.find(task->sourceNode);
+        if (running == m_computeRunningTasks.end() || running->second != taskId)
+        {
+            return;
+        }
+
+        completedTask = *task;
+        const auto appIt = m_computeRunningApps.find(task->sourceNode);
+        if (appIt != m_computeRunningApps.end())
+        {
+            completedApp = appIt->second;
+            m_computeRunningApps.erase(appIt);
+        }
+        m_computeRunningTasks.erase(running);
+
+        auto queueIt = m_computeQueues.find(task->sourceNode);
+        if (queueIt != m_computeQueues.end() && !queueIt->second.empty())
+        {
+            nextTask = std::move(queueIt->second.front());
+            queueIt->second.pop_front();
+            TaskState* nextState = FindTaskStateLocked(nextTask->task.taskId);
+            NS_ABORT_MSG_IF(nextState == nullptr || *nextState != TaskState::QUEUED,
+                            "COMPUTE queue state is not QUEUED for task "
+                                << nextTask->task.taskId);
+            *nextState = TaskState::RUNNING;
+            m_computeRunningTasks.emplace(task->sourceNode, nextTask->task.taskId);
+            m_computeRunningApps.emplace(task->sourceNode, nextTask->app);
+            if (queueIt->second.empty())
+            {
+                m_computeQueues.erase(queueIt);
+            }
+        }
+    }
+
+    if (completedApp != nullptr)
+    {
+        completedApp->ComputeTaskCompletesNotify(completedTask.sourceNode, completedTask.taskId);
+    }
+
+    if (nextTask.has_value())
+    {
+        nextTask->app->ComputeTaskStartsNotify(nextTask->task.sourceNode,
+                                               nextTask->task.taskId);
+        RecordCanonicalEvent("START", nextTask->task);
+        nextTask->app->SendTraffic(nextTask->task);
+    }
+
+    // Release the local compute slot before entering the existing visibility path.
     MarkTaskCompleted(taskId);
 }
 

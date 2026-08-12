@@ -89,6 +89,7 @@ public:
     void OnTaskCompleted(uint32_t taskId, uint32_t jettyNum);
     void OnTestTaskCompleted(uint32_t taskId, uint32_t jettyNum);
     void OnMemTaskCompleted(uint32_t taskId);
+    void CompleteComputeTask(uint32_t taskId);
 
     // ========== 回调函数 ==========
     void SetFinishCallback(Callback<void, uint32_t, uint32_t> cb, Ptr<UbJetty> jetty);
@@ -109,11 +110,17 @@ private:
 
     TracedCallback<uint32_t, uint32_t> m_traceMemTaskStartsNotify;
     TracedCallback<uint32_t, uint32_t> m_traceMemTaskCompletesNotify;
+    TracedCallback<uint32_t, uint32_t> m_traceComputeTaskQueuedNotify;
+    TracedCallback<uint32_t, uint32_t> m_traceComputeTaskStartsNotify;
+    TracedCallback<uint32_t, uint32_t> m_traceComputeTaskCompletesNotify;
     TracedCallback<uint32_t, uint32_t, uint32_t> m_traceWqeTaskStartsNotify;
     TracedCallback<uint32_t, uint32_t, uint32_t> m_traceWqeTaskCompletesNotify;
 
     void MemTaskStartsNotify(uint32_t nodeId, uint32_t taskId);
     void MemTaskCompletesNotify(uint32_t nodeId, uint32_t taskId);
+    void ComputeTaskQueuedNotify(uint32_t nodeId, uint32_t taskId);
+    void ComputeTaskStartsNotify(uint32_t nodeId, uint32_t taskId);
+    void ComputeTaskCompletesNotify(uint32_t nodeId, uint32_t taskId);
     void WqeTaskStartsNotify(uint32_t nodeId, uint32_t jettyNum, uint32_t taskId);
     void WqeTaskCompletesNotify(uint32_t nodeId, uint32_t jettyNum, uint32_t taskId);
     void WriteNotifyTaskStarts(uint32_t nodeId, uint32_t jettyNum, uint32_t baseTaskId);
