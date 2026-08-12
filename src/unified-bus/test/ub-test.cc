@@ -1022,7 +1022,7 @@ class UbTrafficConfigEndpointPortFieldsTest : public TestCase
         {
             std::ofstream trafficFile(trafficPath);
             NS_TEST_ASSERT_MSG_EQ(trafficFile.good(), true, "temporary traffic file should open");
-            trafficFile << "taskId,sourceNode,destNode,dataSize,opType,priority,delay,phaseId,"
+            trafficFile << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
                            "dependOnPhases,srcPortId,dstPortId\r\n";
             trafficFile << "1,2,3,64,URMA_WRITE,1,0ns,10,,,\r\n";
             trafficFile << "2,4,5,128,URMA_READ,2,7ns,20,10,11,12\r\n";
@@ -1195,7 +1195,7 @@ class UbTrafficConfigRejectsLegacyEntityHeaderTest : public TestCase
         {
             std::ofstream trafficFile(trafficPath);
             NS_TEST_ASSERT_MSG_EQ(trafficFile.good(), true, "temporary traffic file should open");
-            trafficFile << "taskId,sourceNode,destNode,dataSize,opType,priority,delay,phaseId,"
+            trafficFile << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
                            "dependOnPhases,srcEntityId,dstEntityId\n";
             trafficFile << "1,2,3,64,URMA_WRITE,1,0ns,10,,11,12\n";
         }
@@ -1209,6 +1209,7 @@ class UbTrafficConfigRejectsLegacyEntityHeaderTest : public TestCase
         {
             NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status), SIGABRT, "legacy header should fail fast");
         }
+
         std::filesystem::remove(trafficPath);
     }
 };
@@ -1230,7 +1231,7 @@ class UbTrafficConfigRejectsRowHeaderWidthMismatchTest : public TestCase
         {
             std::ofstream trafficFile(trafficPath);
             NS_TEST_ASSERT_MSG_EQ(trafficFile.good(), true, "temporary traffic file should open");
-            trafficFile << "taskId,sourceNode,destNode,dataSize,opType,priority,delay,phaseId,"
+            trafficFile << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
                            "dependOnPhases,srcPortId,dstPortId\n";
             trafficFile << "1,2,3,64,URMA_WRITE,1,0ns,10,\n";
         }
@@ -27859,9 +27860,10 @@ class UbSwitchCtpRoutingKeyMatchesReferenceCna16SourceDecodeTest : public TestCa
         NS_TEST_ASSERT_MSG_EQ(rtKey.sip,
                               NodeIdToIp(Cna16ToNodeId(cnaHeader.GetScna())).Get(),
                               "CTP routing key should preserve a wildcard CNA16 source port");
-        NS_TEST_ASSERT_MSG_EQ(rtKey.dip,
-                              NodeIdToIp(Cna16ToNodeId(cnaHeader.GetDcna())).Get(),
-                              "CTP routing key should preserve a wildcard CNA16 destination port");
+        NS_TEST_ASSERT_MSG_EQ(
+            rtKey.dip,
+            NodeIdToIp(Cna16ToNodeId(cnaHeader.GetDcna()), 0).Get(),
+            "CTP routing key should preserve the legacy wildcard CNA16 destination lookup key");
         NS_TEST_ASSERT_MSG_EQ(rtKey.sport,
                               cnaHeader.GetLb(),
                               "CTP routing key should use CNA LB as sport hash salt");
