@@ -104,7 +104,17 @@ public:
     // 获取指定节点的连接管理器视图
     Ptr<TpConnectionManager> GetConnectionManagerByNode(uint32_t nodeId);
 
-    // 根据预设配置的规则选择获取tpns
+    /**
+     * @brief Select or create transport connections for a traffic record.
+     * @param ruler Connection selection rule used when no endpoint-port constraint is present.
+     * @param useShortestPath Whether newly created connections must use shortest routes.
+     * @param useMultiPath Whether multiple transport connections may be returned.
+     * @param localNodeId Local endpoint node identifier.
+     * @param peerNodeId Peer endpoint node identifier.
+     * @param localPort Optional local endpoint port; UINT32_MAX means wildcard.
+     * @param peerPort Optional peer endpoint port; UINT32_MAX means wildcard.
+     * @param priority Traffic priority used for connection matching and creation.
+     */
     std::vector<uint32_t> GetTpns(GetTpnRuleT ruler,
                                   bool useShortestPath,
                                   bool useMultiPath,
@@ -120,6 +130,8 @@ public:
      * @param localNodeId Local node identifier.
      * @param peerNodeId Peer node identifier.
      * @param priority Traffic priority associated with the reservation.
+     * @param localPort Optional local endpoint port; UINT32_MAX means wildcard.
+     * @param peerPort Optional peer endpoint port; UINT32_MAX means wildcard.
      */
     void ReserveTpnsForTraffic(bool useShortestPath,
                                uint32_t localNodeId,
@@ -134,6 +146,8 @@ public:
      * @param localNodeId Local node identifier and lifecycle owner of the returned identities.
      * @param peerNodeId Peer node identifier.
      * @param priority Traffic priority associated with the reservation.
+     * @param localPort Optional local endpoint port; UINT32_MAX means wildcard.
+     * @param peerPort Optional peer endpoint port; UINT32_MAX means wildcard.
      * @return Identities created by this call. Returns empty when a matching reservation already
      *         exists; existing reservations are never claimed.
      */
@@ -174,7 +188,15 @@ public:
                                                uint32_t peerPort,
                                                uint32_t priority) const;
 
-    // Query the local connection view with optional endpoint-port constraints and priority.
+    /**
+     * @brief Query local connections using endpoint nodes, optional ports, and priority.
+     * @param localNodeId Local endpoint node identifier.
+     * @param peerNodeId Peer endpoint node identifier.
+     * @param localPort Optional local endpoint port; UINT32_MAX means wildcard.
+     * @param peerPort Optional peer endpoint port; UINT32_MAX means wildcard.
+     * @param priority Traffic priority to match.
+     * @return Matching local TPN and connection-metric pairs.
+     */
     std::vector<std::pair<uint32_t, uint32_t>>
     GetTpnsByTrafficCriteria(uint32_t localNodeId,
                              uint32_t peerNodeId,

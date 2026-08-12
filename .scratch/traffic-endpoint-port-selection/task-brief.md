@@ -88,10 +88,20 @@ The TP channel and transport state machine remain unchanged.
 
 ## Closeout Evidence
 
-- `ninja -C cmake-cache unified-bus-test`: PASS; target was already up to date.
+- `ninja -C cmake-cache unified-bus-test`: PASS after the documentation-only closeout patch.
+- `ninja -C cmake-cache ns3.44-ub-quick-example`: PASS.
 - `./build/utils/ns3.44-test-runner --test-name=unified-bus`: PASS.
+- `./build/utils/ns3.44-test-runner --test-name=unified-bus-lifecycle`: PASS.
+- `./build/utils/ns3.44-test-runner --test-name=unified-bus-ctp-lifecycle`: PASS.
+- `./build/utils/ns3.44-test-runner --test-name=unified-bus-ldst-lifecycle`: PASS.
 - `python3.12 -m unittest discover -s tests/unified_bus_lifecycle -p 'test*.py'`: PASS, 38 tests.
-- `git diff --cached --check`: PASS.
+- Port-selection scenarios: PASS, 11/11 RTP, CTP, and LDST cases covering exact, reverse,
+  independent wildcard, and explicit port-0 traffic. Artifacts are under
+  `/private/tmp/traffic-endpoint-port-current2.eYnmq2`.
+- Legacy byte comparison: PASS. For old nine-column traffic, RTP, CTP, and LDST `runlog/` and
+  `output/` trees were recursively byte-identical between baseline and candidate. Artifacts are
+  under `/private/tmp/traffic-endpoint-port-byte-current.iQwDud`.
+- `git diff --check`: PASS for the final functional and documentation changes.
 - `python3.12 -m pytest -q tests/unified_bus_lifecycle`: NOT RUN; this environment has no
   `pytest` module (`No module named pytest`).
 - `./build/utils/ns3.44-test-runner --test-name=unified-bus-examples`: FAIL only at the existing
@@ -101,4 +111,7 @@ The TP channel and transport state machine remain unchanged.
 
 The final review checked both traffic parser entry points, wildcard versus explicit port
 presence, reverse RTP connection matching, CTP request/response hints, LDST request/response
-routing, and the unchanged TP channel/state-machine boundary.
+routing, and the unchanged TP channel/state-machine boundary. The standards review's Doxygen
+finding for the new public connection-selection interfaces was fixed in
+`src/unified-bus/model/ub-tp-connection-manager.h`; its data-clump observation was a non-blocking
+refactoring judgement call and was left out to preserve the requested small change.

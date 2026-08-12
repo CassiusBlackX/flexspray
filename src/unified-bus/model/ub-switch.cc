@@ -994,7 +994,8 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
 
     // Route
     bool selectedShortestPath = false;
-    const bool hasExplicitDestinationPort = (rtKey.dip & 0xff) != 0;
+    const bool hasExplicitDestinationPort =
+        (headers.cna16NetworkHeader.GetDcna() & 0xF) != 0;
     int outPort = hasExplicitDestinationPort
                       ? m_routingProcess->GetOutPortForEndpoint(
                             rtKey, selectedShortestPath, port->GetIfIndex())
@@ -1155,8 +1156,10 @@ void UbSwitch::GetLdstRoutingKey(const ParsedLdstHeaders &headers, RoutingKey &r
     uint16_t lb = headers.cna16NetworkHeader.GetLb();
     rtKey.sip = sourcePortExplicit ? utils::NodeIdToIp(snode, sport).Get()
                                    : utils::NodeIdToIp(snode).Get();
-    rtKey.dip = destinationPortExplicit ? utils::NodeIdToIp(dnode, dport).Get()
-                                        : utils::NodeIdToIp(dnode).Get();
+    // Keep the legacy LDST destination lookup key for wildcard CNA16 addresses. The
+    // original CNA low nibble is used by forwarding to distinguish wildcard from exact
+    // endpoint routing, so this key must not be used to infer port presence.
+    rtKey.dip = utils::NodeIdToIp(dnode, dport).Get();
     rtKey.sport = lb;
     rtKey.dport = dport;
     rtKey.priority = headers.datalinkPacketHeader.GetPacketVL();
@@ -1190,8 +1193,10 @@ void UbSwitch::GetCtpRoutingKey(const ParsedCtpHeaders &headers, RoutingKey &rtK
         lb = headers.cna16NetworkHeader.GetLb();
         rtKey.sip = sourcePortExplicit ? utils::NodeIdToIp(snode, sport).Get()
                                        : utils::NodeIdToIp(snode).Get();
-        rtKey.dip = destinationPortExplicit ? utils::NodeIdToIp(dnode, dport).Get()
-                                            : utils::NodeIdToIp(dnode).Get();
+        // Preserve the legacy CTP wildcard destination lookup key. CNA16 wildcard
+        // destination routing historically used endpoint port 0, while an explicit
+        // port still selects its own endpoint route.
+        rtKey.dip = utils::NodeIdToIp(dnode, dport).Get();
     }
     if (headers.isCna24)
     {
