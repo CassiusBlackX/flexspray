@@ -2,8 +2,8 @@
 #ifndef UB_FUNCTION_H
 #define UB_FUNCTION_H
 
-#include <ns3/event-id.h>
-#include <ns3/node.h>
+#include "ns3/event-id.h"
+#include "ns3/node.h"
 #include <unordered_map>
 #include "ns3/ub-sliding-bitmap-window.h"
 #include "ub-transport.h"
@@ -150,6 +150,8 @@ namespace ns3 {
             const UbLifecycleResourceIdentity& transportIdentity);
         void RegisterJettyCtpBinding(uint32_t jettyNum,
                                      Ptr<UbCtpTransportService> service);
+        bool UnregisterJettyCtpBinding(uint32_t jettyNum,
+                                       Ptr<UbCtpTransportService> service);
     private:
         void DoDispose() override;
         Ptr<UbTransaction> GetTransaction();
@@ -157,7 +159,7 @@ namespace ns3 {
         uint32_t m_nodeId;
         Ptr<UbTransaction> m_transaction;
         Ptr<UbJettyManager> m_jettyManager;
-    
+
     };
 
     enum class UbJettyLifecycleState : uint8_t
@@ -185,6 +187,7 @@ namespace ns3 {
         void RegisterWqe(uint32_t jettyNum,
                          uint32_t wqeId,
                          const UbLifecycleResourceIdentity& identity);
+        uint64_t ResolveWqeLifecycleLocalId(uint32_t jettyNum, uint32_t wqeId) const;
         void ApplyWqeOutcome(uint32_t jettyNum,
                              uint32_t wqeId,
                              const UbLifecycleResourceIdentity& identity,
@@ -208,6 +211,7 @@ namespace ns3 {
             uint32_t jettyNum,
             const UbLifecycleResourceIdentity& transportIdentity);
         void RegisterCtpBinding(uint32_t jettyNum, Ptr<UbCtpTransportService> service);
+        bool UnregisterCtpBinding(uint32_t jettyNum, Ptr<UbCtpTransportService> service);
         void DisposeAll();
 
       private:
@@ -284,6 +288,11 @@ namespace ns3 {
             m_taSsnSndNxt++;
         }
 
+        uint32_t PeekNextTaSsn() const
+        {
+            return m_taSsnSndNxt;
+        }
+
         void PushWqe(Ptr<UbWqe> ubQqe);
         void PushWqe(Ptr<UbWqe> ubQqe, uint32_t maxSegmentBytes);
 
@@ -299,6 +308,7 @@ namespace ns3 {
 
         bool IsValid(); // Jetty是否可用
         bool IsReadyToSend();
+        bool IsIdle() const;
 
         uint32_t GetSrc() const
         {
@@ -392,7 +402,7 @@ namespace ns3 {
 
         uint32_t GetTaSsnSndNxtForTest() const
         {
-            return m_taSsnSndNxt;
+            return PeekNextTaSsn();
         }
 
         uint32_t GetActiveWqeCount() const
@@ -434,7 +444,7 @@ namespace ns3 {
         //   |----ssn5----|------ssn4-------|------ssn3----->
         //   |----ssn2----|----ssn1---|---startssn0----->
         //                               taSsnNxt
-        // 									taSsnUna
+        //                                  taSsnUna
         // wqe.burst_size = 64*1024
         // m_messages = m_wqeVector
         // WQE0 = WqeSegment0 + WqeSegment1 + WqeSegment2

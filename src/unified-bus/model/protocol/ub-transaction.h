@@ -130,6 +130,22 @@ namespace ns3 {
         std::vector<UbLifecycleResourceIdentity> segmentIdentities;
         std::vector<UbLifecycleResourceIdentity> resolvedTpIdentities;
     };
+
+    struct UbRemoteUrmaRequestContext
+    {
+        TaOpcode operation{TaOpcode::TA_OPCODE_WRITE};
+        uint32_t bytes{0};
+        uint32_t sourceNodeId{0};
+        uint32_t targetNodeId{0};
+        UbPriority priority{UB_PRIORITY_DEFAULT};
+        uint64_t address{0};
+        uint32_t tokenId{0};
+        Ptr<const Packet> payload;
+    };
+
+    using UbRemoteUrmaResponseSender = Callback<void>;
+    using UbRemoteUrmaRequestProcessor =
+        Callback<bool, const UbRemoteUrmaRequestContext&, UbRemoteUrmaResponseSender>;
     /**
     * @brief
     */
@@ -158,6 +174,8 @@ namespace ns3 {
         Ptr<UbJetty> GetJetty(uint32_t jettyNum);
 
         bool JettyBindTp(uint32_t src, uint32_t dest, uint32_t jettyNum, bool multiPath, std::vector<uint32_t> tpns);
+
+        bool HasJettyTpBinding(uint32_t jettyNum) const;
 
         void DestroyJettyTpMap(uint32_t jettyNum);
         /** Release one completed task's binding and optionally retire its now-unused TPG. */
@@ -204,6 +222,9 @@ namespace ns3 {
 
         bool ProcessWqeSegmentComplete(Ptr<UbWqeSegment> wqeSegment);
         void HandleInboundTaUnit(uint32_t localTpn, Ptr<UbWqeSegment> segment);
+        bool DispatchRemoteUrmaRequest(Ptr<UbWqeSegment> request,
+                                       UbRemoteUrmaResponseSender responseSender);
+        Ptr<UbWqeSegment> BuildRemoteUrmaResponse(Ptr<UbWqeSegment> request) const;
         Ptr<UbWqeSegment> ProcessInboundTaRequest(Ptr<UbWqeSegment> request);
         bool ProcessInboundTaResponse(Ptr<UbWqeSegment> response);
         uint64_t DeriveRemoteAddressForTest(const Ptr<UbWqeSegment>& request) const
@@ -314,6 +335,11 @@ namespace ns3 {
         bool IsPeerTpInUse(uint32_t tpn);
 
         std::vector<uint32_t> GetUselessTpns();
+
+        void SetRemoteUrmaRequestProcessor(UbRemoteUrmaRequestProcessor processor);
+        void ClearRemoteUrmaRequestProcessor();
+        bool HasRemoteUrmaRequestProcessor() const;
+
     private:
 
         void DoDispose() override;
@@ -455,8 +481,17 @@ namespace ns3 {
         bool IsUrmaReadWriteRequest(const Ptr<UbWqeSegment>& segment);
 
         void ValidateUrmaServiceModeOrDie(uint32_t jettyNum, const Ptr<UbWqeSegment>& segment);
+        void EnqueueInboundTaResponse(uint32_t localTpn, Ptr<UbWqeSegment> response);
+        static void SendBoundRemoteUrmaResponse(Ptr<UbTransaction> transaction,
+                                                uint32_t localTpn,
+                                                Ptr<UbWqeSegment> request);
+        void SendRemoteUrmaResponse(uint32_t localTpn, Ptr<UbWqeSegment> request);
+        Ptr<UbWqeSegment> BuildRemoteWriteAck(uint32_t localTpn,
+                                              Ptr<UbWqeSegment> request) const;
+        Ptr<UbWqeSegment> BuildRemoteReadResponse(uint32_t localTpn,
+                                                  Ptr<UbWqeSegment> request) const;
         Ptr<UbWqeSegment> ExecuteRemoteWriteAndBuildAck(uint32_t localTpn,
-                                                        Ptr<UbWqeSegment> request);
+                                                         Ptr<UbWqeSegment> request);
         Ptr<UbWqeSegment> ExecuteRemoteReadAndBuildResponse(uint32_t localTpn,
                                                             Ptr<UbWqeSegment> request);
         void CompleteLocalRequestFromResponse(Ptr<UbWqeSegment> response);
@@ -486,6 +521,7 @@ namespace ns3 {
 
         // 记录每个jetty对应的serviceMode
         std::map<uint32_t, TransactionServiceMode> m_serviceMode;
+        UbRemoteUrmaRequestProcessor m_remoteUrmaRequestProcessor;
         // 每个jetty存储wqe的id顺序
         std::map<uint32_t, std::vector<uint32_t>> m_orderedWqeIdsByJetty;
         std::map<std::pair<uint32_t, uint64_t>, uint32_t> m_memoryStore;

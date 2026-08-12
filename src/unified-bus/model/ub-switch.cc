@@ -883,7 +883,7 @@ bool UbSwitch::SinkLdstDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Pa
     uint8_t type = headers.dummyTransactionHeader.GetTaOpcode();
     // 数据包
     if (type == (uint8_t)TaOpcode::TA_OPCODE_WRITE || type == (uint8_t)TaOpcode::TA_OPCODE_READ) {
-        ldstApi->RecvDataPacket(packet);
+        ldstApi->RecvDataPacket(packet, port->GetIfIndex());
     } else if (type == (uint8_t)TaOpcode::TA_OPCODE_TRANSACTION_ACK ||
                type == (uint8_t)TaOpcode::TA_OPCODE_READ_RESPONSE) {
         ldstApi->RecvResponse(packet);

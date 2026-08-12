@@ -56,7 +56,11 @@ GetPayloadBytesThisPacket(const Ptr<UbWqeSegment>& segment, uint32_t progressByt
 uint32_t
 GetWireLengthBytes(const Ptr<UbWqeSegment>& segment, uint32_t payloadBytes)
 {
-    return IsZeroPayloadReadRequest(segment) ? segment->GetResLenBytes() : payloadBytes;
+    const bool isWriteRequest = segment != nullptr &&
+                                segment->GetType() == TaOpcode::TA_OPCODE_WRITE &&
+                                segment->GetSegmentKind() == UbTransactionSegmentKind::REQUEST;
+    return IsZeroPayloadReadRequest(segment) || isWriteRequest ? segment->GetLogicalBytes()
+                                                               : payloadBytes;
 }
 
 uint32_t
@@ -687,6 +691,14 @@ UbTransportChannel::BuildGbnPacketDescriptor(const NewDataSendContext& ctx,
     descriptor.progressBytes = ctx.progressBytes;
     descriptor.payloadBytes = ctx.payloadBytes;
     descriptor.wireLengthBytes = ctx.wireLengthBytes;
+    descriptor.remoteAddress = ctx.segment->GetRemoteAddress();
+    descriptor.remoteTokenId = ctx.segment->GetRemoteTokenId();
+    if (ctx.segment->HasExplicitPayload())
+    {
+        descriptor.explicitPayload = ctx.segment->GetExplicitPayload();
+        NS_ABORT_MSG_IF(descriptor.explicitPayload->GetSize() != ctx.totalProgressBytes,
+                        "Explicit WQE segment payload must match the segment transfer size");
+    }
     descriptor.taskId = ctx.segment->GetTaskId();
     descriptor.wqeSize = ctx.segment->GetWqeSize();
     descriptor.taOpcode = ctx.segment->GetType();
@@ -975,7 +987,22 @@ Ptr<Packet> UbTransportChannel::GenDataPacket(Ptr<UbWqeSegment> wqeSegment,
 Ptr<Packet>
 UbTransportChannel::BuildRtpDataPacket(const UbGbnPacketDescriptor& descriptor)
 {
-    Ptr<Packet> p = Create<Packet>(descriptor.payloadBytes);
+    Ptr<Packet> p;
+    if (descriptor.explicitPayload != nullptr)
+    {
+        NS_ABORT_MSG_IF(descriptor.packetOffsetBytes > descriptor.explicitPayload->GetSize() ||
+                            descriptor.payloadBytes >
+                                descriptor.explicitPayload->GetSize() -
+                                    descriptor.packetOffsetBytes,
+                        "Explicit RTP payload descriptor exceeds its immutable payload");
+        p = descriptor.explicitPayload->CreateFragment(descriptor.packetOffsetBytes,
+                                                       descriptor.payloadBytes);
+        p->AddPacketTag(UbExplicitPayloadTag{});
+    }
+    else
+    {
+        p = Create<Packet>(descriptor.payloadBytes);
+    }
     UbFlowTag flowTag(descriptor.taskId, descriptor.wqeSize);
     p->AddPacketTag(flowTag);
     if (descriptor.hasCorrelation)
@@ -986,6 +1013,8 @@ UbTransportChannel::BuildRtpDataPacket(const UbGbnPacketDescriptor& descriptor)
     }
     // add UbMAExtTah
     UbMAExtTah MAExtTaHeader;
+    MAExtTaHeader.SetVirtualAddress(descriptor.remoteAddress);
+    MAExtTaHeader.SetTokenId(descriptor.remoteTokenId);
     MAExtTaHeader.SetLength(descriptor.wireLengthBytes);
     p->AddHeader(MAExtTaHeader);
     // add TaHeader
@@ -1035,21 +1064,17 @@ UbTransportChannel::BuildRtpDataPacket(const UbGbnPacketDescriptor& descriptor)
     return p;
 }
 
-Ptr<UbWqeSegment> UbTransportChannel::TrackInboundTaPacket(const UbTransportHeader& tpHeader,
-                                                           const UbTransactionHeader& taHeader,
-                                                           uint32_t resLenBytes,
-                                                           uint32_t payloadBytes,
-                                                           uint32_t taskId,
-                                                           bool hasTransactionCorrelation,
-                                                           const UbTransactionCorrelationIdentity& correlation)
+Ptr<UbWqeSegment>
+UbTransportChannel::TrackInboundTaPacket(const BufferedInboundPacket& packet)
 {
-    const uint32_t srcTpn = tpHeader.GetSrcTpn();
+    const uint32_t srcTpn = packet.tpHeader.GetSrcTpn();
     uint64_t& tpMsnReference = m_inboundTpMsnReferences[srcTpn];
-    const uint64_t logicalTpMsn = UbTpMsnSequence::Unwrap(tpHeader.GetTpMsn(), tpMsnReference);
-    const auto taSsnKey = std::make_pair(srcTpn, taHeader.GetIniRcId());
+    const uint64_t logicalTpMsn =
+        UbTpMsnSequence::Unwrap(packet.tpHeader.GetTpMsn(), tpMsnReference);
+    const auto taSsnKey = std::make_pair(srcTpn, packet.taHeader.GetIniRcId());
     uint32_t& taSsnReference = m_inboundTaSsnReferences[taSsnKey];
     const uint32_t logicalTaSsn =
-        UbTaSsnSequence::Unwrap(taHeader.GetIniTaSsn(), taSsnReference);
+        UbTaSsnSequence::Unwrap(packet.taHeader.GetIniTaSsn(), taSsnReference);
     const auto key = std::make_pair(srcTpn, logicalTpMsn);
     auto& state = m_inboundTaUnits[key];
     tpMsnReference = std::max<uint64_t>(tpMsnReference, logicalTpMsn + 1);
@@ -1062,31 +1087,34 @@ Ptr<UbWqeSegment> UbTransportChannel::TrackInboundTaPacket(const UbTransportHead
         state.segment->SetSport(m_dport);
         state.segment->SetDport(m_sport);
         state.segment->SetPriority(m_priority);
-        state.segment->SetTaskId(taskId);
+        state.segment->SetTaskId(packet.taskId);
         state.segment->SetWqeSize(0);
-        state.segment->SetJettyNum(taHeader.GetIniRcId());
+        state.segment->SetJettyNum(packet.taHeader.GetIniRcId());
         state.segment->SetTaMsn(logicalTpMsn);
         state.segment->SetTaSsn(logicalTaSsn);
-        state.segment->SetOriginJettyNum(taHeader.GetIniRcId());
+        state.segment->SetOriginJettyNum(packet.taHeader.GetIniRcId());
         state.segment->SetRequestTassn(logicalTaSsn);
         state.segment->SetResolvedTpIdentity(m_lifecycleOwner);
         state.segment->SetTpMsn(logicalTpMsn);
         state.segment->SetTpn(m_tpn);
+        state.segment->SetRemoteAddress(packet.remoteAddress);
+        state.segment->SetRemoteTokenId(packet.remoteTokenId);
     }
-    if (hasTransactionCorrelation)
+    if (packet.hasTransactionCorrelation)
     {
         NS_ABORT_MSG_IF(state.segment->HasTransactionCorrelation() &&
-                            state.segment->GetTransactionCorrelation() != correlation,
+                            state.segment->GetTransactionCorrelation() !=
+                                packet.transactionCorrelation,
                         "Packets for one inbound Transaction unit have different correlations");
-        state.segment->SetTransactionCorrelation(correlation);
+        state.segment->SetTransactionCorrelation(packet.transactionCorrelation);
     }
 
-    const auto taOpcode = static_cast<TaOpcode>(taHeader.GetTaOpcode());
+    const auto taOpcode = static_cast<TaOpcode>(packet.taHeader.GetTaOpcode());
     const bool isReadRequest = taOpcode == TaOpcode::TA_OPCODE_READ;
     const bool isReadResponse = taOpcode == TaOpcode::TA_OPCODE_READ_RESPONSE;
     const bool isTransactionAck = taOpcode == TaOpcode::TA_OPCODE_TRANSACTION_ACK;
     state.segment->SetType(taOpcode);
-    state.segment->SetOrderType(static_cast<OrderType>(taHeader.GetOrder()));
+    state.segment->SetOrderType(static_cast<OrderType>(packet.taHeader.GetOrder()));
     state.segment->SetSegmentKind(
         isTransactionAck || isReadResponse
             ? UbTransactionSegmentKind::RESPONSE
@@ -1103,16 +1131,25 @@ Ptr<UbWqeSegment> UbTransportChannel::TrackInboundTaPacket(const UbTransportHead
     {
         state.segment->SetRequestOpcode(taOpcode);
     }
-    state.segment->SetResponseBytes(isReadRequest ? resLenBytes : (isReadResponse ? payloadBytes : 0));
+    state.segment->SetResponseBytes(isReadRequest ? packet.resLenBytes
+                                                   : (isReadResponse ? packet.payloadBytes : 0));
     state.segment->SetNeedsTransactionResponse(
         taOpcode == TaOpcode::TA_OPCODE_WRITE || isReadRequest);
 
-    state.bytesReceived += payloadBytes;
+    state.bytesReceived += packet.payloadBytes;
+    if (packet.explicitPayload != nullptr)
+    {
+        if (state.explicitPayload == nullptr)
+        {
+            state.explicitPayload = Create<Packet>();
+        }
+        state.explicitPayload->AddAtEnd(packet.explicitPayload);
+    }
     if (isReadRequest)
     {
-        state.segment->SetSize(resLenBytes);
-        state.segment->SetWqeSize(resLenBytes);
-        state.segment->SetResLenBytes(resLenBytes);
+        state.segment->SetSize(packet.resLenBytes);
+        state.segment->SetWqeSize(packet.resLenBytes);
+        state.segment->SetResLenBytes(packet.resLenBytes);
         state.segment->SetPayloadBytes(0);
         state.segment->SetCarrierBytes(1);
     }
@@ -1125,12 +1162,17 @@ Ptr<UbWqeSegment> UbTransportChannel::TrackInboundTaPacket(const UbTransportHead
         state.segment->SetCarrierBytes(state.bytesReceived);
     }
 
-    if (!tpHeader.GetLastPacket())
+    if (!packet.tpHeader.GetLastPacket())
     {
         return nullptr;
     }
 
     Ptr<UbWqeSegment> completed = state.segment;
+    if (state.explicitPayload != nullptr &&
+        state.explicitPayload->GetSize() == state.bytesReceived)
+    {
+        completed->SetExplicitPayload(state.explicitPayload);
+    }
     m_inboundTaUnits.erase(key);
     return completed;
 }
@@ -1720,6 +1762,13 @@ UbTransportChannel::ParseReceivedDataPacket(Ptr<Packet> packet,
     packet->RemoveHeader(ctx.maExtHeader);
     ctx.payloadBytes = packet->GetSize();
     ctx.resLenBytes = ctx.maExtHeader.GetLength();
+    UbExplicitPayloadTag explicitPayloadTag;
+    if (packet->PeekPacketTag(explicitPayloadTag))
+    {
+        Ptr<Packet> explicitPayload = packet->Copy();
+        explicitPayload->RemovePacketTag(explicitPayloadTag);
+        ctx.explicitPayload = explicitPayload;
+    }
     ctx.psn = UbTpPsnSequence::Unwrap(ctx.transportHeader.GetPsn(), m_psnRecvNxt);
     packet->PeekPacketTag(ctx.flowTag);
     UbTransactionCorrelationTag correlationTag;
@@ -1929,13 +1978,17 @@ UbTransportChannel::UpdateReceiveWindowAndCollectCompletedTa(
                                                    ctx.payloadBytes,
                                                    ctx.networkHeader);
     UbFlowTag flowTag = ctx.flowTag;
-    m_bufferedInboundPackets[ctx.psn] = {ctx.transportHeader,
-                                         ctx.transactionHeader,
-                                         ctx.resLenBytes,
-                                         ctx.payloadBytes,
-                                         flowTag.GetFlowId(),
-                                         ctx.hasTransactionCorrelation,
-                                         ctx.transactionCorrelation};
+    m_bufferedInboundPackets[ctx.psn] = {
+        .tpHeader = ctx.transportHeader,
+        .taHeader = ctx.transactionHeader,
+        .resLenBytes = ctx.resLenBytes,
+        .remoteAddress = ctx.maExtHeader.GetVirtualAddress(),
+        .remoteTokenId = ctx.maExtHeader.GetTokenId(),
+        .payloadBytes = ctx.payloadBytes,
+        .taskId = flowTag.GetFlowId(),
+        .hasTransactionCorrelation = ctx.hasTransactionCorrelation,
+        .transactionCorrelation = ctx.transactionCorrelation,
+        .explicitPayload = ctx.explicitPayload};
     if (outOfOrderPacket) {
         NS_LOG_DEBUG("Out-of-Order Packet,tpn:{" << m_tpn << "} psn:{"
                      << ctx.psn << "} expectedPsn:{" << m_psnRecvNxt << "}");
@@ -1960,14 +2013,7 @@ UbTransportChannel::UpdateReceiveWindowAndCollectCompletedTa(
             break;
         }
 
-        Ptr<UbWqeSegment> completedTaUnit =
-            TrackInboundTaPacket(bufferedIt->second.tpHeader,
-                                 bufferedIt->second.taHeader,
-                                 bufferedIt->second.resLenBytes,
-                                 bufferedIt->second.payloadBytes,
-                                 bufferedIt->second.taskId,
-                                 bufferedIt->second.hasTransactionCorrelation,
-                                 bufferedIt->second.transactionCorrelation);
+        Ptr<UbWqeSegment> completedTaUnit = TrackInboundTaPacket(bufferedIt->second);
         if (completedTaUnit != nullptr) {
             completedTaUnits.push_back(completedTaUnit);
         }

@@ -6,6 +6,7 @@
 #include <set>
 #include "protocol/ub-transport.h"
 #include "protocol/ub-transaction.h"
+#include "ns3/ub-ldst-endpoint.h"
 #include "ns3/ub-network-address.h"
 #include "ns3/ub-utils.h"
 
@@ -30,6 +31,7 @@ UbController::UbController()
     m_tpConnectionManager = CreateObject<TpConnectionManager>();
     m_transportChannelManager = CreateObject<UbTransportChannelManager>();
     m_transportChannelManager->Init(this);
+    m_ldstEndpoint = CreateObject<UbLdstEndpoint>();
 }
 
 void UbController::CreateUbFunction()
@@ -37,6 +39,7 @@ void UbController::CreateUbFunction()
     m_tpConnectionManager->SetOwnerNodeId(GetObject<Node>()->GetId());
     m_function = CreateObject<UbFunction>();
     m_function->Init(GetObject<Node>()->GetId());
+    m_ldstEndpoint->Init(GetObject<Node>()->GetId());
 }
 
 void UbController::CreateUbTransaction()
@@ -103,6 +106,7 @@ UbController::DoDispose()
     }
     m_transaction = nullptr;
     m_function = nullptr;
+    m_ldstEndpoint = nullptr;
     m_transportChannelManager = nullptr;
     m_portsByDestination.clear();
     m_tpConnectionManager = nullptr;
@@ -553,6 +557,54 @@ Ptr<UbFunction> UbController::GetUbFunction()
 Ptr<UbTransaction> UbController::GetUbTransaction()
 {
     return m_transaction;
+}
+
+bool
+UbController::SubmitUrmaWqe(uint32_t jettyNum,
+                            Ptr<UbWqe> wqe,
+                            Callback<void, uint32_t, uint32_t> completionObserver)
+{
+    if (wqe == nullptr || m_function == nullptr || m_transaction == nullptr)
+    {
+        return false;
+    }
+    Ptr<UbJetty> jetty = m_function->GetJetty(jettyNum);
+    if (jetty == nullptr)
+    {
+        return false;
+    }
+
+    const bool hasRtpBinding = m_transaction->HasJettyTpBinding(jettyNum);
+    const bool hasCtpPreparation =
+        m_ctpTransportService != nullptr && m_ctpTransportService->HasJettyPreparation(jettyNum);
+    if (hasRtpBinding == hasCtpPreparation)
+    {
+        return false;
+    }
+    bool accepted = false;
+    if (hasRtpBinding)
+    {
+        accepted = m_function->SubmitWqe(wqe, jettyNum).status ==
+                   UbWqeSubmissionStatus::ACCEPTED;
+    }
+    else
+    {
+        accepted = m_ctpTransportService->SubmitPreparedWqe(jettyNum, wqe);
+    }
+    if (!accepted)
+    {
+        return false;
+    }
+    if (!completionObserver.IsNull())
+    {
+        jetty->SetCompletionObserver(completionObserver);
+    }
+    return true;
+}
+
+Ptr<UbLdstEndpoint> UbController::GetLdstEndpoint()
+{
+    return m_ldstEndpoint;
 }
 
 Ptr<UbCtpTransportService> UbController::GetCtpTransportService()

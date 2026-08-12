@@ -20,6 +20,7 @@ using namespace utils;
 namespace ns3 {
 
 class UbLdstApi;
+class UbLdstEndpoint;
 class UbFunction;
 class UbTransaction;
 class UbTransportChannel;
@@ -84,6 +85,25 @@ public:
 
     Ptr<UbTransaction> GetUbTransaction();
 
+    /**
+     * @brief Submit a WQE to a prepared Jetty.
+     *
+     * The optional observer is installed only after all synchronous admission checks pass and
+     * before the WQE is enqueued.  It observes the completed request ID without replacing the
+     * Jetty's caller-facing completion callback.
+     *
+     * @param jettyNum Prepared Jetty receiving the WQE.
+     * @param wqe WQE to submit.
+     * @param completionObserver Optional internal completion observer.
+     * @return True when the WQE was accepted for submission.
+     */
+    bool SubmitUrmaWqe(uint32_t jettyNum,
+                       Ptr<UbWqe> wqe,
+                       Callback<void, uint32_t, uint32_t> completionObserver =
+                           Callback<void, uint32_t, uint32_t>());
+
+    Ptr<UbLdstEndpoint> GetLdstEndpoint();
+
     Ptr<UbCtpTransportService> GetCtpTransportService();
     Ptr<UbCtpTransportService> PeekCtpTransportService() const;
     using CtpPacketTimingCallback = Callback<void,
@@ -138,6 +158,7 @@ private:
 
   Ptr<UbFunction> m_function;       // 功能层
   Ptr<UbTransaction> m_transaction; // 事务层
+  Ptr<UbLdstEndpoint> m_ldstEndpoint;
   Ptr<UbCtpTransportService> m_ctpTransportService;
   CtpPacketTimingCallback m_ctpFirstPacketSendsCallback;
   CtpPacketTimingCallback m_ctpLastPacketAcksCallback;

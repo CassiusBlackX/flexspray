@@ -5,6 +5,7 @@
 #include "ns3/callback.h"
 #include "ns3/ipv4-address.h"
 #include "ns3/object.h"
+#include "ns3/packet.h"
 #include "ns3/core-module.h"
 #include "ns3/ub-lifecycle.h"
 
@@ -717,6 +718,21 @@ public:
         m_priority = priority;
     }
 
+    void SetExplicitPayload(Ptr<const Packet> payload)
+    {
+        m_explicitPayload = payload;
+    }
+
+    Ptr<const Packet> GetExplicitPayload() const
+    {
+        return m_explicitPayload;
+    }
+
+    bool HasExplicitPayload() const
+    {
+        return m_explicitPayload != nullptr;
+    }
+
     // ========== 网络层信息 ==========
     Ipv4Address GetSip() const
     {
@@ -918,6 +934,16 @@ public:
         return m_remoteAddress;
     }
 
+    void SetRemoteTokenId(uint32_t remoteTokenId)
+    {
+        m_remoteTokenId = remoteTokenId;
+    }
+
+    uint32_t GetRemoteTokenId() const
+    {
+        return m_remoteTokenId;
+    }
+
     void SetNeedsTransactionResponse(bool needsTransactionResponse)
     {
         m_needsTransactionResponse = needsTransactionResponse;
@@ -1002,11 +1028,13 @@ private:
     TaOpcode m_requestOpcode = TaOpcode::TA_OPCODE_WRITE;
     uint32_t m_responseBytes = 0;
     uint64_t m_remoteAddress = 0;
+    uint32_t m_remoteTokenId = 0;
     bool m_needsTransactionResponse = true;
     uint32_t m_resLenBytes = 0;
     uint32_t m_payloadBytes = 0;
     uint32_t m_carrierBytes = 0;
     bool m_lifecycleManaged = false;
+    Ptr<const Packet> m_explicitPayload;
 
     // ========== TA层动态信息 (追踪WQE segment的完成) ==========
     uint32_t m_bytesLeft = 0; // 剩余的字节数
@@ -1167,6 +1195,21 @@ public:
     void SetPriority(UbPriority priority)
     {
         m_priority = priority;
+    }
+
+    void SetExplicitPayload(Ptr<const Packet> payload)
+    {
+        m_explicitPayload = payload;
+    }
+
+    Ptr<const Packet> GetExplicitPayload() const
+    {
+        return m_explicitPayload;
+    }
+
+    bool HasExplicitPayload() const
+    {
+        return m_explicitPayload != nullptr;
     }
 
     void SetTaskId(uint32_t taskId)
@@ -1471,6 +1514,16 @@ public:
         return m_remoteAddress;
     }
 
+    void SetRemoteTokenId(uint32_t remoteTokenId)
+    {
+        m_remoteTokenId = remoteTokenId;
+    }
+
+    uint32_t GetRemoteTokenId() const
+    {
+        return m_remoteTokenId;
+    }
+
     void SetNeedsTransactionResponse(bool needsTransactionResponse)
     {
         m_needsTransactionResponse = needsTransactionResponse;
@@ -1562,10 +1615,12 @@ private:
     TaOpcode m_requestOpcode{TaOpcode::TA_OPCODE_WRITE};
     uint32_t m_responseBytes{0};
     uint64_t m_remoteAddress{0};
+    uint32_t m_remoteTokenId{0};
     bool m_needsTransactionResponse{true};
     uint32_t m_resLenBytes{0};
     uint32_t m_payloadBytes{0};
     uint32_t m_carrierBytes{0};
+    Ptr<const Packet> m_explicitPayload;
 
     // ========== TP层静态信息 (调度时设置，之后不变) ==========
     uint64_t m_tpMsn{0};    // TP层消息序号

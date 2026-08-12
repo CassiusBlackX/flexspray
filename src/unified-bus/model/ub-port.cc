@@ -264,6 +264,31 @@ UbPort::~UbPort()
 }
 
 void
+UbPort::SetReceiveHandler(ReceiveHandler handler)
+{
+    NS_LOG_FUNCTION(this);
+    if (handler.IsNull())
+    {
+        ClearReceiveHandler();
+        return;
+    }
+    m_receiveHandler = handler;
+}
+
+void
+UbPort::ClearReceiveHandler()
+{
+    NS_LOG_FUNCTION(this);
+    m_receiveHandler = MakeNullCallback<void, Ptr<UbPort>, Ptr<Packet>>();
+}
+
+bool
+UbPort::HasReceiveHandler() const
+{
+    return !m_receiveHandler.IsNull();
+}
+
+void
 UbPort::EnableMpiReceive()
 {
 #ifdef NS3_MPI
@@ -510,9 +535,26 @@ void UbPort::Receive(Ptr<Packet> packet)
     }
     PortRxNotify(GetNode()->GetId(), m_portId, packet->GetSize());
     PktRcvNotify(packet);
-    GetNode()->GetObject<UbSwitch>()->SwitchHandlePacket(this, packet);
+    DispatchReceive(packet);
 
     return;
+}
+
+void
+UbPort::DispatchReceive(Ptr<Packet> packet)
+{
+    if (!m_receiveHandler.IsNull())
+    {
+        m_receiveHandler(this, packet);
+        return;
+    }
+    HandleWithUbSwitch(packet);
+}
+
+void
+UbPort::HandleWithUbSwitch(Ptr<Packet> packet)
+{
+    GetNode()->GetObject<UbSwitch>()->SwitchHandlePacket(this, packet);
 }
 
 bool UbPort::Attach(Ptr<UbLink> ch)
@@ -762,6 +804,7 @@ void UbPort::DoDispose()
     m_datalink = nullptr;
     m_flowControl = nullptr;
     m_mpiReceiveEnabled = false;
+    m_receiveHandler = MakeNullCallback<void, Ptr<UbPort>, Ptr<Packet>>();
     m_revQueueSize.clear();
     NetDevice::DoDispose();
 }

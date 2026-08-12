@@ -59,6 +59,9 @@ struct UbGbnPacketDescriptor
     uint32_t progressBytes{0};
     uint32_t payloadBytes{0};
     uint32_t wireLengthBytes{0};
+    uint64_t remoteAddress{0};
+    uint32_t remoteTokenId{0};
+    Ptr<const Packet> explicitPayload;
     uint32_t taskId{0};
     uint32_t wqeSize{0};
     TaOpcode taOpcode{TaOpcode::TA_OPCODE_SEND};

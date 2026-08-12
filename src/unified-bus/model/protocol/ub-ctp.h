@@ -14,7 +14,7 @@
 #include "ns3/ub-lifecycle.h"
 #include "ns3/ub-queue-manager.h"
 #include "ns3/ub-tag.h"
-#include "ns3/ub-transaction.h"
+#include "ub-transaction.h"
 
 #include <cstdint>
 #include <deque>
@@ -156,6 +156,12 @@ class UbCtpTransportService : public Object
     bool HandleReceivedPacket(Ptr<Packet> packet, uint32_t receivePortHint);
     bool SendSegment(Ptr<UbWqeSegment> segment, const UbCtpEntityKey& key);
     void PrepareJetty(Ptr<UbJetty> jetty);
+    bool PrepareJetty(Ptr<UbJetty> jetty, const UbCtpEntityKey& key);
+    bool HasJettyPreparation(uint32_t jettyNum) const;
+    bool CanSubmitWqe(uint32_t jettyNum, Ptr<UbWqe> wqe) const;
+    bool SubmitPreparedWqe(uint32_t jettyNum, Ptr<UbWqe> wqe);
+    bool NotifyJettyWork(uint32_t jettyNum);
+    bool UnprepareJetty(uint32_t jettyNum);
     void StartJetty(Ptr<UbJetty> jetty, const UbCtpEntityKey& key);
     void TryContinueJettyTransmission(const UbCtpEntityKey& entityKey);
     void ReleaseJetty(uint32_t jettyNum);
@@ -191,6 +197,9 @@ class UbCtpTransportService : public Object
     Ptr<UbTransaction> GetTransactionOwner() const;
     UbCtpTransactionState& GetTransactionState(const UbCtpEntityKey& key) const;
     void ValidateRoutingType(RoutingType routingType, const std::string& owner) const;
+    bool TryGetJettyPreparation(uint32_t jettyNum,
+                                Ptr<UbJetty>& jetty,
+                                UbCtpEntityKey& key) const;
 
     Ptr<Packet> BuildDataPacketWithTaSsn(Ptr<UbWqeSegment> segment,
                                          UbCtpEntityState& state,
@@ -204,6 +213,13 @@ class UbCtpTransportService : public Object
                               const UbCtpEntityKey& packetKey,
                               uint32_t taSsn,
                               uint32_t progressBytes);
+    static void SendBoundRemoteUrmaResponse(Ptr<UbCtpTransportService> service,
+                                            Ptr<UbTransaction> transaction,
+                                            Ptr<UbWqeSegment> request,
+                                            UbCtpEntityKey responseKey);
+    void SendRemoteUrmaResponse(Ptr<UbTransaction> transaction,
+                                Ptr<UbWqeSegment> request,
+                                const UbCtpEntityKey& responseKey);
     Ptr<UbWqeSegment> ProcessInboundTaRequest(Ptr<UbWqeSegment> request) const;
     Ptr<UbWqeSegment> BuildInboundTaOperation(const UbCompactTransactionHeader& taHeader,
                                               const UbCompactMAExtTah& maHeader,
@@ -213,7 +229,8 @@ class UbCtpTransportService : public Object
                                               uint32_t priority,
                                               uint32_t payloadBytes,
                                               uint32_t flowId,
-                                              uint32_t flowSize);
+                                              uint32_t flowSize,
+                                              Ptr<const Packet> explicitPayload);
     uint32_t SelectOutPort(UbCtpEntityState& state,
                            const UbCtpEntityKey& routeKey,
                            uint16_t loadBalanceSalt);

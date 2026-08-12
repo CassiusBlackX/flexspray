@@ -50,6 +50,7 @@ public:
     Ptr<UbLdstThread> GetLdstThread(uint32_t threadId);
     Callback<void, uint32_t> FinishCallback;
     void OnRecvAck(uint32_t taskSegmentId);
+    bool TryRecvAck(uint32_t taskSegmentId);
     bool OnRecvAckForTest(uint32_t taskSegmentId);
     void OnTaskSegmentCompleted(Ptr<UbLdstTaskSegment> taskSegment);
 

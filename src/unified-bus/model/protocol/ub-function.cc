@@ -4,9 +4,9 @@
 
 #include "ns3/ub-datatype.h"
 #include "ns3/ub-controller.h"
-#include "ns3/ub-ctp.h"
-#include "ns3/ub-transaction.h"
-#include "ns3/ub-function.h"
+#include "ub-ctp.h"
+#include "ub-transaction.h"
+#include "ub-function.h"
 
 namespace ns3 {
 
@@ -187,8 +187,10 @@ UbWqeSubmissionResult UbFunction::SubmitWqe(Ptr<UbWqe> wqe, uint32_t jettyNum)
 
     Ptr<UbLifecycleCoordinator> coordinator =
         UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId));
+    const uint64_t lifecycleLocalId =
+        m_jettyManager->ResolveWqeLifecycleLocalId(jettyNum, wqe->GetWqeId());
     const UbLifecycleResourceIdentity wqeIdentity =
-        coordinator->OpenResource(UbLifecycleResourceKind::WQE, wqe->GetWqeId());
+        coordinator->OpenResource(UbLifecycleResourceKind::WQE, lifecycleLocalId);
     NS_ABORT_MSG_IF(!GetTransaction()->TryAdmitRtpWqe(jettyNum,
                                                       wqe,
                                                       wqeIdentity,
@@ -228,8 +230,10 @@ UbFunction::SubmitCtpWqe(Ptr<UbWqe> wqe,
 
     Ptr<UbLifecycleCoordinator> coordinator =
         UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId));
+    const uint64_t lifecycleLocalId =
+        m_jettyManager->ResolveWqeLifecycleLocalId(jettyNum, wqe->GetWqeId());
     const UbLifecycleResourceIdentity wqeIdentity =
-        coordinator->OpenResource(UbLifecycleResourceKind::WQE, wqe->GetWqeId());
+        coordinator->OpenResource(UbLifecycleResourceKind::WQE, lifecycleLocalId);
     NS_ABORT_MSG_IF(!GetTransaction()->TryAdmitCtpWqe(jettyNum,
                                                       wqe,
                                                       wqeIdentity,
@@ -355,6 +359,13 @@ UbFunction::RegisterJettyCtpBinding(uint32_t jettyNum,
                                     Ptr<UbCtpTransportService> service)
 {
     m_jettyManager->RegisterCtpBinding(jettyNum, service);
+}
+
+bool
+UbFunction::UnregisterJettyCtpBinding(uint32_t jettyNum,
+                                      Ptr<UbCtpTransportService> service)
+{
+    return m_jettyManager->UnregisterCtpBinding(jettyNum, service);
 }
 
 void UbFunction::DoDispose()
@@ -551,6 +562,21 @@ UbJettyManager::RegisterCtpBinding(uint32_t jettyNum,
     it->second.hasCtpBinding = true;
 }
 
+bool
+UbJettyManager::UnregisterCtpBinding(uint32_t jettyNum,
+                                     Ptr<UbCtpTransportService> service)
+{
+    auto it = m_jettyRecordsByNum.find(jettyNum);
+    if (it == m_jettyRecordsByNum.end() ||
+        it->second.state != UbJettyLifecycleState::ACTIVE ||
+        !it->second.hasCtpBinding || m_ctpService != service)
+    {
+        return false;
+    }
+    it->second.hasCtpBinding = false;
+    return true;
+}
+
 void
 UbJettyManager::RegisterWqe(uint32_t jettyNum,
                             uint32_t wqeId,
@@ -562,6 +588,47 @@ UbJettyManager::RegisterWqe(uint32_t jettyNum,
                     "Cannot register WQE on a missing or draining Jetty");
     NS_ABORT_MSG_IF(!it->second.wqes.emplace(wqeId, identity).second,
                     "Duplicate manager-owned WQE record");
+}
+
+uint64_t
+UbJettyManager::ResolveWqeLifecycleLocalId(uint32_t jettyNum, uint32_t wqeId) const
+{
+    const auto isInUse = [this](uint64_t localId) {
+        for (const auto& [candidateJettyNum, record] : m_jettyRecordsByNum)
+        {
+            (void)candidateJettyNum;
+            if (std::any_of(record.wqes.begin(),
+                            record.wqes.end(),
+                            [localId](const auto& entry) {
+                                return entry.second.localId == localId;
+                            }))
+            {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    if (!isInUse(wqeId))
+    {
+        return wqeId;
+    }
+
+    uint64_t scope = static_cast<uint64_t>(jettyNum) + 1;
+    for (uint64_t attempts = 0; attempts < UINT32_MAX; ++attempts)
+    {
+        if (scope > UINT32_MAX)
+        {
+            scope = 1;
+        }
+        const uint64_t candidate = (scope << 32) | wqeId;
+        if (!isInUse(candidate))
+        {
+            return candidate;
+        }
+        ++scope;
+    }
+    NS_ABORT_MSG("Exhausted scoped WQE lifecycle identities");
 }
 
 void
@@ -1147,10 +1214,20 @@ Ptr<UbWqeSegment> UbJetty::GenWqeSegment(Ptr<UbWqe> wqe, uint32_t segmentSize)
     segment->SetRequestOpcode(wqe->GetRequestOpcode());
     segment->SetResponseBytes(wqe->GetResponseBytes());
     segment->SetRemoteAddress(wqe->GetRemoteAddress());
+    segment->SetRemoteTokenId(wqe->GetRemoteTokenId());
     segment->SetNeedsTransactionResponse(wqe->NeedsTransactionResponse());
     segment->SetResLenBytes(segmentSize);
     segment->SetPayloadBytes(wqe->GetType() == TaOpcode::TA_OPCODE_READ ? 0 : segmentSize);
     segment->SetCarrierBytes(wqe->GetType() == TaOpcode::TA_OPCODE_READ ? 1 : segmentSize);
+    if (wqe->HasExplicitPayload())
+    {
+        Ptr<const Packet> payload = wqe->GetExplicitPayload();
+        const uint32_t segmentOffset =
+            static_cast<uint32_t>(wqe->GetSize() - wqe->GetBytesLeft());
+        NS_ABORT_MSG_IF(payload->GetSize() != wqe->GetSize(),
+                        "Explicit WQE payload must match the WQE transfer size");
+        segment->SetExplicitPayload(payload->CreateFragment(segmentOffset, segmentSize));
+    }
 
     // TP layer information will be set during subsequent TP layer scheduling
 
@@ -1186,7 +1263,6 @@ void UbJetty::PushWqe(Ptr<UbWqe> ubWqe, uint32_t maxSegmentBytes)
     ubWqe->SetRequestTassn(ubWqe->GetTaSsnStart());
     ubWqe->SetRequestOpcode(ubWqe->GetType());
     ubWqe->SetResponseBytes(ubWqe->GetType() == TaOpcode::TA_OPCODE_READ ? ubWqe->GetSize() : 0);
-    ubWqe->SetRemoteAddress(0);
     ubWqe->SetNeedsTransactionResponse(ubWqe->GetType() == TaOpcode::TA_OPCODE_WRITE ||
                                        ubWqe->GetType() == TaOpcode::TA_OPCODE_READ);
     ubWqe->SetResLenBytes(ubWqe->GetSize());
@@ -1212,6 +1288,12 @@ bool UbJetty::IsValid()
 bool UbJetty::IsReadyToSend()
 {
     return true;
+}
+
+bool
+UbJetty::IsIdle() const
+{
+    return m_wqeVector.empty() && m_taSsnSndUna == m_taSsnSndNxt;
 }
 
 /*

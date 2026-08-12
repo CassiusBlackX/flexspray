@@ -2,7 +2,7 @@
 /**
  * @file ub-test.cc
  * @brief Test suite for the unified-bus module
- * 
+ *
  * This file contains unit tests for the unified-bus functionality,
  * including basic object creation, configuration, and core features.
  */
@@ -117,6 +117,37 @@ CreateCtpWriteSegment(uint32_t taSsn = 0)
     segment->SetResLenBytes(64);
     segment->SetRemoteAddress(0);
     return segment;
+}
+
+Ptr<UbWqeSegment>
+CreateCtpWriteSegmentForKey(uint32_t srcNodeId,
+                            const UbCtpEntityKey& key,
+                            uint32_t taSsn = 0)
+{
+    Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(taSsn);
+    segment->SetSrc(srcNodeId);
+    segment->SetDest(key.dstNodeId);
+    segment->SetSrcEntityId(key.srcEntityId);
+    segment->SetDstEntityId(key.dstEntityId);
+    segment->SetPriority(key.vl);
+    return segment;
+}
+
+Ptr<UbWqe>
+CreateCtpWqeForKey(Ptr<UbFunction> function,
+                   uint32_t srcNodeId,
+                   const UbCtpEntityKey& key,
+                   uint32_t requestId)
+{
+    Ptr<UbWqe> wqe = function->CreateWqe(srcNodeId,
+                                         key.dstNodeId,
+                                         64,
+                                         requestId,
+                                         TaOpcode::TA_OPCODE_WRITE);
+    wqe->SetSrcEntityId(key.srcEntityId);
+    wqe->SetDstEntityId(key.dstEntityId);
+    wqe->SetPriority(key.vl);
+    return wqe;
 }
 
 Ptr<UbWqeSegment>
@@ -914,7 +945,7 @@ RunInChildProcess(const std::function<void()>& fn);
 
 /**
  * @brief Unified-bus functionality test
- * 
+ *
  * Tests basic unified-bus module functionality including:
  * - Object creation and initialization
  * - Singleton pattern verification
@@ -926,7 +957,7 @@ class UbFunctionalityTest : public TestCase
 public:
     UbFunctionalityTest();
     void DoRun() override;
-    
+
 private:
     void DoSetup() override;
     void DoTeardown() override;
@@ -954,28 +985,28 @@ void UbFunctionalityTest::DoTeardown()
 void UbFunctionalityTest::DoRun()
 {
     NS_LOG_FUNCTION(this);
-    
+
     // Test 1: UbTrafficGen singleton
     UbTrafficGen& gen1 = UbTrafficGen::GetInstance();
     UbTrafficGen& gen2 = UbTrafficGen::GetInstance();
     NS_TEST_ASSERT_MSG_EQ(&gen1, &gen2, "UbTrafficGen should be singleton");
-    
+
     // Test 2: Initial state
     NS_TEST_ASSERT_MSG_EQ(gen1.IsCompleted(), true, "UbTrafficGen should be completed initially");
-    
+
     // Test 3: UbApp creation
     Ptr<UbApp> app = CreateObject<UbApp>();
     NS_TEST_ASSERT_MSG_NE(app, nullptr, "UbApp creation should succeed");
-    
+
     // Test 4: Node creation
     NodeContainer nodes;
     nodes.Create(2);
     NS_TEST_ASSERT_MSG_EQ(nodes.GetN(), 2, "Should create 2 nodes");
-    
+
     // Test 5: Configuration setting (without getting)
     Config::SetDefault("ns3::UbApp::EnableMultiPath", BooleanValue(false));
     Config::SetDefault("ns3::UbPort::UbDataRate", StringValue("400Gbps"));
-    
+
     NS_LOG_INFO("All basic tests completed successfully");
 }
 
@@ -1285,7 +1316,7 @@ class UbAppCtpTransportModeEntryTest : public TestCase
 
         TrafficRecord record;
         record.taskId = 1;
-        record.sourceNode = 3;
+        record.sourceNode = node->GetId();
         record.destNode = 4;
         record.dataSize = 64;
         record.opType = "URMA_WRITE";
@@ -1396,7 +1427,7 @@ class UbAppCtpRuntimeTaskEndpointPortDerivationTest : public TestCase
 
         UbTrafficGen::RuntimeTask task;
         task.taskId = 2;
-        task.sourceNode = 3;
+        task.sourceNode = node->GetId();
         task.destNode = 4;
         task.dataSize = 64;
         task.phaseId = 1;
@@ -1477,7 +1508,7 @@ class UbAppCtpAdmissionBackpressurePreservesJettyTest : public TestCase
 
         UbTrafficGen::RuntimeTask task;
         task.taskId = 33;
-        task.sourceNode = 3;
+        task.sourceNode = node->GetId();
         task.destNode = 4;
         task.dataSize = 2 * UB_WQE_TA_SEGMENT_BYTE;
         task.phaseId = 1;
@@ -6366,6 +6397,96 @@ public:
     }
 };
 
+class UbJettyPreservesWqeRemoteAddressTest : public TestCase
+{
+  public:
+    UbJettyPreservesWqeRemoteAddressTest()
+        : TestCase("UnifiedBus - Jetty preserves WQE remote address across segmentation")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+
+        Ptr<Node> node = topo.sender;
+        Ptr<UbController> controller = node->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        constexpr uint32_t configuredJettyNum = 11;
+        constexpr uint32_t defaultJettyNum = 12;
+        constexpr uint64_t remoteAddress = 0x12345000ull;
+        const uint32_t destNode = topo.receiver->GetId();
+        function->CreateJetty(node->GetId(), destNode, configuredJettyNum);
+        function->CreateJetty(node->GetId(), destNode, defaultJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(node->GetId(),
+                                                       destNode,
+                                                       configuredJettyNum,
+                                                       false,
+                                                       {kUrmaWriteRegressionSenderTpn}),
+                              true,
+                              "Configured-address Jetty should bind the sender TP");
+        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(node->GetId(),
+                                                       destNode,
+                                                       defaultJettyNum,
+                                                       false,
+                                                       {kUrmaWriteRegressionSenderTpn}),
+                              true,
+                              "Default-address Jetty should bind the sender TP");
+
+        Ptr<UbWqe> configured =
+            function->CreateWqe(node->GetId(),
+                                destNode,
+                                2 * UB_WQE_TA_SEGMENT_BYTE,
+                                100,
+                                TaOpcode::TA_OPCODE_WRITE);
+        configured->SetRemoteAddress(remoteAddress);
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(function->SubmitWqe(configured, configuredJettyNum).status),
+            static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+            "Configured-address WQE should enter the prepared RTP path");
+        NS_TEST_ASSERT_MSG_EQ(configured->GetRemoteAddress(),
+                              remoteAddress,
+                              "Jetty submission preserves caller-configured address");
+
+        Ptr<UbJetty> configuredJetty = function->GetJetty(configuredJettyNum);
+        NS_TEST_ASSERT_MSG_NE(configuredJetty, nullptr, "configured Jetty exists");
+        Ptr<UbWqeSegment> first = configuredJetty->GetNextWqeSegment();
+        Ptr<UbWqeSegment> second = configuredJetty->GetNextWqeSegment();
+        NS_TEST_ASSERT_MSG_NE(first, nullptr, "first segment is generated");
+        NS_TEST_ASSERT_MSG_NE(second, nullptr, "second segment is generated");
+        NS_TEST_EXPECT_MSG_EQ(first->GetRemoteAddress(),
+                              remoteAddress,
+                              "first segment inherits request address");
+        NS_TEST_EXPECT_MSG_EQ(second->GetRemoteAddress(),
+                              remoteAddress,
+                              "second segment inherits request address");
+
+        Ptr<UbWqe> defaultAddress = function->CreateWqe(node->GetId(),
+                                                        destNode,
+                                                        UB_WQE_TA_SEGMENT_BYTE,
+                                                        101,
+                                                        TaOpcode::TA_OPCODE_WRITE);
+        NS_TEST_ASSERT_MSG_EQ(
+            static_cast<uint32_t>(function->SubmitWqe(defaultAddress, defaultJettyNum).status),
+            static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+            "Default-address WQE should enter the prepared RTP path");
+        NS_TEST_EXPECT_MSG_EQ(defaultAddress->GetRemoteAddress(),
+                              0u,
+                              "unset WQE address remains zero after submission");
+        Ptr<UbWqeSegment> defaultSegment =
+            function->GetJetty(defaultJettyNum)->GetNextWqeSegment();
+        NS_TEST_ASSERT_MSG_NE(defaultSegment, nullptr, "default-address segment is generated");
+        NS_TEST_EXPECT_MSG_EQ(defaultSegment->GetRemoteAddress(),
+                              0u,
+                              "unset WQE address remains zero in generated segment");
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
 class UbWqeSegmentKeepsLogicalTaSequencesTest : public TestCase
 {
 public:
@@ -7139,6 +7260,89 @@ class UbUrmaWriteOutOfOrderRequestSliceCompletionTest : public TestCase
     }
 
     uint32_t m_targetRequestSliceCompleteCount{0};
+};
+
+class UbUrmaRtpWriteMaetahSegmentLengthTest : public TestCase
+{
+  public:
+    UbUrmaRtpWriteMaetahSegmentLengthTest()
+        : TestCase("UnifiedBus - RTP WRITE MAETAH carries the transaction segment length")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(false));
+
+        constexpr uint32_t segmentBytes = 4 * UB_MTU_BYTE;
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbTransportChannel> senderTp =
+            topo.sender->GetObject<UbController>()
+                ->GetTransportChannelManager()
+                ->GetTp(kUrmaWriteRegressionSenderTpn);
+        NS_TEST_ASSERT_MSG_NE(senderTp, nullptr, "Sender TP should exist");
+
+        Ptr<UbWqeSegment> segment = CreateObject<UbWqeSegment>();
+        segment->SetSrc(topo.sender->GetId());
+        segment->SetDest(topo.receiver->GetId());
+        segment->SetSport(topo.senderPort->GetIfIndex());
+        segment->SetDport(topo.receiverPort->GetIfIndex());
+        segment->SetType(TaOpcode::TA_OPCODE_WRITE);
+        segment->SetSize(segmentBytes);
+        segment->SetPriority(kUrmaWriteRegressionPriority);
+        segment->SetTaskId(kUrmaWriteRegressionTaskId);
+        segment->SetWqeSize(segmentBytes);
+        segment->SetJettyNum(kUrmaWriteRegressionJettyNum);
+        segment->SetTaSsn(0);
+        segment->SetOrderType(OrderType::ORDER_NO);
+        segment->SetTpn(kUrmaWriteRegressionSenderTpn);
+        segment->SetTpMsn(senderTp->GetMsnCnt());
+        segment->SetPsnStart(senderTp->GetPsnCnt());
+        segment->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
+        segment->SetOriginJettyNum(kUrmaWriteRegressionJettyNum);
+        segment->SetRequestOpcode(TaOpcode::TA_OPCODE_WRITE);
+        segment->SetNeedsTransactionResponse(true);
+        segment->SetLogicalBytes(segmentBytes);
+        segment->SetPayloadBytes(segmentBytes);
+        segment->SetCarrierBytes(segmentBytes);
+
+        senderTp->UpdatePsnCnt(segment->GetPsnSize());
+        senderTp->UpDateMsnCnt(1);
+        senderTp->PushWqeSegment(segment);
+
+        for (uint32_t packetIndex = 0; packetIndex < segmentBytes / UB_MTU_BYTE; ++packetIndex)
+        {
+            Ptr<Packet> packet = senderTp->GetNextPacketForTest();
+            NS_TEST_ASSERT_MSG_NE(packet, nullptr, "Each RTP WRITE packet should be generated");
+
+            UbDatalinkPacketHeader dataLinkHeader;
+            UbIpBasedNetworkHeader networkHeader;
+            Ipv4Header ipv4Header;
+            UdpHeader udpHeader;
+            UbTransportHeader transportHeader;
+            UbTransactionHeader transactionHeader;
+            UbMAExtTah maHeader;
+            packet->RemoveHeader(dataLinkHeader);
+            packet->RemoveHeader(networkHeader);
+            packet->RemoveHeader(ipv4Header);
+            packet->RemoveHeader(udpHeader);
+            packet->RemoveHeader(transportHeader);
+            packet->RemoveHeader(transactionHeader);
+            packet->RemoveHeader(maHeader);
+
+            NS_TEST_EXPECT_MSG_EQ(maHeader.GetLength(),
+                                  segmentBytes,
+                                  "Every packet in one TASSN should carry the full segment length");
+            NS_TEST_EXPECT_MSG_EQ(packet->GetSize(),
+                                  UB_MTU_BYTE,
+                                  "The packet payload remains limited to one transport MTU");
+        }
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
 };
 
 class UbCreateNodeSystemIdTest : public TestCase
@@ -18235,7 +18439,7 @@ class UbLifecycleCtpCachedJettyAdmissionFreezeTest : public TestCase
 
         UbTrafficGen::RuntimeTask task;
         task.taskId = 33;
-        task.sourceNode = 3;
+        task.sourceNode = node->GetId();
         task.destNode = 4;
         task.dataSize = UB_WQE_TA_SEGMENT_BYTE;
         task.phaseId = 1;
@@ -23027,6 +23231,7 @@ class UbExplicitConnectionDestroyDrainsAdmittedWriteTest : public TestCase
     void DoRun() override
     {
         Config::Reset();
+#ifdef NS3_MTP
         if (m_mtp)
         {
             Config::SetDefault("ns3::UbLink::Delay", TimeValue(NanoSeconds(10)));
@@ -23034,8 +23239,10 @@ class UbExplicitConnectionDestroyDrainsAdmittedWriteTest : public TestCase
             MtpInterface::Enable(2, 2);
 #endif
         }
+#endif
         LocalTpTopology topo =
             BuildLocalTpTopology(true, m_mtp ? 1u : 0u, m_mtp ? 2u : 0u);
+#ifdef NS3_MTP
         if (m_mtp)
         {
 #ifdef NS3_MTP
@@ -23047,6 +23254,7 @@ class UbExplicitConnectionDestroyDrainsAdmittedWriteTest : public TestCase
                                   "Receiver should execute on the second worker LP");
 #endif
         }
+#endif
         InstallStaticTpPair(topo);
         topo.sender->GetObject<UbController>()
             ->GetTransportChannelManager()
@@ -25403,6 +25611,7 @@ class UbAllocatorSelectionReentrantStopTest : public TestCase
         fixture.ports[kOutPort]->m_flowControl = stopFlowControl;
         fixture.ports[kOutPort]->SetFaultCallBack(
             MakeCallback(&UbAllocatorSelectionReentrantStopTest::ObserveEgressTransmit, this));
+        fixture.ports[kOutPort]->SetSendState(SendState::BUSY);
         const bool existingEgressEnqueued = fixture.ports[kOutPort]->EnqueueToEgress(
             std::make_tuple(kInPort, kPriority, Create<Packet>(kExistingEgressBytes)));
         NS_TEST_ASSERT_MSG_EQ(existingEgressEnqueued,
@@ -25498,15 +25707,18 @@ class UbDwrrSelectionReentrantStopDoesNotScanNextVlTest : public TestCase
         fixture.ports[kOutPort]->SetFaultCallBack(
             MakeCallback(&UbDwrrSelectionReentrantStopDoesNotScanNextVlTest::ObserveEgressTransmit,
                          this));
+        fixture.ports[kOutPort]->SetSendState(SendState::BUSY);
         NS_TEST_ASSERT_MSG_EQ(
             fixture.ports[kOutPort]->EnqueueToEgress(
                 std::make_tuple(kInPort, kFirstPriority, Create<Packet>(kExistingEgressBytes))),
             true,
             "DWRR scan fixture must retain one pre-existing egress packet");
-        fixture.sw->SendPacket(
-            Create<Packet>(kPacketBytes), kInPort, kOutPort, kFirstPriority);
-        fixture.sw->SendPacket(
-            Create<Packet>(kPacketBytes), kInPort, kOutPort, kLaterPriority);
+        fixture.sw->PushPacketToVoq(
+            Create<Packet>(kPacketBytes), kOutPort, kFirstPriority, kInPort);
+        fixture.queueManager->PushToVoq(kInPort, kOutPort, kFirstPriority, kPacketBytes);
+        fixture.sw->PushPacketToVoq(
+            Create<Packet>(kPacketBytes), kOutPort, kLaterPriority, kInPort);
+        fixture.queueManager->PushToVoq(kInPort, kOutPort, kLaterPriority, kPacketBytes);
 
         allocator->TriggerAllocator(fixture.ports[kOutPort]);
         Simulator::Stop(NanoSeconds(30));
@@ -25865,7 +26077,9 @@ class UbAllocatorEgressBlockRollsBackSelectionTest : public TestCase
         fixture.ports[kOutPort]->m_flowControl = flowControl;
         fixture.ports[kOutPort]->GetUbQueue()->SetAttribute("MaxEgressBytes", UintegerValue(0));
 
-        for (uint32_t inPort = 0; inPort < kPortsNum; ++inPort) {
+        const uint32_t expectedInPort = (fixture.node->GetId() + kOutPort) % kPortsNum;
+        for (uint32_t offset = 0; offset < kPortsNum; ++offset) {
+            const uint32_t inPort = (expectedInPort + offset) % kPortsNum;
             fixture.sw->SendPacket(Create<Packet>(kPacketBytes), inPort, kOutPort, kPriority);
         }
 
@@ -25886,7 +26100,6 @@ class UbAllocatorEgressBlockRollsBackSelectionTest : public TestCase
                               0u,
                               "A zero-capacity egress must commit no grant");
 
-        const uint32_t expectedInPort = (fixture.node->GetId() + kOutPort) % kPortsNum;
         fixture.ports[kOutPort]->GetUbQueue()->SetAttribute("MaxEgressBytes",
                                                             UintegerValue(kPacketBytes));
         fixture.sw->GetAllocator()->TriggerAllocator(fixture.ports[kOutPort]);
@@ -26518,7 +26731,12 @@ class UbDwrrAllocatorPreservesIngressQueueSlotsAcrossVlTest : public TestCase
 
         uint8_t credits[16] = {};
         credits[0] = 1;
-        sw->SendControlFrame(UbDataLink::BuildControlCreditPacket(credits), kOutPort);
+        Ptr<Packet> controlPacket = UbDataLink::BuildControlCreditPacket(credits);
+        sw->PushPacketToVoq(controlPacket, kOutPort, 0, kOutPort);
+        sw->GetQueueManager()->PushToVoq(kOutPort,
+                                         kOutPort,
+                                         0,
+                                         controlPacket->GetSize());
         sw->PushPacketToVoq(Create<Packet>(64), kOutPort, 1, 1);
         sw->PushPacketToVoq(Create<Packet>(64), kOutPort, 1, 3);
         sw->PushPacketToVoq(Create<Packet>(64), kOutPort, 2, 0);
@@ -26872,6 +27090,72 @@ class UbCtpHeaderEncodeDecodeTest : public TestCase
     }
 };
 
+class UbMAExtTahRoundTripTest : public TestCase
+{
+  public:
+    UbMAExtTahRoundTripTest()
+        : TestCase("UnifiedBus - MAETAH round-trips address, TokenID, and length")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        constexpr uint64_t address = 0x123456789abcu;
+        constexpr uint32_t tokenId = 0x54321u;
+        constexpr uint32_t length = 0x10203040u;
+
+        UbMAExtTah header;
+        header.SetVirtualAddress(address);
+        header.SetTokenId(tokenId);
+        header.SetLength(length);
+        Ptr<Packet> packet = Create<Packet>();
+        packet->AddHeader(header);
+
+        UbMAExtTah decoded;
+        packet->RemoveHeader(decoded);
+        NS_TEST_EXPECT_MSG_EQ(decoded.GetVirtualAddress(),
+                              address,
+                              "MAETAH virtual address round trips");
+        NS_TEST_EXPECT_MSG_EQ(decoded.GetTokenId(), tokenId, "MAETAH TokenID round trips");
+        NS_TEST_EXPECT_MSG_EQ(decoded.GetLength(), length, "MAETAH length round trips");
+    }
+};
+
+class UbCompactMAExtTahRoundTripTest : public TestCase
+{
+  public:
+    UbCompactMAExtTahRoundTripTest()
+        : TestCase("UnifiedBus - compact MAETAH round-trips address, TokenID, and length")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        constexpr uint64_t address = 0x123456789abcu;
+        constexpr uint32_t tokenId = 0x54321u;
+        constexpr uint8_t length = 6;
+
+        UbCompactMAExtTah header;
+        header.SetVirtualAddress(address);
+        header.SetTokenId(tokenId);
+        header.SetLength(length);
+        Ptr<Packet> packet = Create<Packet>();
+        packet->AddHeader(header);
+
+        UbCompactMAExtTah decoded;
+        packet->RemoveHeader(decoded);
+        NS_TEST_EXPECT_MSG_EQ(decoded.GetVirtualAddress(),
+                              address,
+                              "compact MAETAH virtual address round trips");
+        NS_TEST_EXPECT_MSG_EQ(decoded.GetTokenId(),
+                              tokenId,
+                              "compact MAETAH TokenID round trips");
+        NS_TEST_EXPECT_MSG_EQ(decoded.GetLength(), length, "compact MAETAH length round trips");
+    }
+};
+
 class UbCtpTransactionContextHolTest : public TestCase
 {
   public:
@@ -26999,6 +27283,399 @@ class UbCtpServiceDoesNotCreateRtpTpTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(controller->GetTransportChannelManager()->GetCount(),
                               initialTransportCount,
                               "Sending a CTP segment must not allocate RTP transport channels");
+
+        Simulator::Destroy();
+    }
+};
+
+class UbTransactionJettyTpBindingQueryTest : public TestCase
+{
+  public:
+    UbTransactionJettyTpBindingQueryTest()
+        : TestCase("UnifiedBus - transaction reports caller-prepared Jetty TP binding")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        constexpr uint32_t jettyNum = 41;
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        function->CreateJetty(topo.sender->GetId(), topo.receiver->GetId(), jettyNum);
+
+        NS_TEST_ASSERT_MSG_EQ(transaction->HasJettyTpBinding(jettyNum),
+                              false,
+                              "A newly created Jetty must not report an RTP binding");
+
+        const std::vector<uint32_t> tpns = {kUrmaWriteRegressionSenderTpn};
+        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
+                                                       topo.receiver->GetId(),
+                                                       jettyNum,
+                                                       false,
+                                                       tpns),
+                              true,
+                              "The caller should be able to prepare an RTP Jetty");
+        NS_TEST_ASSERT_MSG_EQ(transaction->HasJettyTpBinding(jettyNum),
+                              true,
+                              "The transaction layer must report the prepared RTP binding");
+
+        transaction->DestroyJettyTpMap(jettyNum);
+        NS_TEST_ASSERT_MSG_EQ(transaction->HasJettyTpBinding(jettyNum),
+                              false,
+                              "Removing the Jetty TP mapping must clear the prepared state");
+
+        Simulator::Destroy();
+    }
+};
+
+class UbCtpJettyPreparationLifecycleTest : public TestCase
+{
+  public:
+    UbCtpJettyPreparationLifecycleTest()
+        : TestCase("UnifiedBus - CTP Jetty preparation has one persistent key and explicit cleanup")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        constexpr uint32_t jettyNum = 42;
+        constexpr uint32_t secondJettyNum = 48;
+        Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<UbController> controller = node->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
+        const UbCtpEntityKey key{.srcEntityId = 10,
+                                .dstNodeId = node->GetId() + 1,
+                                .dstEntityId = 11,
+                                .vl = 7};
+        UbCtpEntityKey otherKey = key;
+        otherKey.dstEntityId = 12;
+        function->CreateJetty(node->GetId(), key.dstNodeId, jettyNum);
+        Ptr<UbJetty> jetty = function->GetJetty(jettyNum);
+        function->CreateJetty(node->GetId(), key.dstNodeId, secondJettyNum);
+        Ptr<UbJetty> secondJetty = function->GetJetty(secondJettyNum);
+
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(jetty, key),
+                              true,
+                              "The caller should be able to prepare an idle CTP Jetty");
+        NS_TEST_ASSERT_MSG_EQ(service->HasJettyPreparation(jettyNum),
+                              true,
+                              "Prepared CTP state must be queryable by Jetty number");
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(jetty, key),
+                              true,
+                              "Repeating the same CTP preparation should be idempotent");
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(jetty, otherKey),
+                              false,
+                              "One CTP Jetty must reject a second persistent Entity key");
+
+        UbCtpEntityState& sharedState = service->GetOrCreateEntityState(key);
+        sharedState.Tx().routing.nextSprayIndex = 7;
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(secondJetty, key),
+                              true,
+                              "A second Jetty should share an existing CTP Entity key");
+        NS_TEST_ASSERT_MSG_EQ(sharedState.Tx().routing.nextSprayIndex,
+                              7u,
+                              "Preparing a shared-key Jetty must preserve packet-spray progress");
+        NS_TEST_ASSERT_MSG_EQ(service->NotifyJettyWork(jettyNum),
+                              true,
+                              "Work notification should use the existing CTP preparation");
+
+        const uint32_t entityStateCount = service->GetEntityStateCount();
+        NS_TEST_ASSERT_MSG_EQ(service->UnprepareJetty(jettyNum),
+                              true,
+                              "An idle CTP Jetty should unprepare cleanly");
+        NS_TEST_ASSERT_MSG_EQ(service->HasJettyPreparation(jettyNum),
+                              false,
+                              "CTP unprepare must remove the reverse Jetty registration");
+        NS_TEST_ASSERT_MSG_EQ(service->NotifyJettyWork(jettyNum),
+                              false,
+                              "An unprepared Jetty must reject later work notification");
+        NS_TEST_ASSERT_MSG_EQ(service->GetEntityStateCount(),
+                              entityStateCount,
+                              "Unprepare must preserve Entity state that may be shared by other work");
+        NS_TEST_ASSERT_MSG_EQ(service->UnprepareJetty(secondJettyNum),
+                              true,
+                              "The second idle CTP Jetty should also unprepare cleanly");
+
+        Simulator::Destroy();
+    }
+};
+
+class UbJettyTransportPreparationExclusivityTest : public TestCase
+{
+  public:
+    UbJettyTransportPreparationExclusivityTest()
+        : TestCase("UnifiedBus - one Jetty cannot be prepared for RTP and CTP")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        constexpr uint32_t jettyNum = 43;
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
+        const UbCtpEntityKey key{.srcEntityId = 10,
+                                .dstNodeId = topo.receiver->GetId(),
+                                .dstEntityId = 11,
+                                .vl = kUrmaWriteRegressionPriority};
+        function->CreateJetty(topo.sender->GetId(), key.dstNodeId, jettyNum);
+        Ptr<UbJetty> jetty = function->GetJetty(jettyNum);
+        const std::vector<uint32_t> tpns = {kUrmaWriteRegressionSenderTpn};
+
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(jetty, key),
+                              true,
+                              "The Jetty should accept its first CTP preparation");
+        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
+                                                       key.dstNodeId,
+                                                       jettyNum,
+                                                       false,
+                                                       tpns),
+                              false,
+                              "RTP binding must reject a CTP-prepared Jetty");
+        NS_TEST_ASSERT_MSG_EQ(service->UnprepareJetty(jettyNum),
+                              true,
+                              "The idle CTP preparation should be removable");
+
+        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
+                                                       key.dstNodeId,
+                                                       jettyNum,
+                                                       false,
+                                                       tpns),
+                              true,
+                              "The Jetty should accept RTP binding after CTP unprepare");
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(jetty, key),
+                              false,
+                              "CTP preparation must reject an RTP-bound Jetty");
+
+        Simulator::Destroy();
+    }
+};
+
+class UbControllerRejectsUnpreparedUrmaWqeTest : public TestCase
+{
+  public:
+    UbControllerRejectsUnpreparedUrmaWqeTest()
+        : TestCase("UnifiedBus - Controller rejects URMA WQE without a prepared transport path")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        constexpr uint32_t jettyNum = 44;
+        Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<UbController> controller = node->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        function->CreateJetty(node->GetId(), node->GetId() + 1, jettyNum);
+        Ptr<UbWqe> wqe = function->CreateWqe(node->GetId(),
+                                             node->GetId() + 1,
+                                             64,
+                                             9,
+                                             TaOpcode::TA_OPCODE_WRITE);
+
+        NS_TEST_ASSERT_MSG_EQ(wqe->GetOriginJettyNum(),
+                              UINT32_MAX,
+                              "A new WQE should not have an assigned origin Jetty");
+        NS_TEST_ASSERT_MSG_EQ(controller->SubmitUrmaWqe(jettyNum, wqe),
+                              false,
+                              "Controller must reject a Jetty with no prepared RTP or CTP path");
+        NS_TEST_ASSERT_MSG_EQ(wqe->GetOriginJettyNum(),
+                              UINT32_MAX,
+                              "Rejected submission must not mutate or enqueue the WQE");
+
+        Simulator::Destroy();
+    }
+};
+
+class UbControllerSubmitsPreparedRtpUrmaWqeTest : public TestCase
+{
+  public:
+    UbControllerSubmitsPreparedRtpUrmaWqeTest()
+        : TestCase("UnifiedBus - Controller submits URMA WQE through prepared RTP Jetty")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        constexpr uint32_t jettyNum = 45;
+        constexpr uint32_t requestId = 10;
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        function->CreateJetty(topo.sender->GetId(), topo.receiver->GetId(), jettyNum);
+        const std::vector<uint32_t> tpns = {kUrmaWriteRegressionSenderTpn};
+        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
+                                                       topo.receiver->GetId(),
+                                                       jettyNum,
+                                                       false,
+                                                       tpns),
+                              true,
+                              "The caller should prepare the RTP Jetty before submission");
+        Ptr<UbJetty> jetty = function->GetJetty(jettyNum);
+        jetty->SetClientCallback(
+            MakeCallback(&UbControllerSubmitsPreparedRtpUrmaWqeTest::OnCompleted, this));
+        Ptr<UbWqe> wqe = function->CreateWqe(topo.sender->GetId(),
+                                             topo.receiver->GetId(),
+                                             64,
+                                             requestId,
+                                             TaOpcode::TA_OPCODE_WRITE);
+
+        NS_TEST_ASSERT_MSG_EQ(controller->SubmitUrmaWqe(jettyNum, wqe),
+                              true,
+                              "Controller should accept a WQE with exactly one prepared RTP path");
+        NS_TEST_ASSERT_MSG_EQ(wqe->GetOriginJettyNum(),
+                              jettyNum,
+                              "Accepted WQE must be assigned to the caller-selected Jetty");
+
+        Simulator::Stop(MicroSeconds(100));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(m_completionCount,
+                              1u,
+                              "Prepared RTP submission should invoke the Jetty callback exactly once");
+        NS_TEST_ASSERT_MSG_EQ(m_completedRequestId,
+                              requestId,
+                              "RTP completion should preserve the submitted WQE identifier");
+        NS_TEST_ASSERT_MSG_EQ(m_completedJettyNum,
+                              jettyNum,
+                              "RTP completion should preserve the selected Jetty number");
+
+        Simulator::Destroy();
+    }
+
+    void OnCompleted(uint32_t requestId, uint32_t jettyNum)
+    {
+        ++m_completionCount;
+        m_completedRequestId = requestId;
+        m_completedJettyNum = jettyNum;
+    }
+
+    uint32_t m_completionCount{0};
+    uint32_t m_completedRequestId{UINT32_MAX};
+    uint32_t m_completedJettyNum{UINT32_MAX};
+};
+
+class UbControllerValidatesAndSubmitsPreparedCtpUrmaWqeTest : public TestCase
+{
+  public:
+    UbControllerValidatesAndSubmitsPreparedCtpUrmaWqeTest()
+        : TestCase("UnifiedBus - Controller validates and submits bound CTP URMA WQE")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        constexpr uint32_t jettyNum = 46;
+        Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<UbController> controller = node->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
+        const UbCtpEntityKey key{.srcEntityId = 10,
+                                .dstNodeId = node->GetId() + 1,
+                                .dstEntityId = 11,
+                                .vl = 7};
+        function->CreateJetty(node->GetId(), key.dstNodeId, jettyNum);
+        Ptr<UbJetty> jetty = function->GetJetty(jettyNum);
+        service->SetSourcePortHint(key, 0);
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(jetty, key),
+                              true,
+                              "The caller should prepare the bound CTP Jetty");
+
+        Ptr<UbWqe> mismatch = CreateCtpWqeForKey(function, node->GetId(), key, 11);
+        mismatch->SetDstEntityId(key.dstEntityId + 1);
+        NS_TEST_ASSERT_MSG_EQ(controller->SubmitUrmaWqe(jettyNum, mismatch),
+                              false,
+                              "Bound CTP submission must reject a mismatched destination Entity");
+        NS_TEST_ASSERT_MSG_EQ(mismatch->GetOriginJettyNum(),
+                              UINT32_MAX,
+                              "Rejected CTP WQE must remain outside the Jetty queue");
+
+        Ptr<UbWqe> accepted = CreateCtpWqeForKey(function, node->GetId(), key, 12);
+        NS_TEST_ASSERT_MSG_EQ(controller->SubmitUrmaWqe(jettyNum, accepted),
+                              true,
+                              "Controller should submit a compatible WQE through prepared CTP");
+        NS_TEST_ASSERT_MSG_EQ(accepted->GetOriginJettyNum(),
+                              jettyNum,
+                              "Accepted CTP WQE must use the caller-selected Jetty");
+        NS_TEST_ASSERT_MSG_GT(service->GetQueuedPacketCountForTest(key),
+                              0u,
+                              "CTP work notification should drain the accepted WQE into its queue");
+        NS_TEST_ASSERT_MSG_EQ(service->UnprepareJetty(jettyNum),
+                              false,
+                              "CTP unprepare must reject a Jetty with outstanding work");
+
+        Simulator::Destroy();
+    }
+};
+
+class UbControllerSubmitsUnboundSourceCtpDestinationsTest : public TestCase
+{
+  public:
+    UbControllerSubmitsUnboundSourceCtpDestinationsTest()
+        : TestCase("UnifiedBus - Controller preserves per-WQE destinations for unbound CTP Jetty")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        constexpr uint32_t jettyNum = 47;
+        Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<UbController> controller = node->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
+        const UbCtpEntityKey firstKey{.srcEntityId = 10,
+                                     .dstNodeId = node->GetId() + 1,
+                                     .dstEntityId = 11,
+                                     .vl = 7};
+        UbCtpEntityKey secondKey = firstKey;
+        secondKey.dstNodeId += 1;
+        secondKey.dstEntityId += 1;
+        const UbCtpEntityKey sourceKey = service->MakeSourceGroupKeyForRequest(firstKey);
+
+        function->CreateJetty(node->GetId(), jettyNum);
+        Ptr<UbJetty> jetty = function->GetJetty(jettyNum);
+        service->SetSourcePortHint(firstKey, 0);
+        service->SetSourcePortHint(secondKey, 0);
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(jetty, sourceKey),
+                              true,
+                              "The caller should prepare one unbound source-group Jetty");
+
+        Ptr<UbWqe> first = CreateCtpWqeForKey(function, node->GetId(), firstKey, 13);
+        Ptr<UbWqe> second = CreateCtpWqeForKey(function, node->GetId(), secondKey, 14);
+
+        NS_TEST_ASSERT_MSG_EQ(controller->SubmitUrmaWqe(jettyNum, first),
+                              true,
+                              "Unbound CTP Jetty should accept the first WQE destination");
+        NS_TEST_ASSERT_MSG_EQ(controller->SubmitUrmaWqe(jettyNum, second),
+                              true,
+                              "Unbound CTP Jetty should accept a second per-WQE destination");
+        NS_TEST_ASSERT_MSG_GT(service->GetQueuedPacketCountForTest(firstKey),
+                              0u,
+                              "The first destination should retain its own packet key");
+        NS_TEST_ASSERT_MSG_GT(service->GetQueuedPacketCountForTest(secondKey),
+                              0u,
+                              "The second destination should retain its own packet key");
+        NS_TEST_ASSERT_MSG_EQ(transaction->HasJettyTpBinding(jettyNum),
+                              false,
+                              "Unbound CTP submission must not create an RTP TP binding");
 
         Simulator::Destroy();
     }
@@ -29748,6 +30425,17 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbTrafficGenIntegerDelayParserTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTrafficGenDependencyVisibilityDefaultTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpHeaderEncodeDecodeTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbMAExtTahRoundTripTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCompactMAExtTahRoundTripTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbTransactionJettyTpBindingQueryTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpJettyPreparationLifecycleTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbJettyTransportPreparationExclusivityTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbControllerRejectsUnpreparedUrmaWqeTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbControllerSubmitsPreparedRtpUrmaWqeTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbControllerValidatesAndSubmitsPreparedCtpUrmaWqeTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbControllerSubmitsUnboundSourceCtpDestinationsTest(),
+                TestCase::Duration::QUICK);
     AddTestCase(new UbCtpTransactionContextHolTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpReportsConstraintsWithoutMutatingJettyTest(),
                 TestCase::Duration::QUICK);
@@ -29898,12 +30586,14 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbDcqcnCompletedFlowReleasesHostActiveSlotTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnIdleFlowCancelsRecoveryStateTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbUrmaReadWqeMetadataPropagationTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbJettyPreservesWqeRemoteAddressTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbRemoteAddressUsesSegmentTaSsnTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbWqeSegmentKeepsLogicalTaSequencesTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbJettyCompletesLogicalTassnAcrossWireWrapTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbReceiverKeepsInboundTpMsnLogicalKeyAcrossWireWrapTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbUrmaWriteCompletionNeedsTransactionResponseTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbUrmaReadCompletionNeedsReadResponseTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbUrmaRtpWriteMaetahSegmentLengthTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbUrmaReadMultiPacketResponseCountTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbUrmaReadMultiSliceRequestPacketSemanticsTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTraceDirSetupTest(), TestCase::Duration::QUICK);
@@ -30641,6 +31331,7 @@ UbTransactionUrmaTestSuite::UbTransactionUrmaTestSuite()
     : TestSuite("unified-bus-transaction-urma", Type::UNIT)
 {
     AddTestCase(new UbUrmaReadWqeMetadataPropagationTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbJettyPreservesWqeRemoteAddressTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbRemoteAddressUsesSegmentTaSsnTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbWqeSegmentKeepsLogicalTaSequencesTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbJettyCompletesLogicalTassnAcrossWireWrapTest(), TestCase::Duration::QUICK);
@@ -30648,6 +31339,7 @@ UbTransactionUrmaTestSuite::UbTransactionUrmaTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbUrmaWriteCompletionNeedsTransactionResponseTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbUrmaReadCompletionNeedsReadResponseTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbUrmaRtpWriteMaetahSegmentLengthTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbUrmaReadMultiPacketResponseCountTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbUrmaReadMultiSliceRequestPacketSemanticsTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbUrmaWriteOutOfOrderRequestSliceCompletionTest(), TestCase::Duration::QUICK);

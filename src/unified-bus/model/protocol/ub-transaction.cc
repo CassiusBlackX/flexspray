@@ -4,9 +4,9 @@
 
 #include "ns3/ub-datatype.h"
 #include "ns3/ub-controller.h"
-#include "ns3/ub-ctp.h"
+#include "ub-ctp.h"
 #include "ns3/ub-modulo-sequence.h"
-#include "ns3/ub-transaction.h"
+#include "ub-transaction.h"
 #include "ns3/ub-utils.h"
 
 namespace ns3 {
@@ -260,10 +260,15 @@ bool UbTransaction::JettyBindTp(uint32_t src, uint32_t dest, uint32_t jettyNum,
     if (!GetFunction()->IsJettyAcceptingWqes(jettyNum)) {
         return false;
     }
+    Ptr<UbController> controller = GetOwnerController();
+    Ptr<UbCtpTransportService> ctpService =
+        controller == nullptr ? nullptr : controller->PeekCtpTransportService();
+    if (ctpService != nullptr && ctpService->HasJettyPreparation(jettyNum)) {
+        return false;
+    }
 
     std::vector<Ptr<UbTransportChannel>> requestedTransports;
     requestedTransports.reserve(tpns.size());
-    Ptr<UbController> controller = GetOwnerController();
     Ptr<UbTransportChannelManager> manager =
         controller == nullptr ? nullptr : controller->GetTransportChannelManager();
     for (uint32_t tpn : tpns) {
@@ -331,6 +336,12 @@ bool UbTransaction::JettyBindTp(uint32_t src, uint32_t dest, uint32_t jettyNum,
         m_jettyRtpReferences.at(jettyNum).GetIdentity());
     m_jettyTpgMaterializations.erase(jettyNum);
     return true;
+}
+
+bool
+UbTransaction::HasJettyTpBinding(uint32_t jettyNum) const
+{
+    return m_jettyRtpReferences.find(jettyNum) != m_jettyRtpReferences.end();
 }
 
 void UbTransaction::DestroyJettyTpMap(uint32_t jettyNum)
@@ -1666,18 +1677,110 @@ void UbTransaction::HandleInboundTaUnit(uint32_t localTpn, Ptr<UbWqeSegment> seg
         return;
     }
 
-    Ptr<UbWqeSegment> response = ProcessInboundTaRequest(segment);
+    if (IsUrmaReadWriteRequest(segment) && HasRemoteUrmaRequestProcessor())
+    {
+        Ptr<UbTransaction> self(this);
+        UbRemoteUrmaResponseSender responseSender =
+            MakeBoundCallback(&UbTransaction::SendBoundRemoteUrmaResponse,
+                              self,
+                              localTpn,
+                              segment);
+        DispatchRemoteUrmaRequest(segment, responseSender);
+        return;
+    }
 
+    Ptr<UbWqeSegment> response = ProcessInboundTaRequest(segment);
+    EnqueueInboundTaResponse(localTpn, response);
+}
+
+bool
+UbTransaction::DispatchRemoteUrmaRequest(Ptr<UbWqeSegment> request,
+                                         UbRemoteUrmaResponseSender responseSender)
+{
+    if (!IsUrmaReadWriteRequest(request) || responseSender.IsNull() ||
+        m_remoteUrmaRequestProcessor.IsNull())
+    {
+        return false;
+    }
+
+    const UbRemoteUrmaRequestContext requestContext{
+        .operation = request->GetType(),
+        .bytes = request->GetSize(),
+        .sourceNodeId = request->GetSrc(),
+        .targetNodeId = request->GetDest(),
+        .priority = request->GetPriority(),
+        .address = request->GetRemoteAddress(),
+        .tokenId = request->GetRemoteTokenId(),
+        .payload = request->GetExplicitPayload()};
+    return m_remoteUrmaRequestProcessor(requestContext, responseSender);
+}
+
+Ptr<UbWqeSegment>
+UbTransaction::BuildRemoteUrmaResponse(Ptr<UbWqeSegment> request) const
+{
+    if (request == nullptr)
+    {
+        return nullptr;
+    }
+    if (request->GetType() == TaOpcode::TA_OPCODE_WRITE)
+    {
+        return BuildRemoteWriteAck(UINT32_MAX, request);
+    }
+    if (request->GetType() == TaOpcode::TA_OPCODE_READ)
+    {
+        return BuildRemoteReadResponse(UINT32_MAX, request);
+    }
+    return nullptr;
+}
+
+void UbTransaction::SetRemoteUrmaRequestProcessor(UbRemoteUrmaRequestProcessor processor)
+{
+    m_remoteUrmaRequestProcessor = processor;
+}
+
+void UbTransaction::ClearRemoteUrmaRequestProcessor()
+{
+    m_remoteUrmaRequestProcessor = UbRemoteUrmaRequestProcessor();
+}
+
+bool UbTransaction::HasRemoteUrmaRequestProcessor() const
+{
+    return !m_remoteUrmaRequestProcessor.IsNull();
+}
+
+void UbTransaction::EnqueueInboundTaResponse(uint32_t localTpn,
+                                             Ptr<UbWqeSegment> response)
+{
     if (response == nullptr) {
         return;
     }
 
     response->SetTpn(localTpn);
-    if (segment->HasResolvedTpIdentity())
-    {
-        response->SetResolvedTpIdentity(segment->GetResolvedTpIdentity());
-    }
     EnqueueRemoteRtpWqeSegment(localTpn, response);
+}
+
+void UbTransaction::SendBoundRemoteUrmaResponse(Ptr<UbTransaction> transaction,
+                                                uint32_t localTpn,
+                                                Ptr<UbWqeSegment> request)
+{
+    if (transaction != nullptr) {
+        transaction->SendRemoteUrmaResponse(localTpn, request);
+    }
+}
+
+void UbTransaction::SendRemoteUrmaResponse(uint32_t localTpn,
+                                           Ptr<UbWqeSegment> request)
+{
+    if (request == nullptr) {
+        return;
+    }
+    if (request->GetType() == TaOpcode::TA_OPCODE_WRITE) {
+        EnqueueInboundTaResponse(localTpn, BuildRemoteWriteAck(localTpn, request));
+        return;
+    }
+    if (request->GetType() == TaOpcode::TA_OPCODE_READ) {
+        EnqueueInboundTaResponse(localTpn, BuildRemoteReadResponse(localTpn, request));
+    }
 }
 
 Ptr<UbWqeSegment> UbTransaction::ProcessInboundTaRequest(Ptr<UbWqeSegment> request)
@@ -1723,6 +1826,16 @@ Ptr<UbWqeSegment> UbTransaction::ExecuteRemoteWriteAndBuildAck(uint32_t localTpn
     const uint64_t address = DeriveRemoteAddress(request);
     m_memoryStore[std::make_pair(m_nodeId, address)] = request->GetSize();
 
+    return BuildRemoteWriteAck(localTpn, request);
+}
+
+Ptr<UbWqeSegment> UbTransaction::BuildRemoteWriteAck(uint32_t localTpn,
+                                                     Ptr<UbWqeSegment> request) const
+{
+    if (request == nullptr) {
+        return nullptr;
+    }
+
     Ptr<UbWqeSegment> response = CreateObject<UbWqeSegment>();
     response->SetSrc(m_nodeId);
     response->SetDest(request->GetSrc());
@@ -1743,12 +1856,17 @@ Ptr<UbWqeSegment> UbTransaction::ExecuteRemoteWriteAndBuildAck(uint32_t localTpn
     response->SetRequestTassn(request->GetRequestTassn());
     response->SetRequestOpcode(TaOpcode::TA_OPCODE_WRITE);
     response->SetResponseBytes(0);
-    response->SetRemoteAddress(address);
+    response->SetRemoteAddress(request->GetRemoteAddress());
+    response->SetRemoteTokenId(request->GetRemoteTokenId());
     response->SetNeedsTransactionResponse(false);
     response->SetTpn(localTpn);
     if (request->HasTransactionCorrelation())
     {
         response->SetTransactionCorrelation(request->GetTransactionCorrelation());
+    }
+    if (request->HasResolvedTpIdentity())
+    {
+        response->SetResolvedTpIdentity(request->GetResolvedTpIdentity());
     }
     return response;
 }
@@ -1760,11 +1878,18 @@ Ptr<UbWqeSegment> UbTransaction::ExecuteRemoteReadAndBuildResponse(uint32_t loca
         return nullptr;
     }
 
-    const uint64_t address = DeriveRemoteAddress(request);
-    const auto memoryIt = m_memoryStore.find(std::make_pair(m_nodeId, address));
+    return BuildRemoteReadResponse(localTpn, request);
+}
+
+Ptr<UbWqeSegment> UbTransaction::BuildRemoteReadResponse(uint32_t localTpn,
+                                                          Ptr<UbWqeSegment> request) const
+{
+    if (request == nullptr) {
+        return nullptr;
+    }
+
     const uint32_t responseBytes = request->GetResponseBytes() == 0 ? request->GetSize()
                                                                      : request->GetResponseBytes();
-    (void)memoryIt;
 
     Ptr<UbWqeSegment> response = CreateObject<UbWqeSegment>();
     response->SetSrc(m_nodeId);
@@ -1785,12 +1910,17 @@ Ptr<UbWqeSegment> UbTransaction::ExecuteRemoteReadAndBuildResponse(uint32_t loca
     response->SetRequestTassn(request->GetRequestTassn());
     response->SetRequestOpcode(TaOpcode::TA_OPCODE_READ);
     response->SetResponseBytes(responseBytes);
-    response->SetRemoteAddress(address);
+    response->SetRemoteAddress(request->GetRemoteAddress());
+    response->SetRemoteTokenId(request->GetRemoteTokenId());
     response->SetNeedsTransactionResponse(false);
     response->SetTpn(localTpn);
     if (request->HasTransactionCorrelation())
     {
         response->SetTransactionCorrelation(request->GetTransactionCorrelation());
+    }
+    if (request->HasResolvedTpIdentity())
+    {
+        response->SetResolvedTpIdentity(request->GetResolvedTpIdentity());
     }
     return response;
 }
@@ -2036,7 +2166,7 @@ UbTransaction::TryAdmitRtpWqe(uint32_t jettyNum,
     operation.wqeIdentity = wqeIdentity;
     operation.operationIdentity = coordinator->OpenResource(
         UbLifecycleResourceKind::TRANSACTION_OPERATION,
-        wqe->GetWqeId());
+        wqeIdentity.localId);
     operation.transportReference = *reference;
     operation.directTpn = reference->IsDirectTp() ? reference->GetDirectTpn() : UINT32_MAX;
     operation.workLease = coordinator->AcquireLease(wqeIdentity,
@@ -2064,7 +2194,7 @@ UbTransaction::TryAdmitCtpWqe(uint32_t jettyNum,
     operation.wqeIdentity = wqeIdentity;
     operation.operationIdentity = coordinator->OpenResource(
         UbLifecycleResourceKind::TRANSACTION_OPERATION,
-        wqe->GetWqeId());
+        wqeIdentity.localId);
     operation.workLease = coordinator->AcquireLease(wqeIdentity,
                                                     UbLifecycleLeaseKind::WORK,
                                                     operation.operationIdentity);
@@ -2592,6 +2722,7 @@ UbTransaction::DoDispose()
     m_tpRRIndex.clear();
     m_random = nullptr;
     m_serviceMode.clear();
+    m_remoteUrmaRequestProcessor = UbRemoteUrmaRequestProcessor();
     m_memoryStore.clear();
     m_operations.clear();
     m_tpgsBlockingJettyRetry.clear();

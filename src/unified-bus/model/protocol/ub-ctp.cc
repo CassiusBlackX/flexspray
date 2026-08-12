@@ -8,16 +8,16 @@
 #include "ns3/node.h"
 #include "ns3/simulator.h"
 #include "ns3/ub-controller.h"
-#include "ns3/ub-datalink.h"
-#include "ns3/ub-function.h"
-#include "ns3/ub-header.h"
+#include "ub-datalink.h"
+#include "ub-function.h"
+#include "ub-header.h"
 #include "ns3/ub-lifecycle.h"
 #include "ns3/ub-modulo-sequence.h"
 #include "ns3/ub-network-address.h"
 #include "ns3/ub-port.h"
-#include "ns3/ub-routing-process.h"
+#include "ub-routing-process.h"
 #include "ns3/ub-switch.h"
-#include "ns3/ub-transaction.h"
+#include "ub-transaction.h"
 #include "ns3/ub-utils.h"
 #include "ns3/uinteger.h"
 
@@ -125,13 +125,32 @@ BuildCtpPacket(Ptr<UbWqeSegment> segment,
     const bool isReadRequest = segment->GetType() == TaOpcode::TA_OPCODE_READ &&
                                segment->GetSegmentKind() == UbTransactionSegmentKind::REQUEST;
     const uint32_t payloadBytes = isAckResponse || isReadRequest ? 0 : progressBytes;
-    const uint32_t logicalBytes = isReadRequest ? segment->GetLogicalBytes() : payloadBytes;
+    const uint32_t logicalBytes =
+        segment->GetLogicalBytes() == 0 ? payloadBytes : segment->GetLogicalBytes();
     NS_ABORT_MSG_IF(payloadBytes > UB_MTU_BYTE,
                     "CTP packet payload must not exceed one MTU-sized transaction segment");
     NS_ABORT_MSG_IF(isReadRequest && logicalBytes > UB_MTU_BYTE,
                     "CTP read request segment must not describe more than one MTU response");
 
-    Ptr<Packet> packet = Create<Packet>(payloadBytes);
+    Ptr<Packet> packet;
+    if (segment->HasExplicitPayload() && payloadBytes > 0)
+    {
+        Ptr<const Packet> payload = segment->GetExplicitPayload();
+        const uint32_t carrierBytes = segment->GetCarrierBytes() == 0
+                                          ? segment->GetSize()
+                                          : segment->GetCarrierBytes();
+        const uint32_t bytesLeft = static_cast<uint32_t>(segment->GetBytesLeft());
+        NS_ABORT_MSG_IF(bytesLeft > carrierBytes,
+                        "CTP explicit payload progress exceeds its wire carrier size");
+        NS_ABORT_MSG_IF(payload->GetSize() != carrierBytes,
+                        "CTP explicit WQE segment payload must match the segment transfer size");
+        packet = payload->CreateFragment(carrierBytes - bytesLeft, payloadBytes);
+        packet->AddPacketTag(UbExplicitPayloadTag{});
+    }
+    else
+    {
+        packet = Create<Packet>(payloadBytes);
+    }
     UbFlowTag flowTag(segment->GetTaskId(), segment->GetWqeSize());
     packet->AddPacketTag(flowTag);
 
@@ -148,6 +167,8 @@ BuildCtpPacket(Ptr<UbWqeSegment> segment,
         taHeader.SetTaOpcode(segment->GetType());
         taHeader.SetIniTaSsn(static_cast<uint16_t>(taSsn));
         UbCompactMAExtTah maHeader;
+        maHeader.SetVirtualAddress(segment->GetRemoteAddress());
+        maHeader.SetTokenId(segment->GetRemoteTokenId());
         maHeader.SetLength(static_cast<uint8_t>(CalcCompactLength(logicalBytes)));
         packet->AddHeader(maHeader);
         packet->AddHeader(taHeader);
@@ -830,22 +851,157 @@ UbCtpTransportService::GetTransactionConstraints() const
     return {};
 }
 
+bool
+UbCtpTransportService::PrepareJetty(Ptr<UbJetty> jetty, const UbCtpEntityKey& key)
+{
+    if (jetty == nullptr || m_node == nullptr || jetty->GetSrc() != m_node->GetId())
+    {
+        return false;
+    }
+    if (jetty->HasBoundDest())
+    {
+        if (jetty->GetDest() != key.dstNodeId)
+        {
+            return false;
+        }
+    }
+    else if (!(MakeSourceGroupKeyForRequest(key) == key))
+    {
+        return false;
+    }
+
+    Ptr<UbController> controller = m_node == nullptr ? nullptr : m_node->GetObject<UbController>();
+    Ptr<UbTransaction> transaction = controller == nullptr ? nullptr : controller->GetUbTransaction();
+    Ptr<UbFunction> function = controller == nullptr ? nullptr : controller->GetUbFunction();
+    if (transaction == nullptr || function == nullptr ||
+        !function->IsJettyAcceptingWqes(jetty->GetJettyNum()) ||
+        transaction->HasJettyTpBinding(jetty->GetJettyNum()))
+    {
+        return false;
+    }
+
+    Ptr<UbJetty> preparedJetty;
+    UbCtpEntityKey preparedKey;
+    if (TryGetJettyPreparation(jetty->GetJettyNum(), preparedJetty, preparedKey))
+    {
+        return preparedJetty == jetty && preparedKey == key;
+    }
+
+    PrepareJetty(jetty);
+    function->RegisterJettyCtpBinding(jetty->GetJettyNum(),
+                                      Ptr<UbCtpTransportService>(this));
+    m_keyJettys[key].push_back(jetty);
+    UbCtpEntityState& state = GetOrCreateEntityState(key);
+    state.Tx().routing.routingType = m_defaultRoutingPolicy.routingType;
+    return true;
+}
+
+bool
+UbCtpTransportService::HasJettyPreparation(uint32_t jettyNum) const
+{
+    Ptr<UbJetty> jetty;
+    UbCtpEntityKey key;
+    return TryGetJettyPreparation(jettyNum, jetty, key);
+}
+
+bool
+UbCtpTransportService::CanSubmitWqe(uint32_t jettyNum, Ptr<UbWqe> wqe) const
+{
+    Ptr<UbJetty> jetty;
+    UbCtpEntityKey key;
+    if (!TryGetJettyPreparation(jettyNum, jetty, key) || jetty == nullptr || wqe == nullptr ||
+        !jetty->CanAcceptWqe(wqe))
+    {
+        return false;
+    }
+
+    if (m_node == nullptr || !wqe->HasSrcEntityId() || !wqe->HasDstEntityId() ||
+        wqe->GetSrc() != m_node->GetId() || wqe->GetSrcEntityId() != key.srcEntityId ||
+        static_cast<uint32_t>(wqe->GetPriority()) != key.vl)
+    {
+        return false;
+    }
+    if (jetty->HasBoundDest())
+    {
+        return wqe->GetDest() == key.dstNodeId && wqe->GetDstEntityId() == key.dstEntityId;
+    }
+    return MakeSourceGroupKeyForRequest(key) == key;
+}
+
+bool
+UbCtpTransportService::SubmitPreparedWqe(uint32_t jettyNum, Ptr<UbWqe> wqe)
+{
+    Ptr<UbJetty> jetty;
+    UbCtpEntityKey key;
+    if (!CanSubmitWqe(jettyNum, wqe) ||
+        !TryGetJettyPreparation(jettyNum, jetty, key))
+    {
+        return false;
+    }
+
+    Ptr<UbController> controller = m_node == nullptr ? nullptr : m_node->GetObject<UbController>();
+    Ptr<UbFunction> function = controller == nullptr ? nullptr : controller->GetUbFunction();
+    if (function == nullptr ||
+        function->SubmitCtpWqe(wqe, jettyNum, key).status !=
+            UbWqeSubmissionStatus::ACCEPTED)
+    {
+        return false;
+    }
+    TryContinueJettyTransmission(key);
+    return true;
+}
+
+bool
+UbCtpTransportService::NotifyJettyWork(uint32_t jettyNum)
+{
+    Ptr<UbJetty> jetty;
+    UbCtpEntityKey key;
+    if (!TryGetJettyPreparation(jettyNum, jetty, key))
+    {
+        return false;
+    }
+    TryContinueJettyTransmission(key);
+    return true;
+}
+
+bool
+UbCtpTransportService::UnprepareJetty(uint32_t jettyNum)
+{
+    Ptr<UbJetty> jetty;
+    UbCtpEntityKey key;
+    if (!TryGetJettyPreparation(jettyNum, jetty, key) || jetty == nullptr || !jetty->IsIdle())
+    {
+        return false;
+    }
+
+    Ptr<UbController> controller = m_node == nullptr ? nullptr : m_node->GetObject<UbController>();
+    Ptr<UbFunction> function = controller == nullptr ? nullptr : controller->GetUbFunction();
+    if (function == nullptr ||
+        !function->UnregisterJettyCtpBinding(jettyNum, Ptr<UbCtpTransportService>(this)))
+    {
+        return false;
+    }
+
+    auto jettysIt = m_keyJettys.find(key);
+    NS_ABORT_MSG_IF(jettysIt == m_keyJettys.end(),
+                    "Prepared CTP Jetty lost its canonical key binding");
+    auto& jettys = jettysIt->second;
+    jettys.erase(std::remove(jettys.begin(), jettys.end(), jetty), jettys.end());
+    if (jettys.empty())
+    {
+        m_keyJettys.erase(jettysIt);
+        m_keyJettyRrIndex.erase(key);
+    }
+    return true;
+}
+
 void
 UbCtpTransportService::StartJetty(Ptr<UbJetty> jetty, const UbCtpEntityKey& key)
 {
-    PrepareJetty(jetty);
-
-    auto& jettys = m_keyJettys[key];
-    if (std::find(jettys.begin(), jettys.end(), jetty) == jettys.end())
+    if (PrepareJetty(jetty, key))
     {
-        jettys.push_back(jetty);
+        NotifyJettyWork(jetty->GetJettyNum());
     }
-    m_node->GetObject<UbController>()->GetUbFunction()->RegisterJettyCtpBinding(
-        jetty->GetJettyNum(),
-        Ptr<UbCtpTransportService>(this));
-    UbCtpEntityState& state = GetOrCreateEntityState(key);
-    state.Tx().routing.routingType = m_defaultRoutingPolicy.routingType;
-    TryContinueJettyTransmission(key);
 }
 
 void
@@ -876,15 +1032,26 @@ UbCtpTransportService::ReleaseJetty(uint32_t jettyNum)
 bool
 UbCtpTransportService::HasJettyBindingForTest(uint32_t jettyNum) const
 {
-    for (const auto& [key, jettys] : m_keyJettys)
+    return HasJettyPreparation(jettyNum);
+}
+
+bool
+UbCtpTransportService::TryGetJettyPreparation(uint32_t jettyNum,
+                                              Ptr<UbJetty>& jetty,
+                                              UbCtpEntityKey& key) const
+{
+    for (const auto& [candidateKey, jettys] : m_keyJettys)
     {
-        (void)key;
-        if (std::any_of(jettys.begin(),
-                        jettys.end(),
-                        [jettyNum](const Ptr<UbJetty>& jetty) {
-                            return jetty != nullptr && jetty->GetJettyNum() == jettyNum;
-                        }))
+        auto it = std::find_if(jettys.begin(),
+                               jettys.end(),
+                               [jettyNum](const Ptr<UbJetty>& candidate) {
+                                   return candidate != nullptr &&
+                                          candidate->GetJettyNum() == jettyNum;
+                               });
+        if (it != jettys.end())
         {
+            jetty = *it;
+            key = candidateKey;
             return true;
         }
     }
@@ -1223,6 +1390,15 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t receive
         receivePort = utils::Cna16ToPortId(cnaHeader.GetDcna());
     }
 
+    Ptr<const Packet> explicitPayload;
+    UbExplicitPayloadTag explicitPayloadTag;
+    if (copy->PeekPacketTag(explicitPayloadTag))
+    {
+        Ptr<Packet> headerFreePayload = copy->Copy();
+        headerFreePayload->RemovePacketTag(explicitPayloadTag);
+        explicitPayload = headerFreePayload;
+    }
+
     Ptr<UbWqeSegment> request = BuildInboundTaOperation(taHeader,
                                                         maHeader,
                                                         taOpcode,
@@ -1231,7 +1407,33 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t receive
                                                         localKey.vl,
                                                         copy->GetSize(),
                                                         flowTag.GetFlowId(),
-                                                        flowTag.GetFlowSize());
+                                                        flowTag.GetFlowSize(),
+                                                        explicitPayload);
+    if (request == nullptr)
+    {
+        return true;
+    }
+
+    if (!RoutingTypeIsPerPacket(linkHeader.GetRoutingType()) && receivePort < 15)
+    {
+        SetSourcePortHint(localKey, receivePort);
+    }
+    localState.Tx().routing.routingType = linkHeader.GetRoutingType();
+
+    Ptr<UbController> controller = m_node == nullptr ? nullptr : m_node->GetObject<UbController>();
+    Ptr<UbTransaction> transaction = controller == nullptr ? nullptr : controller->GetUbTransaction();
+    Ptr<UbCtpTransportService> self(this);
+    UbRemoteUrmaResponseSender responseSender =
+        MakeBoundCallback(&UbCtpTransportService::SendBoundRemoteUrmaResponse,
+                          self,
+                          transaction,
+                          request,
+                          localKey);
+    if (transaction != nullptr && transaction->HasRemoteUrmaRequestProcessor())
+    {
+        transaction->DispatchRemoteUrmaRequest(request, responseSender);
+        return true;
+    }
 
     Ptr<UbWqeSegment> response = ProcessInboundTaRequest(request);
     if (response == nullptr)
@@ -1256,6 +1458,39 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t receive
     const bool sent = SendResponseSegment(response, localState);
     TryRetireTransactionState(localKey);
     return sent;
+}
+
+void
+UbCtpTransportService::SendBoundRemoteUrmaResponse(Ptr<UbCtpTransportService> service,
+                                                    Ptr<UbTransaction> transaction,
+                                                    Ptr<UbWqeSegment> request,
+                                                    UbCtpEntityKey responseKey)
+{
+    if (service != nullptr)
+    {
+        service->SendRemoteUrmaResponse(transaction, request, responseKey);
+    }
+}
+
+void
+UbCtpTransportService::SendRemoteUrmaResponse(Ptr<UbTransaction> transaction,
+                                               Ptr<UbWqeSegment> request,
+                                               const UbCtpEntityKey& responseKey)
+{
+    if (transaction == nullptr || request == nullptr)
+    {
+        return;
+    }
+
+    Ptr<UbWqeSegment> response = transaction->BuildRemoteUrmaResponse(request);
+    if (response == nullptr)
+    {
+        return;
+    }
+
+    UbCtpEntityState& responseState = GetOrCreateEntityState(responseKey);
+    ++responseState.Rx().generatedResponses;
+    SendResponseSegment(response, responseState);
 }
 
 Ptr<UbWqeSegment>
@@ -1285,12 +1520,18 @@ UbCtpTransportService::BuildInboundTaOperation(const UbCompactTransactionHeader&
                                                uint32_t priority,
                                                uint32_t payloadBytes,
                                                uint32_t flowId,
-                                               uint32_t flowSize)
+                                               uint32_t flowSize,
+                                               Ptr<const Packet> explicitPayload)
 {
     // UB Base Specification 2.0, 6.7.2: one CTP TP Packet carries one complete TA operation.
     const bool isReadRequest = taOpcode == TaOpcode::TA_OPCODE_READ;
     const uint32_t logicalBytes =
         static_cast<uint32_t>(64u << static_cast<uint32_t>(maHeader.GetLength()));
+    if (explicitPayload != nullptr &&
+        (isReadRequest || explicitPayload->GetSize() != payloadBytes))
+    {
+        return nullptr;
+    }
 
     Ptr<UbWqeSegment> operation = CreateObject<UbWqeSegment>();
     operation->SetSrc(srcNodeId);
@@ -1306,13 +1547,18 @@ UbCtpTransportService::BuildInboundTaOperation(const UbCompactTransactionHeader&
     operation->SetRequestTassn(taHeader.GetIniTaSsn());
     operation->SetType(taOpcode);
     operation->SetRequestOpcode(taOpcode);
+    operation->SetRemoteAddress(maHeader.GetVirtualAddress());
+    operation->SetRemoteTokenId(maHeader.GetTokenId());
     operation->SetResponseBytes(isReadRequest ? logicalBytes : 0);
     operation->SetNeedsTransactionResponse(taOpcode == TaOpcode::TA_OPCODE_WRITE || isReadRequest);
-    operation->SetSize(isReadRequest ? logicalBytes : payloadBytes);
-    operation->SetLogicalBytes(isReadRequest ? logicalBytes : payloadBytes);
-    operation->SetPayloadBytes(0);
-    operation->SetCarrierBytes(isReadRequest ? 1 : payloadBytes);
+    operation->SetSize(logicalBytes);
+    operation->SetLogicalBytes(logicalBytes);
     operation->SetPayloadBytes(payloadBytes);
+    operation->SetCarrierBytes(isReadRequest ? 1 : payloadBytes);
+    if (explicitPayload != nullptr)
+    {
+        operation->SetExplicitPayload(explicitPayload);
+    }
     return operation;
 }
 

@@ -510,6 +510,7 @@ private:
     {
         Ptr<UbWqeSegment> segment;
         uint32_t bytesReceived{0};
+        Ptr<Packet> explicitPayload;
     };
 
     struct BufferedInboundPacket
@@ -517,10 +518,13 @@ private:
         UbTransportHeader tpHeader;
         UbTransactionHeader taHeader;
         uint32_t resLenBytes{0};
+        uint64_t remoteAddress{0};
+        uint32_t remoteTokenId{0};
         uint32_t payloadBytes{0};
         uint32_t taskId{0};
         bool hasTransactionCorrelation{false};
         UbTransactionCorrelationIdentity transactionCorrelation;
+        Ptr<const Packet> explicitPayload;
     };
 
     struct ReceivedDataPacketContext
@@ -539,6 +543,7 @@ private:
         uint64_t psn{0};
         uint32_t payloadBytes{0};
         uint32_t resLenBytes{0};
+        Ptr<const Packet> explicitPayload;
     };
 
     struct AckResponseContext
@@ -593,13 +598,7 @@ private:
     void NotifyDataPacketSent(const UbGbnPacketDescriptor& descriptor, Ptr<Packet> packet);
     void AdvanceNewDataSendState(const NewDataSendContext& ctx, Ptr<Packet> packet);
     Ptr<UbTransaction> GetTransaction();
-    Ptr<UbWqeSegment> TrackInboundTaPacket(const UbTransportHeader& tpHeader,
-                                           const UbTransactionHeader& taHeader,
-                                           uint32_t resLenBytes,
-                                           uint32_t payloadBytes,
-                                           uint32_t taskId,
-                                           bool hasTransactionCorrelation,
-                                           const UbTransactionCorrelationIdentity& correlation);
+    Ptr<UbWqeSegment> TrackInboundTaPacket(const BufferedInboundPacket& packet);
     bool ShouldCompleteOnTpAck(const Ptr<UbWqeSegment>& segment) const;
     uint64_t GetCumulativeAckPsn() const;
     TpOpcode GetResponseOpcode(bool selectiveAck) const;

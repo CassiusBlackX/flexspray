@@ -96,7 +96,15 @@ public:
 
     virtual ~UbPort();
 
+    using ReceiveHandler = Callback<void, Ptr<UbPort>, Ptr<Packet>>;
+
     void Receive(Ptr<Packet> p);
+
+    void SetReceiveHandler(ReceiveHandler handler);
+
+    void ClearReceiveHandler();
+
+    bool HasReceiveHandler() const;
 
     void EnableMpiReceive();
 
@@ -200,6 +208,10 @@ private:
 
     void PktRcvNotify(Ptr<Packet> p);
 
+    void DispatchReceive(Ptr<Packet> packet);
+
+    void HandleWithUbSwitch(Ptr<Packet> packet);
+
     void TraComEventNotify(Ptr<Packet> p, Time t);
 
     void UpdateTxBytes(uint64_t bytes);
@@ -231,6 +243,7 @@ private:
     Ptr<UbDataLink> m_datalink;
 
     TracedCallback<Ptr<Packet>> m_tracePktRcvNotify;
+    ReceiveHandler m_receiveHandler;
     Callback<int, Ptr<Packet>, uint32_t, uint32_t, Ptr<UbPort>> m_faultCallBack;
 
     TracedCallback<Ptr<Packet>, Time> m_traceTraComEventNotify;
