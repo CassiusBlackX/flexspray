@@ -173,7 +173,12 @@ namespace ns3 {
 
         Ptr<UbJetty> GetJetty(uint32_t jettyNum);
 
-        bool JettyBindTp(uint32_t src, uint32_t dest, uint32_t jettyNum, bool multiPath, std::vector<uint32_t> tpns);
+        bool JettyBindTp(uint32_t src,
+                         uint32_t dest,
+                         uint32_t jettyNum,
+                         bool multiPath,
+                         std::vector<uint32_t> tpns,
+                         uint32_t taskId = 0);
 
         bool HasJettyTpBinding(uint32_t jettyNum) const;
 

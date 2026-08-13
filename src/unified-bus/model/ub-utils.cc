@@ -2066,6 +2066,40 @@ void UbUtils::PrintTraceInfoNoTs(const string& fileName, const string& info)
     AppendTraceInfoNoTs(GetCachedTraceSink(fileName), info);
 }
 
+void
+UbUtils::TpgPhaseCreateNotify(uint32_t srcNode,
+                              uint32_t dstNode,
+                              uint32_t taskId,
+                              uint32_t memberCount,
+                              uint32_t initialIndex,
+                              uint16_t initialPort,
+                              const std::vector<uint16_t>& memberPorts,
+                              const std::string& strategy)
+{
+    BooleanValue enabled;
+    if (!GlobalValue::GetValueByNameFailSafe("UB_TRACE_ENABLE", enabled) || !enabled.Get())
+    {
+        return;
+    }
+    if (!GlobalValue::GetValueByNameFailSafe("UB_TPG_PHASE_TRACE_ENABLE", enabled) || !enabled.Get())
+    {
+        return;
+    }
+    std::ostringstream oss;
+    oss << "TPG_CREATE: src=" << srcNode << " dst=" << dstNode << " taskId=" << taskId
+        << " memberCount=" << memberCount << " initialIndex=" << initialIndex
+        << " initialPort=" << initialPort << " strategy=" << strategy << " memberPorts=";
+    for (size_t i = 0; i < memberPorts.size(); ++i)
+    {
+        if (i != 0)
+        {
+            oss << ',';
+        }
+        oss << memberPorts[i];
+    }
+    PrintTraceInfoNoTs(trace_path + "runlog/TPGPhaseTrace.tr", oss.str());
+}
+
 inline void UbUtils::TpFirstPacketSendsNotify(
     uint32_t nodeId, uint32_t taskId, uint32_t tpn, uint32_t dstTpn, uint32_t tpMsn, uint32_t psnSndNxt, uint32_t sPort)
 {

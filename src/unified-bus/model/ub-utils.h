@@ -354,6 +354,15 @@ public:
 
     static bool IsTpDebugEnabledFor(uint32_t nodeId, uint32_t tpn);
 
+    static void TpgPhaseCreateNotify(uint32_t srcNode,
+                                     uint32_t dstNode,
+                                     uint32_t taskId,
+                                     uint32_t memberCount,
+                                     uint32_t initialIndex,
+                                     uint16_t initialPort,
+                                     const std::vector<uint16_t>& memberPorts,
+                                     const std::string& strategy);
+
     static void TpDebugStateNotify(uint32_t nodeId,
                                    uint32_t tpn,
                                    const std::string& reason,
@@ -507,6 +516,24 @@ private:
                                                        "Master switch for all traces",
                                                        ns3::BooleanValue(true),
                                                        ns3::MakeBooleanChecker());
+
+    ns3::GlobalValue g_tpg_phase_hash_enable =
+        ns3::GlobalValue("UB_TPG_PHASE_HASH_ENABLE",
+                         "Use a seeded hash for the initial RTP TPG TP cursor.",
+                         ns3::BooleanValue(false),
+                         ns3::MakeBooleanChecker());
+
+    ns3::GlobalValue g_tpg_phase_seed =
+        ns3::GlobalValue("UB_TPG_PHASE_SEED",
+                         "Seed for the initial RTP TPG TP cursor hash.",
+                         ns3::UintegerValue(0),
+                         ns3::MakeUintegerChecker<uint32_t>());
+
+    ns3::GlobalValue g_tpg_phase_trace_enable =
+        ns3::GlobalValue("UB_TPG_PHASE_TRACE_ENABLE",
+                         "Enable initialization-only RTP TPG phase traces.",
+                         ns3::BooleanValue(false),
+                         ns3::MakeBooleanChecker());
 
     ns3::GlobalValue g_task_trace_enable = ns3::GlobalValue("UB_TASK_TRACE_ENABLE",
                                                             "Enable task and WQE level traces",

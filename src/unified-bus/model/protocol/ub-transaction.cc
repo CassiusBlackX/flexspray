@@ -4,10 +4,13 @@
 
 #include "ns3/ub-datatype.h"
 #include "ns3/ub-controller.h"
+#include "ns3/hash.h"
 #include "ub-ctp.h"
 #include "ns3/ub-modulo-sequence.h"
 #include "ub-transaction.h"
 #include "ns3/ub-utils.h"
+
+#include <sstream>
 
 namespace ns3 {
 
@@ -19,6 +22,22 @@ namespace
 {
 
 using UbTaSsnSequence = UbModuloSequence<16, uint32_t>;
+
+uint64_t
+BuildTpgPhaseHash(uint32_t seed,
+                  uint32_t src,
+                  uint32_t dest,
+                  uint32_t taskId,
+                  const std::vector<Ptr<UbTransportChannel>>& members)
+{
+    std::ostringstream key;
+    key << "TPG_PHASE:" << seed << ':' << src << ':' << dest << ':' << taskId;
+    for (const auto& member : members)
+    {
+        key << ':' << member->GetTpn() << ':' << member->GetSport();
+    }
+    return Hash64(key.str());
+}
 
 } // namespace
 
@@ -249,8 +268,12 @@ Ptr<UbJetty> UbTransaction::GetJetty(uint32_t jettyNum)
 
 }
 
-bool UbTransaction::JettyBindTp(uint32_t src, uint32_t dest, uint32_t jettyNum,
-                                bool multiPath, std::vector<uint32_t> tpns)
+bool UbTransaction::JettyBindTp(uint32_t src,
+                                uint32_t dest,
+                                uint32_t jettyNum,
+                                bool multiPath,
+                                std::vector<uint32_t> tpns,
+                                uint32_t taskId)
 {
     NS_LOG_DEBUG(this);
     Ptr<UbJetty> ubJetty = GetJetty(jettyNum);
@@ -300,8 +323,22 @@ bool UbTransaction::JettyBindTp(uint32_t src, uint32_t dest, uint32_t jettyNum,
         {
             return false;
         }
-        const uint32_t initialSelectionCursor =
-            m_nextJettyTpStartIndex % boundTransports.size();
+        BooleanValue phaseHashEnabled;
+        UintegerValue phaseSeed;
+        const bool usePhaseHash =
+            GlobalValue::GetValueByNameFailSafe("UB_TPG_PHASE_HASH_ENABLE", phaseHashEnabled) &&
+            phaseHashEnabled.Get() &&
+            GlobalValue::GetValueByNameFailSafe("UB_TPG_PHASE_SEED", phaseSeed);
+        const uint32_t initialSelectionCursor = usePhaseHash
+                                                    ? static_cast<uint32_t>(
+                                                          BuildTpgPhaseHash(phaseSeed.Get(),
+                                                                            src,
+                                                                            dest,
+                                                                            taskId,
+                                                                            boundTransports) %
+                                                          boundTransports.size())
+                                                    : m_nextJettyTpStartIndex %
+                                                          boundTransports.size();
         Ptr<UbTransportGroup> group =
             controller->CreateRtpTpGroup(boundTransports, initialSelectionCursor);
         if (group == nullptr)
@@ -311,6 +348,20 @@ bool UbTransaction::JettyBindTp(uint32_t src, uint32_t dest, uint32_t jettyNum,
         m_jettyRtpReferences.insert_or_assign(
             jettyNum,
             UbRtpTransportReference::ForTpGroup(group->GetLifecycleIdentity()));
+        std::vector<uint16_t> memberPorts;
+        memberPorts.reserve(boundTransports.size());
+        for (const auto& member : boundTransports)
+        {
+            memberPorts.push_back(member->GetSport());
+        }
+        utils::UbUtils::TpgPhaseCreateNotify(src,
+                                              dest,
+                                              taskId,
+                                              static_cast<uint32_t>(boundTransports.size()),
+                                              initialSelectionCursor,
+                                              memberPorts.at(initialSelectionCursor),
+                                              memberPorts,
+                                              usePhaseHash ? "seeded-hash" : "sequential");
     } else {
         NS_LOG_DEBUG("Single tp");
         // 根据随机结果选择TP

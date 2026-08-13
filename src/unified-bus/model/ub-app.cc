@@ -416,7 +416,12 @@ void UbApp::SendTraffic(UbTrafficGen::RuntimeTask task)
             task.hasSrcPortId ? task.srcPortId : UINT32_MAX,
             task.hasDstPortId ? task.dstPortId : UINT32_MAX,
             task.priority);
-        bool bindRst = ubTa->JettyBindTp(task.sourceNode, task.destNode, m_jettyNum, m_multiPathEnable, tpns);
+        bool bindRst = ubTa->JettyBindTp(task.sourceNode,
+                                         task.destNode,
+                                         m_jettyNum,
+                                         m_multiPathEnable,
+                                         tpns,
+                                         task.taskId);
         if (bindRst) {
             Ptr<UbJetty> curr_jetty = ubFunc->GetJetty(m_jettyNum);
             SetFinishCallback(MakeCallback(&UbApp::OnTaskCompleted, this), curr_jetty);
