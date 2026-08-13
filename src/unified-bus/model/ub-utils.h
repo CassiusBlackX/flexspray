@@ -547,6 +547,18 @@ private:
                          ns3::UintegerValue(0),
                          ns3::MakeUintegerChecker<uint32_t>());
 
+    ns3::GlobalValue g_allocator_rr_phase_hash_enable =
+        ns3::GlobalValue("UB_ALLOCATOR_RR_PHASE_HASH_ENABLE",
+                         "Use a seeded hash for the initial allocator RR ingress index.",
+                         ns3::BooleanValue(false),
+                         ns3::MakeBooleanChecker());
+
+    ns3::GlobalValue g_allocator_rr_phase_seed =
+        ns3::GlobalValue("UB_ALLOCATOR_RR_PHASE_SEED",
+                         "Seed for the initial allocator RR ingress index hash.",
+                         ns3::UintegerValue(0),
+                         ns3::MakeUintegerChecker<uint32_t>());
+
     ns3::GlobalValue g_task_trace_enable = ns3::GlobalValue("UB_TASK_TRACE_ENABLE",
                                                             "Enable task and WQE level traces",
                                                             ns3::BooleanValue(true),

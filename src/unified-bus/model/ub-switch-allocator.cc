@@ -6,11 +6,13 @@
 #include "ub-queue-manager.h"
 
 #include "ns3/ub-controller.h"
+#include "ns3/hash.h"
 #include "ns3/ub-port.h"
 #include "ns3/ub-switch.h"
 
 #include <algorithm>
 #include <limits>
+#include <sstream>
 
 namespace ns3 {
 
@@ -23,6 +25,19 @@ ComputeInitialIngressPhase(uint32_t nodeId, uint32_t outPortId, size_t qSize)
         return 0;
     }
     return static_cast<uint32_t>((nodeId + outPortId) % qSize);
+}
+
+uint32_t
+ComputeSeededIngressPhase(uint32_t seed,
+                          uint32_t nodeId,
+                          uint32_t outPortId,
+                          uint32_t priority,
+                          size_t qSize)
+{
+    std::ostringstream key;
+    key << "ALLOCATOR_RR_PHASE:" << seed << ':' << nodeId << ':' << outPortId << ':'
+        << priority << ':' << qSize;
+    return qSize == 0 ? 0 : static_cast<uint32_t>(Hash64(key.str()) % qSize);
 }
 
 } // namespace
@@ -681,8 +696,21 @@ Ptr<UbIngressQueue> UbRoundRobinAllocator::SelectNextIngressQueue(Ptr<UbPort> ou
             continue;
         }
         if (!m_rrPhaseSeeded[outPortId][pi]) {
-            m_rrIdx[outPortId][pi] =
-                ComputeInitialIngressPhase(m_nodeId, outPortId, ingressQueueSlotCount);
+            BooleanValue enabled;
+            UintegerValue seed;
+            const bool useSeededPhase =
+                GlobalValue::GetValueByNameFailSafe("UB_ALLOCATOR_RR_PHASE_HASH_ENABLE", enabled) &&
+                enabled.Get() &&
+                GlobalValue::GetValueByNameFailSafe("UB_ALLOCATOR_RR_PHASE_SEED", seed);
+            m_rrIdx[outPortId][pi] = useSeededPhase
+                                         ? ComputeSeededIngressPhase(seed.Get(),
+                                                                      m_nodeId,
+                                                                      outPortId,
+                                                                      pi,
+                                                                      ingressQueueSlotCount)
+                                         : ComputeInitialIngressPhase(m_nodeId,
+                                                                       outPortId,
+                                                                       ingressQueueSlotCount);
             m_rrPhaseSeeded[outPortId][pi] = true;
         } else if (m_rrIdx[outPortId][pi] >= ingressQueueSlotCount) {
             m_rrIdx[outPortId][pi] %= ingressQueueSlotCount;
@@ -797,8 +825,21 @@ Ptr<UbIngressQueue> UbDwrrAllocator::SelectNextIngressQueue(Ptr<UbPort> outPort)
         }
 
         if (!m_rrPhaseSeeded[outPortId][pi]) {
-            m_rrIdx[outPortId][pi] =
-                ComputeInitialIngressPhase(m_nodeId, outPortId, ingressQueueSlotCount);
+            BooleanValue enabled;
+            UintegerValue seed;
+            const bool useSeededPhase =
+                GlobalValue::GetValueByNameFailSafe("UB_ALLOCATOR_RR_PHASE_HASH_ENABLE", enabled) &&
+                enabled.Get() &&
+                GlobalValue::GetValueByNameFailSafe("UB_ALLOCATOR_RR_PHASE_SEED", seed);
+            m_rrIdx[outPortId][pi] = useSeededPhase
+                                         ? ComputeSeededIngressPhase(seed.Get(),
+                                                                      m_nodeId,
+                                                                      outPortId,
+                                                                      pi,
+                                                                      ingressQueueSlotCount)
+                                         : ComputeInitialIngressPhase(m_nodeId,
+                                                                       outPortId,
+                                                                       ingressQueueSlotCount);
             m_rrPhaseSeeded[outPortId][pi] = true;
         } else if (m_rrIdx[outPortId][pi] >= ingressQueueSlotCount) {
             m_rrIdx[outPortId][pi] %= ingressQueueSlotCount;
