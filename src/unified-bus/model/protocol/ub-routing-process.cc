@@ -8,8 +8,10 @@
 #include "ns3/ub-next-hop-index.h"
 #include "ns3/ub-routing-policy.h"
 #include "ns3/ub-rule-routing.h"
+#include "ns3/hash.h"
 
 #include <algorithm>
+#include <sstream>
 
 namespace ns3 {
 
@@ -18,6 +20,20 @@ NS_LOG_COMPONENT_DEFINE("UbRoutingProcess");
 
 namespace
 {
+
+uint64_t
+BuildRoutingPhaseHash(uint32_t seed,
+                      uint32_t nodeId,
+                      const std::vector<uint16_t>& candidatePorts)
+{
+    std::ostringstream key;
+    key << "ROUTING_RR_PHASE:" << seed << ':' << nodeId;
+    for (uint16_t port : candidatePorts)
+    {
+        key << ':' << port;
+    }
+    return Hash64(key.str());
+}
 void
 RemoveIngressPort(uint16_t inPort,
                   std::vector<uint16_t>& shortestPorts,
@@ -554,6 +570,18 @@ UbRoutingProcess::SelectCandidate(RoutingKey& key,
             }
         }
         uint64_t& nextIndex = m_rrNextIndexByCandidates[candidatePorts];
+        if (nextIndex == 0)
+        {
+            BooleanValue enabled;
+            UintegerValue seed;
+            if (GlobalValue::GetValueByNameFailSafe("UB_ROUTING_RR_PHASE_HASH_ENABLE", enabled) &&
+                enabled.Get() &&
+                GlobalValue::GetValueByNameFailSafe("UB_ROUTING_RR_PHASE_SEED", seed))
+            {
+                nextIndex = BuildRoutingPhaseHash(seed.Get(), m_nodeId, candidatePorts) %
+                             candidateCount;
+            }
+        }
         index = nextIndex++ % candidateCount;
     }
     else if (m_multipathSelector == MultipathSelector::INGRESS_PORT_STRIPE &&
