@@ -18,6 +18,17 @@ namespace ns3 {
 
 NS_LOG_COMPONENT_DEFINE("UbApp");
 
+namespace
+{
+uint32_t
+DeriveCtpEntityId(bool hasPort, uint32_t port)
+{
+    NS_ABORT_MSG_IF(hasPort && port == UINT32_MAX,
+                    "CTP endpoint port cannot be represented by an internal Entity id");
+    return hasPort ? port + 1 : 0;
+}
+} // namespace
+
 NS_OBJECT_ENSURE_REGISTERED(UbApp);
 TypeId UbApp::GetTypeId(void)
 {
@@ -62,16 +73,6 @@ TypeId UbApp::GetTypeId(void)
                                           "RTP",
                                           TransportMode::CTP,
                                           "CTP"))
-            .AddAttribute("LocalEntityId",
-                          "Default local entity id used for CTP URMA traffic.",
-                          UintegerValue(0),
-                          MakeUintegerAccessor(&UbApp::m_localEntityId),
-                          MakeUintegerChecker<uint32_t>())
-            .AddAttribute("PeerEntityId",
-                          "Default peer entity id used for CTP URMA traffic.",
-                          UintegerValue(0),
-                          MakeUintegerAccessor(&UbApp::m_peerEntityId),
-                          MakeUintegerChecker<uint32_t>())
             .AddAttribute("CtpUseUnboundSourceJetty",
                           "When true, CTP reuses one unbound source Jetty per source entity and VL.",
                           BooleanValue(false),
@@ -125,18 +126,6 @@ UbApp::SetTransportMode(TransportMode mode)
     m_transportMode = mode;
 }
 
-void
-UbApp::SetLocalEntityId(uint32_t localEntityId)
-{
-    m_localEntityId = localEntityId;
-}
-
-void
-UbApp::SetPeerEntityId(uint32_t peerEntityId)
-{
-    m_peerEntityId = peerEntityId;
-}
-
 void UbApp::SendTraffic(TrafficRecord record)
 {
     NS_ABORT_MSG_IF(record.priority < 0 ||
@@ -151,10 +140,10 @@ void UbApp::SendTraffic(TrafficRecord record)
     task.dataSize = static_cast<uint32_t>(record.dataSize);
     task.priority = static_cast<uint8_t>(record.priority);
     task.delay = record.delay.empty() ? Time(0) : Time(record.delay);
-    task.srcEntityId = record.srcEntityId;
-    task.dstEntityId = record.dstEntityId;
-    task.hasSrcEntityId = record.hasSrcEntityId;
-    task.hasDstEntityId = record.hasDstEntityId;
+    task.srcPortId = record.srcPortId;
+    task.dstPortId = record.dstPortId;
+    task.hasSrcPortId = record.hasSrcPortId;
+    task.hasDstPortId = record.hasDstPortId;
     if (record.opType == "URMA_WRITE") {
         task.op = UbTrafficGen::RuntimeTaskOp::URMA_WRITE;
     } else if (record.opType == "URMA_READ") {
@@ -183,10 +172,10 @@ UbApp::SendCtpUrmaTraffic(TrafficRecord record)
     task.destNode = static_cast<uint32_t>(record.destNode);
     task.dataSize = static_cast<uint32_t>(record.dataSize);
     task.priority = static_cast<uint8_t>(record.priority);
-    task.srcEntityId = record.srcEntityId;
-    task.dstEntityId = record.dstEntityId;
-    task.hasSrcEntityId = record.hasSrcEntityId;
-    task.hasDstEntityId = record.hasDstEntityId;
+    task.srcPortId = record.srcPortId;
+    task.dstPortId = record.dstPortId;
+    task.hasSrcPortId = record.hasSrcPortId;
+    task.hasDstPortId = record.hasDstPortId;
     if (record.opType == "URMA_WRITE") {
         task.op = UbTrafficGen::RuntimeTaskOp::URMA_WRITE;
     } else if (record.opType == "URMA_READ") {
@@ -214,8 +203,8 @@ UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
     Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
     service->SetRoutingType(m_routingType);
 
-    const uint32_t srcEntityId = task.hasSrcEntityId ? task.srcEntityId : m_localEntityId;
-    const uint32_t dstEntityId = task.hasDstEntityId ? task.dstEntityId : m_peerEntityId;
+    const uint32_t srcEntityId = DeriveCtpEntityId(task.hasSrcPortId, task.srcPortId);
+    const uint32_t dstEntityId = DeriveCtpEntityId(task.hasDstPortId, task.dstPortId);
     const uint8_t vl = task.priority;
     uint32_t jettyNum = m_jettyNum;
     Ptr<UbJetty> jetty;
@@ -259,6 +248,14 @@ UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
                        .dstNodeId = task.destNode,
                        .dstEntityId = dstEntityId,
                        .vl = vl};
+    if (task.hasSrcPortId)
+    {
+        service->SetSourcePortHint(key, task.srcPortId);
+    }
+    if (task.hasDstPortId)
+    {
+        service->SetDestinationPortHint(key, task.dstPortId);
+    }
     const UbCtpEntityKey jettyKey =
         m_ctpUseUnboundSourceJetty ? service->MakeSourceGroupKeyForRequest(key) : key;
     const UbWqeSubmissionResult submission = ubFunc->SubmitCtpWqe(wqe, jettyNum, jettyKey);
@@ -358,7 +355,11 @@ void UbApp::SendTraffic(UbTrafficGen::RuntimeTask task)
                                      task.priority,
                                      type,
                                      threadIds,
-                                     0);
+                                     0,
+                                     task.srcPortId,
+                                     task.hasSrcPortId,
+                                     task.dstPortId,
+                                     task.hasDstPortId);
     } else if (task.op == UbTrafficGen::RuntimeTaskOp::URMA_WRITE ||
                task.op == UbTrafficGen::RuntimeTaskOp::URMA_READ) {
         if (m_transportMode == TransportMode::CTP)
@@ -381,7 +382,10 @@ void UbApp::SendTraffic(UbTrafficGen::RuntimeTask task)
                             UbJettyLifetime::TASK_SCOPED);
         vector<uint32_t> tpns = GetNode()->GetObject<UbController>()->GetTpConnManager()->GetTpns(
             m_getTpnRule, RoutingTypeUsesShortestPaths(m_routingType), m_multiPathEnable, task.sourceNode,
-            task.destNode, UINT32_MAX, UINT32_MAX, task.priority);
+            task.destNode,
+            task.hasSrcPortId ? task.srcPortId : UINT32_MAX,
+            task.hasDstPortId ? task.dstPortId : UINT32_MAX,
+            task.priority);
         bool bindRst = ubTa->JettyBindTp(task.sourceNode, task.destNode, m_jettyNum, m_multiPathEnable, tpns);
         if (bindRst) {
             Ptr<UbJetty> curr_jetty = ubFunc->GetJetty(m_jettyNum);

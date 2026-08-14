@@ -49,8 +49,6 @@ public:
     void SetNode(Ptr<Node> node); // 设置当前节点
 
     void SetTransportMode(TransportMode mode);
-    void SetLocalEntityId(uint32_t localEntityId);
-    void SetPeerEntityId(uint32_t peerEntityId);
 
     /**
      * @brief Get the configured transport mode.
@@ -137,8 +135,6 @@ private:
 
     uint32_t m_jettyNum = 0;       // 当前节点维护的jettynum,不会重复
     TransportMode m_transportMode{TransportMode::RTP};
-    uint32_t m_localEntityId{0};
-    uint32_t m_peerEntityId{0};
 
 };
 

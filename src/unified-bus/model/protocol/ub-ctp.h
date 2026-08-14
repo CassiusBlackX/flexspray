@@ -219,6 +219,7 @@ class UbCtpTransportService : public Object
                            uint16_t loadBalanceSalt);
     uint16_t NextLoadBalanceSalt(UbCtpEntityState& state, const UbCtpEntityKey& routeKey);
     uint32_t ResolveDestinationPortHint(const UbCtpEntityKey& key) const;
+    uint32_t ResolveSourcePortHint(const UbCtpEntityKey& key) const;
     void RegisterQueueIfNeeded(Ptr<UbCtpTxQueue> queue,
                                uint32_t outPort,
                                uint32_t priority);

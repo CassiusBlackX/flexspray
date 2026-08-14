@@ -11,6 +11,7 @@
 namespace ns3 {
 constexpr int MAX_LB = 255;
 constexpr int MIN_LB = 0;
+struct RoutingKey;
 class UbController;
 class UbLdstApi : public Object {
 public:
@@ -29,6 +30,10 @@ public:
 private:
     void ValidateRoutingType(RoutingType routingType) const;
     void SendPacket(Ptr<UbLdstTaskSegment> taskSegment, Ptr<Packet> packet);
+    int SelectOutPort(RoutingKey routingKey,
+                      bool hasSourcePort,
+                      uint32_t sourcePort,
+                      bool hasDestinationPort) const;
     Ptr<Packet> GenDataPacket(Ptr<UbLdstTaskSegment> taskSegment);
     uint32_t m_nodeId{UINT32_MAX};
     uint32_t m_lbHashSalt = 0;

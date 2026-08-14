@@ -8,6 +8,8 @@
 #include "ns3/ub-ldst-api.h"
 #include "ns3/ub-port.h"
 
+#include <algorithm>
+
 namespace ns3 {
 NS_LOG_COMPONENT_DEFINE("UbLdstApi");
 
@@ -88,20 +90,112 @@ void UbLdstApi::LdstProcess(Ptr<UbLdstTaskSegment> taskSegment)
     SendPacket(taskSegment, packet);
 }
 
-void UbLdstApi::SendPacket(Ptr<UbLdstTaskSegment> taskSegment, Ptr<Packet> packet)
+int
+UbLdstApi::SelectOutPort(RoutingKey routingKey,
+                         bool hasSourcePort,
+                         uint32_t sourcePort,
+                         bool hasDestinationPort) const
+{
+    auto node = NodeList::GetNode(m_nodeId);
+    auto sw = node->GetObject<UbSwitch>();
+    NS_ABORT_MSG_IF(sw == nullptr || sw->GetRoutingProcess() == nullptr,
+                    "LDST routing requires a source switch");
+
+    if (!hasSourcePort && !hasDestinationPort)
+    {
+        bool selectedShortestPath = false;
+        return sw->GetRoutingProcess()->GetOutPort(routingKey, selectedShortestPath);
+    }
+
+    if (hasSourcePort)
+    {
+        NS_ABORT_MSG_IF(sourcePort >= node->GetNDevices() ||
+                            DynamicCast<UbPort>(node->GetDevice(sourcePort)) == nullptr,
+                        "Requested LDST source endpoint port is unavailable on node "
+                            << m_nodeId << ": " << sourcePort);
+    }
+    Ptr<UbRoutingProcess> routing = sw->GetRoutingProcess();
+    std::vector<uint16_t> shortestCandidates;
+    std::vector<uint16_t> nonShortestCandidates;
+    uint32_t routeDip = routingKey.dip;
+    const bool handledByRule = hasDestinationPort
+                                   ? routing->TryGetRuleCandidatesExact(routeDip,
+                                                                        shortestCandidates,
+                                                                        nonShortestCandidates)
+                                   : routing->TryGetRuleCandidatesWithPrimaryFallback(
+                                         routeDip,
+                                         UINT16_MAX,
+                                         shortestCandidates,
+                                         nonShortestCandidates);
+    if (!handledByRule)
+    {
+        if (hasDestinationPort)
+        {
+            routing->GetShortestOutPorts(routeDip, shortestCandidates);
+            if (!RoutingTypeUsesShortestPaths(routingKey.routingType))
+            {
+                routing->GetOtherOutPorts(routeDip, nonShortestCandidates);
+            }
+        }
+        else
+        {
+            routing->GetShortestCandidates(routeDip, UINT16_MAX, shortestCandidates);
+            if (!RoutingTypeUsesShortestPaths(routingKey.routingType))
+            {
+                routing->GetNonShortestCandidates(routeDip, UINT16_MAX, nonShortestCandidates);
+            }
+        }
+    }
+    if (hasSourcePort)
+    {
+        const auto isNotRequestedPort = [sourcePort](uint16_t candidate) {
+            return candidate != sourcePort;
+        };
+        shortestCandidates.erase(std::remove_if(shortestCandidates.begin(),
+                                                shortestCandidates.end(),
+                                                isNotRequestedPort),
+                                 shortestCandidates.end());
+        nonShortestCandidates.erase(std::remove_if(nonShortestCandidates.begin(),
+                                                   nonShortestCandidates.end(),
+                                                   isNotRequestedPort),
+                                    nonShortestCandidates.end());
+    }
+    if (RoutingTypeUsesShortestPaths(routingKey.routingType))
+    {
+        nonShortestCandidates.clear();
+    }
+    NS_ABORT_MSG_IF(shortestCandidates.empty() && nonShortestCandidates.empty(),
+                    "Requested LDST source endpoint port is unreachable for destination "
+                        << Ipv4Address(routingKey.dip));
+    bool selectedShortestPath = false;
+    return routing->SelectOutPort(routingKey,
+                                  shortestCandidates,
+                                  nonShortestCandidates,
+                                  selectedShortestPath);
+}
+
+void
+UbLdstApi::SendPacket(Ptr<UbLdstTaskSegment> taskSegment, Ptr<Packet> packet)
 {
     RoutingKey rtKey;
-    rtKey.sip = utils::NodeIdToIp(taskSegment->GetSrc()).Get();
-    rtKey.dip = utils::NodeIdToIp(taskSegment->GetDest()).Get();
+    rtKey.sip = taskSegment->HasSrcPortId()
+                    ? utils::NodeIdToIp(taskSegment->GetSrc(), taskSegment->GetSrcPortId()).Get()
+                    : utils::NodeIdToIp(taskSegment->GetSrc()).Get();
+    rtKey.dip = taskSegment->HasDstPortId()
+                    ? utils::NodeIdToIp(taskSegment->GetDest(), taskSegment->GetDstPortId()).Get()
+                    : utils::NodeIdToIp(taskSegment->GetDest()).Get();
     rtKey.sport = m_lbHashSalt;
-    rtKey.dport = 0;
+    rtKey.dport =
+        taskSegment->HasDstPortId() ? static_cast<uint16_t>(taskSegment->GetDstPortId()) : 0;
     rtKey.priority = taskSegment->GetPriority();
     rtKey.routingType = m_routingType;
 
     auto node = NodeList::GetNode(m_nodeId);
     auto sw = node->GetObject<UbSwitch>();
-    bool selectedShortestPath = false;
-    int outPort = sw->GetRoutingProcess()->GetOutPort(rtKey, selectedShortestPath);
+    int outPort = SelectOutPort(rtKey,
+                                taskSegment->HasSrcPortId(),
+                                taskSegment->GetSrcPortId(),
+                                taskSegment->HasDstPortId());
     // TODO: Source injection currently ignores selectedShortestPath. If this lookup selects a
     // non-shortest port, mark the packet shortest-only before enqueueing it so a downstream
     // switch cannot consume the UB one-detour allowance again.
@@ -147,9 +241,21 @@ Ptr<Packet> UbLdstApi::GenDataPacket(Ptr<UbLdstTaskSegment> taskSegment)
     // Gen Headers
     cMAETah.SetLength((uint8_t)length);
     cTaHeader.SetIniTaSsn(taskSegment->GetTaskSegmentId()); // taskid
-    uint16_t scna = static_cast<uint16_t>(utils::NodeIdToCna16(taskSegment->GetSrc()));
+    NS_ABORT_MSG_IF(taskSegment->HasSrcPortId() && taskSegment->GetSrcPortId() >= 15,
+                    "LDST source endpoint port cannot be encoded as CNA16: "
+                        << taskSegment->GetSrcPortId());
+    NS_ABORT_MSG_IF(taskSegment->HasDstPortId() && taskSegment->GetDstPortId() >= 15,
+                    "LDST destination endpoint port cannot be encoded as CNA16: "
+                        << taskSegment->GetDstPortId());
+    uint16_t scna = static_cast<uint16_t>(taskSegment->HasSrcPortId()
+                                              ? utils::NodeIdToCna16(taskSegment->GetSrc(),
+                                                                     taskSegment->GetSrcPortId())
+                                              : utils::NodeIdToCna16(taskSegment->GetSrc()));
     cna16NetworkHeader.SetScna(scna);
-    uint16_t dcna = static_cast<uint16_t>(utils::NodeIdToCna16(taskSegment->GetDest()));
+    uint16_t dcna = static_cast<uint16_t>(taskSegment->HasDstPortId()
+                                              ? utils::NodeIdToCna16(taskSegment->GetDest(),
+                                                                     taskSegment->GetDstPortId())
+                                              : utils::NodeIdToCna16(taskSegment->GetDest()));
     cna16NetworkHeader.SetDcna(dcna);
     cna16NetworkHeader.SetLb(m_lbHashSalt);
     cna16NetworkHeader.SetServiceLevel(taskSegment->GetPriority());
@@ -215,18 +321,26 @@ void UbLdstApi::RecvDataPacket(Ptr<Packet> packet)
                                 linkPacketHeader.GetRoutingType(),
                                 UbDatalinkHeaderConfig::PACKET_UB_MEM);
     RoutingKey rtKey;
-    rtKey.sip = utils::Cna16ToIp(cna16NetworkHeader.GetScna()).Get();
-    rtKey.dip = utils::Cna16ToIp(cna16NetworkHeader.GetDcna()).Get();
+    const uint32_t sourcePort = (cna16NetworkHeader.GetScna() & 0xF) == 0
+                                    ? UINT32_MAX
+                                    : utils::Cna16ToPortId(cna16NetworkHeader.GetScna());
+    const uint32_t destinationPort = (cna16NetworkHeader.GetDcna() & 0xF) == 0
+                                         ? UINT32_MAX
+                                         : utils::Cna16ToPortId(cna16NetworkHeader.GetDcna());
+    rtKey.sip = utils::Cna16ToEndpointIp(cna16NetworkHeader.GetScna()).Get();
+    rtKey.dip = utils::Cna16ToEndpointIp(cna16NetworkHeader.GetDcna()).Get();
     rtKey.sport = cna16NetworkHeader.GetLb();
-    rtKey.dport = 0;
+    rtKey.dport = destinationPort == UINT32_MAX ? 0 : static_cast<uint16_t>(destinationPort);
     rtKey.priority = linkPacketHeader.GetPacketVL();
     rtKey.routingType = linkPacketHeader.GetRoutingType();
     
     auto node = NodeList::GetNode(m_nodeId);
     auto sw = node->GetObject<UbSwitch>();
 
-    bool selectedShortestPath = false;
-    int destPort = sw->GetRoutingProcess()->GetOutPort(rtKey, selectedShortestPath);
+    int destPort = SelectOutPort(rtKey,
+                                 sourcePort != UINT32_MAX,
+                                 sourcePort,
+                                 destinationPort != UINT32_MAX);
     // TODO: Source injection currently ignores selectedShortestPath. If this lookup selects a
     // non-shortest port, mark the ACK shortest-only before enqueueing it so a downstream switch
     // cannot consume the UB one-detour allowance again.

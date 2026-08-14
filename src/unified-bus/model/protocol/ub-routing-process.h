@@ -68,6 +68,9 @@ class UbRoutingProcess : public Object
     bool TryGetRuleCandidates(uint32_t dip,
                               std::vector<uint16_t>& shortestPorts,
                               std::vector<uint16_t>& nonShortestPorts) const;
+    bool TryGetRuleCandidatesExact(uint32_t dip,
+                                    std::vector<uint16_t>& shortestPorts,
+                                    std::vector<uint16_t>& nonShortestPorts) const;
     bool TryGetRuleCandidatesWithPrimaryFallback(
         uint32_t dip,
         uint16_t inPort,
@@ -79,6 +82,9 @@ class UbRoutingProcess : public Object
     int GetOutPort(RoutingKey& key,
                    bool& selectedShortestPath,
                    uint16_t inPort = UINT16_MAX);
+    int GetOutPortForEndpoint(RoutingKey& key,
+                              bool& selectedShortestPath,
+                              uint16_t inPort = UINT16_MAX);
     int SelectOutPort(RoutingKey& key,
                       const std::vector<uint16_t>& shortestPorts,
                       const std::vector<uint16_t>& nonShortestPorts,
