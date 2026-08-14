@@ -480,9 +480,9 @@ In `CTP` mode, CTP traffic does not use RTP TP mappings from `transport_channel.
 The file may still be present and loaded during setup, but CTP does not create RTP TP
 channels and does not use TPN, PSN, TPACK, TPNAK, TPSACK, or end-to-end RTP retransmission.
 Optional `traffic.csv` fields `srcPortId` and `dstPortId` constrain the source and destination
-endpoint ports independently; an empty field leaves that endpoint unconstrained. In CTP mode,
-the application derives internal Entity identifiers from these endpoint constraints, so Entity
-IDs are not part of the traffic-file interface.
+endpoint ports independently; an empty field leaves that endpoint unconstrained. CTP Entity IDs
+remain independent traffic inputs through `srcEntityId,dstEntityId`, or use the application's
+`LocalEntityId` and `PeerEntityId` defaults when those fields are absent.
 
 ### TPN in the code (what it does and how to set it)
 
@@ -502,11 +502,13 @@ TP channel and TP group in code:
 Schema:
 ```
 taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases
+taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,srcEntityId,dstEntityId
 taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,srcPortId,dstPortId
+taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,srcEntityId,dstEntityId,srcPortId,dstPortId
 ```
 
-Use the nine-column form when no endpoint-port constraint is needed. Use the eleven-column form
-when either endpoint port is constrained.
+Use the nine-column form when no optional fields are needed. The eleven-column form adds either
+the entity pair or endpoint-port pair; use the thirteen-column form when both are needed.
 
 Recommendation: Generate `traffic.csv` (e.g., all-to-all, RDMA-like patterns, collective-like workloads) via `scratch/ns-3-ub-tools/traffic_maker/`. See `traffic_maker/README.md` in the `open-usim/ns-3-ub-tools` submodule repository.
 - `taskId` — integer ID (unique per file).
@@ -536,7 +538,9 @@ Examples:
 
 Current URMA read/write constraints in `traffic.csv`:
 - `URMA_WRITE` and `URMA_READ` do not require extra CSV columns for remote address, token, local address, or read offset in this iteration.
-- In `CTP` mode, `URMA_WRITE` and `URMA_READ` may use optional trailing `srcPortId,dstPortId` columns. Entity IDs remain an internal CTP detail and are derived from the endpoint constraints.
+- In `CTP` mode, `URMA_WRITE` and `URMA_READ` may use optional trailing `srcEntityId,dstEntityId`
+  or `srcPortId,dstPortId` columns. The thirteen-column form keeps entity identity and endpoint
+  routing constraints independent; absent Entity IDs use the application's defaults.
 - `URMA_WRITE` and `URMA_READ` complete on transaction responses (`TAACK` / `READ_RESPONSE`), not when the request's TP ACK arrives.
 - Only the ROI success path is modeled for URMA read/write at the transaction layer right now; other service modes are rejected explicitly.
 - `URMA_READ` is sliced at the TA layer. Each read request slice sends exactly one TP request packet with zero wire payload; the logical slice length is carried in `MAETAH.Length`.

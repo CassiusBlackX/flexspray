@@ -334,17 +334,36 @@ SplitCsvRow(const std::string& line)
     return fields;
 }
 
-void
+struct TrafficCsvOptionalFields
+{
+    bool hasEntityIds{false};
+    bool hasPortIds{false};
+};
+
+TrafficCsvOptionalFields
 ValidateTrafficCsvHeader(const std::vector<std::string>& header)
 {
-    NS_ABORT_MSG_IF(header.size() != 9 && header.size() != 11,
-                    "traffic.csv header must have 9 base fields or 11 fields with "
-                        "srcPortId,dstPortId");
+    NS_ABORT_MSG_IF(header.size() != 9 && header.size() != 11 && header.size() != 13,
+                    "traffic.csv header must have 9 base fields, one optional entity or port "
+                    "pair, or both pairs");
+    TrafficCsvOptionalFields fields;
     if (header.size() == 11)
     {
-        NS_ABORT_MSG_IF(header[9] != "srcPortId" || header[10] != "dstPortId",
-                        "traffic.csv 11-field header must end with srcPortId,dstPortId");
+        fields.hasEntityIds = header[9] == "srcEntityId" && header[10] == "dstEntityId";
+        fields.hasPortIds = header[9] == "srcPortId" && header[10] == "dstPortId";
+        NS_ABORT_MSG_IF(!fields.hasEntityIds && !fields.hasPortIds,
+                        "traffic.csv 11-field header must end with srcEntityId,dstEntityId or "
+                        "srcPortId,dstPortId");
     }
+    if (header.size() == 13)
+    {
+        fields.hasEntityIds = header[9] == "srcEntityId" && header[10] == "dstEntityId";
+        fields.hasPortIds = header[11] == "srcPortId" && header[12] == "dstPortId";
+        NS_ABORT_MSG_IF(!fields.hasEntityIds || !fields.hasPortIds,
+                        "traffic.csv 13-field header must end with "
+                        "srcEntityId,dstEntityId,srcPortId,dstPortId");
+    }
+    return fields;
 }
 
 void
@@ -497,7 +516,10 @@ AppendDependencyPhases(std::string_view field, TrafficRecord& record)
 }
 
 void
-SetTrafficRecordField(int fieldCount, std::string_view rawField, TrafficRecord& record)
+SetTrafficRecordField(int fieldCount,
+                      std::string_view rawField,
+                      TrafficRecord& record,
+                      const TrafficCsvOptionalFields& optionalFields)
 {
     const std::string_view field = TrimField(rawField);
     switch (fieldCount)
@@ -530,10 +552,34 @@ SetTrafficRecordField(int fieldCount, std::string_view rawField, TrafficRecord& 
         AppendDependencyPhases(field, record);
         break;
     case 9:
+        if (optionalFields.hasEntityIds)
+        {
+            record.srcEntityId = field.empty() ? 0 : ParseUint32Field(field);
+            record.hasSrcEntityId = true;
+        }
+        else if (optionalFields.hasPortIds)
+        {
+            record.hasSrcPortId = !field.empty();
+            record.srcPortId = record.hasSrcPortId ? ParseUint32Field(field) : 0;
+        }
+        break;
+    case 10:
+        if (optionalFields.hasEntityIds)
+        {
+            record.dstEntityId = field.empty() ? 0 : ParseUint32Field(field);
+            record.hasDstEntityId = true;
+        }
+        else if (optionalFields.hasPortIds)
+        {
+            record.hasDstPortId = !field.empty();
+            record.dstPortId = record.hasDstPortId ? ParseUint32Field(field) : 0;
+        }
+        break;
+    case 11:
         record.hasSrcPortId = !field.empty();
         record.srcPortId = record.hasSrcPortId ? ParseUint32Field(field) : 0;
         break;
-    case 10:
+    case 12:
         record.hasDstPortId = !field.empty();
         record.dstPortId = record.hasDstPortId ? ParseUint32Field(field) : 0;
         break;
@@ -952,7 +998,10 @@ CreateConfigStoreInput(const std::string& filename, uint32_t& rewrittenLines)
 }
 
 void
-SetTrafficRecordViewField(int fieldCount, std::string_view rawField, TrafficRecordView& record)
+SetTrafficRecordViewField(int fieldCount,
+                          std::string_view rawField,
+                          TrafficRecordView& record,
+                          const TrafficCsvOptionalFields& optionalFields)
 {
     const std::string_view field = TrimField(rawField);
     switch (fieldCount)
@@ -985,10 +1034,34 @@ SetTrafficRecordViewField(int fieldCount, std::string_view rawField, TrafficReco
         record.dependOnPhases = field;
         break;
     case 9:
+        if (optionalFields.hasEntityIds)
+        {
+            record.srcEntityId = field.empty() ? 0 : ParseUint32Field(field);
+            record.hasSrcEntityId = true;
+        }
+        else if (optionalFields.hasPortIds)
+        {
+            record.hasSrcPortId = !field.empty();
+            record.srcPortId = record.hasSrcPortId ? ParseUint32Field(field) : 0;
+        }
+        break;
+    case 10:
+        if (optionalFields.hasEntityIds)
+        {
+            record.dstEntityId = field.empty() ? 0 : ParseUint32Field(field);
+            record.hasDstEntityId = true;
+        }
+        else if (optionalFields.hasPortIds)
+        {
+            record.hasDstPortId = !field.empty();
+            record.dstPortId = record.hasDstPortId ? ParseUint32Field(field) : 0;
+        }
+        break;
+    case 11:
         record.hasSrcPortId = !field.empty();
         record.srcPortId = record.hasSrcPortId ? ParseUint32Field(field) : 0;
         break;
-    case 10:
+    case 12:
         record.hasDstPortId = !field.empty();
         record.dstPortId = record.hasDstPortId ? ParseUint32Field(field) : 0;
         break;
@@ -4147,7 +4220,7 @@ UbUtils::ForEachTrafficRecordInternal(const string& filename,
     string line;
     NS_ABORT_MSG_IF(!getline(file, line), "traffic.csv is missing its header");
     const std::vector<std::string> header = SplitCsvRow(line);
-    ValidateTrafficCsvHeader(header);
+    const TrafficCsvOptionalFields optionalFields = ValidateTrafficCsvHeader(header);
     const std::size_t expectedFieldCount = header.size();
     TrafficRecord record;
     while (getline(file, line)) {
@@ -4166,6 +4239,10 @@ UbUtils::ForEachTrafficRecordInternal(const string& filename,
         record.delay.clear();
         record.phaseId = 0;
         record.dependOnPhases.clear();
+        record.srcEntityId = 0;
+        record.dstEntityId = 0;
+        record.hasSrcEntityId = false;
+        record.hasDstEntityId = false;
         record.srcPortId = 0;
         record.dstPortId = 0;
         record.hasSrcPortId = false;
@@ -4182,7 +4259,8 @@ UbUtils::ForEachTrafficRecordInternal(const string& filename,
             SetTrafficRecordField(fieldCount,
                                   std::string_view(line).substr(fieldStart,
                                                                 fieldEnd - fieldStart),
-                                  record);
+                                  record,
+                                  optionalFields);
             ++fieldCount;
 
             if (fieldEnd == line.size()) {
@@ -4191,8 +4269,8 @@ UbUtils::ForEachTrafficRecordInternal(const string& filename,
             fieldStart = fieldEnd + 1;
         }
         NS_ABORT_MSG_IF(
-            fieldCount != 9 && fieldCount != 11,
-            "traffic.csv row must have 9 base fields or 11 fields with srcPortId,dstPortId");
+            static_cast<std::size_t>(fieldCount) != expectedFieldCount,
+            "traffic.csv row field count must match its header");
         callback(record);
     }
     file.close();
@@ -4213,7 +4291,7 @@ UbUtils::ForEachTrafficRecordViewInternal(
     string line;
     NS_ABORT_MSG_IF(!getline(file, line), "traffic.csv is missing its header");
     const std::vector<std::string> header = SplitCsvRow(line);
-    ValidateTrafficCsvHeader(header);
+    const TrafficCsvOptionalFields optionalFields = ValidateTrafficCsvHeader(header);
     const std::size_t expectedFieldCount = header.size();
     while (getline(file, line)) {
         if (line.empty() || line[0] == '#' || line.find_first_not_of(" \t") == string::npos) {
@@ -4234,7 +4312,8 @@ UbUtils::ForEachTrafficRecordViewInternal(
             SetTrafficRecordViewField(fieldCount,
                                       std::string_view(line).substr(fieldStart,
                                                                     fieldEnd - fieldStart),
-                                      record);
+                                      record,
+                                      optionalFields);
             ++fieldCount;
 
             if (fieldEnd == line.size()) {
@@ -4243,8 +4322,8 @@ UbUtils::ForEachTrafficRecordViewInternal(
             fieldStart = fieldEnd + 1;
         }
         NS_ABORT_MSG_IF(
-            fieldCount != 9 && fieldCount != 11,
-            "traffic.csv row must have 9 base fields or 11 fields with srcPortId,dstPortId");
+            static_cast<std::size_t>(fieldCount) != expectedFieldCount,
+            "traffic.csv row field count must match its header");
         callback(record);
     }
     file.close();

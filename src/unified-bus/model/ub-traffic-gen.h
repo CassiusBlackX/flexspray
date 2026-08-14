@@ -81,6 +81,10 @@ public:
         uint8_t priority{0};
         RuntimeTaskOp op{RuntimeTaskOp::UNKNOWN};
         Time delay{Time(0)};
+        uint32_t srcEntityId{0};
+        uint32_t dstEntityId{0};
+        bool hasSrcEntityId{false};
+        bool hasDstEntityId{false};
         uint32_t srcPortId{0};
         uint32_t dstPortId{0};
         bool hasSrcPortId{false};

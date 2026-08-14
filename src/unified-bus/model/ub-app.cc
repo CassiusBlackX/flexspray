@@ -21,17 +21,6 @@ namespace ns3
 
 NS_LOG_COMPONENT_DEFINE("UbApp");
 
-namespace
-{
-uint32_t
-DeriveCtpEntityId(bool hasPort, uint32_t port)
-{
-    NS_ABORT_MSG_IF(hasPort && port == UINT32_MAX,
-                    "CTP endpoint port cannot be represented by an internal Entity id");
-    return hasPort ? port + 1 : 0;
-}
-} // namespace
-
 NS_OBJECT_ENSURE_REGISTERED(UbApp);
 
 TypeId
@@ -76,6 +65,16 @@ UbApp::GetTypeId(void)
                           EnumValue(TransportMode::RTP),
                           MakeEnumAccessor<TransportMode>(&UbApp::m_transportMode),
                           MakeEnumChecker(TransportMode::RTP, "RTP", TransportMode::CTP, "CTP"))
+            .AddAttribute("LocalEntityId",
+                          "Default local entity id used for CTP URMA traffic.",
+                          UintegerValue(0),
+                          MakeUintegerAccessor(&UbApp::m_localEntityId),
+                          MakeUintegerChecker<uint32_t>())
+            .AddAttribute("PeerEntityId",
+                          "Default peer entity id used for CTP URMA traffic.",
+                          UintegerValue(0),
+                          MakeUintegerAccessor(&UbApp::m_peerEntityId),
+                          MakeUintegerChecker<uint32_t>())
             .AddAttribute(
                 "CtpUseUnboundSourceJetty",
                 "When true, CTP reuses one unbound source Jetty per source entity and VL.",
@@ -146,6 +145,18 @@ UbApp::SetTransportMode(TransportMode mode)
 }
 
 void
+UbApp::SetLocalEntityId(uint32_t localEntityId)
+{
+    m_localEntityId = localEntityId;
+}
+
+void
+UbApp::SetPeerEntityId(uint32_t peerEntityId)
+{
+    m_peerEntityId = peerEntityId;
+}
+
+void
 UbApp::SendTraffic(TrafficRecord record)
 {
     NS_ABORT_MSG_IF(record.priority < 0 || static_cast<uint32_t>(record.priority) > UB_PRIORITY_MAX,
@@ -159,6 +170,10 @@ UbApp::SendTraffic(TrafficRecord record)
     task.dataSize = static_cast<uint32_t>(record.dataSize);
     task.priority = static_cast<uint8_t>(record.priority);
     task.delay = record.delay.empty() ? Time(0) : Time(record.delay);
+    task.srcEntityId = record.srcEntityId;
+    task.dstEntityId = record.dstEntityId;
+    task.hasSrcEntityId = record.hasSrcEntityId;
+    task.hasDstEntityId = record.hasDstEntityId;
     task.srcPortId = record.srcPortId;
     task.dstPortId = record.dstPortId;
     task.hasSrcPortId = record.hasSrcPortId;
@@ -207,6 +222,10 @@ UbApp::SendCtpUrmaTraffic(TrafficRecord record)
     task.destNode = static_cast<uint32_t>(record.destNode);
     task.dataSize = static_cast<uint32_t>(record.dataSize);
     task.priority = static_cast<uint8_t>(record.priority);
+    task.srcEntityId = record.srcEntityId;
+    task.dstEntityId = record.dstEntityId;
+    task.hasSrcEntityId = record.hasSrcEntityId;
+    task.hasDstEntityId = record.hasDstEntityId;
     task.srcPortId = record.srcPortId;
     task.dstPortId = record.dstPortId;
     task.hasSrcPortId = record.hasSrcPortId;
@@ -243,8 +262,8 @@ UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
     Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
     service->SetRoutingType(m_routingType);
 
-    const uint32_t srcEntityId = DeriveCtpEntityId(task.hasSrcPortId, task.srcPortId);
-    const uint32_t dstEntityId = DeriveCtpEntityId(task.hasDstPortId, task.dstPortId);
+    const uint32_t srcEntityId = task.hasSrcEntityId ? task.srcEntityId : m_localEntityId;
+    const uint32_t dstEntityId = task.hasDstEntityId ? task.dstEntityId : m_peerEntityId;
     const uint8_t vl = task.priority;
     uint32_t jettyNum = m_jettyNum;
     Ptr<UbJetty> jetty;

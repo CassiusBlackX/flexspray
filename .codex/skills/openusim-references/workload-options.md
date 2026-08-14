@@ -33,11 +33,14 @@ All workload paths â€” built-in generator, reference file, or custom skeleton â€
 
 ```
 taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases
+taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,srcEntityId,dstEntityId
 taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,srcPortId,dstPortId
+taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,srcEntityId,dstEntityId,srcPortId,dstPortId
 ```
 
-The nine-column header omits endpoint constraints. The eleven-column header adds the optional
-`srcPortId` and `dstPortId` fields; the two cells remain independently optional.
+The nine-column header omits optional fields. The eleven-column header adds either the CTP entity
+pair or endpoint-port pair. The thirteen-column header preserves both pairs; port cells remain
+independently optional.
 
 ### Column definitions
 
@@ -52,13 +55,14 @@ The nine-column header omits endpoint constraints. The eleven-column header adds
 | `delay` | string | Task start delay with time unit | e.g. `10ns`, `0ns`; valid units: `ns`, `us`, `ms`, `s` |
 | `phaseId` | int | Phase identifier | Tasks in the same phase can execute in parallel |
 | `dependOnPhases` | string | Space-separated phaseId list | Empty string for first phase; tasks wait for all listed phases to complete |
+| `srcEntityId` | int | Optional CTP source entity ID | Optional entity field; empty defaults to the application value |
+| `dstEntityId` | int | Optional CTP destination entity ID | Optional entity field; empty defaults to the application value |
 | `srcPortId` | int | Optional source endpoint port ID | Trailing field; empty means any source endpoint port |
 | `dstPortId` | int | Optional destination endpoint port ID | Trailing field; empty means any destination endpoint port |
 
-An explicit `0` selects endpoint port 0; an empty cell is a wildcard. The four endpoint fields
-`sourceNode,destNode,srcPortId,dstPortId` identify the requested endpoint pair when either port is
-specified. The simulator derives protocol-specific internal state from that pair; traffic files do
-not contain Entity IDs.
+An explicit `0` selects endpoint port 0; an empty port cell is a wildcard. The endpoint fields
+`sourceNode,destNode,srcPortId,dstPortId` constrain routing, while CTP Entity IDs identify the
+transaction context independently.
 
 ### Valid `opType` values
 

@@ -1210,11 +1210,11 @@ class UbTrafficConfigEndpointPortFieldsTest : public TestCase
 };
 
 #ifndef _WIN32
-class UbTrafficConfigRejectsLegacyEntityHeaderTest : public TestCase
+class UbTrafficConfigEntityAndEndpointPortFieldsTest : public TestCase
 {
   public:
-    UbTrafficConfigRejectsLegacyEntityHeaderTest()
-        : TestCase("UnifiedBus - traffic parser rejects legacy Entity-ID columns")
+    UbTrafficConfigEntityAndEndpointPortFieldsTest()
+        : TestCase("UnifiedBus - traffic parser preserves entity ids alongside endpoint ports")
     {
     }
 
@@ -1222,24 +1222,53 @@ class UbTrafficConfigRejectsLegacyEntityHeaderTest : public TestCase
     void DoRun() override
     {
         const auto trafficPath =
-            std::filesystem::temp_directory_path() / "ub-traffic-config-legacy-entity-fields.csv";
+            std::filesystem::temp_directory_path() / "ub-traffic-config-entity-and-port-fields.csv";
         {
             std::ofstream trafficFile(trafficPath);
             NS_TEST_ASSERT_MSG_EQ(trafficFile.good(), true, "temporary traffic file should open");
             trafficFile << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
-                          "dependOnPhases,srcEntityId,dstEntityId\n";
-            trafficFile << "1,2,3,64,URMA_WRITE,1,0ns,10,,11,12\n";
+                           "dependOnPhases,srcEntityId,dstEntityId,srcPortId,dstPortId\n";
+            trafficFile << "1,2,3,64,URMA_WRITE,1,0ns,10,,11,12,0,\n";
         }
 
-        const int status = RunInChildProcess([trafficPath]() {
-            UbUtils::Get()->ForEachTrafficRecordView(trafficPath.string(),
-                                                     [](const TrafficRecordView&) {});
-        });
-        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, "legacy Entity-ID header should abort");
-        if (WIFSIGNALED(status))
-        {
-            NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status), SIGABRT, "legacy header should fail fast");
-        }
+        const auto records = UbUtils::Get()->LoadTrafficConfig(trafficPath.string());
+        NS_TEST_ASSERT_MSG_EQ(records.size(), 1u, "entity-and-port row should load");
+        NS_TEST_ASSERT_MSG_EQ(records[0].srcEntityId, 11u, "source entity should be preserved");
+        NS_TEST_ASSERT_MSG_EQ(records[0].dstEntityId, 12u, "destination entity should be preserved");
+        NS_TEST_ASSERT_MSG_EQ(records[0].hasSrcEntityId,
+                              true,
+                              "source entity column should be present");
+        NS_TEST_ASSERT_MSG_EQ(records[0].hasDstEntityId,
+                              true,
+                              "destination entity column should be present");
+        NS_TEST_ASSERT_MSG_EQ(records[0].srcPortId, 0u, "explicit source port 0 should be preserved");
+        NS_TEST_ASSERT_MSG_EQ(records[0].hasSrcPortId,
+                              true,
+                              "explicit source port 0 should not be wildcard");
+        NS_TEST_ASSERT_MSG_EQ(records[0].hasDstPortId,
+                              false,
+                              "empty destination port should remain wildcard");
+
+        bool sawView = false;
+        UbUtils::Get()->ForEachTrafficRecordView(
+            trafficPath.string(),
+            [this, &sawView](const TrafficRecordView& record) {
+                sawView = true;
+                NS_TEST_ASSERT_MSG_EQ(record.srcEntityId,
+                                      11u,
+                                      "streaming view should preserve source entity");
+                NS_TEST_ASSERT_MSG_EQ(record.dstEntityId,
+                                      12u,
+                                      "streaming view should preserve destination entity");
+                NS_TEST_ASSERT_MSG_EQ(record.hasSrcPortId,
+                                      true,
+                                      "streaming view should preserve explicit source port 0");
+                NS_TEST_ASSERT_MSG_EQ(record.hasDstPortId,
+                                      false,
+                                      "streaming view should preserve wildcard destination port");
+            });
+        NS_TEST_ASSERT_MSG_EQ(sawView, true, "entity-and-port row should stream");
+
         std::filesystem::remove(trafficPath);
     }
 };
@@ -1406,11 +1435,11 @@ class UbTrafficGenRuntimeTaskEndpointPortFieldsTest : public TestCase
     }
 };
 
-class UbAppCtpRuntimeTaskEndpointPortDerivationTest : public TestCase
+class UbAppCtpRuntimeTaskEntityAndEndpointPortTest : public TestCase
 {
   public:
-    UbAppCtpRuntimeTaskEndpointPortDerivationTest()
-        : TestCase("UnifiedBus - app CTP runtime task path derives Entity ids from endpoint ports")
+    UbAppCtpRuntimeTaskEntityAndEndpointPortTest()
+        : TestCase("UnifiedBus - app CTP runtime task keeps entity ids independent of endpoint ports")
     {
     }
 
@@ -1423,6 +1452,8 @@ class UbAppCtpRuntimeTaskEndpointPortDerivationTest : public TestCase
         Ptr<UbApp> app = CreateObject<UbApp>();
         node->AddApplication(app);
         app->SetTransportMode(TransportMode::CTP);
+        app->SetLocalEntityId(21);
+        app->SetPeerEntityId(22);
 
         UbTrafficGen::RuntimeTask task;
         task.taskId = 2;
@@ -1432,6 +1463,10 @@ class UbAppCtpRuntimeTaskEndpointPortDerivationTest : public TestCase
         task.phaseId = 1;
         task.priority = 5;
         task.op = UbTrafficGen::RuntimeTaskOp::URMA_WRITE;
+        task.srcEntityId = 31;
+        task.dstEntityId = 32;
+        task.hasSrcEntityId = true;
+        task.hasDstEntityId = true;
         task.srcPortId = 0;
         task.dstPortId = 0;
         task.hasSrcPortId = true;
@@ -1439,16 +1474,16 @@ class UbAppCtpRuntimeTaskEndpointPortDerivationTest : public TestCase
 
         const uint32_t initialTransportCount = controller->GetTransportChannelManager()->GetCount();
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-        service->SetSourcePortHint(UbCtpEntityKey{.srcEntityId = 1,
+        service->SetSourcePortHint(UbCtpEntityKey{.srcEntityId = 31,
                                                   .dstNodeId = 4,
-                                                  .dstEntityId = 1,
+                                                  .dstEntityId = 32,
                                                   .vl = 5},
                                    0);
         app->SendTraffic(task);
 
-        UbCtpEntityKey explicitKey{.srcEntityId = 1,
+        UbCtpEntityKey explicitKey{.srcEntityId = 31,
                                    .dstNodeId = 4,
-                                   .dstEntityId = 1,
+                                   .dstEntityId = 32,
                                    .vl = 5};
         UbCtpEntityKey fallbackKey{.srcEntityId = 21,
                                    .dstNodeId = 4,
@@ -1457,11 +1492,10 @@ class UbAppCtpRuntimeTaskEndpointPortDerivationTest : public TestCase
 
         NS_TEST_ASSERT_MSG_EQ(service->HasTransactionContextForTesting(explicitKey),
                               true,
-                              "runtime CTP branch should create the Entity context derived from "
-                              "port 0");
+                              "runtime CTP branch should preserve traffic entity ids");
         NS_TEST_ASSERT_MSG_EQ(service->HasTransactionContextForTesting(fallbackKey),
                               false,
-                              "traffic-derived Entity ids must not fall back to app defaults");
+                              "explicit traffic entity ids must not fall back to app defaults");
         NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(explicitKey),
                               1u,
                               "runtime CTP branch should drain the single WQE segment into the explicit key queue");
@@ -28178,6 +28212,75 @@ class UbCtpLocalDataPacketGeneratesTaAckTest : public TestCase
     }
 };
 
+class UbCtpDelayedRemoteProcessorPreservesEndpointPortsTest : public TestCase
+{
+  public:
+    UbCtpDelayedRemoteProcessorPreservesEndpointPortsTest()
+        : TestCase("UnifiedBus - delayed CTP remote processor preserves reversed endpoint ports")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        LocalTpTopology topo = BuildLocalTpTopology();
+        Ptr<UbCtpTransportService> senderService =
+            topo.sender->GetObject<UbController>()->GetCtpTransportService();
+        Ptr<UbController> receiverController = topo.receiver->GetObject<UbController>();
+        Ptr<UbCtpTransportService> receiverService = receiverController->GetCtpTransportService();
+
+        UbCtpEntityKey requestKey{.srcEntityId = 41,
+                                  .dstNodeId = topo.receiver->GetId(),
+                                  .dstEntityId = 42,
+                                  .vl = 7};
+        senderService->SetSourcePortHint(requestKey, topo.senderPort->GetIfIndex());
+        senderService->SetDestinationPortHint(requestKey, topo.receiverPort->GetIfIndex());
+        receiverController->GetUbTransaction()->SetRemoteUrmaRequestProcessor(
+            UbRemoteUrmaRequestProcessor(
+                [](const UbRemoteUrmaRequestContext&, UbRemoteUrmaResponseSender responseSender) {
+                    Simulator::Schedule(NanoSeconds(1), responseSender);
+                    return true;
+                }));
+
+        Ptr<UbWqeSegment> request = CreateCtpWriteSegment(0);
+        request->SetSrc(topo.sender->GetId());
+        request->SetDest(topo.receiver->GetId());
+        Ptr<Packet> requestPacket = senderService->BuildDataPacket(request, requestKey);
+        topo.receiver->GetObject<UbSwitch>()->SwitchHandlePacket(topo.receiverPort, requestPacket);
+        Simulator::Run();
+
+        UbCtpEntityKey responseKey{.srcEntityId = requestKey.dstEntityId,
+                                   .dstNodeId = topo.sender->GetId(),
+                                   .dstEntityId = requestKey.srcEntityId,
+                                   .vl = requestKey.vl};
+        Ptr<UbCtpTxQueue> responseQueue = receiverService->GetOrCreateQueue(
+            responseKey, topo.receiverPort->GetIfIndex(), responseKey.vl);
+        Ptr<Packet> responsePacket = responseQueue->GetNextPacket();
+        NS_TEST_ASSERT_MSG_NE(responsePacket,
+                              nullptr,
+                              "delayed remote processor should enqueue a CTP response");
+        if (responsePacket != nullptr)
+        {
+            UbDatalinkPacketHeader datalinkHeader;
+            responsePacket->RemoveHeader(datalinkHeader);
+            UbCna16NetworkHeader cnaHeader;
+            responsePacket->RemoveHeader(cnaHeader);
+            NS_TEST_ASSERT_MSG_EQ(
+                cnaHeader.GetScna(),
+                static_cast<uint16_t>(
+                    NodeIdToCna16(topo.receiver->GetId(), topo.receiverPort->GetIfIndex())),
+                "delayed response should retain the request destination endpoint as its source");
+            NS_TEST_ASSERT_MSG_EQ(
+                cnaHeader.GetDcna(),
+                static_cast<uint16_t>(
+                    NodeIdToCna16(topo.sender->GetId(), topo.senderPort->GetIfIndex())),
+                "delayed response should retain the request source endpoint as its destination");
+        }
+
+        Simulator::Destroy();
+    }
+};
+
 class UbCtpTaAckInheritsPacketSprayRoutingPolicyTest : public TestCase
 {
   public:
@@ -30558,12 +30661,12 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbControllerCtpLazyServiceTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTrafficConfigEndpointPortFieldsTest(), TestCase::Duration::QUICK);
 #ifndef _WIN32
-    AddTestCase(new UbTrafficConfigRejectsLegacyEntityHeaderTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbTrafficConfigEntityAndEndpointPortFieldsTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTrafficConfigRejectsRowHeaderWidthMismatchTest(), TestCase::Duration::QUICK);
 #endif
     AddTestCase(new UbAppCtpTransportModeEntryTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTrafficGenRuntimeTaskEndpointPortFieldsTest(), TestCase::Duration::QUICK);
-    AddTestCase(new UbAppCtpRuntimeTaskEndpointPortDerivationTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbAppCtpRuntimeTaskEntityAndEndpointPortTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbAppCtpAdmissionBackpressurePreservesJettyTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbAppCtpForwardsRoutingTypeToServiceTest(), TestCase::Duration::QUICK);
@@ -30598,6 +30701,8 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbCtpBuildDataPacketHeaderTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpBuildResponsePacketTaAckTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpLocalDataPacketGeneratesTaAckTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpDelayedRemoteProcessorPreservesEndpointPortsTest(),
+                TestCase::Duration::QUICK);
     AddTestCase(new UbCtpTaAckInheritsPacketSprayRoutingPolicyTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpCompactQueueCarriesLocalGenerationMetadataTest(),
                 TestCase::Duration::QUICK);

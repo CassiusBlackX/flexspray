@@ -1392,9 +1392,16 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t receive
         return true;
     }
 
-    if (!RoutingTypeIsPerPacket(linkHeader.GetRoutingType()) && receivePort < 15)
+    const bool requestDestinationPortExplicit = (cnaHeader.GetDcna() & 0xF) != 0;
+    if (receivePort < 15 &&
+        (!RoutingTypeIsPerPacket(linkHeader.GetRoutingType()) || requestDestinationPortExplicit))
     {
         SetSourcePortHint(localKey, receivePort);
+    }
+    const bool requestSourcePortExplicit = (cnaHeader.GetScna() & 0xF) != 0;
+    if (requestSourcePortExplicit)
+    {
+        SetDestinationPortHint(localKey, utils::Cna16ToPortId(cnaHeader.GetScna()));
     }
     localState.Tx().routing.routingType = linkHeader.GetRoutingType();
 
@@ -1421,19 +1428,6 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t receive
     }
     ++localState.Rx().generatedResponses;
 
-    const bool requestDestinationPortExplicit = (cnaHeader.GetDcna() & 0xF) != 0;
-    if (receivePort < 15 &&
-        (!RoutingTypeIsPerPacket(linkHeader.GetRoutingType()) || requestDestinationPortExplicit))
-    {
-        SetSourcePortHint(localKey, receivePort);
-    }
-    const bool requestSourcePortExplicit = (cnaHeader.GetScna() & 0xF) != 0;
-    if (requestSourcePortExplicit)
-    {
-        const uint32_t sourcePort = utils::Cna16ToPortId(cnaHeader.GetScna());
-        SetDestinationPortHint(localKey, sourcePort);
-    }
-    localState.Tx().routing.routingType = linkHeader.GetRoutingType();
     const bool sent = SendResponseSegment(response, localState);
     TryRetireTransactionState(localKey);
     return sent;
