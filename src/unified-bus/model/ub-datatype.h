@@ -350,6 +350,26 @@ public:
         return m_dest;
     }
 
+    bool HasSrcPortId() const
+    {
+        return m_hasSrcPortId;
+    }
+
+    bool HasDstPortId() const
+    {
+        return m_hasDstPortId;
+    }
+
+    uint32_t GetSrcPortId() const
+    {
+        return m_srcPortId;
+    }
+
+    uint32_t GetDstPortId() const
+    {
+        return m_dstPortId;
+    }
+
     UbMemOperationType GetType() const
     {
         return m_type;
@@ -378,6 +398,18 @@ public:
     void SetDest(uint32_t dest)
     {
         m_dest = dest;
+    }
+
+    void SetSrcPortId(uint32_t portId)
+    {
+        m_srcPortId = portId;
+        m_hasSrcPortId = true;
+    }
+
+    void SetDstPortId(uint32_t portId)
+    {
+        m_dstPortId = portId;
+        m_hasDstPortId = true;
     }
 
     void SetType(UbMemOperationType type)
@@ -480,6 +512,10 @@ private:
     // ========== 任务描述信息 ==========
     uint32_t m_src;                 // 源节点标识符
     uint32_t m_dest;                // 目的节点标识符
+    uint32_t m_srcPortId{0};
+    uint32_t m_dstPortId{0};
+    bool m_hasSrcPortId{false};
+    bool m_hasDstPortId{false};
     UbMemOperationType m_type = UbMemOperationType::STORE; // 操作类型
     uint32_t m_size = 0;                                     // MemTask数据大小 (字节)
     UbPriority m_priority = UB_PRIORITY_DEFAULT;             // MemTask优先级 (0-15, 0最高)

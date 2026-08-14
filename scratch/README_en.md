@@ -478,8 +478,10 @@ uses existing TP Channel / TPG behavior.
 In `CTP` mode, CTP traffic does not use RTP TP mappings from `transport_channel.csv`.
 The file may still be present and loaded during setup, but CTP does not create RTP TP
 channels and does not use TPN, PSN, TPACK, TPNAK, TPSACK, or end-to-end RTP retransmission.
-Optional `traffic.csv` fields `srcEntityId` and `dstEntityId` select CTP entities; missing
-fields default to `0`.
+Optional `traffic.csv` fields `srcPortId` and `dstPortId` constrain the source and destination
+endpoint ports independently; an empty field leaves that endpoint unconstrained. In CTP mode,
+the application derives internal Entity identifiers from these endpoint constraints, so Entity
+IDs are not part of the traffic-file interface.
 
 ### TPN in the code (what it does and how to set it)
 
@@ -499,7 +501,11 @@ TP channel and TP group in code:
 Schema:
 ```
 taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases
+taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,srcPortId,dstPortId
 ```
+
+Use the nine-column form when no endpoint-port constraint is needed. Use the eleven-column form
+when either endpoint port is constrained.
 
 Recommendation: Generate `traffic.csv` (e.g., all-to-all, RDMA-like patterns, collective-like workloads) via `scratch/ns-3-ub-tools/traffic_maker/`. See `traffic_maker/README.md` in the `open-usim/ns-3-ub-tools` submodule repository.
 - `taskId` — integer ID (unique per file).
@@ -510,6 +516,9 @@ Recommendation: Generate `traffic.csv` (e.g., all-to-all, RDMA-like patterns, co
 - `delay` — schedule offset relative to simulation start (Time).
 - `phaseId` — integer phase tag; tasks with the same phase can run concurrently.
 - `dependOnPhases` — optional list (space-separated) of phase IDs that must complete before this task’s phase starts.
+- `srcPortId` / `dstPortId` — optional trailing endpoint-port constraints. Add both columns when
+  using them; each cell may be empty independently. An explicit `0` means port 0, while an empty
+  cell means any endpoint port.
 
 Numeric field rules:
 - `taskId`, `sourceNode`, `destNode`, `dataSize(Byte)`, `priority`, `phaseId`, and each `dependOnPhases` token are parsed as unsigned decimal integers.
@@ -526,7 +535,7 @@ Examples:
 
 Current URMA read/write constraints in `traffic.csv`:
 - `URMA_WRITE` and `URMA_READ` do not require extra CSV columns for remote address, token, local address, or read offset in this iteration.
-- In `CTP` mode, `URMA_WRITE` and `URMA_READ` may use optional trailing `srcEntityId,dstEntityId` columns. Missing values default to entity `0`.
+- In `CTP` mode, `URMA_WRITE` and `URMA_READ` may use optional trailing `srcPortId,dstPortId` columns. Entity IDs remain an internal CTP detail and are derived from the endpoint constraints.
 - `URMA_WRITE` and `URMA_READ` complete on transaction responses (`TAACK` / `READ_RESPONSE`), not when the request's TP ACK arrives.
 - Only the ROI success path is modeled for URMA read/write at the transaction layer right now; other service modes are rejected explicitly.
 - `URMA_READ` is sliced at the TA layer. Each read request slice sends exactly one TP request packet with zero wire payload; the logical slice length is carried in `MAETAH.Length`.

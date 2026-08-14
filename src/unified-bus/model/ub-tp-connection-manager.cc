@@ -2,8 +2,10 @@
 #include "ns3/ub-tp-connection-manager.h"
 #include "ns3/ub-controller.h"
 #include "ns3/node-list.h"
+#include "ns3/ub-port.h"
 #include "ns3/ub-utils.h"
 
+#include <algorithm>
 #include <limits>
 
 using namespace ns3;
@@ -181,29 +183,48 @@ std::vector<uint32_t> TpConnectionManager::GetTpns(GetTpnRuleT ruler,
     std::vector<std::pair<uint32_t, uint32_t>> resWithMetrics;
     std::vector<uint32_t> tpns;
     uint32_t minMetrics = UINT32_MAX;
-    switch (ruler) {
-        case GetTpnRuleT::BY_PEERNODE:
-            resWithMetrics = GetTpnsByPeerNode(localNodeId, peerNodeId);
-            break;
-        case GetTpnRuleT::BY_PEERNODE_PRIORITY:
-            resWithMetrics = GetTpnsByPeerNodePriority(localNodeId, peerNodeId, priority);
-            break;
-        case GetTpnRuleT::BY_PEERNODE_LOCALPORT:
-            resWithMetrics = GetTpnsByPeerNodeLocalPort(localNodeId, peerNodeId, localPort);
-            break;
-        case GetTpnRuleT::BY_PEERNODE_BOTHPORTS:
-            resWithMetrics = GetTpnsByPeerNodeBothPorts(localNodeId, peerNodeId, localPort, peerPort);
-            break;
-        case GetTpnRuleT::BY_ALL:
-            resWithMetrics = GetTpnsByFullCriteria(localNodeId, peerNodeId, localPort, peerPort, priority);
-            break;
-        default:
-            break;
+    if (localPort != UINT32_MAX || peerPort != UINT32_MAX)
+    {
+        resWithMetrics = GetTpnsByTrafficCriteria(localNodeId,
+                                                   peerNodeId,
+                                                   localPort,
+                                                   peerPort,
+                                                   priority);
+    }
+    else
+    {
+        switch (ruler)
+        {
+            case GetTpnRuleT::BY_PEERNODE:
+                resWithMetrics = GetTpnsByPeerNode(localNodeId, peerNodeId);
+                break;
+            case GetTpnRuleT::BY_PEERNODE_PRIORITY:
+                resWithMetrics = GetTpnsByPeerNodePriority(localNodeId, peerNodeId, priority);
+                break;
+            case GetTpnRuleT::BY_PEERNODE_LOCALPORT:
+                resWithMetrics = GetTpnsByPeerNodeLocalPort(localNodeId, peerNodeId, localPort);
+                break;
+            case GetTpnRuleT::BY_PEERNODE_BOTHPORTS:
+                resWithMetrics =
+                    GetTpnsByPeerNodeBothPorts(localNodeId, peerNodeId, localPort, peerPort);
+                break;
+            case GetTpnRuleT::BY_ALL:
+                resWithMetrics =
+                    GetTpnsByFullCriteria(localNodeId, peerNodeId, localPort, peerPort, priority);
+                break;
+            default:
+                break;
+        }
     }
     if (resWithMetrics.empty())
     {
         resWithMetrics =
-            ReserveNewTpConnections(localNodeId, peerNodeId, priority, useShortestPath);
+            ReserveNewTpConnections(localNodeId,
+                                     peerNodeId,
+                                     priority,
+                                     useShortestPath,
+                                     localPort,
+                                     peerPort);
     }
 
     for (auto p : resWithMetrics) {
@@ -224,29 +245,45 @@ void
 TpConnectionManager::ReserveTpnsForTraffic(bool useShortestPath,
                                            uint32_t localNodeId,
                                            uint32_t peerNodeId,
-                                           uint32_t priority)
+                                           uint32_t priority,
+                                           uint32_t localPort,
+                                           uint32_t peerPort)
 {
     std::lock_guard<std::mutex> controlLock(g_tpConnectionControlLock);
-    if (!GetTpnsByPeerNodePriority(localNodeId, peerNodeId, priority).empty())
+    if (!GetTpnsByTrafficCriteria(localNodeId, peerNodeId, localPort, peerPort, priority).empty())
     {
         return;
     }
-    ReserveNewTpConnections(localNodeId, peerNodeId, priority, useShortestPath);
+    ReserveNewTpConnections(localNodeId,
+                            peerNodeId,
+                            priority,
+                            useShortestPath,
+                            localPort,
+                            peerPort);
 }
 
 std::vector<UbLifecycleResourceIdentity>
 TpConnectionManager::ReservePlannedTpnsForTraffic(bool useShortestPath,
                                                   uint32_t localNodeId,
                                                   uint32_t peerNodeId,
-                                                  uint32_t priority)
+                                                  uint32_t priority,
+                                                  uint32_t localPort,
+                                                  uint32_t peerPort)
 {
     std::lock_guard<std::mutex> controlLock(g_tpConnectionControlLock);
-    if (!GetTpnsByPeerNodePriority(localNodeId, peerNodeId, priority).empty())
+    const auto existing =
+        GetTpnsByTrafficCriteria(localNodeId, peerNodeId, localPort, peerPort, priority);
+    if (!existing.empty())
     {
         return {};
     }
     const auto reserved =
-        ReserveNewTpConnections(localNodeId, peerNodeId, priority, useShortestPath);
+        ReserveNewTpConnections(localNodeId,
+                                 peerNodeId,
+                                 priority,
+                                 useShortestPath,
+                                 localPort,
+                                 peerPort);
     std::vector<UbLifecycleResourceIdentity> identities;
     identities.reserve(reserved.size());
     for (const auto& [tpn, metric] : reserved)
@@ -395,6 +432,48 @@ std::vector<std::pair<uint32_t, uint32_t>> TpConnectionManager::GetTpnsByFullCri
             if (isMatch) {
                 tpns.push_back(std::make_pair(localTpn, conn.metrics));
             }
+        }
+    }
+    return tpns;
+}
+
+std::vector<std::pair<uint32_t, uint32_t>>
+TpConnectionManager::GetTpnsByTrafficCriteria(uint32_t localNodeId,
+                                              uint32_t peerNodeId,
+                                              uint32_t localPort,
+                                              uint32_t peerPort,
+                                              uint32_t priority) const
+{
+    std::vector<std::pair<uint32_t, uint32_t>> tpns;
+    std::lock_guard<std::mutex> lock(m_stateLock);
+    const auto it = m_nodeConnections.find(localNodeId);
+    if (it == m_nodeConnections.end())
+    {
+        return tpns;
+    }
+
+    for (const LocalConnectionRef& ref : it->second)
+    {
+        const Connection* connection = ResolveConnectionRefLocked(ref);
+        NS_ABORT_MSG_IF(connection == nullptr,
+                        "Node index contains a stale connection view");
+        uint32_t localTpn = 0;
+        bool matches = false;
+        if (connection->node1 == localNodeId && connection->node2 == peerNodeId)
+        {
+            matches = (localPort == UINT32_MAX || connection->port1 == localPort) &&
+                      (peerPort == UINT32_MAX || connection->port2 == peerPort);
+            localTpn = connection->tpn1;
+        }
+        else if (connection->node2 == localNodeId && connection->node1 == peerNodeId)
+        {
+            matches = (localPort == UINT32_MAX || connection->port2 == localPort) &&
+                      (peerPort == UINT32_MAX || connection->port1 == peerPort);
+            localTpn = connection->tpn2;
+        }
+        if (matches && connection->priority == priority)
+        {
+            tpns.emplace_back(localTpn, connection->metrics);
         }
     }
     return tpns;
@@ -1526,23 +1605,67 @@ std::vector<std::pair<uint32_t, uint32_t>>
 TpConnectionManager::ReserveNewTpConnections(uint32_t src,
                                              uint32_t dst,
                                              uint32_t priority,
-                                             bool useShortestPath)
+                                             bool useShortestPath,
+                                             uint32_t localPort,
+                                             uint32_t peerPort)
 {
     std::vector<std::pair<uint32_t, uint32_t>> tpns;
+    Ptr<Node> sourceNode = NodeList::GetNode(src);
+    Ptr<Node> destinationNode = NodeList::GetNode(dst);
+    NS_ABORT_MSG_IF(localPort != UINT32_MAX &&
+                        (localPort >= sourceNode->GetNDevices() ||
+                         DynamicCast<UbPort>(sourceNode->GetDevice(localPort)) == nullptr),
+                    "Requested RTP source endpoint port is unavailable on node "
+                        << src << ": " << localPort);
+    NS_ABORT_MSG_IF(peerPort != UINT32_MAX &&
+                        (peerPort >= destinationNode->GetNDevices() ||
+                         DynamicCast<UbPort>(destinationNode->GetDevice(peerPort)) == nullptr),
+                    "Requested RTP destination endpoint port is unavailable on node "
+                        << dst << ": " << peerPort);
     // 目标节点+端口的ip地址，出端口和跳数pair 的 vector
     std::map<Ipv4Address, std::vector<std::pair<uint16_t, uint32_t>>> routingEntries;
     // 查找路由，寻找从本节点到目的节点的路径
-    Ptr<UbRoutingProcess> rt = NodeList::GetNode(src)->GetObject<UbSwitch>()->GetRoutingProcess();
-    for (uint32_t dstPort = 0; dstPort < NodeList::GetNode(dst)->GetNDevices(); dstPort++) {
+    Ptr<UbRoutingProcess> rt = sourceNode->GetObject<UbSwitch>()->GetRoutingProcess();
+    for (uint32_t dstPort = 0; dstPort < destinationNode->GetNDevices(); dstPort++) {
+        if (peerPort != UINT32_MAX && dstPort != peerPort)
+        {
+            continue;
+        }
         // 查找去往该ip的出端口，若非空则记录
         Ipv4Address dstPortIp = NodeIdToIp(dst, dstPort);
         std::vector<uint16_t> shortestOutPortsVec, otherOutPortsVec;
-        if (!rt->TryGetRuleCandidates(dstPortIp.Get(),
-                                      shortestOutPortsVec,
-                                      otherOutPortsVec))
+        const bool hasExactDestinationPort = peerPort != UINT32_MAX;
+        const bool handledByRule = hasExactDestinationPort
+                                       ? rt->TryGetRuleCandidatesExact(dstPortIp.Get(),
+                                                                        shortestOutPortsVec,
+                                                                        otherOutPortsVec)
+                                       : rt->TryGetRuleCandidatesWithPrimaryFallback(
+                                             dstPortIp.Get(),
+                                             UINT16_MAX,
+                                             shortestOutPortsVec,
+                                             otherOutPortsVec);
+        if (!handledByRule)
         {
             rt->GetShortestOutPorts(dstPortIp.Get(), shortestOutPortsVec);
             rt->GetOtherOutPorts(dstPortIp.Get(), otherOutPortsVec);
+        }
+        if (localPort != UINT32_MAX)
+        {
+            const auto matchesLocalPort = [localPort](uint16_t outPort) {
+                return outPort == localPort;
+            };
+            shortestOutPortsVec.erase(std::remove_if(shortestOutPortsVec.begin(),
+                                                     shortestOutPortsVec.end(),
+                                                     [&](uint16_t outPort) {
+                                                         return !matchesLocalPort(outPort);
+                                                     }),
+                                      shortestOutPortsVec.end());
+            otherOutPortsVec.erase(std::remove_if(otherOutPortsVec.begin(),
+                                                  otherOutPortsVec.end(),
+                                                  [&](uint16_t outPort) {
+                                                      return !matchesLocalPort(outPort);
+                                                  }),
+                                   otherOutPortsVec.end());
         }
         if (!shortestOutPortsVec.empty()) {
             routingEntries[dstPortIp] = std::vector<std::pair<uint16_t, uint32_t>>();
@@ -1567,8 +1690,8 @@ TpConnectionManager::ReserveNewTpConnections(uint32_t src,
         uint32_t dstPort = IpToPortId(dstIp);
         for (auto outPortIt = it->second.begin(); outPortIt != it->second.end(); outPortIt++) {
             // 无论是否创建TP，都建立connection记录，以供后续所有源目的节点相同的流使用
-            Ptr<ns3::UbController> sendCtrl = NodeList::GetNode(src)->GetObject<ns3::UbController>();
-            Ptr<ns3::UbController> recvCtrl = NodeList::GetNode(dst)->GetObject<ns3::UbController>();
+            Ptr<ns3::UbController> sendCtrl = sourceNode->GetObject<ns3::UbController>();
+            Ptr<ns3::UbController> recvCtrl = destinationNode->GetObject<ns3::UbController>();
             Connection conn;
             conn.node1 = src;
             conn.port1 = outPortIt->first;

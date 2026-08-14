@@ -29,11 +29,15 @@ Only offer the three most relevant template choices.
 
 All workload paths — built-in generator, reference file, or custom skeleton — must produce a CSV conforming to this schema.
 
-### Header
+### Headers
 
 ```
 taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases
+taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,srcPortId,dstPortId
 ```
+
+The nine-column header omits endpoint constraints. The eleven-column header adds the optional
+`srcPortId` and `dstPortId` fields; the two cells remain independently optional.
 
 ### Column definitions
 
@@ -48,6 +52,13 @@ taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOn
 | `delay` | string | Task start delay with time unit | e.g. `10ns`, `0ns`; valid units: `ns`, `us`, `ms`, `s` |
 | `phaseId` | int | Phase identifier | Tasks in the same phase can execute in parallel |
 | `dependOnPhases` | string | Space-separated phaseId list | Empty string for first phase; tasks wait for all listed phases to complete |
+| `srcPortId` | int | Optional source endpoint port ID | Trailing field; empty means any source endpoint port |
+| `dstPortId` | int | Optional destination endpoint port ID | Trailing field; empty means any destination endpoint port |
+
+An explicit `0` selects endpoint port 0; an empty cell is a wildcard. The four endpoint fields
+`sourceNode,destNode,srcPortId,dstPortId` identify the requested endpoint pair when either port is
+specified. The simulator derives protocol-specific internal state from that pair; traffic files do
+not contain Entity IDs.
 
 ### Valid `opType` values
 

@@ -47,14 +47,25 @@ class LifecycleCorpusContractTest(unittest.TestCase):
         self.assertEqual(rules[0]["psn"], "1")
         self.assertEqual(rules[0]["dropCount"], "1")
 
-    def test_ctp_case_spans_entities_vls_and_queue_evidence(self):
+    def test_ctp_case_uses_endpoint_ports_vls_and_queue_evidence(self):
         case_id = "medium-ctp-entity-vl-pressure"
         attributes = self.read_text(case_id, "network_attribute.txt")
         traffic = self.read_csv(case_id, "traffic.csv")
         self.assertIn('default ns3::UbApp::TransportMode "CTP"', attributes)
         self.assertIn('global UB_QUEUE_TRACE_ENABLE "true"', attributes)
-        self.assertGreater(len({row["srcEntityId"] for row in traffic}), 1)
-        self.assertGreater(len({row["dstEntityId"] for row in traffic}), 1)
+        self.assertEqual(
+            {(row["srcPortId"], row["dstPortId"]) for row in traffic},
+            {("", ""), ("", "0"), ("0", ""), ("0", "0")},
+        )
+        self.assertEqual(
+            len(
+                {
+                    (row["sourceNode"], row["srcPortId"], row["destNode"], row["dstPortId"])
+                    for row in traffic
+                }
+            ),
+            4,
+        )
         self.assertGreater(len({row["priority"] for row in traffic}), 1)
 
     def test_cross_owner_case_binds_two_ranks_and_positive_link_delay(self):

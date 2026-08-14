@@ -715,16 +715,60 @@ uint32_t ActivateTrafficFromConfig(const std::string& configPath,
 
     uint32_t localTaskCount = 0;
     std::vector<Ptr<UbApp>> sourceApps;
-    using PlannedConnectionKey = std::tuple<uint32_t, uint32_t, uint8_t>;
-    std::map<PlannedConnectionKey, std::vector<UbLifecycleResourceIdentity>>
-        driverOwnedConnections;
+    using PlannedConnectionKey =
+        std::tuple<uint32_t, uint32_t, bool, uint32_t, bool, uint32_t, uint8_t>;
+    std::map<PlannedConnectionKey, std::vector<UbLifecycleResourceIdentity>> driverOwnedConnections;
+    const auto findDriverOwnedConnections = [&](const TrafficRecordView& record) {
+        std::vector<UbLifecycleResourceIdentity> identities;
+        const auto matchesTraffic = [&](const Connection& connection) {
+            if (connection.priority != record.priority ||
+                !((connection.node1 == record.sourceNode && connection.node2 == record.destNode) ||
+                  (connection.node1 == record.destNode && connection.node2 == record.sourceNode)))
+            {
+                return false;
+            }
+
+            const bool sourceIsNode1 = connection.node1 == record.sourceNode;
+            const uint32_t sourcePort = sourceIsNode1 ? connection.port1 : connection.port2;
+            const uint32_t destinationPort = sourceIsNode1 ? connection.port2 : connection.port1;
+            return (!record.hasSrcPortId || sourcePort == record.srcPortId) &&
+                   (!record.hasDstPortId || destinationPort == record.dstPortId);
+        };
+
+        for (const auto& [unusedKey, reserved] : driverOwnedConnections)
+        {
+            (void)unusedKey;
+            for (const auto& identity : reserved)
+            {
+                Ptr<Node> ownerNode = NodeList::GetNode(identity.ownerNodeId);
+                Ptr<UbController> ownerController = ownerNode->GetObject<UbController>();
+                if (ownerController == nullptr)
+                {
+                    continue;
+                }
+                Connection connection;
+                if (!ownerController->GetTpConnManager()->TryGetLocalConnection(
+                        identity.ownerNodeId,
+                        identity.localId,
+                        connection) ||
+                    !matchesTraffic(connection))
+                {
+                    continue;
+                }
+                if (std::find(identities.begin(), identities.end(), identity) == identities.end())
+                {
+                    identities.push_back(identity);
+                }
+            }
+        }
+        return identities;
+    };
     Ptr<UbApp> appDefaults = CreateObject<UbApp>();
     UbUtils::Get()->PrintTimestamp("[traffic] Activate clients and enqueue tasks.");
     UbUtils::Get()->ForEachTrafficRecordView(trafficPath, [&](const TrafficRecordView& record) {
         Ptr<Node> sourceNode = NodeList::GetNode(record.sourceNode);
-        const bool localOwned =
-            !activateLocalOwnedTasksOnly ||
-            UbUtils::ExtractMpiRank(sourceNode->GetSystemId()) == mpiRank;
+        const bool localOwned = !activateLocalOwnedTasksOnly ||
+                                UbUtils::ExtractMpiRank(sourceNode->GetSystemId()) == mpiRank;
 
         if (static_cast<size_t>(record.sourceNode) >= sourceApps.size())
         {
@@ -768,12 +812,9 @@ uint32_t ActivateTrafficFromConfig(const std::string& configPath,
             }
         }
 
-        const bool reserveRtpConnections =
-            configuredApp->GetTransportMode() == TransportMode::RTP;
-        const bool useShortestPaths =
-            RoutingTypeUsesShortestPaths(configuredApp->GetRoutingType());
-        const bool managePlannedConnections =
-            configuredApp->IsPlannedTpConnectionDestroyEnabled();
+        const bool reserveRtpConnections = configuredApp->GetTransportMode() == TransportMode::RTP;
+        const bool useShortestPaths = RoutingTypeUsesShortestPaths(configuredApp->GetRoutingType());
+        const bool managePlannedConnections = configuredApp->IsPlannedTpConnectionDestroyEnabled();
         if (!managePlannedConnections && reserveRtpConnections &&
             (record.opType == "URMA_WRITE" || record.opType == "URMA_READ"))
         {
@@ -781,7 +822,9 @@ uint32_t ActivateTrafficFromConfig(const std::string& configPath,
                 useShortestPaths,
                 record.sourceNode,
                 record.destNode,
-                record.priority);
+                record.priority,
+                record.hasSrcPortId ? record.srcPortId : UINT32_MAX,
+                record.hasDstPortId ? record.dstPortId : UINT32_MAX);
         }
 
         if (localOwned)
@@ -795,22 +838,39 @@ uint32_t ActivateTrafficFromConfig(const std::string& configPath,
         {
             // A TP connection is bidirectional. Keep one ownership record for both traffic
             // directions so a reverse task cannot outlive an uncounted planned use.
-            const PlannedConnectionKey routeKey{std::min(record.sourceNode, record.destNode),
-                                                std::max(record.sourceNode, record.destNode),
-                                                record.priority};
+            const bool isCanonicalDirection = record.sourceNode <= record.destNode;
+            const PlannedConnectionKey routeKey = isCanonicalDirection
+                                                      ? PlannedConnectionKey{record.sourceNode,
+                                                                             record.destNode,
+                                                                             record.hasSrcPortId,
+                                                                             record.srcPortId,
+                                                                             record.hasDstPortId,
+                                                                             record.dstPortId,
+                                                                             record.priority}
+                                                      : PlannedConnectionKey{record.destNode,
+                                                                             record.sourceNode,
+                                                                             record.hasDstPortId,
+                                                                             record.dstPortId,
+                                                                             record.hasSrcPortId,
+                                                                             record.srcPortId,
+                                                                             record.priority};
             auto planned = driverOwnedConnections.find(routeKey);
             if (planned == driverOwnedConnections.end())
             {
                 Ptr<TpConnectionManager> manager =
                     sourceNode->GetObject<UbController>()->GetTpConnManager();
-                planned = driverOwnedConnections
-                              .emplace(routeKey,
-                                       manager->ReservePlannedTpnsForTraffic(
-                                           useShortestPaths,
-                                           record.sourceNode,
-                                           record.destNode,
-                                           record.priority))
-                              .first;
+                auto identities = findDriverOwnedConnections(record);
+                if (identities.empty())
+                {
+                    identities = manager->ReservePlannedTpnsForTraffic(
+                        useShortestPaths,
+                        record.sourceNode,
+                        record.destNode,
+                        record.priority,
+                        record.hasSrcPortId ? record.srcPortId : UINT32_MAX,
+                        record.hasDstPortId ? record.dstPortId : UINT32_MAX);
+                }
+                planned = driverOwnedConnections.emplace(routeKey, identities).first;
             }
             UbTrafficGen::Get()->RegisterPlannedTpConnections(record.taskId, planned->second);
         }

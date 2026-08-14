@@ -27,6 +27,7 @@
 #include "ns3/ub-flow-control.h"
 #include "ns3/ub-function.h"
 #include "ns3/ub-link.h"
+#include "ns3/ub-ldst-api.h"
 #include "ns3/ub-ldst-instance.h"
 #include "ns3/ub-ldst-thread.h"
 #include "ns3/ub-lifecycle.h"
@@ -1004,11 +1005,12 @@ class UbControllerCtpLazyServiceTest : public TestCase
     }
 };
 
-class UbTrafficConfigEntityFieldsTest : public TestCase
+class UbTrafficConfigEndpointPortFieldsTest : public TestCase
 {
   public:
-    UbTrafficConfigEntityFieldsTest()
-        : TestCase("UnifiedBus - traffic parser accepts optional source and destination entity ids")
+    UbTrafficConfigEndpointPortFieldsTest()
+        : TestCase(
+              "UnifiedBus - traffic parser accepts optional source and destination endpoint ports")
     {
     }
 
@@ -1016,31 +1018,73 @@ class UbTrafficConfigEntityFieldsTest : public TestCase
     void DoRun() override
     {
         const auto trafficPath =
-            std::filesystem::temp_directory_path() / "ub-traffic-config-entity-fields.csv";
+            std::filesystem::temp_directory_path() / "ub-traffic-config-endpoint-port-fields.csv";
         {
             std::ofstream trafficFile(trafficPath);
             NS_TEST_ASSERT_MSG_EQ(trafficFile.good(), true, "temporary traffic file should open");
-            trafficFile << "taskId,sourceNode,destNode,dataSize,opType,priority,delay,phaseId,"
-                           "dependOnPhases,srcEntityId,dstEntityId\r\n";
-            trafficFile << "1,2,3,64,URMA_WRITE,1,0ns,10,\r\n";
+            trafficFile << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
+                           "dependOnPhases,srcPortId,dstPortId\r\n";
+            trafficFile << "1,2,3,64,URMA_WRITE,1,0ns,10,,,\r\n";
             trafficFile << "2,4,5,128,URMA_READ,2,7ns,20,10,11,12\r\n";
             trafficFile << "3,6,7,256,URMA_WRITE,3,0ns,30,,,\r\n";
+            trafficFile << "4,8,9,512,URMA_WRITE,4,0ns,40,,0,\r\n";
+            trafficFile << "5,8,9,512,URMA_READ,4,0ns,50,,,0\r\n";
         }
 
         auto records = UbUtils::Get()->LoadTrafficConfig(trafficPath.string());
-        NS_TEST_ASSERT_MSG_EQ(records.size(), 3u, "three traffic records should load");
-        NS_TEST_ASSERT_MSG_EQ(records[0].srcEntityId, 0u, "9-field rows should default source entity to 0");
-        NS_TEST_ASSERT_MSG_EQ(records[0].dstEntityId, 0u, "9-field rows should default destination entity to 0");
-        NS_TEST_ASSERT_MSG_EQ(records[0].hasSrcEntityId, false, "9-field rows should not mark source entity present");
-        NS_TEST_ASSERT_MSG_EQ(records[0].hasDstEntityId, false, "9-field rows should not mark destination entity present");
-        NS_TEST_ASSERT_MSG_EQ(records[1].srcEntityId, 11u, "11-field rows should parse source entity");
-        NS_TEST_ASSERT_MSG_EQ(records[1].dstEntityId, 12u, "11-field rows should parse destination entity");
-        NS_TEST_ASSERT_MSG_EQ(records[1].hasSrcEntityId, true, "11-field rows should mark source entity present");
-        NS_TEST_ASSERT_MSG_EQ(records[1].hasDstEntityId, true, "11-field rows should mark destination entity present");
-        NS_TEST_ASSERT_MSG_EQ(records[2].srcEntityId, 0u, "empty source entity field should parse as 0");
-        NS_TEST_ASSERT_MSG_EQ(records[2].dstEntityId, 0u, "empty destination entity field should parse as 0");
-        NS_TEST_ASSERT_MSG_EQ(records[2].hasSrcEntityId, true, "empty 11-field source entity should still be present");
-        NS_TEST_ASSERT_MSG_EQ(records[2].hasDstEntityId, true, "empty 11-field destination entity should still be present");
+        NS_TEST_ASSERT_MSG_EQ(records.size(), 5u, "five traffic records should load");
+        NS_TEST_ASSERT_MSG_EQ(records[0].srcPortId,
+                              0u,
+                              "wildcard source port should default to 0");
+        NS_TEST_ASSERT_MSG_EQ(records[0].dstPortId,
+                              0u,
+                              "wildcard destination port should default to 0");
+        NS_TEST_ASSERT_MSG_EQ(records[0].hasSrcPortId,
+                              false,
+                              "wildcard source port should not be marked present");
+        NS_TEST_ASSERT_MSG_EQ(records[0].hasDstPortId,
+                              false,
+                              "wildcard destination port should not be marked present");
+        NS_TEST_ASSERT_MSG_EQ(records[1].srcPortId, 11u, "11-field rows should parse source port");
+        NS_TEST_ASSERT_MSG_EQ(records[1].dstPortId,
+                              12u,
+                              "11-field rows should parse destination port");
+        NS_TEST_ASSERT_MSG_EQ(records[1].hasSrcPortId,
+                              true,
+                              "11-field rows should mark source port present");
+        NS_TEST_ASSERT_MSG_EQ(records[1].hasDstPortId,
+                              true,
+                              "11-field rows should mark destination port present");
+        NS_TEST_ASSERT_MSG_EQ(records[2].srcPortId,
+                              0u,
+                              "empty source port field should parse as 0");
+        NS_TEST_ASSERT_MSG_EQ(records[2].dstPortId,
+                              0u,
+                              "empty destination port field should parse as 0");
+        NS_TEST_ASSERT_MSG_EQ(records[2].hasSrcPortId,
+                              false,
+                              "empty source port should remain a wildcard");
+        NS_TEST_ASSERT_MSG_EQ(records[2].hasDstPortId,
+                              false,
+                              "empty destination port should remain a wildcard");
+        NS_TEST_ASSERT_MSG_EQ(records[3].srcPortId, 0u, "explicit source port 0 should parse as 0");
+        NS_TEST_ASSERT_MSG_EQ(records[3].dstPortId, 0u, "empty destination port should parse as 0");
+        NS_TEST_ASSERT_MSG_EQ(records[3].hasSrcPortId,
+                              true,
+                              "explicit source port 0 should not become a wildcard");
+        NS_TEST_ASSERT_MSG_EQ(records[3].hasDstPortId,
+                              false,
+                              "empty destination port should remain a wildcard");
+        NS_TEST_ASSERT_MSG_EQ(records[4].srcPortId, 0u, "empty source port should parse as 0");
+        NS_TEST_ASSERT_MSG_EQ(records[4].dstPortId,
+                              0u,
+                              "explicit destination port 0 should parse as 0");
+        NS_TEST_ASSERT_MSG_EQ(records[4].hasSrcPortId,
+                              false,
+                              "empty source port should remain a wildcard");
+        NS_TEST_ASSERT_MSG_EQ(records[4].hasDstPortId,
+                              true,
+                              "explicit destination port 0 should not become a wildcard");
 
         uint32_t viewIndex = 0;
         UbUtils::Get()->ForEachTrafficRecordView(
@@ -1048,45 +1092,178 @@ class UbTrafficConfigEntityFieldsTest : public TestCase
             [this, &viewIndex](const TrafficRecordView& record) {
                 if (viewIndex == 0)
                 {
-                    NS_TEST_ASSERT_MSG_EQ(record.srcEntityId, 0u, "9-field views should default source entity to 0");
-                    NS_TEST_ASSERT_MSG_EQ(record.dstEntityId, 0u, "9-field views should default destination entity to 0");
-                    NS_TEST_ASSERT_MSG_EQ(record.hasSrcEntityId,
+                    NS_TEST_ASSERT_MSG_EQ(record.srcPortId,
+                                          0u,
+                                          "wildcard views should default source port to 0");
+                    NS_TEST_ASSERT_MSG_EQ(record.dstPortId,
+                                          0u,
+                                          "wildcard views should default destination port to 0");
+                    NS_TEST_ASSERT_MSG_EQ(record.hasSrcPortId,
                                           false,
-                                          "9-field views should not mark source entity present");
-                    NS_TEST_ASSERT_MSG_EQ(record.hasDstEntityId,
-                                          false,
-                                          "9-field views should not mark destination entity present");
+                                          "wildcard views should not mark source port present");
+                    NS_TEST_ASSERT_MSG_EQ(
+                        record.hasDstPortId,
+                        false,
+                        "wildcard views should not mark destination port present");
                 }
                 else if (viewIndex == 1)
                 {
-                    NS_TEST_ASSERT_MSG_EQ(record.srcEntityId, 11u, "11-field views should parse source entity");
-                    NS_TEST_ASSERT_MSG_EQ(record.dstEntityId, 12u, "11-field views should parse destination entity");
-                    NS_TEST_ASSERT_MSG_EQ(record.hasSrcEntityId,
+                    NS_TEST_ASSERT_MSG_EQ(record.srcPortId,
+                                          11u,
+                                          "11-field views should parse source port");
+                    NS_TEST_ASSERT_MSG_EQ(record.dstPortId,
+                                          12u,
+                                          "11-field views should parse destination port");
+                    NS_TEST_ASSERT_MSG_EQ(record.hasSrcPortId,
                                           true,
-                                          "11-field views should mark source entity present");
-                    NS_TEST_ASSERT_MSG_EQ(record.hasDstEntityId,
+                                          "11-field views should mark source port present");
+                    NS_TEST_ASSERT_MSG_EQ(record.hasDstPortId,
                                           true,
-                                          "11-field views should mark destination entity present");
+                                          "11-field views should mark destination port present");
                 }
                 else if (viewIndex == 2)
                 {
-                    NS_TEST_ASSERT_MSG_EQ(record.srcEntityId, 0u, "empty source entity view field should parse as 0");
-                    NS_TEST_ASSERT_MSG_EQ(record.dstEntityId, 0u, "empty destination entity view field should parse as 0");
-                    NS_TEST_ASSERT_MSG_EQ(record.hasSrcEntityId,
+                    NS_TEST_ASSERT_MSG_EQ(record.srcPortId,
+                                          0u,
+                                          "empty source port view field should parse as 0");
+                    NS_TEST_ASSERT_MSG_EQ(record.dstPortId,
+                                          0u,
+                                          "empty destination port view field should parse as 0");
+                    NS_TEST_ASSERT_MSG_EQ(record.hasSrcPortId,
+                                          false,
+                                          "empty source port view field should remain a wildcard");
+                    NS_TEST_ASSERT_MSG_EQ(
+                        record.hasDstPortId,
+                        false,
+                        "empty destination port view field should remain a wildcard");
+                }
+                else if (viewIndex == 3)
+                {
+                    NS_TEST_ASSERT_MSG_EQ(record.srcPortId,
+                                          0u,
+                                          "explicit source port 0 view field should parse as 0");
+                    NS_TEST_ASSERT_MSG_EQ(record.dstPortId,
+                                          0u,
+                                          "empty destination port view field should parse as 0");
+                    NS_TEST_ASSERT_MSG_EQ(record.hasSrcPortId,
                                           true,
-                                          "empty 11-field view source entity should still be present");
-                    NS_TEST_ASSERT_MSG_EQ(record.hasDstEntityId,
-                                          true,
-                                          "empty 11-field view destination entity should still be present");
+                                          "explicit source port 0 view should not be a wildcard");
+                    NS_TEST_ASSERT_MSG_EQ(record.hasDstPortId,
+                                          false,
+                                          "empty destination port view should remain a wildcard");
+                }
+                else if (viewIndex == 4)
+                {
+                    NS_TEST_ASSERT_MSG_EQ(record.srcPortId,
+                                          0u,
+                                          "empty source port view field should parse as 0");
+                    NS_TEST_ASSERT_MSG_EQ(
+                        record.dstPortId,
+                        0u,
+                        "explicit destination port 0 view field should parse as 0");
+                    NS_TEST_ASSERT_MSG_EQ(record.hasSrcPortId,
+                                          false,
+                                          "empty source port view should remain a wildcard");
+                    NS_TEST_ASSERT_MSG_EQ(
+                        record.hasDstPortId,
+                        true,
+                        "explicit destination port 0 view should not be a wildcard");
                 }
                 ++viewIndex;
             });
-        NS_TEST_ASSERT_MSG_EQ(viewIndex, 3u, "three traffic record views should stream");
+        NS_TEST_ASSERT_MSG_EQ(viewIndex, 5u, "five traffic record views should stream");
 
         std::filesystem::remove(trafficPath);
         Simulator::Destroy();
     }
 };
+
+#ifndef _WIN32
+class UbTrafficConfigRejectsLegacyEntityHeaderTest : public TestCase
+{
+  public:
+    UbTrafficConfigRejectsLegacyEntityHeaderTest()
+        : TestCase("UnifiedBus - traffic parser rejects legacy Entity-ID columns")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const auto trafficPath =
+            std::filesystem::temp_directory_path() / "ub-traffic-config-legacy-entity-fields.csv";
+        {
+            std::ofstream trafficFile(trafficPath);
+            NS_TEST_ASSERT_MSG_EQ(trafficFile.good(), true, "temporary traffic file should open");
+            trafficFile << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
+                           "dependOnPhases,srcEntityId,dstEntityId\n";
+            trafficFile << "1,2,3,64,URMA_WRITE,1,0ns,10,,11,12\n";
+        }
+
+        const int status = RunInChildProcess([trafficPath]() {
+            UbUtils::Get()->ForEachTrafficRecordView(trafficPath.string(),
+                                                     [](const TrafficRecordView&) {});
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, "legacy Entity-ID header should abort");
+        if (WIFSIGNALED(status))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status), SIGABRT, "legacy header should fail fast");
+        }
+
+        std::filesystem::remove(trafficPath);
+    }
+};
+
+class UbTrafficConfigRejectsRowHeaderWidthMismatchTest : public TestCase
+{
+  public:
+    UbTrafficConfigRejectsRowHeaderWidthMismatchTest()
+        : TestCase(
+              "UnifiedBus - traffic parser rejects rows with a different width than the header")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const auto trafficPath =
+            std::filesystem::temp_directory_path() / "ub-traffic-config-row-width-mismatch.csv";
+        {
+            std::ofstream trafficFile(trafficPath);
+            NS_TEST_ASSERT_MSG_EQ(trafficFile.good(), true, "temporary traffic file should open");
+            trafficFile << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
+                           "dependOnPhases,srcPortId,dstPortId\n";
+            trafficFile << "1,2,3,64,URMA_WRITE,1,0ns,10,\n";
+        }
+
+        const int recordStatus = RunInChildProcess([trafficPath]() {
+            UbUtils::Get()->ForEachTrafficRecordView(trafficPath.string(),
+                                                     [](const TrafficRecordView&) {});
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(recordStatus), 1,
+                              "record parser should abort on a row/header width mismatch");
+        if (WIFSIGNALED(recordStatus))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WTERMSIG(recordStatus), SIGABRT,
+                                  "record parser should fail fast on a row/header width mismatch");
+        }
+
+        const int phaseStatus = RunInChildProcess([trafficPath]() {
+            UbUtils::Get()->RegisterTrafficPhaseDependenciesAndGetStats(trafficPath.string());
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(phaseStatus), 1,
+                              "phase index parser should abort on a row/header width mismatch");
+        if (WIFSIGNALED(phaseStatus))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WTERMSIG(phaseStatus), SIGABRT,
+                                  "phase index parser should fail fast on a row/header width "
+                                  "mismatch");
+        }
+
+        std::filesystem::remove(trafficPath);
+    }
+};
+#endif
 
 class UbAppCtpTransportModeEntryTest : public TestCase
 {
@@ -1105,8 +1282,6 @@ class UbAppCtpTransportModeEntryTest : public TestCase
         Ptr<UbApp> app = CreateObject<UbApp>();
         node->AddApplication(app);
         app->SetTransportMode(TransportMode::CTP);
-        app->SetLocalEntityId(21);
-        app->SetPeerEntityId(22);
 
         TrafficRecord record;
         record.taskId = 1;
@@ -1120,16 +1295,16 @@ class UbAppCtpTransportModeEntryTest : public TestCase
 
         const uint32_t initialTransportCount = controller->GetTransportChannelManager()->GetCount();
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-        service->SetSourcePortHint(UbCtpEntityKey{.srcEntityId = 21,
+        service->SetSourcePortHint(UbCtpEntityKey{.srcEntityId = 0,
                                                   .dstNodeId = 4,
-                                                  .dstEntityId = 22,
+                                                  .dstEntityId = 0,
                                                   .vl = 5},
                                    0);
         app->SendTraffic(record);
 
-        UbCtpEntityKey key{.srcEntityId = 21,
+        UbCtpEntityKey key{.srcEntityId = 0,
                            .dstNodeId = 4,
-                           .dstEntityId = 22,
+                           .dstEntityId = 0,
                            .vl = 5};
         NS_TEST_ASSERT_MSG_NE(service, nullptr, "CTP mode should initialize the CTP service");
         NS_TEST_ASSERT_MSG_EQ(controller->GetTransportChannelManager()->GetCount(),
@@ -1146,11 +1321,12 @@ class UbAppCtpTransportModeEntryTest : public TestCase
     }
 };
 
-class UbTrafficGenRuntimeTaskEntityFieldsTest : public TestCase
+class UbTrafficGenRuntimeTaskEndpointPortFieldsTest : public TestCase
 {
   public:
-    UbTrafficGenRuntimeTaskEntityFieldsTest()
-        : TestCase("UnifiedBus - runtime task conversion preserves CTP entity fields and presence")
+    UbTrafficGenRuntimeTaskEndpointPortFieldsTest()
+        : TestCase(
+              "UnifiedBus - runtime task conversion preserves endpoint port fields and presence")
     {
     }
 
@@ -1168,25 +1344,25 @@ class UbTrafficGenRuntimeTaskEntityFieldsTest : public TestCase
         record.priority = 3;
         record.delay = "0ns";
         record.phaseId = 4;
-        record.srcEntityId = 0;
-        record.dstEntityId = 12;
-        record.hasSrcEntityId = true;
-        record.hasDstEntityId = true;
+        record.srcPortId = 0;
+        record.dstPortId = 12;
+        record.hasSrcPortId = true;
+        record.hasDstPortId = true;
 
         UbTrafficGen::RuntimeTask task = gen.ConvertToRuntimeTask(record);
 
-        NS_TEST_ASSERT_MSG_EQ(task.srcEntityId,
+        NS_TEST_ASSERT_MSG_EQ(task.srcPortId,
                               0u,
-                              "runtime task should preserve explicit source entity 0");
-        NS_TEST_ASSERT_MSG_EQ(task.dstEntityId,
+                              "runtime task should preserve explicit source port 0");
+        NS_TEST_ASSERT_MSG_EQ(task.dstPortId,
                               12u,
-                              "runtime task should preserve destination entity");
-        NS_TEST_ASSERT_MSG_EQ(task.hasSrcEntityId,
+                              "runtime task should preserve destination port");
+        NS_TEST_ASSERT_MSG_EQ(task.hasSrcPortId,
                               true,
-                              "runtime task should preserve source entity presence");
-        NS_TEST_ASSERT_MSG_EQ(task.hasDstEntityId,
+                              "runtime task should preserve source port presence");
+        NS_TEST_ASSERT_MSG_EQ(task.hasDstPortId,
                               true,
-                              "runtime task should preserve destination entity presence");
+                              "runtime task should preserve destination port presence");
         NS_TEST_ASSERT_MSG_EQ(task.hasPhaseDependencies,
                               false,
                               "an empty dependency field should mark an initial task");
@@ -1200,11 +1376,11 @@ class UbTrafficGenRuntimeTaskEntityFieldsTest : public TestCase
     }
 };
 
-class UbAppCtpRuntimeTaskEntityFallbackTest : public TestCase
+class UbAppCtpRuntimeTaskEndpointPortDerivationTest : public TestCase
 {
   public:
-    UbAppCtpRuntimeTaskEntityFallbackTest()
-        : TestCase("UnifiedBus - app CTP runtime task path honors explicit entity zero")
+    UbAppCtpRuntimeTaskEndpointPortDerivationTest()
+        : TestCase("UnifiedBus - app CTP runtime task path derives Entity ids from endpoint ports")
     {
     }
 
@@ -1217,8 +1393,6 @@ class UbAppCtpRuntimeTaskEntityFallbackTest : public TestCase
         Ptr<UbApp> app = CreateObject<UbApp>();
         node->AddApplication(app);
         app->SetTransportMode(TransportMode::CTP);
-        app->SetLocalEntityId(21);
-        app->SetPeerEntityId(22);
 
         UbTrafficGen::RuntimeTask task;
         task.taskId = 2;
@@ -1228,35 +1402,36 @@ class UbAppCtpRuntimeTaskEntityFallbackTest : public TestCase
         task.phaseId = 1;
         task.priority = 5;
         task.op = UbTrafficGen::RuntimeTaskOp::URMA_WRITE;
-        task.srcEntityId = 0;
-        task.dstEntityId = 12;
-        task.hasSrcEntityId = true;
-        task.hasDstEntityId = true;
+        task.srcPortId = 0;
+        task.dstPortId = 0;
+        task.hasSrcPortId = true;
+        task.hasDstPortId = true;
 
         const uint32_t initialTransportCount = controller->GetTransportChannelManager()->GetCount();
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-        service->SetSourcePortHint(UbCtpEntityKey{.srcEntityId = 0,
+        service->SetSourcePortHint(UbCtpEntityKey{.srcEntityId = 1,
                                                   .dstNodeId = 4,
-                                                  .dstEntityId = 12,
+                                                  .dstEntityId = 1,
                                                   .vl = 5},
                                    0);
         app->SendTraffic(task);
 
-        UbCtpEntityKey explicitKey{.srcEntityId = 0,
+        UbCtpEntityKey explicitKey{.srcEntityId = 1,
                                    .dstNodeId = 4,
-                                   .dstEntityId = 12,
+                                   .dstEntityId = 1,
                                    .vl = 5};
         UbCtpEntityKey fallbackKey{.srcEntityId = 21,
                                    .dstNodeId = 4,
-                                   .dstEntityId = 12,
+                                   .dstEntityId = 22,
                                    .vl = 5};
 
         NS_TEST_ASSERT_MSG_EQ(service->HasTransactionContextForTesting(explicitKey),
                               true,
-                              "runtime CTP branch should create the explicit entity-0 context");
+                              "runtime CTP branch should create the Entity context derived from "
+                              "port 0");
         NS_TEST_ASSERT_MSG_EQ(service->HasTransactionContextForTesting(fallbackKey),
                               false,
-                              "explicit entity 0 must not fall back to the app default entity");
+                              "traffic-derived Entity ids must not fall back to app defaults");
         NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(explicitKey),
                               1u,
                               "runtime CTP branch should drain the single WQE segment into the explicit key queue");
@@ -1285,12 +1460,10 @@ class UbAppCtpAdmissionBackpressurePreservesJettyTest : public TestCase
         Ptr<UbApp> app = CreateObject<UbApp>();
         node->AddApplication(app);
         app->SetTransportMode(TransportMode::CTP);
-        app->SetLocalEntityId(21);
-        app->SetPeerEntityId(22);
 
-        UbCtpEntityKey key{.srcEntityId = 21,
+        UbCtpEntityKey key{.srcEntityId = 0,
                            .dstNodeId = 4,
-                           .dstEntityId = 22,
+                           .dstEntityId = 0,
                            .vl = 5};
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
         service->SetSourcePortHint(key, 0);
@@ -1363,10 +1536,6 @@ class UbAppCtpForwardsRoutingTypeToServiceTest : public TestCase
         task.phaseId = 1;
         task.priority = 5;
         task.op = UbTrafficGen::RuntimeTaskOp::URMA_WRITE;
-        task.srcEntityId = 0;
-        task.dstEntityId = 0;
-        task.hasSrcEntityId = true;
-        task.hasDstEntityId = true;
 
         app->SendCtpUrmaTraffic(task);
 
@@ -17384,12 +17553,10 @@ class UbLifecycleCtpCachedJettyAdmissionFreezeTest : public TestCase
         Ptr<UbApp> app = CreateObject<UbApp>();
         node->AddApplication(app);
         app->SetTransportMode(TransportMode::CTP);
-        app->SetLocalEntityId(21);
-        app->SetPeerEntityId(22);
 
-        UbCtpEntityKey key{.srcEntityId = 21,
+        UbCtpEntityKey key{.srcEntityId = 0,
                            .dstNodeId = 4,
-                           .dstEntityId = 22,
+                           .dstEntityId = 0,
                            .vl = 5};
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
         service->SetSourcePortHint(key, 0);
@@ -20125,6 +20292,61 @@ class UbCreateTpUsesPerPortIpTest : public TestCase
     }
 };
 
+class UbTrafficDrivenReservationDoesNotFallbackForMissingExplicitDestinationRouteTest
+    : public TestCase
+{
+  public:
+    UbTrafficDrivenReservationDoesNotFallbackForMissingExplicitDestinationRouteTest()
+        : TestCase(
+              "UnifiedBus - RTP reservation does not fall back for an explicit destination port")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const int status = RunInChildProcess([]() {
+            Ptr<Node> source = CreateObject<Node>();
+            Ptr<Node> destination = CreateObject<Node>();
+            InitNode(source, UB_DEVICE, 1);
+            InitNode(destination, UB_DEVICE, 2);
+
+            source->GetObject<UbSwitch>()->GetRoutingProcess()->GetRoutingTable().AddShortestRoute(
+                NodeIdToIp(destination->GetId()).Get(),
+                {0});
+
+            const auto identities = source->GetObject<UbController>()
+                                        ->GetTpConnManager()
+                                        ->ReservePlannedTpnsForTraffic(true,
+                                                                        source->GetId(),
+                                                                        destination->GetId(),
+                                                                        7,
+                                                                        UINT32_MAX,
+                                                                        1);
+            NS_ABORT_MSG_IF(!identities.empty(),
+                            "RTP reserved a connection without an exact destination-port route");
+            NS_ABORT_MSG_IF(
+                !source->GetObject<UbController>()->GetTpConnManager()
+                     ->GetNodeConnections(source->GetId())
+                     .empty(),
+                "RTP used a node-level route as a destination-port fallback");
+            NS_ABORT_MSG_IF(
+                !destination->GetObject<UbController>()->GetTpConnManager()
+                     ->GetNodeConnections(destination->GetId())
+                     .empty(),
+                "RTP created a receiver connection for a missing exact route");
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFEXITED(status), 1,
+                              "RTP reservation should complete without a fallback connection");
+        if (WIFEXITED(status))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WEXITSTATUS(status), 0,
+                                  "RTP reservation should leave both endpoint connection indexes "
+                                  "empty");
+        }
+    }
+};
+
 class UbControllerMissingTpnLookupDoesNotInsertTest : public TestCase
 {
   public:
@@ -20241,6 +20463,70 @@ class UbTpConnectionManagerPublicLookupCompatibilityTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(bothPorts[0].first, 201u, "Both-port lookup should use local TPN");
         NS_TEST_ASSERT_MSG_EQ(full[0].first, 201u, "Full-criteria lookup should use local TPN");
         NS_TEST_ASSERT_MSG_EQ(full[0].second, 7u, "Full-criteria lookup should preserve metrics");
+
+        const auto trafficExact = sender->GetTpnsByTrafficCriteria(topo.sender->GetId(),
+                                                                    topo.receiver->GetId(),
+                                                                    11,
+                                                                    21,
+                                                                    3);
+        const auto trafficSourceWildcard = sender->GetTpnsByTrafficCriteria(
+            topo.sender->GetId(), topo.receiver->GetId(), UINT32_MAX, 21, 3);
+        const auto trafficDestinationWildcard = sender->GetTpnsByTrafficCriteria(
+            topo.sender->GetId(), topo.receiver->GetId(), 11, UINT32_MAX, 3);
+        const auto trafficBothWildcard = sender->GetTpnsByTrafficCriteria(topo.sender->GetId(),
+                                                                           topo.receiver->GetId(),
+                                                                           UINT32_MAX,
+                                                                           UINT32_MAX,
+                                                                           3);
+        NS_TEST_ASSERT_MSG_EQ(trafficExact.size(),
+                              1u,
+                              "Traffic criteria should match the requested endpoint pair");
+        NS_TEST_ASSERT_MSG_EQ(trafficExact[0].first,
+                              101u,
+                              "Traffic criteria should return the local TPN for the exact pair");
+        NS_TEST_ASSERT_MSG_EQ(trafficSourceWildcard.size(),
+                              1u,
+                              "A wildcard source port should preserve the destination constraint");
+        NS_TEST_ASSERT_MSG_EQ(trafficSourceWildcard[0].first,
+                              101u,
+                              "Source wildcard lookup should preserve the matching local TPN");
+        NS_TEST_ASSERT_MSG_EQ(trafficDestinationWildcard.size(),
+                              1u,
+                              "A wildcard destination port should preserve the source constraint");
+        NS_TEST_ASSERT_MSG_EQ(trafficDestinationWildcard[0].first,
+                              101u,
+                              "Destination wildcard lookup should preserve the matching local TPN");
+        NS_TEST_ASSERT_MSG_EQ(trafficBothWildcard.size(),
+                              2u,
+                              "Two wildcards should return both same-priority endpoint pairs");
+
+        const auto plannedWildcard = sender->ReservePlannedTpnsForTraffic(
+            true, topo.sender->GetId(), topo.receiver->GetId(), 3, UINT32_MAX, UINT32_MAX);
+        NS_TEST_ASSERT_MSG_EQ(plannedWildcard.empty(),
+                              true,
+                              "Planned wildcard traffic should not claim preloaded endpoint pairs");
+        const auto plannedExact = sender->ReservePlannedTpnsForTraffic(
+            true, topo.sender->GetId(), topo.receiver->GetId(), 3, 11, 21);
+        NS_TEST_ASSERT_MSG_EQ(plannedExact.empty(),
+                              true,
+                              "Planned exact traffic should not claim a preloaded endpoint pair");
+
+        const auto reverseTrafficExact = receiver->GetTpnsByTrafficCriteria(
+            topo.receiver->GetId(), topo.sender->GetId(), 21, 11, 3);
+        const auto reverseTrafficSourceWildcard = receiver->GetTpnsByTrafficCriteria(
+            topo.receiver->GetId(), topo.sender->GetId(), UINT32_MAX, 11, 3);
+        NS_TEST_ASSERT_MSG_EQ(reverseTrafficExact.size(),
+                              1u,
+                              "Reverse traffic should match the same endpoint pair");
+        NS_TEST_ASSERT_MSG_EQ(reverseTrafficExact[0].first,
+                              201u,
+                              "Reverse traffic should return the receiver-local TPN");
+        NS_TEST_ASSERT_MSG_EQ(reverseTrafficSourceWildcard.size(),
+                              1u,
+                              "Reverse traffic should preserve the peer-port constraint");
+        NS_TEST_ASSERT_MSG_EQ(reverseTrafficSourceWildcard[0].first,
+                              201u,
+                              "Reverse wildcard lookup should return the receiver-local TPN");
 
         const auto nodeConnections = receiver->GetNodeConnections(topo.receiver->GetId());
         const auto allTpns = receiver->GetAllTpnsForNode(topo.receiver->GetId());
@@ -25836,8 +26122,8 @@ class UbCtpBuildDataPacketHeaderTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(cnaHeader.GetNlp(), UB_CNA_NLP_CTPH, "CNA16 NLP should point to CTPH");
         NS_TEST_ASSERT_MSG_EQ(cnaHeader.GetServiceLevel(), 7, "CNA16 service level should carry CTP VL");
         NS_TEST_ASSERT_MSG_EQ(cnaHeader.GetScna(),
-                              static_cast<uint16_t>(NodeIdToCna16(node->GetId())),
-                              "CTP SCNA should use the primary source CNA");
+                              static_cast<uint16_t>(NodeIdToCna16(node->GetId(), 2)),
+                              "CTP source port hint should be encoded in SCNA");
         NS_TEST_ASSERT_MSG_EQ(cnaHeader.GetDcna(),
                               static_cast<uint16_t>(NodeIdToCna16(key.dstNodeId, 3)),
                               "CTP destination port hint should be encoded in DCNA");
@@ -25970,20 +26256,35 @@ class UbCtpLocalDataPacketGeneratesTaAckTest : public TestCase
             topo.sender->GetObject<UbController>()->GetCtpTransportService();
         Ptr<UbCtpTransportService> receiverService =
             topo.receiver->GetObject<UbController>()->GetCtpTransportService();
-        UbCtpEntityKey requestKey{.srcEntityId = 0,
+        UbCtpEntityKey requestKey{.srcEntityId = 1,
                                   .dstNodeId = topo.receiver->GetId(),
-                                  .dstEntityId = 0,
+                                  .dstEntityId = 1,
                                   .vl = 7};
+        senderService->SetSourcePortHint(requestKey, topo.senderPort->GetIfIndex());
+        senderService->SetDestinationPortHint(requestKey, topo.receiverPort->GetIfIndex());
         Ptr<UbWqeSegment> request = CreateCtpWriteSegment(0);
         request->SetSrc(topo.sender->GetId());
         request->SetDest(topo.receiver->GetId());
         Ptr<Packet> dataPacket = senderService->BuildDataPacket(request, requestKey);
+        Ptr<Packet> requestHeaderCopy = dataPacket->Copy();
+        UbDatalinkPacketHeader requestDatalinkHeader;
+        requestHeaderCopy->RemoveHeader(requestDatalinkHeader);
+        UbCna16NetworkHeader requestCnaHeader;
+        requestHeaderCopy->RemoveHeader(requestCnaHeader);
+        NS_TEST_ASSERT_MSG_EQ(requestCnaHeader.GetScna(),
+                              static_cast<uint16_t>(NodeIdToCna16(topo.sender->GetId(),
+                                                                  topo.senderPort->GetIfIndex())),
+                              "explicit CTP request should encode the source endpoint port");
+        NS_TEST_ASSERT_MSG_EQ(requestCnaHeader.GetDcna(),
+                              static_cast<uint16_t>(NodeIdToCna16(topo.receiver->GetId(),
+                                                                  topo.receiverPort->GetIfIndex())),
+                              "explicit CTP request should encode the destination endpoint port");
 
         topo.receiver->GetObject<UbSwitch>()->SwitchHandlePacket(topo.receiverPort, dataPacket);
 
-        UbCtpEntityKey ackKey{.srcEntityId = 0,
+        UbCtpEntityKey ackKey{.srcEntityId = 1,
                               .dstNodeId = topo.sender->GetId(),
-                              .dstEntityId = 0,
+                              .dstEntityId = 1,
                               .vl = 7};
         NS_TEST_ASSERT_MSG_EQ(receiverService->GetQueuedPacketCountForTest(ackKey),
                               1u,
@@ -26012,12 +26313,14 @@ class UbCtpLocalDataPacketGeneratesTaAckTest : public TestCase
         UbCompactAckTransactionHeader compactAck;
         ackPacket->RemoveHeader(compactAck);
 
-        NS_TEST_ASSERT_MSG_EQ(cnaHeader.GetScna(),
-                              utils::NodeIdToCna16(topo.receiver->GetId()),
-                              "TAACK SCNA should use the primary response source CNA");
-        NS_TEST_ASSERT_MSG_EQ(cnaHeader.GetDcna(),
-                              utils::NodeIdToCna16(topo.sender->GetId()),
-                              "TAACK should target the original requester");
+        NS_TEST_ASSERT_MSG_EQ(
+            cnaHeader.GetScna(),
+            utils::NodeIdToCna16(topo.receiver->GetId(), topo.receiverPort->GetIfIndex()),
+            "TAACK SCNA should use the receiving endpoint port");
+        NS_TEST_ASSERT_MSG_EQ(
+            cnaHeader.GetDcna(),
+            utils::NodeIdToCna16(topo.sender->GetId(), topo.senderPort->GetIfIndex()),
+            "TAACK should target the original source endpoint port");
         NS_TEST_ASSERT_MSG_EQ(eidHeader.GetSourceEid(),
                               ackKey.srcEntityId,
                               "TAACK should encode the response source entity");
@@ -26030,6 +26333,60 @@ class UbCtpLocalDataPacketGeneratesTaAckTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(compactAck.GetIniTaSsn(),
                               0u,
                               "TAACK should acknowledge the request TASSN");
+
+        UbCtpEntityKey wildcardRequestKey{.srcEntityId = 0,
+                                          .dstNodeId = topo.receiver->GetId(),
+                                          .dstEntityId = 0,
+                                          .vl = 7};
+        Ptr<UbWqeSegment> wildcardRequest = CreateCtpWriteSegment(1);
+        wildcardRequest->SetSrc(topo.sender->GetId());
+        wildcardRequest->SetDest(topo.receiver->GetId());
+        Ptr<Packet> wildcardDataPacket =
+            senderService->BuildDataPacket(wildcardRequest, wildcardRequestKey);
+        Ptr<Packet> wildcardRequestHeaderCopy = wildcardDataPacket->Copy();
+        UbDatalinkPacketHeader wildcardRequestDatalinkHeader;
+        wildcardRequestHeaderCopy->RemoveHeader(wildcardRequestDatalinkHeader);
+        UbCna16NetworkHeader wildcardRequestCnaHeader;
+        wildcardRequestHeaderCopy->RemoveHeader(wildcardRequestCnaHeader);
+        NS_TEST_ASSERT_MSG_EQ(wildcardRequestCnaHeader.GetScna(),
+                              static_cast<uint16_t>(NodeIdToCna16(topo.sender->GetId())),
+                              "wildcard CTP request should keep the source CNA wildcard");
+        NS_TEST_ASSERT_MSG_EQ(wildcardRequestCnaHeader.GetDcna(),
+                              static_cast<uint16_t>(NodeIdToCna16(topo.receiver->GetId())),
+                              "wildcard CTP request should keep the destination CNA wildcard");
+        topo.receiver->GetObject<UbSwitch>()->SwitchHandlePacket(topo.receiverPort,
+                                                                 wildcardDataPacket);
+
+        UbCtpEntityKey wildcardAckKey{.srcEntityId = 0,
+                                      .dstNodeId = topo.sender->GetId(),
+                                      .dstEntityId = 0,
+                                      .vl = 7};
+        NS_TEST_ASSERT_MSG_EQ(receiverService->GetQueuedPacketCountForTest(wildcardAckKey),
+                              1u,
+                              "wildcard CTP data should enqueue a wildcard TAACK");
+        Ptr<UbCtpTxQueue> wildcardAckQueue =
+            receiverService->GetOrCreateQueue(wildcardAckKey,
+                                              topo.receiverPort->GetIfIndex(),
+                                              wildcardAckKey.vl);
+        Ptr<Packet> wildcardAckPacket = wildcardAckQueue->GetNextPacket();
+        NS_TEST_ASSERT_MSG_NE(wildcardAckPacket,
+                              nullptr,
+                              "wildcard CTP TAACK packet should be queued");
+        if (wildcardAckPacket != nullptr)
+        {
+            UbDatalinkPacketHeader wildcardDatalinkHeader;
+            wildcardAckPacket->RemoveHeader(wildcardDatalinkHeader);
+            UbCna16NetworkHeader wildcardCnaHeader;
+            wildcardAckPacket->RemoveHeader(wildcardCnaHeader);
+            NS_TEST_ASSERT_MSG_EQ(wildcardCnaHeader.GetScna(),
+                                  static_cast<uint16_t>(NodeIdToCna16(
+                                      topo.receiver->GetId(), topo.receiverPort->GetIfIndex())),
+                                  "wildcard TAACK should retain the existing receive-port hint");
+            NS_TEST_ASSERT_MSG_EQ(
+                wildcardCnaHeader.GetDcna(),
+                static_cast<uint16_t>(NodeIdToCna16(topo.sender->GetId())),
+                "wildcard TAACK should keep the response destination CNA wildcard");
+        }
 
         Simulator::Destroy();
     }
@@ -27501,10 +27858,12 @@ class UbSwitchCtpRoutingKeyMatchesReferenceCna16SourceDecodeTest : public TestCa
         const RoutingKey rtKey = sw->GetCtpRoutingKeyForTest(packet);
 
         NS_TEST_ASSERT_MSG_EQ(rtKey.sip,
-                              NodeIdToIp(nodes.Get(7)->GetId(),
-                                         Cna16ToPortId(NodeIdToCna16(nodes.Get(7)->GetId())))
-                                  .Get(),
-                              "CTP routing key should match reference CNA16 source decode");
+                              NodeIdToIp(Cna16ToNodeId(cnaHeader.GetScna())).Get(),
+                              "CTP routing key should preserve a wildcard CNA16 source port");
+        NS_TEST_ASSERT_MSG_EQ(
+            rtKey.dip,
+            NodeIdToIp(Cna16ToNodeId(cnaHeader.GetDcna()), 0).Get(),
+            "CTP routing key should preserve the legacy wildcard CNA16 destination lookup key");
         NS_TEST_ASSERT_MSG_EQ(rtKey.sport,
                               cnaHeader.GetLb(),
                               "CTP routing key should use CNA LB as sport hash salt");
@@ -27653,12 +28012,10 @@ class UbCtpReadWriteUsesTransactionLifecycleTest : public TestCase
         Ptr<UbApp> app = CreateObject<UbApp>();
         node->AddApplication(app);
         app->SetTransportMode(TransportMode::CTP);
-        app->SetLocalEntityId(10);
-        app->SetPeerEntityId(11);
 
-        UbCtpEntityKey key{.srcEntityId = 10,
+        UbCtpEntityKey key{.srcEntityId = 0,
                            .dstNodeId = 1,
-                           .dstEntityId = 11,
+                           .dstEntityId = 0,
                            .vl = 7};
         service->SetSourcePortHint(key, 0);
 
@@ -27739,12 +28096,10 @@ class UbCtpForcedTerminalCleansTransactionStateTest : public TestCase
         Ptr<UbApp> app = CreateObject<UbApp>();
         node->AddApplication(app);
         app->SetTransportMode(TransportMode::CTP);
-        app->SetLocalEntityId(10);
-        app->SetPeerEntityId(11);
 
-        UbCtpEntityKey key{.srcEntityId = 10,
+        UbCtpEntityKey key{.srcEntityId = 0,
                            .dstNodeId = 1,
-                           .dstEntityId = 11,
+                           .dstEntityId = 0,
                            .vl = 7};
         controller->GetCtpTransportService()->SetSourcePortHint(key, 0);
 
@@ -27852,6 +28207,139 @@ class UbLdstCompletionRetiresActiveRecordsTest : public TestCase
     uint32_t m_completionCount{0};
     uint32_t m_completedTaskId{0};
 };
+
+class UbLdstEndpointPortSelectionTest : public TestCase
+{
+  public:
+    UbLdstEndpointPortSelectionTest()
+        : TestCase("UnifiedBus - LDST selects traffic endpoint ports")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        constexpr uint32_t sourceNodeId = 0;
+        constexpr uint32_t destinationNodeId = 1;
+        constexpr uint32_t sourcePortId = 1;
+        constexpr uint32_t destinationPortId = 3;
+        constexpr uint32_t priority = 7;
+
+        Ptr<Node> node = CreateObject<Node>(sourceNodeId);
+        InitNode(node, UB_DEVICE, 2);
+        Ptr<UbLdstInstance> ldstInstance = CreateObject<UbLdstInstance>();
+        node->AggregateObject(ldstInstance);
+        ldstInstance->Init(node->GetId());
+
+        Ptr<UbRoutingProcess> routing = node->GetObject<UbSwitch>()->GetRoutingProcess();
+        routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(destinationNodeId).Get(), {0});
+        routing->GetRoutingTable().AddShortestRoute(
+            NodeIdToIp(destinationNodeId, destinationPortId).Get(), {1});
+
+        Ptr<UbLdstTaskSegment> segment = CreateObject<UbLdstTaskSegment>();
+        segment->SetSrc(sourceNodeId);
+        segment->SetDest(destinationNodeId);
+        segment->SetSrcPortId(sourcePortId);
+        segment->SetDstPortId(destinationPortId);
+        segment->SetPriority(priority);
+        segment->SetSize(64);
+        segment->SetTaskId(1);
+        segment->SetTaskSegmentId(1);
+        segment->SetType(UbMemOperationType::STORE);
+        segment->SetPacketInfo(64, 0);
+
+        NS_TEST_ASSERT_MSG_EQ(segment->HasSrcPortId(), true,
+                              "LDST segment should retain source port presence");
+        NS_TEST_ASSERT_MSG_EQ(segment->HasDstPortId(), true,
+                              "LDST segment should retain destination port presence");
+        NS_TEST_ASSERT_MSG_EQ(segment->GetSrcPortId(), sourcePortId,
+                              "LDST segment should retain source endpoint port");
+        NS_TEST_ASSERT_MSG_EQ(segment->GetDstPortId(), destinationPortId,
+                              "LDST segment should retain destination endpoint port");
+
+        node->GetObject<UbController>()->GetUbFunction()->GetUbLdstApi()->LdstProcess(segment);
+
+        Ptr<UbSwitch> sw = node->GetObject<UbSwitch>();
+        NS_TEST_ASSERT_MSG_EQ(sw->GetVoqPacketCountForTest(sourcePortId, priority, sourcePortId),
+                              1u,
+                              "LDST should inject through the requested source endpoint port");
+        NS_TEST_ASSERT_MSG_EQ(sw->GetVoqPacketCountForTest(0, priority, 0),
+                              0u,
+                              "LDST should not use the wildcard destination route");
+
+        Ptr<UbLdstTaskSegment> destinationOnlySegment = CreateObject<UbLdstTaskSegment>();
+        destinationOnlySegment->SetSrc(sourceNodeId);
+        destinationOnlySegment->SetDest(destinationNodeId);
+        destinationOnlySegment->SetDstPortId(destinationPortId);
+        destinationOnlySegment->SetPriority(priority);
+        destinationOnlySegment->SetSize(64);
+        destinationOnlySegment->SetTaskId(2);
+        destinationOnlySegment->SetTaskSegmentId(2);
+        destinationOnlySegment->SetType(UbMemOperationType::STORE);
+        destinationOnlySegment->SetPacketInfo(64, 0);
+
+        node->GetObject<UbController>()->GetUbFunction()->GetUbLdstApi()->LdstProcess(
+            destinationOnlySegment);
+        NS_TEST_ASSERT_MSG_EQ(sw->GetVoqPacketCountForTest(1, priority, 1),
+                              2u,
+                              "LDST destination-only selection should keep source port wildcarded");
+
+        ldstInstance->DoDispose();
+        Simulator::Destroy();
+    }
+};
+
+#ifndef _WIN32
+class UbLdstExplicitDestinationPortRejectsPrimaryFallbackTest : public TestCase
+{
+  public:
+    UbLdstExplicitDestinationPortRejectsPrimaryFallbackTest()
+        : TestCase("UnifiedBus - LDST rejects an explicit destination port without an exact route")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const int status = RunInChildProcess([]() {
+            constexpr uint32_t sourceNodeId = 0;
+            constexpr uint32_t destinationNodeId = 1;
+            constexpr uint32_t destinationPortId = 3;
+
+            Ptr<Node> node = CreateObject<Node>(sourceNodeId);
+            InitNode(node, UB_DEVICE, 2);
+            Ptr<UbLdstInstance> ldstInstance = CreateObject<UbLdstInstance>();
+            node->AggregateObject(ldstInstance);
+            ldstInstance->Init(node->GetId());
+
+            node->GetObject<UbSwitch>()->GetRoutingProcess()->GetRoutingTable().AddShortestRoute(
+                NodeIdToIp(destinationNodeId).Get(),
+                {0});
+
+            Ptr<UbLdstTaskSegment> segment = CreateObject<UbLdstTaskSegment>();
+            segment->SetSrc(sourceNodeId);
+            segment->SetDest(destinationNodeId);
+            segment->SetDstPortId(destinationPortId);
+            segment->SetPriority(7);
+            segment->SetSize(64);
+            segment->SetTaskId(2);
+            segment->SetTaskSegmentId(2);
+            segment->SetType(UbMemOperationType::STORE);
+            segment->SetPacketInfo(64, 0);
+
+            node->GetObject<UbController>()->GetUbFunction()->GetUbLdstApi()->LdstProcess(segment);
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1,
+                              "LDST should reject an explicit destination port without an exact "
+                              "route");
+        if (WIFSIGNALED(status))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status), SIGABRT,
+                                  "LDST should fail fast instead of using a node-level fallback");
+        }
+    }
+};
+#endif
 
 class UbLdstTrackedEventAndForcedStopTest : public TestCase
 {
@@ -28064,10 +28552,14 @@ UbTestSuite::UbTestSuite()
 {
     AddTestCase(new UbFunctionalityTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbControllerCtpLazyServiceTest(), TestCase::Duration::QUICK);
-    AddTestCase(new UbTrafficConfigEntityFieldsTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbTrafficConfigEndpointPortFieldsTest(), TestCase::Duration::QUICK);
+#ifndef _WIN32
+    AddTestCase(new UbTrafficConfigRejectsLegacyEntityHeaderTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbTrafficConfigRejectsRowHeaderWidthMismatchTest(), TestCase::Duration::QUICK);
+#endif
     AddTestCase(new UbAppCtpTransportModeEntryTest(), TestCase::Duration::QUICK);
-    AddTestCase(new UbTrafficGenRuntimeTaskEntityFieldsTest(), TestCase::Duration::QUICK);
-    AddTestCase(new UbAppCtpRuntimeTaskEntityFallbackTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbTrafficGenRuntimeTaskEndpointPortFieldsTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbAppCtpRuntimeTaskEndpointPortDerivationTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbAppCtpAdmissionBackpressurePreservesJettyTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbAppCtpForwardsRoutingTypeToServiceTest(), TestCase::Duration::QUICK);
@@ -28431,6 +28923,11 @@ UbLdstLifecycleTestSuite::UbLdstLifecycleTestSuite()
     : TestSuite("unified-bus-ldst-lifecycle", Type::UNIT)
 {
     AddTestCase(new UbLdstCompletionRetiresActiveRecordsTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbLdstEndpointPortSelectionTest(), TestCase::Duration::QUICK);
+#ifndef _WIN32
+    AddTestCase(new UbLdstExplicitDestinationPortRejectsPrimaryFallbackTest(),
+                TestCase::Duration::QUICK);
+#endif
     AddTestCase(new UbLdstTrackedEventAndForcedStopTest(), TestCase::Duration::QUICK);
 }
 
@@ -28448,6 +28945,9 @@ UbTpReservationTestSuite::UbTpReservationTestSuite()
     : TestSuite("unified-bus-tp-reservation", Type::UNIT)
 {
     AddTestCase(new UbCreateTpUsesPerPortIpTest(), TestCase::Duration::QUICK);
+    AddTestCase(
+        new UbTrafficDrivenReservationDoesNotFallbackForMissingExplicitDestinationRouteTest(),
+        TestCase::Duration::QUICK);
     AddTestCase(new UbControllerMissingTpnLookupDoesNotInsertTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTpConnectionManagerPublicLookupCompatibilityTest(),
                 TestCase::Duration::QUICK);
@@ -30231,9 +30731,10 @@ class UbQuickExamplePlannedTpDestroyReverseTrafficSystemTest : public TestCase
         SetDataDir(NS_TEST_SOURCEDIR);
         const std::filesystem::path caseDir = CopyCaseDirWithTrafficFile(
             "scratch/2nodes_single-tp",
-            "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases\n"
-            "0,0,1,64,URMA_WRITE,7,10ns,0,\n"
-            "1,1,0,64,URMA_WRITE,7,10ns,0,\n");
+            "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
+            "dependOnPhases,srcPortId,dstPortId\n"
+            "0,0,1,64,URMA_WRITE,7,10ns,0,,,\n"
+            "1,1,0,64,URMA_WRITE,7,10ns,1,0,,0\n");
         std::error_code ec;
         std::filesystem::remove(caseDir / "transport_channel.csv", ec);
         ReplaceInFile(caseDir / "network_attribute.txt",
@@ -30243,12 +30744,11 @@ class UbQuickExamplePlannedTpDestroyReverseTrafficSystemTest : public TestCase
                       "default ns3::UbApp::EnablePlannedTpConnectionDestroy \"true\"\n");
         const std::filesystem::path snapshotPath =
             CreateSafeTempBasename("ub-planned-tp-reverse").replace_extension(".csv");
-        auto [status, output] =
-            RunQuickExampleAbsoluteCaseCommand(CreateTempDirFilename(GetName() + ".log"),
-                                                "--runtime-storage-snapshot=\"" +
-                                                    snapshotPath.string() + "\"",
-                                                "",
-                                                caseDir.string());
+        auto [status, output] = RunQuickExampleAbsoluteCaseCommand(
+            CreateTempDirFilename(GetName() + ".log"),
+            "--runtime-storage-snapshot=\"" + snapshotPath.string() + "\"",
+            "",
+            caseDir.string());
 
         std::ifstream input(snapshotPath);
         std::ostringstream contents;

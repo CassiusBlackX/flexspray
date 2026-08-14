@@ -27,10 +27,10 @@ struct TrafficRecord
     string delay;
     int phaseId;
     vector<uint32_t> dependOnPhases;
-    uint32_t srcEntityId = 0;
-    uint32_t dstEntityId = 0;
-    bool hasSrcEntityId{false};
-    bool hasDstEntityId{false};
+    uint32_t srcPortId = 0;
+    uint32_t dstPortId = 0;
+    bool hasSrcPortId{false};
+    bool hasDstPortId{false};
 };
 
 // Lightweight CSV row view. string_view fields are valid only during the parser callback.
@@ -45,10 +45,10 @@ struct TrafficRecordView
     std::string_view delay{};
     uint32_t phaseId{0};
     std::string_view dependOnPhases{};
-    uint32_t srcEntityId{0};
-    uint32_t dstEntityId{0};
-    bool hasSrcEntityId{false};
-    bool hasDstEntityId{false};
+    uint32_t srcPortId{0};
+    uint32_t dstPortId{0};
+    bool hasSrcPortId{false};
+    bool hasDstPortId{false};
 };
 
 constexpr long DEFAULT_PORT_BUFFER_SIZE = 2097152;
@@ -130,6 +130,13 @@ inline Ipv4Address Cna16ToIp(uint32_t cnaAddr)
     // Convert CNA to NodeId, then NodeId to IP
     uint32_t node_id = Cna16ToNodeId(cnaAddr);
     return NodeIdToIp(node_id);
+}
+
+inline Ipv4Address Cna16ToEndpointIp(uint32_t cnaAddr)
+{
+    const uint32_t nodeId = Cna16ToNodeId(cnaAddr);
+    return (cnaAddr & 0xF) == 0 ? NodeIdToIp(nodeId)
+                                : NodeIdToIp(nodeId, Cna16ToPortId(cnaAddr));
 }
 
 inline uint32_t IpToCna16(Ipv4Address ip)
