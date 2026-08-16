@@ -223,7 +223,7 @@ void CheckExampleProcess()
         return;
     }
     std::cout << std::endl;
-    Simulator::Stop();
+    Simulator::ScheduleNow(static_cast<void (*)()>(&Simulator::Stop));
 }
 
 MpiLaunchProbe ProbeMpiWorld(int* argc, char*** argv, uint32_t mtpThreads)

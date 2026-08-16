@@ -32481,6 +32481,34 @@ class UbQuickExampleMissingCasePathSystemTest : public TestCase
     }
 };
 
+class UbQuickExampleEmptyTrafficSystemTest : public TestCase
+{
+  public:
+    UbQuickExampleEmptyTrafficSystemTest()
+        : TestCase("UnifiedBus - ub-quick-example completes an empty traffic case")
+    {
+    }
+
+    void DoRun() override
+    {
+        SetDataDir(NS_TEST_SOURCEDIR);
+        const std::filesystem::path caseDir = CopyCaseDirWithTrafficFile(
+            kLocalSingleThreadQuickExampleCase,
+            "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases\n");
+        auto [status, output] = RunQuickExampleAbsoluteCaseCommand(
+            CreateTempDirFilename(GetName() + ".log"),
+            "",
+            "/usr/bin/perl -e 'alarm shift; exec @ARGV' 2",
+            caseDir);
+
+        std::filesystem::remove_all(caseDir);
+        NS_TEST_ASSERT_MSG_EQ(status, 0, "empty traffic case should exit successfully: " << output);
+        NS_TEST_ASSERT_MSG_NE(output.find("[run] Simulation finished"),
+                              std::string::npos,
+                              "empty traffic case should report simulation completion");
+    }
+};
+
 class UbQuickExampleMissingCaseDirSystemTest : public TestCase
 {
   public:
@@ -34096,6 +34124,7 @@ class UbQuickExampleSystemTestSuite : public TestSuite
         : TestSuite("unified-bus-examples", Type::SYSTEM)
     {
         AddTestCase(new UbQuickExampleMissingCasePathSystemTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbQuickExampleEmptyTrafficSystemTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbQuickExampleMissingCaseDirSystemTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbQuickExampleMissingCaseFileSystemTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbQuickExampleHelpTextSystemTest(), TestCase::Duration::QUICK);
@@ -34182,6 +34211,18 @@ class UbQuickExampleSystemTestSuite : public TestSuite
 };
 
 static UbQuickExampleSystemTestSuite g_ubQuickExampleSystemTestSuite;
+
+class UbQuickExampleEmptyTrafficFocusedTestSuite : public TestSuite
+{
+  public:
+    UbQuickExampleEmptyTrafficFocusedTestSuite()
+        : TestSuite("unified-bus-empty-traffic", Type::SYSTEM)
+    {
+        AddTestCase(new UbQuickExampleEmptyTrafficSystemTest(), TestCase::Duration::QUICK);
+    }
+};
+
+static UbQuickExampleEmptyTrafficFocusedTestSuite g_ubQuickExampleEmptyTrafficFocusedTestSuite;
 
 #ifdef NS3_MPI
 class UbQuickExampleMpiDependencyVisibilityFocusedTestSuite : public TestSuite
