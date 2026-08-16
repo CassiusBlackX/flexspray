@@ -33,10 +33,6 @@ struct TrafficRecord
     string delay;
     int phaseId;
     vector<uint32_t> dependOnPhases;
-    uint32_t srcEntityId = 0;
-    uint32_t dstEntityId = 0;
-    bool hasSrcEntityId{false};
-    bool hasDstEntityId{false};
     uint32_t srcPortId = 0;
     uint32_t dstPortId = 0;
     bool hasSrcPortId{false};
@@ -55,10 +51,6 @@ struct TrafficRecordView
     std::string_view delay{};
     uint32_t phaseId{0};
     std::string_view dependOnPhases{};
-    uint32_t srcEntityId{0};
-    uint32_t dstEntityId{0};
-    bool hasSrcEntityId{false};
-    bool hasDstEntityId{false};
     uint32_t srcPortId{0};
     uint32_t dstPortId{0};
     bool hasSrcPortId{false};

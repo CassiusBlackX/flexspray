@@ -12,6 +12,7 @@
 #include "ns3/hash.h"
 #include "ns3/log.h"
 #include "ns3/node.h"
+#include "ns3/node-list.h"
 #include "ns3/simulator.h"
 #include "ns3/ub-controller.h"
 #include "ns3/ub-lifecycle.h"
@@ -83,10 +84,21 @@ EntityLoadBalanceSalt(uint32_t srcNodeId, const UbCtpEntityKey& key)
         Hash64(std::string(reinterpret_cast<const char*>(buf), sizeof(buf))) & 0xffff);
 }
 
-void
-ValidateCna16PortHint(uint32_t port, const char* label)
+std::string
+FormatPortList(const std::vector<uint16_t>& ports)
 {
-    NS_ABORT_MSG_IF(port >= 15, "CTP " << label << " port hint cannot be encoded as CNA16");
+    std::ostringstream out;
+    out << "[";
+    for (std::size_t index = 0; index < ports.size(); ++index)
+    {
+        if (index != 0)
+        {
+            out << ",";
+        }
+        out << ports[index];
+    }
+    out << "]";
+    return out.str();
 }
 
 void
@@ -111,14 +123,18 @@ Ptr<Packet>
 BuildCtpPacket(Ptr<UbWqeSegment> segment,
                uint32_t srcNodeId,
                const UbCtpEntityKey& key,
-               uint32_t srcPortHint,
-               uint32_t dstPortHint,
+               uint32_t srcPortId,
+               uint32_t dstPortId,
                uint32_t taSsn,
                uint32_t progressBytes,
                const UbCtpRoutingPolicy& routing,
                uint8_t loadBalanceSalt)
 {
     NS_ABORT_MSG_IF(segment == nullptr, "CTP packet requires WQE segment");
+    NS_ABORT_MSG_IF(srcPortId != UINT32_MAX && srcPortId > CTP_MAX_CNA16_PORT_ID,
+                    "CTP source port cannot be encoded as CNA16: " << srcPortId);
+    NS_ABORT_MSG_IF(dstPortId != UINT32_MAX && dstPortId > CTP_MAX_CNA16_PORT_ID,
+                    "CTP destination port cannot be encoded as CNA16: " << dstPortId);
 
     const bool isAckResponse = segment->GetSegmentKind() == UbTransactionSegmentKind::RESPONSE &&
                                segment->GetType() == TaOpcode::TA_OPCODE_TRANSACTION_ACK;
@@ -189,13 +205,13 @@ BuildCtpPacket(Ptr<UbWqeSegment> segment,
     packet->AddHeader(ctpHeader);
 
     UbCna16NetworkHeader cnaHeader;
-    const uint32_t srcCna = srcPortHint == UINT32_MAX
+    const uint32_t srcCna = srcPortId == UINT32_MAX
                                 ? utils::NodeIdToCna16(srcNodeId)
-                                : utils::NodeIdToCna16(srcNodeId, srcPortHint);
+                                : utils::NodeIdToCna16(srcNodeId, srcPortId);
     cnaHeader.SetScna(static_cast<uint16_t>(srcCna));
-    const uint32_t dstCna = dstPortHint == UINT32_MAX
+    const uint32_t dstCna = dstPortId == UINT32_MAX
                                 ? utils::NodeIdToCna16(key.dstNodeId)
-                                : utils::NodeIdToCna16(key.dstNodeId, dstPortHint);
+                                : utils::NodeIdToCna16(key.dstNodeId, dstPortId);
     cnaHeader.SetDcna(static_cast<uint16_t>(dstCna));
     cnaHeader.SetLb(loadBalanceSalt);
     cnaHeader.SetServiceLevel(key.vl);
@@ -583,32 +599,6 @@ UbCtpTransportService::SetExperimentTaAckPacketBytesForTest(uint32_t packetBytes
     m_experimentTaAckPacketBytes = packetBytes;
 }
 
-void
-UbCtpTransportService::SetSourcePortHint(const UbCtpEntityKey& key, uint32_t port)
-{
-    ValidateCna16PortHint(port, "source");
-    m_srcPortHints[key] = port;
-}
-
-void
-UbCtpTransportService::ClearSourcePortHint(const UbCtpEntityKey& key)
-{
-    m_srcPortHints.erase(key);
-}
-
-void
-UbCtpTransportService::SetDestinationPortHint(const UbCtpEntityKey& key, uint32_t port)
-{
-    ValidateCna16PortHint(port, "destination");
-    m_dstPortHints[key] = port;
-}
-
-void
-UbCtpTransportService::ClearDestinationPortHint(const UbCtpEntityKey& key)
-{
-    m_dstPortHints.erase(key);
-}
-
 UbCtpEntityState&
 UbCtpTransportService::GetOrCreateEntityState(const UbCtpEntityKey& key)
 {
@@ -729,8 +719,12 @@ UbCtpTransportService::BuildDataPacketWithTaSsn(Ptr<UbWqeSegment> segment,
     Ptr<Packet> packet = BuildCtpPacket(segment,
                                         m_node->GetId(),
                                         packetKey,
-                                        ResolveSourcePortHint(packetKey),
-                                        ResolveDestinationPortHint(packetKey),
+                                        segment->GetSport() == CTP_WILDCARD_PORT
+                                            ? UINT32_MAX
+                                            : segment->GetSport(),
+                                        segment->GetDport() == CTP_WILDCARD_PORT
+                                            ? UINT32_MAX
+                                            : segment->GetDport(),
                                         taSsn,
                                         progressBytes,
                                         state.Tx().routing,
@@ -777,8 +771,8 @@ UbCtpTransportService::AddCtpNetworkHeaders(Ptr<Packet> packet,
     Ptr<Packet> headers = BuildCtpPacket(empty,
                                          m_node->GetId(),
                                          key,
-                                         ResolveSourcePortHint(key),
-                                         ResolveDestinationPortHint(key),
+                                         UINT32_MAX,
+                                         UINT32_MAX,
                                          0,
                                          packet->GetSize(),
                                          routing,
@@ -1081,7 +1075,7 @@ UbCtpTransportService::SendAdmittedFragment(Ptr<UbWqeSegment> segment,
     }
 
     const uint16_t lbSalt = NextLoadBalanceSalt(state, packetKey);
-    const uint32_t outPort = SelectOutPort(state, packetKey, lbSalt);
+    const uint32_t outPort = SelectOutPort(segment, state, packetKey, lbSalt);
     Ptr<Packet> packet = BuildDataPacketWithTaSsn(segment,
                                                   state,
                                                   packetKey,
@@ -1212,7 +1206,7 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet)
 }
 
 bool
-UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t receivePortHint)
+UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t ingressPortId)
 {
     if (packet == nullptr)
     {
@@ -1260,6 +1254,49 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t receive
 
     const uint32_t wireSrcNodeId = utils::Cna16ToNodeId(cnaHeader.GetScna());
     const uint32_t wireDstNodeId = utils::Cna16ToNodeId(cnaHeader.GetDcna());
+    Ptr<UbController> controller = m_node == nullptr ? nullptr : m_node->GetObject<UbController>();
+    NS_ABORT_MSG_IF(controller == nullptr || !controller->AreCtpEntitiesFrozen(),
+                    "CTP receive requires a frozen local Entity registry");
+    NS_ABORT_MSG_IF(wireDstNodeId != m_node->GetId(),
+                    "CTP packet destination node does not match the receiving host");
+    NS_ABORT_MSG_IF(!controller->HasCtpEntity(dstEntityId),
+                    "CTP destination Entity " << dstEntityId
+                                                << " is not configured on node "
+                                                << m_node->GetId());
+
+    const bool destinationPortExplicit = (cnaHeader.GetDcna() & 0xF) != 0;
+    uint32_t receivePort = ingressPortId;
+    if (receivePort == std::numeric_limits<uint32_t>::max() && destinationPortExplicit)
+    {
+        receivePort = utils::Cna16ToPortId(cnaHeader.GetDcna());
+    }
+    NS_ABORT_MSG_IF(receivePort == std::numeric_limits<uint32_t>::max(),
+                    "CTP receive requires the actual ingress port for a Primary CNA");
+    NS_ABORT_MSG_IF(receivePort > CTP_MAX_CNA16_PORT_ID,
+                    "CTP ingress port cannot be encoded as CNA16: " << receivePort);
+
+    Ptr<UbPort> ingressPort = nullptr;
+    for (uint32_t deviceIndex = 0; deviceIndex < m_node->GetNDevices(); ++deviceIndex)
+    {
+        Ptr<UbPort> candidate = DynamicCast<UbPort>(m_node->GetDevice(deviceIndex));
+        if (candidate != nullptr && candidate->GetIfIndex() == receivePort)
+        {
+            ingressPort = candidate;
+            break;
+        }
+    }
+    NS_ABORT_MSG_IF(ingressPort == nullptr,
+                    "CTP ingress port is not a UB port on node " << m_node->GetId() << ": "
+                                                                  << receivePort);
+    NS_ABORT_MSG_IF(!controller->IsCtpEntityPortMember(dstEntityId, receivePort),
+                    "CTP ingress port " << receivePort << " is not a member of Entity "
+                                          << dstEntityId);
+    if (destinationPortExplicit)
+    {
+        NS_ABORT_MSG_IF(utils::Cna16ToPortId(cnaHeader.GetDcna()) != receivePort,
+                        "Explicit CTP destination CNA does not match the ingress port");
+    }
+
     UbCtpEntityKey localKey{.srcEntityId = dstEntityId,
                             .dstNodeId = wireSrcNodeId,
                             .dstEntityId = srcEntityId,
@@ -1362,12 +1399,6 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t receive
                   flowTag.GetFlowId(),
                   traceTag);
 
-    uint32_t receivePort = receivePortHint;
-    if (receivePort == std::numeric_limits<uint32_t>::max())
-    {
-        receivePort = utils::Cna16ToPortId(cnaHeader.GetDcna());
-    }
-
     Ptr<const Packet> explicitPayload;
     UbExplicitPayloadTag explicitPayloadTag;
     if (copy->PeekPacketTag(explicitPayloadTag))
@@ -1392,20 +1423,26 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t receive
         return true;
     }
 
-    const bool requestDestinationPortExplicit = (cnaHeader.GetDcna() & 0xF) != 0;
-    if (receivePort < 15 &&
-        (!RoutingTypeIsPerPacket(linkHeader.GetRoutingType()) || requestDestinationPortExplicit))
+    request->SetDport(CTP_WILDCARD_PORT);
+    if (receivePort != std::numeric_limits<uint32_t>::max() &&
+        (!RoutingTypeIsPerPacket(linkHeader.GetRoutingType()) || destinationPortExplicit))
     {
-        SetSourcePortHint(localKey, receivePort);
+        request->SetDport(static_cast<uint8_t>(receivePort));
     }
     const bool requestSourcePortExplicit = (cnaHeader.GetScna() & 0xF) != 0;
     if (requestSourcePortExplicit)
     {
-        SetDestinationPortHint(localKey, utils::Cna16ToPortId(cnaHeader.GetScna()));
+        const uint32_t sourcePort = utils::Cna16ToPortId(cnaHeader.GetScna());
+        NS_ABORT_MSG_IF(sourcePort > CTP_MAX_CNA16_PORT_ID,
+                        "CTP source CNA cannot be encoded as a CNA16 port");
+        request->SetSport(static_cast<uint8_t>(sourcePort));
+    }
+    else
+    {
+        request->SetSport(CTP_WILDCARD_PORT);
     }
     localState.Tx().routing.routingType = linkHeader.GetRoutingType();
 
-    Ptr<UbController> controller = m_node == nullptr ? nullptr : m_node->GetObject<UbController>();
     Ptr<UbTransaction> transaction =
         controller == nullptr ? nullptr : controller->GetUbTransaction();
     Ptr<UbCtpTransportService> self(this);
@@ -1590,49 +1627,94 @@ UbCtpTransportService::GetLifecycleOwnerForTest() const
 }
 
 uint32_t
-UbCtpTransportService::SelectOutPort(UbCtpEntityState& state,
+UbCtpTransportService::SelectOutPort(Ptr<UbWqeSegment> segment,
+                                     UbCtpEntityState& state,
                                      const UbCtpEntityKey& routeKey,
                                      uint16_t loadBalanceSalt)
 {
     NS_ABORT_MSG_IF(m_node == nullptr, "CTP send requires a source node");
+    NS_ABORT_MSG_IF(segment == nullptr, "CTP send requires a WQE segment");
 
-    const uint32_t sourcePortHint = ResolveSourcePortHint(routeKey);
-    if (sourcePortHint != UINT32_MAX)
+    const uint32_t sourcePortId =
+        segment->GetSport() == CTP_WILDCARD_PORT ? UINT32_MAX : segment->GetSport();
+    Ptr<UbController> controller = m_node->GetObject<UbController>();
+    NS_ABORT_MSG_IF(controller == nullptr || !controller->AreCtpEntitiesFrozen(),
+                    "CTP source Entity registry must be frozen before sending");
+    NS_ABORT_MSG_IF(!controller->HasCtpEntity(routeKey.srcEntityId),
+                    "CTP source Entity " << routeKey.srcEntityId << " is not configured on node "
+                                          << m_node->GetId());
+    const std::vector<uint16_t>& entityPorts =
+        controller->GetCtpEntityPorts(routeKey.srcEntityId);
+
+    const uint32_t dstPort =
+        segment->GetDport() == CTP_WILDCARD_PORT ? UINT32_MAX : segment->GetDport();
+    NS_ABORT_MSG_IF(routeKey.dstNodeId >= NodeList::GetNNodes(),
+                    "CTP destination node does not exist: " << routeKey.dstNodeId);
+    Ptr<UbController> peerController =
+        NodeList::GetNode(routeKey.dstNodeId)->GetObject<UbController>();
+    NS_ABORT_MSG_IF(peerController == nullptr || !peerController->AreCtpEntitiesFrozen(),
+                    "CTP destination Entity registry must be frozen before sending from node "
+                        << m_node->GetId() << " to node " << routeKey.dstNodeId << " Entity "
+                        << routeKey.dstEntityId << " at TASSN " << segment->GetTaSsn());
+    NS_ABORT_MSG_IF(!peerController->HasCtpEntity(routeKey.dstEntityId),
+                    "CTP destination Entity " << routeKey.dstEntityId
+                                               << " is not configured on node "
+                                               << routeKey.dstNodeId);
+    NS_ABORT_MSG_IF(dstPort != UINT32_MAX &&
+                        !peerController->IsCtpEntityPortMember(routeKey.dstEntityId, dstPort),
+                    "CTP destination port " << dstPort << " is not a member of Entity "
+                                             << routeKey.dstEntityId << " on node "
+                                             << routeKey.dstNodeId);
+
+    if (sourcePortId != UINT32_MAX)
     {
-        const uint32_t outPort = sourcePortHint;
+        const uint32_t outPort = sourcePortId;
+        NS_ABORT_MSG_IF(!controller->IsCtpEntityPortMember(routeKey.srcEntityId, outPort),
+                        "CTP source port " << outPort << " is not a member of Entity "
+                                            << routeKey.srcEntityId);
+        NS_ABORT_MSG_IF(outPort > CTP_MAX_CNA16_PORT_ID,
+                        "CTP source port " << outPort << " cannot be encoded as CNA16");
         NS_ABORT_MSG_IF(outPort >= m_node->GetNDevices(),
-                        "CTP source port hint is outside the node device range");
+                        "CTP source port " << outPort << " is outside the node device range");
         NS_ABORT_MSG_IF(DynamicCast<UbPort>(m_node->GetDevice(outPort)) == nullptr,
-                        "CTP source port hint must reference a UB port");
+                        "CTP source port " << outPort << " is not a UB port");
         return outPort;
     }
 
     Ptr<UbSwitch> sw = m_node->GetObject<UbSwitch>();
     NS_ABORT_MSG_IF(sw == nullptr,
-                    "CTP send requires a source port hint or a route to destination node");
+                    "CTP send requires an explicit source port or a route to destination node");
     Ptr<UbRoutingProcess> routing = sw->GetRoutingProcess();
     NS_ABORT_MSG_IF(routing == nullptr,
-                    "CTP send requires a source port hint or a route to destination node");
+                    "CTP send requires an explicit source port or a route to destination node");
 
-    const uint32_t dstPort = ResolveDestinationPortHint(routeKey);
+    const uint32_t routingDstPort =
+        dstPort == UINT32_MAX
+            ? peerController->SelectCtpEntityMemberPort(routeKey.dstEntityId,
+                                                        static_cast<uint8_t>(loadBalanceSalt))
+            : dstPort;
     RoutingKey rtKey;
     rtKey.sip = utils::NodeIdToIp(m_node->GetId()).Get();
-    rtKey.dip = dstPort == UINT32_MAX ? utils::NodeIdToIp(routeKey.dstNodeId).Get()
-                                      : utils::NodeIdToIp(routeKey.dstNodeId, dstPort).Get();
+    rtKey.dip = utils::NodeIdToIp(routeKey.dstNodeId, routingDstPort).Get();
     rtKey.sport = loadBalanceSalt;
-    rtKey.dport = dstPort == UINT32_MAX ? 0 : static_cast<uint16_t>(dstPort);
+    rtKey.dport = static_cast<uint16_t>(routingDstPort);
     rtKey.priority = routeKey.vl;
     rtKey.routingType = state.Tx().routing.routingType;
 
     bool selectedShortestPath = false;
-    const int outPort = dstPort == UINT32_MAX
-                            ? routing->GetOutPort(rtKey, selectedShortestPath)
-                            : routing->GetOutPortForEndpoint(rtKey, selectedShortestPath);
+    const int outPort = routing->GetOutPortForEndpointRestricted(rtKey,
+                                                                 entityPorts,
+                                                                 selectedShortestPath);
     // TODO: Source routing currently ignores selectedShortestPath. Propagate a non-shortest
     // selection into the transmit routing policy before building the packet header so a
     // downstream switch cannot consume the UB one-detour allowance again.
-    NS_ABORT_MSG_IF(outPort < 0,
-                    "CTP send requires a source port hint or a route to destination node");
+    NS_ABORT_MSG_IF(
+        outPort < 0,
+        "CTP source node " << m_node->GetId() << " Entity " << routeKey.srcEntityId
+                           << " members " << FormatPortList(entityPorts)
+                           << " has no route to destination node " << routeKey.dstNodeId
+                           << " Entity " << routeKey.dstEntityId << " member port "
+                           << routingDstPort);
     NS_ABORT_MSG_IF(static_cast<uint32_t>(outPort) >= m_node->GetNDevices(),
                     "CTP route selected an outPort outside the node device range");
     NS_ABORT_MSG_IF(DynamicCast<UbPort>(m_node->GetDevice(static_cast<uint32_t>(outPort))) ==
@@ -1649,35 +1731,6 @@ UbCtpTransportService::NextLoadBalanceSalt(UbCtpEntityState& state, const UbCtpE
         return EntityLoadBalanceSalt(m_node->GetId(), routeKey);
     }
     return static_cast<uint16_t>(state.Tx().routing.nextSprayIndex++);
-}
-
-uint32_t
-UbCtpTransportService::ResolveDestinationPortHint(const UbCtpEntityKey& key) const
-{
-    auto it = m_dstPortHints.find(key);
-    if (it != m_dstPortHints.end())
-    {
-        return it->second;
-    }
-
-    const UbCtpEntityKey sourceGroupKey = MakeSourceGroupKeyForRequest(key);
-    it = m_dstPortHints.find(sourceGroupKey);
-    if (it != m_dstPortHints.end())
-    {
-        return it->second;
-    }
-    return UINT32_MAX;
-}
-
-uint32_t
-UbCtpTransportService::ResolveSourcePortHint(const UbCtpEntityKey& key) const
-{
-    auto it = m_srcPortHints.find(key);
-    if (it != m_srcPortHints.end())
-    {
-        return it->second;
-    }
-    return UINT32_MAX;
 }
 
 void
@@ -1714,7 +1767,7 @@ UbCtpTransportService::SendResponseSegment(Ptr<UbWqeSegment> response, UbCtpEnti
     if (response->GetType() == TaOpcode::TA_OPCODE_TRANSACTION_ACK)
     {
         const uint16_t lbSalt = NextLoadBalanceSalt(state, key);
-        const uint32_t outPort = SelectOutPort(state, key, lbSalt);
+        const uint32_t outPort = SelectOutPort(response, state, key, lbSalt);
         Ptr<Packet> packet = BuildDataPacketWithTaSsn(response,
                                                       state,
                                                       key,
@@ -1735,7 +1788,7 @@ UbCtpTransportService::SendResponseSegment(Ptr<UbWqeSegment> response, UbCtpEnti
     {
         const uint32_t progressBytes = static_cast<uint32_t>(response->GetBytesLeft());
         const uint16_t lbSalt = NextLoadBalanceSalt(state, key);
-        const uint32_t outPort = SelectOutPort(state, key, lbSalt);
+        const uint32_t outPort = SelectOutPort(response, state, key, lbSalt);
         Ptr<Packet> packet = BuildDataPacketWithTaSsn(response,
                                                       state,
                                                       key,

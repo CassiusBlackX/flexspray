@@ -51,6 +51,7 @@
 #include <barrier>
 #include <chrono>
 #include <csignal>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -108,6 +109,8 @@ CreateCtpWriteSegment(uint32_t taSsn = 0)
     Ptr<UbWqeSegment> segment = CreateObject<UbWqeSegment>();
     segment->SetSrc(0);
     segment->SetDest(1);
+    segment->SetSport(CTP_WILDCARD_PORT);
+    segment->SetDport(CTP_WILDCARD_PORT);
     segment->SetPriority(7);
     segment->SetType(TaOpcode::TA_OPCODE_WRITE);
     segment->SetSize(64);
@@ -116,20 +119,6 @@ CreateCtpWriteSegment(uint32_t taSsn = 0)
     segment->SetPayloadBytes(64);
     segment->SetResLenBytes(64);
     segment->SetRemoteAddress(0);
-    return segment;
-}
-
-Ptr<UbWqeSegment>
-CreateCtpWriteSegmentForKey(uint32_t srcNodeId,
-                            const UbCtpEntityKey& key,
-                            uint32_t taSsn = 0)
-{
-    Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(taSsn);
-    segment->SetSrc(srcNodeId);
-    segment->SetDest(key.dstNodeId);
-    segment->SetSrcEntityId(key.srcEntityId);
-    segment->SetDstEntityId(key.dstEntityId);
-    segment->SetPriority(key.vl);
     return segment;
 }
 
@@ -146,6 +135,8 @@ CreateCtpWqeForKey(Ptr<UbFunction> function,
                                          TaOpcode::TA_OPCODE_WRITE);
     wqe->SetSrcEntityId(key.srcEntityId);
     wqe->SetDstEntityId(key.dstEntityId);
+    wqe->SetSport(CTP_WILDCARD_PORT);
+    wqe->SetDport(CTP_WILDCARD_PORT);
     wqe->SetPriority(key.vl);
     return wqe;
 }
@@ -156,6 +147,8 @@ CreateCtpTaAckResponseSegment(uint32_t requestTaSsn)
     Ptr<UbWqeSegment> segment = CreateObject<UbWqeSegment>();
     segment->SetSrc(1);
     segment->SetDest(0);
+    segment->SetSport(CTP_WILDCARD_PORT);
+    segment->SetDport(CTP_WILDCARD_PORT);
     segment->SetPriority(7);
     segment->SetType(TaOpcode::TA_OPCODE_TRANSACTION_ACK);
     segment->SetSize(0);
@@ -174,9 +167,18 @@ BuildCtpCnpPacket(uint32_t srcNodeId, const UbCtpEntityKey& key)
 {
     Ptr<Packet> packet = Create<Packet>();
 
+    UbCompactEidHeader eidHeader;
+    eidHeader.SetSourceEid(key.srcEntityId);
+    eidHeader.SetDestinationEid(key.dstEntityId);
+    packet->AddHeader(eidHeader);
+
+    UbCompactUpiHeader upiHeader;
+    upiHeader.SetUpi(0);
+    packet->AddHeader(upiHeader);
+
     UbCtpHeader ctpHeader;
     ctpHeader.SetTPOpcode(CtpOpcode::CTP_CNP);
-    ctpHeader.SetNlp(UB_CTPH_NLP_COMPACT_TAH);
+    ctpHeader.SetNlp(UB_CTPH_NLP_UPI16_EID40_TAH);
     packet->AddHeader(ctpHeader);
 
     UbCna16NetworkHeader cnaHeader;
@@ -242,7 +244,10 @@ class UbFailingLink : public UbLink
 };
 
 void
-InitNode(Ptr<Node> node, UbNodeType_t nodeType, uint32_t portCount)
+InitNode(Ptr<Node> node,
+         UbNodeType_t nodeType,
+         uint32_t portCount,
+         bool provisionDefaultCtpEntity = true)
 {
     Ptr<UbSwitch> sw = CreateObject<UbSwitch>();
     node->AggregateObject(sw);
@@ -259,6 +264,13 @@ InitNode(Ptr<Node> node, UbNodeType_t nodeType, uint32_t portCount)
     for (uint32_t index = 0; index < portCount; ++index)
     {
         CreatePort(node);
+    }
+
+    if (nodeType == UB_DEVICE && provisionDefaultCtpEntity)
+    {
+        Ptr<UbController> controller = node->GetObject<UbController>();
+        controller->CreateDefaultCtpEntity(1);
+        controller->FreezeCtpEntities();
     }
 
     sw->Init();
@@ -1214,62 +1226,187 @@ class UbTrafficConfigEntityAndEndpointPortFieldsTest : public TestCase
 {
   public:
     UbTrafficConfigEntityAndEndpointPortFieldsTest()
-        : TestCase("UnifiedBus - traffic parser preserves entity ids alongside endpoint ports")
+        : TestCase("UnifiedBus - traffic parser rejects Entity columns")
     {
     }
 
   private:
     void DoRun() override
     {
-        const auto trafficPath =
-            std::filesystem::temp_directory_path() / "ub-traffic-config-entity-and-port-fields.csv";
+        const auto entityPath =
+            std::filesystem::temp_directory_path() / "ub-traffic-config-entity-fields.csv";
+        const auto combinedPath = std::filesystem::temp_directory_path() /
+                                  "ub-traffic-config-entity-and-port-fields.csv";
         {
-            std::ofstream trafficFile(trafficPath);
-            NS_TEST_ASSERT_MSG_EQ(trafficFile.good(), true, "temporary traffic file should open");
-            trafficFile << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
-                           "dependOnPhases,srcEntityId,dstEntityId,srcPortId,dstPortId\n";
-            trafficFile << "1,2,3,64,URMA_WRITE,1,0ns,10,,11,12,0,\n";
+            std::ofstream entityFile(entityPath);
+            NS_TEST_ASSERT_MSG_EQ(entityFile.good(), true, "Entity traffic file should open");
+            entityFile << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
+                          "dependOnPhases,srcEntityId,dstEntityId\n";
+            entityFile << "1,2,3,64,URMA_WRITE,1,0ns,10,,11,12\n";
+
+            std::ofstream combinedFile(combinedPath);
+            NS_TEST_ASSERT_MSG_EQ(combinedFile.good(),
+                                  true,
+                                  "Entity-plus-port traffic file should open");
+            combinedFile
+                << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
+                   "dependOnPhases,srcEntityId,dstEntityId,srcPortId,dstPortId\n";
+            combinedFile << "1,2,3,64,URMA_WRITE,1,0ns,10,,11,12,0,1\n";
         }
 
-        const auto records = UbUtils::Get()->LoadTrafficConfig(trafficPath.string());
-        NS_TEST_ASSERT_MSG_EQ(records.size(), 1u, "entity-and-port row should load");
-        NS_TEST_ASSERT_MSG_EQ(records[0].srcEntityId, 11u, "source entity should be preserved");
-        NS_TEST_ASSERT_MSG_EQ(records[0].dstEntityId, 12u, "destination entity should be preserved");
-        NS_TEST_ASSERT_MSG_EQ(records[0].hasSrcEntityId,
-                              true,
-                              "source entity column should be present");
-        NS_TEST_ASSERT_MSG_EQ(records[0].hasDstEntityId,
-                              true,
-                              "destination entity column should be present");
-        NS_TEST_ASSERT_MSG_EQ(records[0].srcPortId, 0u, "explicit source port 0 should be preserved");
+        const int entityStatus = RunInChildProcess([entityPath]() {
+            UbUtils::Get()->ForEachTrafficRecordView(entityPath.string(),
+                                                     [](const TrafficRecordView&) {});
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(entityStatus),
+                              1,
+                              "traffic parser should reject the 11-column Entity header");
+        if (WIFSIGNALED(entityStatus))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WTERMSIG(entityStatus),
+                                  SIGABRT,
+                                  "11-column Entity header should fail with SIGABRT");
+        }
+
+        const int combinedStatus = RunInChildProcess([combinedPath]() {
+            UbUtils::Get()->ForEachTrafficRecordView(combinedPath.string(),
+                                                     [](const TrafficRecordView&) {});
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(combinedStatus),
+                              1,
+                              "traffic parser should reject the 13-column Entity-plus-port header");
+        if (WIFSIGNALED(combinedStatus))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WTERMSIG(combinedStatus),
+                                  SIGABRT,
+                                  "13-column Entity-plus-port header should fail with SIGABRT");
+        }
+
+        std::filesystem::remove(entityPath);
+        std::filesystem::remove(combinedPath);
+    }
+};
+
+class UbTrafficConfigPreservesTransportPortRangeTest : public TestCase
+{
+  public:
+    UbTrafficConfigPreservesTransportPortRangeTest()
+        : TestCase("UnifiedBus - traffic parser preserves ports outside the CTP CNA16 range")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const auto sourcePath =
+            std::filesystem::temp_directory_path() / "ub-traffic-config-source-port-15.csv";
+        const auto destinationPath =
+            std::filesystem::temp_directory_path() / "ub-traffic-config-destination-port-15.csv";
+        const std::string header =
+            "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
+            "dependOnPhases,srcPortId,dstPortId\n";
+        {
+            std::ofstream sourceFile(sourcePath);
+            NS_TEST_ASSERT_MSG_EQ(sourceFile.good(), true, "source-port file should open");
+            sourceFile << header << "1,2,3,64,URMA_WRITE,1,0ns,10,,15,14\n";
+
+            std::ofstream destinationFile(destinationPath);
+            NS_TEST_ASSERT_MSG_EQ(destinationFile.good(),
+                                  true,
+                                  "destination-port file should open");
+            destinationFile << header << "1,2,3,64,URMA_WRITE,1,0ns,10,,14,15\n";
+        }
+
+        const auto records = UbUtils::Get()->LoadTrafficConfig(sourcePath.string());
+        NS_TEST_ASSERT_MSG_EQ(records.size(), 1u, "materialized parser should load port 15");
+        NS_TEST_ASSERT_MSG_EQ(records[0].srcPortId,
+                              15u,
+                              "shared traffic parser must preserve an RTP/LDST port above 14");
         NS_TEST_ASSERT_MSG_EQ(records[0].hasSrcPortId,
                               true,
-                              "explicit source port 0 should not be wildcard");
-        NS_TEST_ASSERT_MSG_EQ(records[0].hasDstPortId,
-                              false,
-                              "empty destination port should remain wildcard");
+                              "port 15 must remain explicitly present");
 
-        bool sawView = false;
+        bool sawDestination = false;
         UbUtils::Get()->ForEachTrafficRecordView(
-            trafficPath.string(),
-            [this, &sawView](const TrafficRecordView& record) {
-                sawView = true;
-                NS_TEST_ASSERT_MSG_EQ(record.srcEntityId,
-                                      11u,
-                                      "streaming view should preserve source entity");
-                NS_TEST_ASSERT_MSG_EQ(record.dstEntityId,
-                                      12u,
-                                      "streaming view should preserve destination entity");
-                NS_TEST_ASSERT_MSG_EQ(record.hasSrcPortId,
-                                      true,
-                                      "streaming view should preserve explicit source port 0");
+            destinationPath.string(),
+            [this, &sawDestination](const TrafficRecordView& record) {
+                sawDestination = true;
+                NS_TEST_ASSERT_MSG_EQ(
+                    record.dstPortId,
+                    15u,
+                    "streaming traffic parser must preserve an RTP/LDST destination port above 14");
                 NS_TEST_ASSERT_MSG_EQ(record.hasDstPortId,
-                                      false,
-                                      "streaming view should preserve wildcard destination port");
+                                      true,
+                                      "destination port 15 must remain explicitly present");
             });
-        NS_TEST_ASSERT_MSG_EQ(sawView, true, "entity-and-port row should stream");
+        NS_TEST_ASSERT_MSG_EQ(sawDestination, true, "streaming parser should load port 15");
 
-        std::filesystem::remove(trafficPath);
+        std::filesystem::remove(sourcePath);
+        std::filesystem::remove(destinationPath);
+    }
+};
+
+class UbAppCtpRejectsUnencodableTrafficPortTest : public TestCase
+{
+  public:
+    UbAppCtpRejectsUnencodableTrafficPortTest()
+        : TestCase("UnifiedBus - CTP App rejects traffic ports outside the CNA16 range")
+    {
+    }
+
+  private:
+    int RunScenario(bool sourcePort)
+    {
+        return RunInChildProcess([sourcePort]() {
+            Ptr<Node> node = BuildSinglePortCtpNode();
+            Ptr<UbApp> app = CreateObject<UbApp>();
+            node->AddApplication(app);
+            app->SetTransportMode(TransportMode::CTP);
+
+            UbTrafficGen::RuntimeTask task;
+            task.taskId = sourcePort ? 301 : 302;
+            task.sourceNode = node->GetId();
+            task.destNode = node->GetId() + 1;
+            task.dataSize = 64;
+            task.priority = 5;
+            task.op = UbTrafficGen::RuntimeTaskOp::URMA_WRITE;
+            if (sourcePort)
+            {
+                task.srcPortId = 15;
+                task.hasSrcPortId = true;
+            }
+            else
+            {
+                task.dstPortId = 15;
+                task.hasDstPortId = true;
+            }
+            app->SendCtpUrmaTraffic(task);
+        });
+    }
+
+    void DoRun() override
+    {
+        const int sourceStatus = RunScenario(true);
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(sourceStatus),
+                              1,
+                              "CTP App should reject an unencodable source port");
+        if (WIFSIGNALED(sourceStatus))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WTERMSIG(sourceStatus),
+                                  SIGABRT,
+                                  "unencodable CTP source port should fail with SIGABRT");
+        }
+
+        const int destinationStatus = RunScenario(false);
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(destinationStatus),
+                              1,
+                              "CTP App should reject an unencodable destination port");
+        if (WIFSIGNALED(destinationStatus))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WTERMSIG(destinationStatus),
+                                  SIGABRT,
+                                  "unencodable CTP destination port should fail with SIGABRT");
+        }
     }
 };
 
@@ -1336,6 +1473,9 @@ class UbAppCtpTransportModeEntryTest : public TestCase
     void DoRun() override
     {
         Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<Node> peer = CreateObject<Node>(4);
+        InitNode(peer, UB_DEVICE, 1);
+        AddShortestRoute(node, peer->GetId(), 0, 0);
         Ptr<UbController> controller = node->GetObject<UbController>();
 
         Ptr<UbApp> app = CreateObject<UbApp>();
@@ -1345,7 +1485,7 @@ class UbAppCtpTransportModeEntryTest : public TestCase
         TrafficRecord record;
         record.taskId = 1;
         record.sourceNode = node->GetId();
-        record.destNode = 4;
+        record.destNode = peer->GetId();
         record.dataSize = 64;
         record.opType = "URMA_WRITE";
         record.priority = 5;
@@ -1354,16 +1494,11 @@ class UbAppCtpTransportModeEntryTest : public TestCase
 
         const uint32_t initialTransportCount = controller->GetTransportChannelManager()->GetCount();
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-        service->SetSourcePortHint(UbCtpEntityKey{.srcEntityId = 0,
-                                                  .dstNodeId = 4,
-                                                  .dstEntityId = 0,
-                                                  .vl = 5},
-                                   0);
         app->SendTraffic(record);
 
-        UbCtpEntityKey key{.srcEntityId = 0,
-                           .dstNodeId = 4,
-                           .dstEntityId = 0,
+        UbCtpEntityKey key{.srcEntityId = 1,
+                           .dstNodeId = peer->GetId(),
+                           .dstEntityId = 1,
                            .vl = 5};
         NS_TEST_ASSERT_MSG_NE(service, nullptr, "CTP mode should initialize the CTP service");
         NS_TEST_ASSERT_MSG_EQ(controller->GetTransportChannelManager()->GetCount(),
@@ -1439,7 +1574,7 @@ class UbAppCtpRuntimeTaskEntityAndEndpointPortTest : public TestCase
 {
   public:
     UbAppCtpRuntimeTaskEntityAndEndpointPortTest()
-        : TestCase("UnifiedBus - app CTP runtime task keeps entity ids independent of endpoint ports")
+        : TestCase("UnifiedBus - app CTP runtime task uses App Entity and WQE ports")
     {
     }
 
@@ -1447,26 +1582,25 @@ class UbAppCtpRuntimeTaskEntityAndEndpointPortTest : public TestCase
     void DoRun() override
     {
         Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<Node> peer = CreateObject<Node>(1);
+        InitNode(peer, UB_DEVICE, 1);
+        AddShortestRoute(node, peer->GetId(), 0, 0);
         Ptr<UbController> controller = node->GetObject<UbController>();
 
         Ptr<UbApp> app = CreateObject<UbApp>();
         node->AddApplication(app);
         app->SetTransportMode(TransportMode::CTP);
-        app->SetLocalEntityId(21);
-        app->SetPeerEntityId(22);
+        app->SetLocalEntityId(1);
+        app->SetPeerEntityId(1);
 
         UbTrafficGen::RuntimeTask task;
         task.taskId = 2;
         task.sourceNode = node->GetId();
-        task.destNode = 4;
+        task.destNode = peer->GetId();
         task.dataSize = 64;
         task.phaseId = 1;
         task.priority = 5;
         task.op = UbTrafficGen::RuntimeTaskOp::URMA_WRITE;
-        task.srcEntityId = 31;
-        task.dstEntityId = 32;
-        task.hasSrcEntityId = true;
-        task.hasDstEntityId = true;
         task.srcPortId = 0;
         task.dstPortId = 0;
         task.hasSrcPortId = true;
@@ -1474,28 +1608,16 @@ class UbAppCtpRuntimeTaskEntityAndEndpointPortTest : public TestCase
 
         const uint32_t initialTransportCount = controller->GetTransportChannelManager()->GetCount();
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-        service->SetSourcePortHint(UbCtpEntityKey{.srcEntityId = 31,
-                                                  .dstNodeId = 4,
-                                                  .dstEntityId = 32,
-                                                  .vl = 5},
-                                   0);
         app->SendTraffic(task);
 
-        UbCtpEntityKey explicitKey{.srcEntityId = 31,
-                                   .dstNodeId = 4,
-                                   .dstEntityId = 32,
-                                   .vl = 5};
-        UbCtpEntityKey fallbackKey{.srcEntityId = 21,
-                                   .dstNodeId = 4,
-                                   .dstEntityId = 22,
+        UbCtpEntityKey explicitKey{.srcEntityId = 1,
+                                   .dstNodeId = peer->GetId(),
+                                   .dstEntityId = 1,
                                    .vl = 5};
 
         NS_TEST_ASSERT_MSG_EQ(service->HasTransactionContextForTesting(explicitKey),
                               true,
-                              "runtime CTP branch should preserve traffic entity ids");
-        NS_TEST_ASSERT_MSG_EQ(service->HasTransactionContextForTesting(fallbackKey),
-                              false,
-                              "explicit traffic entity ids must not fall back to app defaults");
+                              "runtime CTP branch should use the App Entity ids");
         NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(explicitKey),
                               1u,
                               "runtime CTP branch should drain the single WQE segment into the explicit key queue");
@@ -1506,6 +1628,359 @@ class UbAppCtpRuntimeTaskEntityAndEndpointPortTest : public TestCase
         Simulator::Destroy();
     }
 };
+
+class UbJettyCopiesCtpEndpointPortSentinelsTest : public TestCase
+{
+  public:
+    UbJettyCopiesCtpEndpointPortSentinelsTest()
+        : TestCase("UnifiedBus - Jetty copies CTP endpoint ports from WQE to segment")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<UbFunction> function = node->GetObject<UbController>()->GetUbFunction();
+        Ptr<UbJetty> jetty = CreateObject<UbJetty>();
+
+        Ptr<UbWqe> explicitPorts =
+            function->CreateWqe(node->GetId(), 1, 64, 201, TaOpcode::TA_OPCODE_WRITE);
+        explicitPorts->SetSport(0);
+        explicitPorts->SetDport(14);
+        Ptr<UbWqeSegment> explicitSegment = jetty->GenWqeSegment(explicitPorts, 64);
+        NS_TEST_ASSERT_MSG_EQ(explicitSegment->GetSport(),
+                              0u,
+                              "explicit source port 0 must survive WQE segmentation");
+        NS_TEST_ASSERT_MSG_EQ(explicitSegment->GetDport(),
+                              14u,
+                              "explicit destination port 14 must survive WQE segmentation");
+
+        Ptr<UbWqe> wildcardPorts =
+            function->CreateWqe(node->GetId(), 1, 64, 202, TaOpcode::TA_OPCODE_WRITE);
+        wildcardPorts->SetSport(CTP_WILDCARD_PORT);
+        wildcardPorts->SetDport(CTP_WILDCARD_PORT);
+        Ptr<UbWqeSegment> wildcardSegment = jetty->GenWqeSegment(wildcardPorts, 64);
+        NS_TEST_ASSERT_MSG_EQ(wildcardSegment->GetSport(),
+                              CTP_WILDCARD_PORT,
+                              "wildcard source sentinel must survive WQE segmentation");
+        NS_TEST_ASSERT_MSG_EQ(wildcardSegment->GetDport(),
+                              CTP_WILDCARD_PORT,
+                              "wildcard destination sentinel must survive WQE segmentation");
+
+        Simulator::Destroy();
+    }
+};
+
+class UbAppCtpEndpointConstraintsDoNotLeakBetweenTasksTest : public TestCase
+{
+  public:
+    UbAppCtpEndpointConstraintsDoNotLeakBetweenTasksTest()
+        : TestCase("UnifiedBus - CTP endpoint constraints stay local to each task")
+    {
+    }
+
+  private:
+    UbTrafficGen::RuntimeTask MakeTask(uint32_t taskId, uint32_t source, uint32_t destination)
+    {
+        UbTrafficGen::RuntimeTask task;
+        task.taskId = taskId;
+        task.sourceNode = source;
+        task.destNode = destination;
+        task.dataSize = 64;
+        task.phaseId = 1;
+        task.priority = 5;
+        task.op = UbTrafficGen::RuntimeTaskOp::URMA_WRITE;
+        return task;
+    }
+
+    void DoRun() override
+    {
+        Ptr<Node> node = CreateObject<Node>();
+        Ptr<Node> peer = CreateObject<Node>();
+        InitNode(node, UB_DEVICE, 2, false);
+        InitNode(peer, UB_DEVICE, 1);
+        Ptr<UbController> controller = node->GetObject<UbController>();
+        controller->CreateCtpEntity(1, {0, 1});
+        controller->FreezeCtpEntities();
+        node->GetObject<UbSwitch>()->GetRoutingProcess()->GetRoutingTable().AddShortestRoute(
+            NodeIdToIp(peer->GetId()).Get(),
+            {1});
+        node->GetObject<UbSwitch>()->GetRoutingProcess()->GetRoutingTable().AddShortestRoute(
+            NodeIdToIp(peer->GetId(), 0).Get(),
+            {1});
+
+        Ptr<UbApp> app = CreateObject<UbApp>();
+        node->AddApplication(app);
+        app->SetTransportMode(TransportMode::CTP);
+
+        UbTrafficGen::RuntimeTask explicitZero =
+            MakeTask(210, node->GetId(), peer->GetId());
+        explicitZero.srcPortId = 0;
+        explicitZero.hasSrcPortId = true;
+        app->SendCtpUrmaTraffic(explicitZero);
+
+        UbTrafficGen::RuntimeTask wildcard = MakeTask(211, node->GetId(), peer->GetId());
+        app->SendCtpUrmaTraffic(wildcard);
+
+        UbTrafficGen::RuntimeTask explicitOne =
+            MakeTask(212, node->GetId(), peer->GetId());
+        explicitOne.srcPortId = 1;
+        explicitOne.hasSrcPortId = true;
+        app->SendCtpUrmaTraffic(explicitOne);
+
+        const UbCtpEntityKey key{.srcEntityId = 1,
+                                 .dstNodeId = peer->GetId(),
+                                 .dstEntityId = 1,
+                                 .vl = 5};
+        Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
+        NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(key, 0, key.vl),
+                              1u,
+                              "explicit port 0 task should remain on port 0 only");
+        NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(key, 1, key.vl),
+                              2u,
+                              "wildcard routing and explicit port 1 should independently use port 1");
+        NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(key),
+                              3u,
+                              "all three same-key tasks should remain independently queued");
+
+        Simulator::Destroy();
+    }
+};
+
+class UbAppCtpMultipleEntitiesSelectIndependentPortsTest : public TestCase
+{
+  public:
+    UbAppCtpMultipleEntitiesSelectIndependentPortsTest()
+        : TestCase("UnifiedBus - multiple CTP Apps select independent host Entities")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<Node> node = CreateObject<Node>();
+        Ptr<Node> peer = CreateObject<Node>();
+        InitNode(node, UB_DEVICE, 2, false);
+        InitNode(peer, UB_DEVICE, 2, false);
+        Ptr<UbController> controller = node->GetObject<UbController>();
+        Ptr<UbController> peerController = peer->GetObject<UbController>();
+        controller->CreateCtpEntity(2, {0, 1});
+        controller->CreateCtpEntity(3, {1});
+        controller->FreezeCtpEntities();
+        peerController->CreateCtpEntity(2, {0, 1});
+        peerController->CreateCtpEntity(3, {1});
+        peerController->FreezeCtpEntities();
+
+        Ptr<UbApp> firstApp = CreateObject<UbApp>();
+        Ptr<UbApp> secondApp = CreateObject<UbApp>();
+        node->AddApplication(firstApp);
+        node->AddApplication(secondApp);
+        firstApp->SetTransportMode(TransportMode::CTP);
+        secondApp->SetTransportMode(TransportMode::CTP);
+        firstApp->SetLocalEntityId(2);
+        firstApp->SetPeerEntityId(2);
+        secondApp->SetLocalEntityId(3);
+        secondApp->SetPeerEntityId(3);
+
+        UbTrafficGen::RuntimeTask first;
+        first.taskId = 220;
+        first.sourceNode = node->GetId();
+        first.destNode = peer->GetId();
+        first.dataSize = 64;
+        first.phaseId = 1;
+        first.priority = 5;
+        first.op = UbTrafficGen::RuntimeTaskOp::URMA_WRITE;
+        first.srcPortId = 0;
+        first.dstPortId = 0;
+        first.hasSrcPortId = true;
+        first.hasDstPortId = true;
+        firstApp->SendCtpUrmaTraffic(first);
+
+        UbTrafficGen::RuntimeTask second = first;
+        second.taskId = 221;
+        second.srcPortId = 1;
+        second.dstPortId = 1;
+        secondApp->SendCtpUrmaTraffic(second);
+
+        const UbCtpEntityKey firstKey{.srcEntityId = 2,
+                                      .dstNodeId = peer->GetId(),
+                                      .dstEntityId = 2,
+                                      .vl = 5};
+        const UbCtpEntityKey secondKey{.srcEntityId = 3,
+                                       .dstNodeId = peer->GetId(),
+                                       .dstEntityId = 3,
+                                       .vl = 5};
+        Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
+        NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(firstKey, 0, firstKey.vl),
+                              1u,
+                              "Entity 2 App should use its selected port 0");
+        NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(secondKey, 1, secondKey.vl),
+                              1u,
+                              "Entity 3 App should use its selected port 1");
+        UbCtpEntityState& firstState = service->GetOrCreateEntityState(firstKey);
+        UbCtpEntityState& secondState = service->GetOrCreateEntityState(secondKey);
+        firstState.Tx().routing.nextSprayIndex = 9;
+        NS_TEST_ASSERT_MSG_EQ(secondState.Tx().routing.nextSprayIndex,
+                              0u,
+                              "different Entity/VL keys must retain independent routing state");
+
+        Simulator::Destroy();
+    }
+};
+
+class UbAppCtpWildcardDestinationUsesPeerEntityRouteTest : public TestCase
+{
+  public:
+    UbAppCtpWildcardDestinationUsesPeerEntityRouteTest()
+        : TestCase("UnifiedBus - CTP wildcard destination routes to a Peer Entity member")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<Node> node = CreateObject<Node>();
+        Ptr<Node> peer = CreateObject<Node>();
+        InitNode(node, UB_DEVICE, 2, false);
+        InitNode(peer, UB_DEVICE, 2, false);
+
+        Ptr<UbController> controller = node->GetObject<UbController>();
+        controller->CreateCtpEntity(1, {0, 1});
+        controller->FreezeCtpEntities();
+        Ptr<UbController> peerController = peer->GetObject<UbController>();
+        peerController->CreateCtpEntity(2, {1});
+        peerController->FreezeCtpEntities();
+
+        Ptr<UbRoutingProcess> routing = node->GetObject<UbSwitch>()->GetRoutingProcess();
+        routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(peer->GetId()).Get(), {0});
+        routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(peer->GetId(), 1).Get(), {1});
+
+        Ptr<UbApp> app = CreateObject<UbApp>();
+        node->AddApplication(app);
+        app->SetTransportMode(TransportMode::CTP);
+        app->SetLocalEntityId(1);
+        app->SetPeerEntityId(2);
+
+        UbTrafficGen::RuntimeTask task;
+        task.taskId = 222;
+        task.sourceNode = node->GetId();
+        task.destNode = peer->GetId();
+        task.dataSize = 64;
+        task.phaseId = 1;
+        task.priority = 5;
+        task.op = UbTrafficGen::RuntimeTaskOp::URMA_WRITE;
+        app->SendCtpUrmaTraffic(task);
+
+        const UbCtpEntityKey key{.srcEntityId = 1,
+                                 .dstNodeId = peer->GetId(),
+                                 .dstEntityId = 2,
+                                 .vl = 5};
+        Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
+        NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(key, 0, key.vl),
+                              0u,
+                              "wildcard destination must not use the Primary-CNA-only route");
+        NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(key, 1, key.vl),
+                              1u,
+                              "wildcard destination should use the Peer Entity endpoint route");
+
+        Ptr<UbCtpTxQueue> queue = service->GetOrCreateQueue(key, 1, key.vl);
+        Ptr<Packet> packet = queue->GetNextPacket();
+        NS_TEST_ASSERT_MSG_NE(packet, nullptr, "Peer Entity route should queue one CTP packet");
+        if (packet != nullptr)
+        {
+            UbDatalinkPacketHeader datalinkHeader;
+            UbCna16NetworkHeader cnaHeader;
+            packet->RemoveHeader(datalinkHeader);
+            packet->RemoveHeader(cnaHeader);
+            NS_TEST_ASSERT_MSG_EQ(cnaHeader.GetDcna(),
+                                  static_cast<uint16_t>(NodeIdToCna16(peer->GetId())),
+                                  "wildcard destination should remain a Primary CNA on wire");
+        }
+
+        Simulator::Destroy();
+    }
+};
+
+#ifndef _WIN32
+class UbAppCtpRejectsRouteOutsideSourceEntityTest : public TestCase
+{
+  public:
+    UbAppCtpRejectsRouteOutsideSourceEntityTest()
+        : TestCase("UnifiedBus - CTP source Entity rejects routes outside its members")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const auto errorPath = std::filesystem::temp_directory_path() /
+                               ("ub-ctp-no-entity-member-route-" +
+                                std::to_string(static_cast<uint64_t>(getpid())) + ".log");
+        std::filesystem::remove(errorPath);
+
+        const pid_t pid = fork();
+        NS_TEST_ASSERT_MSG_NE(pid, -1, "fork should succeed");
+        if (pid == 0)
+        {
+            if (std::freopen(errorPath.c_str(), "w", stderr) == nullptr)
+            {
+                std::_Exit(2);
+            }
+
+            Ptr<Node> source = CreateObject<Node>();
+            Ptr<Node> destination = CreateObject<Node>();
+            InitNode(source, UB_DEVICE, 2, false);
+            InitNode(destination, UB_DEVICE, 1);
+
+            Ptr<UbController> sourceController = source->GetObject<UbController>();
+            sourceController->CreateCtpEntity(1, {0});
+            sourceController->FreezeCtpEntities();
+            AddShortestRoute(source, destination->GetId(), 0, 1);
+
+            Ptr<UbApp> app = CreateObject<UbApp>();
+            source->AddApplication(app);
+            app->SetTransportMode(TransportMode::CTP);
+
+            UbTrafficGen::RuntimeTask task;
+            task.taskId = 223;
+            task.sourceNode = source->GetId();
+            task.destNode = destination->GetId();
+            task.dataSize = 64;
+            task.phaseId = 1;
+            task.priority = 5;
+            task.op = UbTrafficGen::RuntimeTaskOp::URMA_WRITE;
+            app->SendCtpUrmaTraffic(task);
+            std::_Exit(3);
+        }
+
+        int status = 0;
+        NS_TEST_ASSERT_MSG_EQ(waitpid(pid, &status, 0), pid, "waitpid should observe child");
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status),
+                              1,
+                              "a route outside the source Entity should abort");
+        if (WIFSIGNALED(status))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status),
+                                  SIGABRT,
+                                  "an empty Entity-route intersection should fail with SIGABRT");
+        }
+
+        std::ifstream errorFile(errorPath);
+        const std::string error((std::istreambuf_iterator<char>(errorFile)),
+                                std::istreambuf_iterator<char>());
+        const std::regex expected(
+            "CTP source node [0-9]+ Entity 1 members \\[0\\] has no route to destination node "
+            "[0-9]+ Entity 1 member port 0");
+        NS_TEST_ASSERT_MSG_EQ(std::regex_search(error, expected),
+                              true,
+                              "failure should identify both Entities, source members, and destination member");
+
+        std::filesystem::remove(errorPath);
+        Simulator::Destroy();
+    }
+};
+#endif
 
 class UbAppCtpAdmissionBackpressurePreservesJettyTest : public TestCase
 {
@@ -1519,18 +1994,20 @@ class UbAppCtpAdmissionBackpressurePreservesJettyTest : public TestCase
     void DoRun() override
     {
         Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<Node> peer = CreateObject<Node>(4);
+        InitNode(peer, UB_DEVICE, 1);
+        AddShortestRoute(node, peer->GetId(), 0, 0);
         Ptr<UbController> controller = node->GetObject<UbController>();
 
         Ptr<UbApp> app = CreateObject<UbApp>();
         node->AddApplication(app);
         app->SetTransportMode(TransportMode::CTP);
 
-        UbCtpEntityKey key{.srcEntityId = 0,
-                           .dstNodeId = 4,
-                           .dstEntityId = 0,
+        UbCtpEntityKey key{.srcEntityId = 1,
+                           .dstNodeId = peer->GetId(),
+                           .dstEntityId = 1,
                            .vl = 5};
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-        service->SetSourcePortHint(key, 0);
         Ptr<UbCtpTransactionContext> context = service->GetOrCreateTransactionContext(key);
         for (uint32_t sequence = 0; sequence < UB_JETTY_TASSN_OOO_THRESHOLD; ++sequence)
         {
@@ -1542,7 +2019,7 @@ class UbAppCtpAdmissionBackpressurePreservesJettyTest : public TestCase
         UbTrafficGen::RuntimeTask task;
         task.taskId = 33;
         task.sourceNode = node->GetId();
-        task.destNode = 4;
+        task.destNode = peer->GetId();
         task.dataSize = 2 * UB_WQE_TA_SEGMENT_BYTE;
         task.phaseId = 1;
         task.priority = 5;
@@ -1582,6 +2059,8 @@ class UbAppCtpForwardsRoutingTypeToServiceTest : public TestCase
     {
         Ptr<Node> node = CreateObject<Node>(0);
         InitNode(node, UB_DEVICE, 2);
+        Ptr<Node> peer = CreateObject<Node>();
+        InitNode(peer, UB_DEVICE, 1);
 
         Ptr<UbApp> app = CreateObject<UbApp>();
         node->AddApplication(app);
@@ -1590,12 +2069,13 @@ class UbAppCtpForwardsRoutingTypeToServiceTest : public TestCase
                           EnumValue(RoutingType::PER_PACKET_SHORTEST_PATHS));
 
         Ptr<UbRoutingProcess> routing = node->GetObject<UbSwitch>()->GetRoutingProcess();
-        routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(4).Get(), {0, 1});
+        routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(peer->GetId()).Get(), {0, 1});
+        routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(peer->GetId(), 0).Get(), {0, 1});
 
         UbTrafficGen::RuntimeTask task;
         task.taskId = 44;
         task.sourceNode = node->GetId();
-        task.destNode = 4;
+        task.destNode = peer->GetId();
         task.dataSize = 2 * UB_WQE_TA_SEGMENT_BYTE;
         task.phaseId = 1;
         task.priority = 5;
@@ -1604,9 +2084,9 @@ class UbAppCtpForwardsRoutingTypeToServiceTest : public TestCase
         app->SendCtpUrmaTraffic(task);
 
         Ptr<UbCtpTransportService> service = node->GetObject<UbController>()->GetCtpTransportService();
-        UbCtpEntityKey key{.srcEntityId = 0,
-                           .dstNodeId = 4,
-                           .dstEntityId = 0,
+        UbCtpEntityKey key{.srcEntityId = 1,
+                           .dstNodeId = peer->GetId(),
+                           .dstEntityId = 1,
                            .vl = 5};
 
         NS_TEST_ASSERT_MSG_EQ(
@@ -2654,9 +3134,58 @@ public:
     }
 };
 
+class UbRoutingRestrictedCandidatesAllocateOnlyForFilteringTest : public TestCase
+{
+  public:
+    UbRoutingRestrictedCandidatesAllocateOnlyForFilteringTest()
+        : TestCase("UnifiedBus - restricted routing alone allocates fallback filter containers")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<UbRoutingProcess> routing = CreateObject<UbRoutingProcess>();
+        routing->SetNodeId(0);
+        const uint32_t destination = NodeIdToIp(42).Get();
+        routing->GetRoutingTable().AddShortestRoute(destination, {1, 2});
+
+        RoutingKey key{};
+        key.dip = destination;
+        key.routingType = RoutingType::PER_FLOW_SHORTEST_PATHS;
+        bool selectedShortestPath = false;
+
+        const uint64_t before =
+            routing->GetHotPathTemporaryContainerAllocationCountForTest();
+        const int unrestricted = routing->GetOutPort(key, selectedShortestPath);
+        NS_TEST_ASSERT_MSG_NE(unrestricted, -1, "unrestricted lookup should find a route");
+        NS_TEST_ASSERT_MSG_EQ(
+            routing->GetHotPathTemporaryContainerAllocationCountForTest(),
+            before,
+            "unrestricted fallback lookup must keep the existing PortSetView hot path");
+
+        const int restricted =
+            routing->GetOutPortRestricted(key, std::vector<uint16_t>{2}, selectedShortestPath);
+        NS_TEST_ASSERT_MSG_EQ(restricted, 2, "restricted lookup should keep only allowed port 2");
+        NS_TEST_ASSERT_MSG_GT(
+            routing->GetHotPathTemporaryContainerAllocationCountForTest(),
+            before,
+            "restricted fallback lookup should report its temporary filter containers");
+
+        const uint32_t unorderedDestination = NodeIdToIp(43).Get();
+        routing->GetRoutingTable().AddShortestRoute(unorderedDestination, {1});
+        key.dip = unorderedDestination;
+        const int unorderedAllowList =
+            routing->GetOutPortRestricted(key, std::vector<uint16_t>{2, 1}, selectedShortestPath);
+        NS_TEST_ASSERT_MSG_EQ(unorderedAllowList,
+                              1,
+                              "restricted lookup must not require a sorted allow-list");
+    }
+};
+
 class UbDcqcnCnpHeaderRoundTripTest : public TestCase
 {
-public:
+  public:
     UbDcqcnCnpHeaderRoundTripTest()
         : TestCase("UnifiedBus - DCQCN CNP header round-trips ECN and location in spec layout")
     {
@@ -18610,23 +19139,25 @@ class UbLifecycleCtpCachedJettyAdmissionFreezeTest : public TestCase
     {
         Config::Reset();
         Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<Node> peer = CreateObject<Node>(4);
+        InitNode(peer, UB_DEVICE, 1);
+        AddShortestRoute(node, peer->GetId(), 0, 0);
         Ptr<UbController> controller = node->GetObject<UbController>();
         Ptr<UbFunction> function = controller->GetUbFunction();
         Ptr<UbApp> app = CreateObject<UbApp>();
         node->AddApplication(app);
         app->SetTransportMode(TransportMode::CTP);
 
-        UbCtpEntityKey key{.srcEntityId = 0,
-                           .dstNodeId = 4,
-                           .dstEntityId = 0,
+        UbCtpEntityKey key{.srcEntityId = 1,
+                           .dstNodeId = peer->GetId(),
+                           .dstEntityId = 1,
                            .vl = 5};
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-        service->SetSourcePortHint(key, 0);
 
         UbTrafficGen::RuntimeTask task;
         task.taskId = 33;
         task.sourceNode = node->GetId();
-        task.destNode = 4;
+        task.destNode = peer->GetId();
         task.dataSize = UB_WQE_TA_SEGMENT_BYTE;
         task.phaseId = 1;
         task.priority = 5;
@@ -23814,15 +24345,15 @@ class UbCtpPacketTraceConnectsLazyServiceTest : public TestCase
                               "trace connect should not create CTP service before CTP traffic");
 
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-        UbCtpEntityKey key{.srcEntityId = 0,
+        UbCtpEntityKey key{.srcEntityId = 1,
                            .dstNodeId = topo.receiver->GetId(),
-                           .dstEntityId = 0,
+                           .dstEntityId = 1,
                            .vl = 7};
-        service->SetSourcePortHint(key, topo.senderPort->GetIfIndex());
-        service->SetDestinationPortHint(key, topo.receiverPort->GetIfIndex());
         Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(0);
         segment->SetSrc(topo.sender->GetId());
         segment->SetDest(topo.receiver->GetId());
+        segment->SetSport(static_cast<uint8_t>(topo.senderPort->GetIfIndex()));
+        segment->SetDport(static_cast<uint8_t>(topo.receiverPort->GetIfIndex()));
         NS_TEST_ASSERT_MSG_EQ(service->SendSegment(segment, key),
                               true,
                               "CTP send should emit packet trace");
@@ -27353,9 +27884,9 @@ class UbCtpTransactionContextHolTest : public TestCase
   private:
     void DoRun() override
     {
-        UbCtpEntityKey key{.srcEntityId = 0,
+        UbCtpEntityKey key{.srcEntityId = 1,
                            .dstNodeId = 1,
-                           .dstEntityId = 0,
+                           .dstEntityId = 1,
                            .vl = 7};
         UbCtpTransactionContext context(key);
 
@@ -27412,9 +27943,9 @@ class UbCtpTransactionContextAckWindowAdmissionTest : public TestCase
   private:
     void DoRun() override
     {
-        UbCtpEntityKey key{.srcEntityId = 0,
+        UbCtpEntityKey key{.srcEntityId = 1,
                            .dstNodeId = 1,
-                           .dstEntityId = 0,
+                           .dstEntityId = 1,
                            .vl = 7};
         UbCtpTransactionContext context(key);
 
@@ -27449,15 +27980,16 @@ class UbCtpServiceDoesNotCreateRtpTpTest : public TestCase
     void DoRun() override
     {
         Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<Node> peer = CreateObject<Node>();
+        InitNode(peer, UB_DEVICE, 1);
         Ptr<UbController> controller = node->GetObject<UbController>();
 
         const uint32_t initialTransportCount = controller->GetTransportChannelManager()->GetCount();
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-        UbCtpEntityKey key{.srcEntityId = 10,
+        UbCtpEntityKey key{.srcEntityId = 1,
                            .dstNodeId = 1,
-                           .dstEntityId = 11,
+                           .dstEntityId = 1,
                            .vl = 7};
-        service->SetSourcePortHint(key, 0);
 
         service->GetOrCreateTransactionContext(key);
         NS_TEST_ASSERT_MSG_EQ(controller->GetTransportChannelManager()->GetCount(),
@@ -27465,6 +27997,7 @@ class UbCtpServiceDoesNotCreateRtpTpTest : public TestCase
                               "Creating a CTP context must not allocate RTP transport channels");
 
         Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(0);
+        segment->SetSport(0);
         NS_TEST_ASSERT_MSG_EQ(service->SendSegment(segment, key), true, "CTP send should admit seq 0");
         NS_TEST_ASSERT_MSG_EQ(controller->GetTransportChannelManager()->GetCount(),
                               initialTransportCount,
@@ -27536,7 +28069,7 @@ class UbCtpJettyPreparationLifecycleTest : public TestCase
         Ptr<UbController> controller = node->GetObject<UbController>();
         Ptr<UbFunction> function = controller->GetUbFunction();
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-        const UbCtpEntityKey key{.srcEntityId = 10,
+        const UbCtpEntityKey key{.srcEntityId = 1,
                                 .dstNodeId = node->GetId() + 1,
                                 .dstEntityId = 11,
                                 .vl = 7};
@@ -27612,7 +28145,7 @@ class UbJettyTransportPreparationExclusivityTest : public TestCase
         Ptr<UbFunction> function = controller->GetUbFunction();
         Ptr<UbTransaction> transaction = controller->GetUbTransaction();
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-        const UbCtpEntityKey key{.srcEntityId = 10,
+        const UbCtpEntityKey key{.srcEntityId = 1,
                                 .dstNodeId = topo.receiver->GetId(),
                                 .dstEntityId = 11,
                                 .vl = kUrmaWriteRegressionPriority};
@@ -27769,21 +28302,26 @@ class UbControllerValidatesAndSubmitsPreparedCtpUrmaWqeTest : public TestCase
     {
         constexpr uint32_t jettyNum = 46;
         Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<Node> peer = CreateObject<Node>();
+        InitNode(peer, UB_DEVICE, 1, false);
+        Ptr<UbController> peerController = peer->GetObject<UbController>();
+        peerController->CreateCtpEntity(11, {0});
+        peerController->FreezeCtpEntities();
         Ptr<UbController> controller = node->GetObject<UbController>();
         Ptr<UbFunction> function = controller->GetUbFunction();
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-        const UbCtpEntityKey key{.srcEntityId = 10,
-                                .dstNodeId = node->GetId() + 1,
+        const UbCtpEntityKey key{.srcEntityId = 1,
+                                .dstNodeId = peer->GetId(),
                                 .dstEntityId = 11,
                                 .vl = 7};
         function->CreateJetty(node->GetId(), key.dstNodeId, jettyNum);
         Ptr<UbJetty> jetty = function->GetJetty(jettyNum);
-        service->SetSourcePortHint(key, 0);
         NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(jetty, key),
                               true,
                               "The caller should prepare the bound CTP Jetty");
 
         Ptr<UbWqe> mismatch = CreateCtpWqeForKey(function, node->GetId(), key, 11);
+        mismatch->SetSport(0);
         mismatch->SetDstEntityId(key.dstEntityId + 1);
         NS_TEST_ASSERT_MSG_EQ(controller->SubmitUrmaWqe(jettyNum, mismatch),
                               false,
@@ -27793,6 +28331,7 @@ class UbControllerValidatesAndSubmitsPreparedCtpUrmaWqeTest : public TestCase
                               "Rejected CTP WQE must remain outside the Jetty queue");
 
         Ptr<UbWqe> accepted = CreateCtpWqeForKey(function, node->GetId(), key, 12);
+        accepted->SetSport(0);
         NS_TEST_ASSERT_MSG_EQ(controller->SubmitUrmaWqe(jettyNum, accepted),
                               true,
                               "Controller should submit a compatible WQE through prepared CTP");
@@ -27823,29 +28362,39 @@ class UbControllerSubmitsUnboundSourceCtpDestinationsTest : public TestCase
     {
         constexpr uint32_t jettyNum = 47;
         Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<Node> firstPeer = CreateObject<Node>();
+        Ptr<Node> secondPeer = CreateObject<Node>();
+        InitNode(firstPeer, UB_DEVICE, 1, false);
+        InitNode(secondPeer, UB_DEVICE, 1, false);
+        Ptr<UbController> firstPeerController = firstPeer->GetObject<UbController>();
+        Ptr<UbController> secondPeerController = secondPeer->GetObject<UbController>();
+        firstPeerController->CreateCtpEntity(11, {0});
+        secondPeerController->CreateCtpEntity(12, {0});
+        firstPeerController->FreezeCtpEntities();
+        secondPeerController->FreezeCtpEntities();
         Ptr<UbController> controller = node->GetObject<UbController>();
         Ptr<UbFunction> function = controller->GetUbFunction();
         Ptr<UbTransaction> transaction = controller->GetUbTransaction();
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-        const UbCtpEntityKey firstKey{.srcEntityId = 10,
-                                     .dstNodeId = node->GetId() + 1,
+        const UbCtpEntityKey firstKey{.srcEntityId = 1,
+                                     .dstNodeId = firstPeer->GetId(),
                                      .dstEntityId = 11,
                                      .vl = 7};
         UbCtpEntityKey secondKey = firstKey;
-        secondKey.dstNodeId += 1;
+        secondKey.dstNodeId = secondPeer->GetId();
         secondKey.dstEntityId += 1;
         const UbCtpEntityKey sourceKey = service->MakeSourceGroupKeyForRequest(firstKey);
 
         function->CreateJetty(node->GetId(), jettyNum);
         Ptr<UbJetty> jetty = function->GetJetty(jettyNum);
-        service->SetSourcePortHint(firstKey, 0);
-        service->SetSourcePortHint(secondKey, 0);
         NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(jetty, sourceKey),
                               true,
                               "The caller should prepare one unbound source-group Jetty");
 
         Ptr<UbWqe> first = CreateCtpWqeForKey(function, node->GetId(), firstKey, 13);
         Ptr<UbWqe> second = CreateCtpWqeForKey(function, node->GetId(), secondKey, 14);
+        first->SetSport(0);
+        second->SetSport(0);
 
         NS_TEST_ASSERT_MSG_EQ(controller->SubmitUrmaWqe(jettyNum, first),
                               true,
@@ -27867,44 +28416,348 @@ class UbControllerSubmitsUnboundSourceCtpDestinationsTest : public TestCase
     }
 };
 
-class UbCtpPortHintsDoNotCreateEntityStateTest : public TestCase
+class UbCtpEntityRegistryLifecycleTest : public TestCase
 {
   public:
-    UbCtpPortHintsDoNotCreateEntityStateTest()
-        : TestCase("UnifiedBus - CTP port hints do not create entity state")
+    UbCtpEntityRegistryLifecycleTest()
+        : TestCase("UnifiedBus - CTP Entity registry supports membership and freeze")
     {
     }
 
   private:
     void DoRun() override
     {
-        Ptr<Node> node = BuildSinglePortCtpNode();
-        Ptr<UbCtpTransportService> service =
-            node->GetObject<UbController>()->GetCtpTransportService();
-        UbCtpEntityKey key{.srcEntityId = 10,
-                           .dstNodeId = 1,
-                           .dstEntityId = 11,
-                           .vl = 7};
+        Ptr<Node> defaultNode = BuildSinglePortCtpNode();
+        Ptr<UbController> defaultController = defaultNode->GetObject<UbController>();
+        NS_TEST_ASSERT_MSG_EQ(defaultController->HasCtpEntity(1),
+                              true,
+                              "default provisioning should create Entity 1");
+        NS_TEST_ASSERT_MSG_EQ(defaultController->IsCtpEntityPortMember(1, 0),
+                              true,
+                              "default Entity 1 should contain every local UB port");
+        NS_TEST_ASSERT_MSG_EQ(defaultController->AreCtpEntitiesFrozen(),
+                              true,
+                              "default provisioning should freeze the registry");
 
-        service->SetRoutingType(RoutingType::PER_FLOW_SHORTEST_PATHS);
-        service->SetSourcePortHint(key, 0);
-        service->SetDestinationPortHint(key, 3);
+        Ptr<Node> node = CreateObject<Node>();
+        InitNode(node, UB_DEVICE, 3, false);
+        Ptr<UbController> controller = node->GetObject<UbController>();
+        controller->CreateCtpEntity(2, {2, 0, 2});
+        controller->CreateCtpEntity(3, {1, 2});
 
-        NS_TEST_ASSERT_MSG_EQ(service->GetEntityStateCount(),
-                              0u,
-                              "routing policy and port hints must not create transaction state");
+        const std::vector<uint16_t>& ports = controller->GetCtpEntityPorts(2);
+        NS_TEST_ASSERT_MSG_EQ(ports.size(), 2u, "Entity member ports should be deduplicated");
+        NS_TEST_ASSERT_MSG_EQ(ports[0], 0u, "Entity member ports should be sorted");
+        NS_TEST_ASSERT_MSG_EQ(ports[1], 2u, "Entity member ports should be sorted");
+        NS_TEST_ASSERT_MSG_EQ(controller->IsCtpEntityPortMember(3, 2),
+                              true,
+                              "different Entities may share a UB port");
+        controller->FreezeCtpEntities();
+        NS_TEST_ASSERT_MSG_EQ(controller->AreCtpEntitiesFrozen(),
+                              true,
+                              "explicit Entity provisioning should be frozen before traffic");
 
-        service->ClearSourcePortHint(key);
-        service->ClearDestinationPortHint(key);
-        service->GetOrCreateTransactionContext(key);
-
-        NS_TEST_ASSERT_MSG_EQ(service->GetEntityStateCount(),
-                              1u,
-                              "entity state count should track transaction contexts");
+#ifndef _WIN32
+        const int status = RunInChildProcess([]() {
+            Ptr<Node> frozenNode = BuildSinglePortCtpNode();
+            frozenNode->GetObject<UbController>()->CreateCtpEntity(2, {0});
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status),
+                              1,
+                              "creating an Entity after freeze should abort");
+        if (WIFSIGNALED(status))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status),
+                                  SIGABRT,
+                                  "freeze violations should fail with SIGABRT");
+        }
+#endif
 
         Simulator::Destroy();
     }
 };
+
+#ifndef _WIN32
+class UbCtpEntityRegistryRejectsInvalidDefinitionsTest : public TestCase
+{
+  public:
+    UbCtpEntityRegistryRejectsInvalidDefinitionsTest()
+        : TestCase("UnifiedBus - CTP Entity registry rejects invalid definitions")
+    {
+    }
+
+  private:
+    void ExpectAbort(const std::function<void()>& fn, const std::string& reason)
+    {
+        const int status = RunInChildProcess(fn);
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, reason << " should abort");
+        if (WIFSIGNALED(status))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status),
+                                  SIGABRT,
+                                  reason << " should fail with SIGABRT");
+        }
+    }
+
+    void DoRun() override
+    {
+        ExpectAbort(
+            []() {
+                Ptr<Node> node = CreateObject<Node>();
+                InitNode(node, UB_DEVICE, 1, false);
+                node->GetObject<UbController>()->CreateCtpEntity(0, {0});
+            },
+            "reserved Entity ID 0");
+        ExpectAbort(
+            []() {
+                Ptr<Node> node = CreateObject<Node>();
+                InitNode(node, UB_DEVICE, 1, false);
+                node->GetObject<UbController>()->CreateCtpEntity(UB_COMPACT_EID_MAX + 1, {0});
+            },
+            "Entity ID above compact range");
+        ExpectAbort(
+            []() {
+                Ptr<Node> node = CreateObject<Node>();
+                InitNode(node, UB_DEVICE, 1, false);
+                node->GetObject<UbController>()->CreateCtpEntity(2, {});
+            },
+            "empty Entity membership");
+        ExpectAbort(
+            []() {
+                Ptr<Node> node = CreateObject<Node>();
+                InitNode(node, UB_DEVICE, 1, false);
+                Ptr<UbController> controller = node->GetObject<UbController>();
+                controller->CreateCtpEntity(2, {0});
+                controller->CreateCtpEntity(2, {0});
+            },
+            "duplicate Entity ID");
+        ExpectAbort(
+            []() {
+                Ptr<Node> node = CreateObject<Node>();
+                InitNode(node, UB_DEVICE, 1, false);
+                node->GetObject<UbController>()->CreateCtpEntity(2, {15});
+            },
+            "CNA16-unencodable member port");
+        ExpectAbort(
+            []() {
+                Ptr<Node> node = CreateObject<Node>();
+                InitNode(node, UB_DEVICE, 1, false);
+                node->GetObject<UbController>()->CreateCtpEntity(2, {1});
+            },
+            "missing UB member port");
+        ExpectAbort(
+            []() {
+                Ptr<Node> node = CreateObject<Node>();
+                Ptr<UbSwitch> sw = CreateObject<UbSwitch>();
+                node->AggregateObject(sw);
+                sw->SetNodeType(UB_SWITCH);
+                Ptr<UbController> controller = CreateObject<UbController>();
+                node->AggregateObject(controller);
+                CreatePort(node);
+                controller->CreateCtpEntity(2, {0});
+            },
+            "Entity on a switch");
+    }
+};
+#endif
+
+class UbTransportEntityConfigProvisioningTest : public TestCase
+{
+  public:
+    UbTransportEntityConfigProvisioningTest()
+        : TestCase("UnifiedBus - transport Entity CSV provisions host registries")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<Node> configuredHost = CreateObject<Node>();
+        Ptr<Node> emptyHost = CreateObject<Node>();
+        InitNode(configuredHost, UB_DEVICE, 2, false);
+        InitNode(emptyHost, UB_DEVICE, 2, false);
+
+        const auto path =
+            std::filesystem::temp_directory_path() / "ub-transport-entity-valid.csv";
+        {
+            std::ofstream file(path);
+            NS_TEST_ASSERT_MSG_EQ(file.good(), true, "transport Entity file should open");
+            file << "nodeId,entityId,portId\n"
+                 << configuredHost->GetId() << ",2,1\n"
+                 << configuredHost->GetId() << ",2,0\n"
+                 << configuredHost->GetId() << ",3,1\n";
+        }
+
+        UbUtils::Get()->CreateCtpEntities(path.string());
+
+        Ptr<UbController> configured = configuredHost->GetObject<UbController>();
+        Ptr<UbController> empty = emptyHost->GetObject<UbController>();
+        NS_TEST_ASSERT_MSG_EQ(configured->AreCtpEntitiesFrozen(),
+                              true,
+                              "configured host registry should freeze");
+        const auto& configuredPorts = configured->GetCtpEntityPorts(2);
+        NS_TEST_ASSERT_MSG_EQ(configuredPorts.size(), 2u, "CSV should retain both members");
+        NS_TEST_ASSERT_MSG_EQ(configuredPorts[0], 0u, "CSV members should be sorted");
+        NS_TEST_ASSERT_MSG_EQ(configuredPorts[1], 1u, "CSV members should be sorted");
+        NS_TEST_ASSERT_MSG_EQ(configured->IsCtpEntityPortMember(3, 1),
+                              true,
+                              "different CSV Entities may share a port");
+        NS_TEST_ASSERT_MSG_EQ(empty->AreCtpEntitiesFrozen(),
+                              true,
+                              "unlisted host registry should still freeze");
+        NS_TEST_ASSERT_MSG_EQ(empty->HasCtpEntity(1),
+                              false,
+                              "preconfigured mode should not synthesize Entities for unlisted hosts");
+
+        std::filesystem::remove(path);
+        Simulator::Destroy();
+    }
+};
+
+class UbTransportEntityDefaultProvisioningTest : public TestCase
+{
+  public:
+    UbTransportEntityDefaultProvisioningTest()
+        : TestCase("UnifiedBus - missing transport Entity CSV provisions default Entity 1")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<Node> firstHost = CreateObject<Node>();
+        Ptr<Node> secondHost = CreateObject<Node>();
+        InitNode(firstHost, UB_DEVICE, 2, false);
+        InitNode(secondHost, UB_DEVICE, 1, false);
+        const auto missingPath =
+            std::filesystem::temp_directory_path() / "ub-transport-entity-missing.csv";
+        std::filesystem::remove(missingPath);
+
+        UbUtils::Get()->CreateCtpEntities(missingPath.string());
+
+        const auto& firstPorts =
+            firstHost->GetObject<UbController>()->GetCtpEntityPorts(1);
+        const auto& secondPorts =
+            secondHost->GetObject<UbController>()->GetCtpEntityPorts(1);
+        NS_TEST_ASSERT_MSG_EQ(firstPorts.size(),
+                              2u,
+                              "default Entity should contain both first-host UB ports");
+        NS_TEST_ASSERT_MSG_EQ(firstPorts[0], 0u, "default Entity members should be sorted");
+        NS_TEST_ASSERT_MSG_EQ(firstPorts[1], 1u, "default Entity members should be sorted");
+        NS_TEST_ASSERT_MSG_EQ(secondPorts.size(),
+                              1u,
+                              "default Entity should contain the second-host UB port");
+        NS_TEST_ASSERT_MSG_EQ(secondPorts[0], 0u, "default Entity should retain port 0");
+        NS_TEST_ASSERT_MSG_EQ(firstHost->GetObject<UbController>()->AreCtpEntitiesFrozen(),
+                              true,
+                              "default first-host registry should freeze");
+        NS_TEST_ASSERT_MSG_EQ(secondHost->GetObject<UbController>()->AreCtpEntitiesFrozen(),
+                              true,
+                              "default second-host registry should freeze");
+
+        Simulator::Destroy();
+    }
+};
+
+#ifndef _WIN32
+class UbTransportEntityDefaultRejectsUnencodablePortTest : public TestCase
+{
+  public:
+    UbTransportEntityDefaultRejectsUnencodablePortTest()
+        : TestCase("UnifiedBus - default CTP Entity rejects a host port above CNA16 range")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const auto missingPath =
+            std::filesystem::temp_directory_path() / "ub-transport-entity-missing-wide-host.csv";
+        std::filesystem::remove(missingPath);
+        const int status = RunInChildProcess([missingPath]() {
+            Ptr<Node> host = CreateObject<Node>();
+            InitNode(host, UB_DEVICE, 16, false);
+            UbUtils::Get()->CreateCtpEntities(missingPath.string());
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status),
+                              1,
+                              "default Entity should reject UB port 15");
+        if (WIFSIGNALED(status))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status),
+                                  SIGABRT,
+                                  "default Entity port overflow should fail with SIGABRT");
+        }
+    }
+};
+
+class UbTransportEntityConfigRejectsInvalidRowsTest : public TestCase
+{
+  public:
+    UbTransportEntityConfigRejectsInvalidRowsTest()
+        : TestCase("UnifiedBus - transport Entity CSV rejects invalid rows")
+    {
+    }
+
+  private:
+    void ExpectInvalidConfig(uint32_t variant, const std::string& reason)
+    {
+        const auto path = std::filesystem::temp_directory_path() /
+                          ("ub-transport-entity-invalid-" + std::to_string(variant) + ".csv");
+        const int status = RunInChildProcess([path, variant]() {
+            Ptr<Node> host = CreateObject<Node>();
+            Ptr<Node> switchNode = CreateObject<Node>();
+            InitNode(host, UB_DEVICE, 1, false);
+            InitNode(switchNode, UB_SWITCH, 1);
+
+            std::ofstream file(path);
+            NS_ABORT_MSG_IF(!file.good(), "invalid transport Entity fixture should open");
+            file << "nodeId,entityId,portId\n";
+            switch (variant)
+            {
+            case 0:
+                file << host->GetId() << ",2,0\n" << host->GetId() << ",2,0\n";
+                break;
+            case 1:
+                file << NodeList::GetNNodes() + 100 << ",2,0\n";
+                break;
+            case 2:
+                file << switchNode->GetId() << ",2,0\n";
+                break;
+            case 3:
+                file << host->GetId() << ",2,15\n";
+                break;
+            case 4:
+                file << host->GetId() << ",2,1\n";
+                break;
+            default:
+                file << host->GetId() << ",2\n";
+                break;
+            }
+            file.close();
+            UbUtils::Get()->CreateCtpEntities(path.string());
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, reason << " should abort");
+        if (WIFSIGNALED(status))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status),
+                                  SIGABRT,
+                                  reason << " should fail with SIGABRT");
+        }
+        std::filesystem::remove(path);
+    }
+
+    void DoRun() override
+    {
+        ExpectInvalidConfig(0, "duplicate membership row");
+        ExpectInvalidConfig(1, "unknown node");
+        ExpectInvalidConfig(2, "switch target");
+        ExpectInvalidConfig(3, "CNA16-unencodable port");
+        ExpectInvalidConfig(4, "missing UB port");
+        ExpectInvalidConfig(5, "malformed row");
+    }
+};
+#endif
 
 class UbCtpBuildDataPacketHeaderTest : public TestCase
 {
@@ -27920,13 +28773,14 @@ class UbCtpBuildDataPacketHeaderTest : public TestCase
         Ptr<UbCtpTransportService> service = CreateObject<UbCtpTransportService>();
         Ptr<Node> node = CreateObject<Node>();
         service->SetNode(node);
-        UbCtpEntityKey key{.srcEntityId = 10,
+        UbCtpEntityKey key{.srcEntityId = 1,
                            .dstNodeId = 1,
-                           .dstEntityId = 11,
+                           .dstEntityId = 1,
                            .vl = 7};
-        service->SetSourcePortHint(key, 2);
-        service->SetDestinationPortHint(key, 3);
-        Ptr<Packet> packet = service->BuildDataPacket(CreateCtpWriteSegment(0), key);
+        Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(0);
+        segment->SetSport(2);
+        segment->SetDport(3);
+        Ptr<Packet> packet = service->BuildDataPacket(segment, key);
         NS_TEST_ASSERT_MSG_EQ(packet->GetSize(),
                               100u,
                               "64B CTP write should carry the 36B reference compact header stack");
@@ -27943,10 +28797,10 @@ class UbCtpBuildDataPacketHeaderTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(cnaHeader.GetServiceLevel(), 7, "CNA16 service level should carry CTP VL");
         NS_TEST_ASSERT_MSG_EQ(cnaHeader.GetScna(),
                               static_cast<uint16_t>(NodeIdToCna16(node->GetId(), 2)),
-                              "CTP source port hint should be encoded in SCNA");
+                              "CTP source port should be encoded in SCNA");
         NS_TEST_ASSERT_MSG_EQ(cnaHeader.GetDcna(),
                               static_cast<uint16_t>(NodeIdToCna16(key.dstNodeId, 3)),
-                              "CTP destination port hint should be encoded in DCNA");
+                              "CTP destination port should be encoded in DCNA");
 
         UbCtpHeader ctpHeader;
         packet->RemoveHeader(ctpHeader);
@@ -27986,6 +28840,160 @@ class UbCtpBuildDataPacketHeaderTest : public TestCase
     }
 };
 
+class UbCtpCnaPortEncodingBoundaryTest : public TestCase
+{
+  public:
+    UbCtpCnaPortEncodingBoundaryTest()
+        : TestCase("UnifiedBus - CTP CNA16 encodes wildcard and endpoint port boundaries")
+    {
+    }
+
+  private:
+    UbCna16NetworkHeader BuildAndReadCna(Ptr<UbCtpTransportService> service,
+                                         const UbCtpEntityKey& key,
+                                         uint8_t sourcePort,
+                                         uint8_t destinationPort)
+    {
+        Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(0);
+        segment->SetSport(sourcePort);
+        segment->SetDport(destinationPort);
+        Ptr<Packet> packet = service->BuildDataPacket(segment, key);
+        UbDatalinkPacketHeader datalinkHeader;
+        packet->RemoveHeader(datalinkHeader);
+        UbCna16NetworkHeader cnaHeader;
+        packet->RemoveHeader(cnaHeader);
+        return cnaHeader;
+    }
+
+    void DoRun() override
+    {
+        NodeContainer nodes;
+        nodes.Create(2);
+        Ptr<UbCtpTransportService> service = CreateObject<UbCtpTransportService>();
+        service->SetNode(nodes.Get(0));
+        const UbCtpEntityKey key{.srcEntityId = 1,
+                                 .dstNodeId = nodes.Get(1)->GetId(),
+                                 .dstEntityId = 1,
+                                 .vl = 7};
+
+        const UbCna16NetworkHeader wildcard =
+            BuildAndReadCna(service, key, CTP_WILDCARD_PORT, CTP_WILDCARD_PORT);
+        NS_TEST_ASSERT_MSG_EQ((wildcard.GetScna() & 0xF),
+                              0u,
+                              "wildcard source should use Primary CNA");
+        NS_TEST_ASSERT_MSG_EQ((wildcard.GetDcna() & 0xF),
+                              0u,
+                              "wildcard destination should use Primary CNA");
+
+        const UbCna16NetworkHeader portZero = BuildAndReadCna(service, key, 0, 0);
+        NS_TEST_ASSERT_MSG_EQ((portZero.GetScna() & 0xF),
+                              1u,
+                              "explicit source port 0 should encode low bits as 1");
+        NS_TEST_ASSERT_MSG_EQ((portZero.GetDcna() & 0xF),
+                              1u,
+                              "explicit destination port 0 should encode low bits as 1");
+
+        const UbCna16NetworkHeader portFourteen = BuildAndReadCna(service, key, 14, 14);
+        NS_TEST_ASSERT_MSG_EQ((portFourteen.GetScna() & 0xF),
+                              15u,
+                              "explicit source port 14 should encode low bits as 15");
+        NS_TEST_ASSERT_MSG_EQ((portFourteen.GetDcna() & 0xF),
+                              15u,
+                              "explicit destination port 14 should encode low bits as 15");
+
+        Simulator::Destroy();
+    }
+};
+
+#ifndef _WIN32
+class UbCtpReceiveRejectsEntityIngressViolationsTest : public TestCase
+{
+  public:
+    UbCtpReceiveRejectsEntityIngressViolationsTest()
+        : TestCase("UnifiedBus - CTP receive validates Entity membership before opcode handling")
+    {
+    }
+
+  private:
+    void ExpectAbort(uint32_t variant, const std::string& reason)
+    {
+        const int status = RunInChildProcess([variant]() {
+            Ptr<Node> local = CreateObject<Node>();
+            Ptr<Node> remote = CreateObject<Node>();
+            InitNode(local, UB_DEVICE, 2, false);
+            Ptr<UbController> controller = local->GetObject<UbController>();
+            controller->CreateCtpEntity(1, variant == 4 ? std::vector<uint32_t>{0, 1}
+                                                        : std::vector<uint32_t>{0});
+            controller->FreezeCtpEntities();
+            Ptr<UbCtpTransportService> receiver = controller->GetCtpTransportService();
+            const UbCtpEntityKey wireKey{.srcEntityId = 1,
+                                         .dstNodeId = local->GetId(),
+                                         .dstEntityId = 1,
+                                         .vl = 7};
+            Ptr<Packet> packet;
+            if (variant == 0)
+            {
+                Ptr<UbCtpTransportService> builder = CreateObject<UbCtpTransportService>();
+                builder->SetNode(remote);
+                Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(0);
+                segment->SetSrc(remote->GetId());
+                segment->SetDest(local->GetId());
+                packet = builder->BuildDataPacket(segment, wireKey);
+            }
+            else if (variant == 1)
+            {
+                packet = BuildCtpResponsePacketFromNode(remote,
+                                                        CreateCtpTaAckResponseSegment(0),
+                                                        wireKey);
+            }
+            else if (variant == 2)
+            {
+                packet = BuildCtpCnpPacket(remote->GetId(), wireKey);
+            }
+            else if (variant == 3)
+            {
+                Ptr<UbWqeSegment> response = CreateCtpTaAckResponseSegment(0);
+                response->SetType(TaOpcode::TA_OPCODE_READ_RESPONSE);
+                response->SetRequestOpcode(TaOpcode::TA_OPCODE_READ);
+                response->SetSize(64);
+                response->SetLogicalBytes(64);
+                response->SetPayloadBytes(64);
+                response->SetResLenBytes(64);
+                response->SetCarrierBytes(64);
+                packet = BuildCtpResponsePacketFromNode(remote, response, wireKey);
+            }
+            else
+            {
+                Ptr<UbCtpTransportService> builder = CreateObject<UbCtpTransportService>();
+                builder->SetNode(remote);
+                Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(0);
+                segment->SetSrc(remote->GetId());
+                segment->SetDest(local->GetId());
+                segment->SetDport(0);
+                packet = builder->BuildDataPacket(segment, wireKey);
+            }
+            receiver->HandleReceivedPacket(packet, 1);
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, reason << " should abort");
+        if (WIFSIGNALED(status))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status),
+                                  SIGABRT,
+                                  reason << " should fail with SIGABRT");
+        }
+    }
+
+    void DoRun() override
+    {
+        ExpectAbort(0, "DATA on a non-member ingress port");
+        ExpectAbort(1, "TAACK on a non-member ingress port");
+        ExpectAbort(2, "CNP on a non-member ingress port");
+        ExpectAbort(3, "READ response on a non-member ingress port");
+        ExpectAbort(4, "explicit DCNA on a different ingress port");
+    }
+};
+#endif
+
 class UbCtpBuildResponsePacketTaAckTest : public TestCase
 {
   public:
@@ -28005,11 +29013,10 @@ class UbCtpBuildResponsePacketTaAckTest : public TestCase
                            .dstNodeId = 0,
                            .dstEntityId = 10,
                            .vl = 7};
-        service->SetSourcePortHint(key, 0);
-        service->SetDestinationPortHint(key, 0);
-
-        Ptr<Packet> packet =
-            service->BuildResponsePacketForTest(CreateCtpTaAckResponseSegment(3), key);
+        Ptr<UbWqeSegment> response = CreateCtpTaAckResponseSegment(3);
+        response->SetSport(0);
+        response->SetDport(0);
+        Ptr<Packet> packet = service->BuildResponsePacketForTest(response, key);
         NS_TEST_ASSERT_MSG_EQ(packet->GetSize(),
                               24u,
                               "CTP TAACK should carry the 24B reference compact header stack");
@@ -28080,11 +29087,11 @@ class UbCtpLocalDataPacketGeneratesTaAckTest : public TestCase
                                   .dstNodeId = topo.receiver->GetId(),
                                   .dstEntityId = 1,
                                   .vl = 7};
-        senderService->SetSourcePortHint(requestKey, topo.senderPort->GetIfIndex());
-        senderService->SetDestinationPortHint(requestKey, topo.receiverPort->GetIfIndex());
         Ptr<UbWqeSegment> request = CreateCtpWriteSegment(0);
         request->SetSrc(topo.sender->GetId());
         request->SetDest(topo.receiver->GetId());
+        request->SetSport(static_cast<uint8_t>(topo.senderPort->GetIfIndex()));
+        request->SetDport(static_cast<uint8_t>(topo.receiverPort->GetIfIndex()));
         Ptr<Packet> dataPacket = senderService->BuildDataPacket(request, requestKey);
         Ptr<Packet> requestHeaderCopy = dataPacket->Copy();
         UbDatalinkPacketHeader requestDatalinkHeader;
@@ -28154,9 +29161,9 @@ class UbCtpLocalDataPacketGeneratesTaAckTest : public TestCase
                               0u,
                               "TAACK should acknowledge the request TASSN");
 
-        UbCtpEntityKey wildcardRequestKey{.srcEntityId = 0,
+        UbCtpEntityKey wildcardRequestKey{.srcEntityId = 1,
                                           .dstNodeId = topo.receiver->GetId(),
-                                          .dstEntityId = 0,
+                                          .dstEntityId = 1,
                                           .vl = 7};
         Ptr<UbWqeSegment> wildcardRequest = CreateCtpWriteSegment(1);
         wildcardRequest->SetSrc(topo.sender->GetId());
@@ -28177,9 +29184,9 @@ class UbCtpLocalDataPacketGeneratesTaAckTest : public TestCase
         topo.receiver->GetObject<UbSwitch>()->SwitchHandlePacket(topo.receiverPort,
                                                                  wildcardDataPacket);
 
-        UbCtpEntityKey wildcardAckKey{.srcEntityId = 0,
+        UbCtpEntityKey wildcardAckKey{.srcEntityId = 1,
                                       .dstNodeId = topo.sender->GetId(),
-                                      .dstEntityId = 0,
+                                      .dstEntityId = 1,
                                       .vl = 7};
         NS_TEST_ASSERT_MSG_EQ(receiverService->GetQueuedPacketCountForTest(wildcardAckKey),
                               1u,
@@ -28201,7 +29208,7 @@ class UbCtpLocalDataPacketGeneratesTaAckTest : public TestCase
             NS_TEST_ASSERT_MSG_EQ(wildcardCnaHeader.GetScna(),
                                   static_cast<uint16_t>(NodeIdToCna16(
                                       topo.receiver->GetId(), topo.receiverPort->GetIfIndex())),
-                                  "wildcard TAACK should retain the existing receive-port hint");
+                                  "per-flow wildcard TAACK should use the request ingress port");
             NS_TEST_ASSERT_MSG_EQ(
                 wildcardCnaHeader.GetDcna(),
                 static_cast<uint16_t>(NodeIdToCna16(topo.sender->GetId())),
@@ -28228,13 +29235,12 @@ class UbCtpDelayedRemoteProcessorPreservesEndpointPortsTest : public TestCase
             topo.sender->GetObject<UbController>()->GetCtpTransportService();
         Ptr<UbController> receiverController = topo.receiver->GetObject<UbController>();
         Ptr<UbCtpTransportService> receiverService = receiverController->GetCtpTransportService();
+        topo.receiverPort->GetUbQueue()->SetAttribute("MaxEgressBytes", UintegerValue(0));
 
-        UbCtpEntityKey requestKey{.srcEntityId = 41,
+        UbCtpEntityKey requestKey{.srcEntityId = 1,
                                   .dstNodeId = topo.receiver->GetId(),
-                                  .dstEntityId = 42,
+                                  .dstEntityId = 1,
                                   .vl = 7};
-        senderService->SetSourcePortHint(requestKey, topo.senderPort->GetIfIndex());
-        senderService->SetDestinationPortHint(requestKey, topo.receiverPort->GetIfIndex());
         receiverController->GetUbTransaction()->SetRemoteUrmaRequestProcessor(
             UbRemoteUrmaRequestProcessor(
                 [](const UbRemoteUrmaRequestContext&, UbRemoteUrmaResponseSender responseSender) {
@@ -28245,8 +29251,11 @@ class UbCtpDelayedRemoteProcessorPreservesEndpointPortsTest : public TestCase
         Ptr<UbWqeSegment> request = CreateCtpWriteSegment(0);
         request->SetSrc(topo.sender->GetId());
         request->SetDest(topo.receiver->GetId());
+        request->SetSport(static_cast<uint8_t>(topo.senderPort->GetIfIndex()));
+        request->SetDport(static_cast<uint8_t>(topo.receiverPort->GetIfIndex()));
         Ptr<Packet> requestPacket = senderService->BuildDataPacket(request, requestKey);
         topo.receiver->GetObject<UbSwitch>()->SwitchHandlePacket(topo.receiverPort, requestPacket);
+        Simulator::Stop(NanoSeconds(100));
         Simulator::Run();
 
         UbCtpEntityKey responseKey{.srcEntityId = requestKey.dstEntityId,
@@ -28281,6 +29290,161 @@ class UbCtpDelayedRemoteProcessorPreservesEndpointPortsTest : public TestCase
     }
 };
 
+class UbCtpReadResponseReversesEndpointPortsTest : public TestCase
+{
+  public:
+    UbCtpReadResponseReversesEndpointPortsTest()
+        : TestCase("UnifiedBus - CTP READ response reverses explicit and wildcard ports")
+    {
+    }
+
+  private:
+    Ptr<UbWqeSegment> MakeRead(uint32_t taSsn,
+                               uint32_t source,
+                               uint32_t destination,
+                               uint8_t priority,
+                               uint8_t sourcePort,
+                               uint8_t destinationPort)
+    {
+        Ptr<UbWqeSegment> request = CreateCtpWriteSegment(taSsn);
+        request->SetSrc(source);
+        request->SetDest(destination);
+        request->SetPriority(priority);
+        request->SetType(TaOpcode::TA_OPCODE_READ);
+        request->SetSize(64);
+        request->SetLogicalBytes(64);
+        request->SetPayloadBytes(0);
+        request->SetResLenBytes(64);
+        request->SetCarrierBytes(1);
+        request->SetSport(sourcePort);
+        request->SetDport(destinationPort);
+        return request;
+    }
+
+    void CheckCna(Ptr<Packet> packet,
+                  uint32_t sourceNode,
+                  uint32_t destinationNode,
+                  bool explicitPorts,
+                  RoutingType expectedRoutingType)
+    {
+        NS_TEST_ASSERT_MSG_NE(packet, nullptr, "READ response should remain queued for inspection");
+        if (packet == nullptr)
+        {
+            return;
+        }
+        UbDatalinkPacketHeader datalinkHeader;
+        UbCna16NetworkHeader cnaHeader;
+        packet->RemoveHeader(datalinkHeader);
+        packet->RemoveHeader(cnaHeader);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint8_t>(datalinkHeader.GetRoutingType()),
+                              static_cast<uint8_t>(expectedRoutingType),
+                              "READ response should inherit the request routing type");
+        const uint16_t expectedSource = explicitPorts
+                                            ? static_cast<uint16_t>(NodeIdToCna16(sourceNode, 0))
+                                            : static_cast<uint16_t>(NodeIdToCna16(sourceNode));
+        const uint16_t expectedDestination =
+            explicitPorts ? static_cast<uint16_t>(NodeIdToCna16(destinationNode, 0))
+                           : static_cast<uint16_t>(NodeIdToCna16(destinationNode));
+        NS_TEST_ASSERT_MSG_EQ(cnaHeader.GetScna(),
+                              expectedSource,
+                              "READ response SCNA should reverse the request DCNA");
+        NS_TEST_ASSERT_MSG_EQ(cnaHeader.GetDcna(),
+                              expectedDestination,
+                              "READ response DCNA should reverse the request SCNA");
+    }
+
+    void DoRun() override
+    {
+        LocalTpTopology topo = BuildLocalTpTopology();
+        Ptr<UbCtpTransportService> senderService =
+            topo.sender->GetObject<UbController>()->GetCtpTransportService();
+        Ptr<UbCtpTransportService> receiverService =
+            topo.receiver->GetObject<UbController>()->GetCtpTransportService();
+        topo.receiverPort->GetUbQueue()->SetAttribute("MaxEgressBytes", UintegerValue(0));
+
+        const UbCtpEntityKey explicitKey{.srcEntityId = 1,
+                                         .dstNodeId = topo.receiver->GetId(),
+                                         .dstEntityId = 1,
+                                         .vl = 7};
+        Ptr<UbWqeSegment> explicitRequest = MakeRead(0,
+                                                     topo.sender->GetId(),
+                                                     topo.receiver->GetId(),
+                                                     explicitKey.vl,
+                                                     0,
+                                                     0);
+        senderService->ConfigureRoutingPolicy(explicitKey, RoutingType::PER_FLOW_SHORTEST_PATHS);
+        Ptr<Packet> explicitPacket = senderService->BuildDataPacket(explicitRequest, explicitKey);
+        topo.receiver->GetObject<UbSwitch>()->SwitchHandlePacket(topo.receiverPort, explicitPacket);
+        UbCtpEntityKey reverseExplicit{.srcEntityId = 1,
+                                       .dstNodeId = topo.sender->GetId(),
+                                       .dstEntityId = 1,
+                                       .vl = 7};
+        Ptr<UbCtpTxQueue> explicitQueue =
+            receiverService->GetOrCreateQueue(reverseExplicit, 0, reverseExplicit.vl);
+        CheckCna(explicitQueue->GetNextPacket(),
+                 topo.receiver->GetId(),
+                 topo.sender->GetId(),
+                 true,
+                 RoutingType::PER_FLOW_SHORTEST_PATHS);
+
+        const UbCtpEntityKey wildcardKey{.srcEntityId = 1,
+                                         .dstNodeId = topo.receiver->GetId(),
+                                         .dstEntityId = 1,
+                                         .vl = 8};
+        Ptr<UbWqeSegment> wildcardRequest = MakeRead(1,
+                                                     topo.sender->GetId(),
+                                                     topo.receiver->GetId(),
+                                                     wildcardKey.vl,
+                                                     CTP_WILDCARD_PORT,
+                                                     CTP_WILDCARD_PORT);
+        senderService->ConfigureRoutingPolicy(wildcardKey,
+                                               RoutingType::PER_PACKET_SHORTEST_PATHS);
+        Ptr<Packet> wildcardPacket = senderService->BuildDataPacket(wildcardRequest, wildcardKey);
+        topo.receiver->GetObject<UbSwitch>()->SwitchHandlePacket(topo.receiverPort, wildcardPacket);
+        UbCtpEntityKey reverseWildcard{.srcEntityId = 1,
+                                       .dstNodeId = topo.sender->GetId(),
+                                       .dstEntityId = 1,
+                                       .vl = 8};
+        Ptr<UbCtpTxQueue> wildcardQueue =
+            receiverService->GetOrCreateQueue(reverseWildcard, 0, reverseWildcard.vl);
+        CheckCna(wildcardQueue->GetNextPacket(),
+                 topo.receiver->GetId(),
+                 topo.sender->GetId(),
+                 false,
+                 RoutingType::PER_PACKET_SHORTEST_PATHS);
+
+        const UbCtpEntityKey explicitPacketKey{.srcEntityId = 1,
+                                               .dstNodeId = topo.receiver->GetId(),
+                                               .dstEntityId = 1,
+                                               .vl = 9};
+        Ptr<UbWqeSegment> explicitPacketRequest = MakeRead(2,
+                                                           topo.sender->GetId(),
+                                                           topo.receiver->GetId(),
+                                                           explicitPacketKey.vl,
+                                                           0,
+                                                           0);
+        senderService->ConfigureRoutingPolicy(explicitPacketKey,
+                                               RoutingType::PER_PACKET_SHORTEST_PATHS);
+        Ptr<Packet> explicitPerPacketPacket =
+            senderService->BuildDataPacket(explicitPacketRequest, explicitPacketKey);
+        topo.receiver->GetObject<UbSwitch>()->SwitchHandlePacket(topo.receiverPort,
+                                                                 explicitPerPacketPacket);
+        UbCtpEntityKey reverseExplicitPacket{.srcEntityId = 1,
+                                             .dstNodeId = topo.sender->GetId(),
+                                             .dstEntityId = 1,
+                                             .vl = 9};
+        Ptr<UbCtpTxQueue> explicitPacketQueue =
+            receiverService->GetOrCreateQueue(reverseExplicitPacket, 0, reverseExplicitPacket.vl);
+        CheckCna(explicitPacketQueue->GetNextPacket(),
+                 topo.receiver->GetId(),
+                 topo.sender->GetId(),
+                 true,
+                 RoutingType::PER_PACKET_SHORTEST_PATHS);
+
+        Simulator::Destroy();
+    }
+};
+
 class UbCtpTaAckInheritsPacketSprayRoutingPolicyTest : public TestCase
 {
   public:
@@ -28294,6 +29458,7 @@ class UbCtpTaAckInheritsPacketSprayRoutingPolicyTest : public TestCase
     {
         Ptr<Node> sender = CreateObject<Node>();
         Ptr<Node> receiver = CreateObject<Node>(0);
+        InitNode(sender, UB_DEVICE, 1);
         InitNode(receiver, UB_DEVICE, 2);
         Ptr<UbCtpTransportService> receiverService =
             receiver->GetObject<UbController>()->GetCtpTransportService();
@@ -28301,14 +29466,16 @@ class UbCtpTaAckInheritsPacketSprayRoutingPolicyTest : public TestCase
         Ptr<UbRoutingProcess> routing =
             receiver->GetObject<UbSwitch>()->GetRoutingProcess();
         routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(0).Get(), std::vector<uint16_t>{0, 1});
+        routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(0, 0).Get(),
+                                                    std::vector<uint16_t>{0, 1});
 
         Ptr<UbCtpTransportService> packetBuilder = CreateObject<UbCtpTransportService>();
         packetBuilder->SetNode(sender);
         packetBuilder->SetRoutingType(RoutingType::PER_PACKET_SHORTEST_PATHS);
 
-        UbCtpEntityKey requestKey{.srcEntityId = 0,
+        UbCtpEntityKey requestKey{.srcEntityId = 1,
                                   .dstNodeId = 1,
-                                  .dstEntityId = 0,
+                                  .dstEntityId = 1,
                                   .vl = 7};
         for (uint32_t taSsn = 0; taSsn < 16; ++taSsn)
         {
@@ -28321,9 +29488,9 @@ class UbCtpTaAckInheritsPacketSprayRoutingPolicyTest : public TestCase
                                   "CTP data packet should generate a TAACK");
         }
 
-        UbCtpEntityKey ackKey{.srcEntityId = 0,
+        UbCtpEntityKey ackKey{.srcEntityId = 1,
                               .dstNodeId = 0,
-                              .dstEntityId = 0,
+                              .dstEntityId = 1,
                               .vl = 7};
         NS_TEST_ASSERT_MSG_GT(receiverService->GetQueuedPacketCountForTest(ackKey, 1, ackKey.vl),
                               0u,
@@ -28347,9 +29514,9 @@ class UbCtpCompactQueueCarriesLocalGenerationMetadataTest : public TestCase
         Ptr<Node> node = BuildSinglePortCtpNode();
         Ptr<UbCtpTransportService> service =
             node->GetObject<UbController>()->GetCtpTransportService();
-        UbCtpEntityKey key{.srcEntityId = 0,
+        UbCtpEntityKey key{.srcEntityId = 1,
                            .dstNodeId = 1,
-                           .dstEntityId = 0,
+                           .dstEntityId = 1,
                            .vl = 7};
 
         Ptr<UbCtpTxQueue> queue =
@@ -28388,6 +29555,7 @@ class UbCtpWireTaAckCompletesJettyTest : public TestCase
     {
         Ptr<Node> node = BuildSinglePortCtpNode();
         Ptr<Node> remoteNode = CreateObject<Node>();
+        InitNode(remoteNode, UB_DEVICE, 1);
         Ptr<UbController> controller = node->GetObject<UbController>();
         Ptr<UbFunction> function = controller->GetUbFunction();
 
@@ -28399,31 +29567,32 @@ class UbCtpWireTaAckCompletesJettyTest : public TestCase
         Ptr<UbWqe> wqe =
             function->CreateWqe(0, 1, UB_MTU_BYTE, kTaskId, TaOpcode::TA_OPCODE_WRITE);
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-        UbCtpEntityKey key{.srcEntityId = 0,
+        UbCtpEntityKey key{.srcEntityId = 1,
                            .dstNodeId = 1,
-                           .dstEntityId = 0,
+                           .dstEntityId = 1,
                            .vl = 7};
         wqe->SetPriority(key.vl);
+        wqe->SetSport(0);
+        wqe->SetDport(CTP_WILDCARD_PORT);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->SubmitCtpWqe(wqe, kJettyNum, key).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
             "test setup should admit the CTP WQE through the Transaction owner");
-        service->SetSourcePortHint(key, 0);
         service->StartJetty(jetty, key);
         NS_TEST_ASSERT_MSG_EQ(service->GetOrCreateTransactionContext(key)->GetOutstandingCount(),
                               1u,
                               "test setup should make one CTP transaction outstanding");
 
-        UbCtpEntityKey ackWireKey{.srcEntityId = 0,
+        UbCtpEntityKey ackWireKey{.srcEntityId = 1,
                                   .dstNodeId = 0,
-                                  .dstEntityId = 0,
+                                  .dstEntityId = 1,
                                   .vl = 7};
         Ptr<Packet> ackPacket =
             BuildCtpResponsePacketFromNode(remoteNode,
                                            CreateCtpTaAckResponseSegment(0),
                                            ackWireKey);
 
-        NS_TEST_ASSERT_MSG_EQ(service->HandleReceivedPacket(ackPacket),
+        NS_TEST_ASSERT_MSG_EQ(service->HandleReceivedPacket(ackPacket, 0),
                               true,
                               "wire TAACK should be accepted by the CTP service");
         NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndUnaForTest(),
@@ -28463,11 +29632,12 @@ class UbCtpWireTaAckContinuesInflightLimitedWqeTest : public TestCase
     {
         Ptr<Node> node = BuildSinglePortCtpNode();
         Ptr<Node> remoteNode = CreateObject<Node>();
+        InitNode(remoteNode, UB_DEVICE, 1);
         Ptr<UbController> controller = node->GetObject<UbController>();
         Ptr<UbFunction> function = controller->GetUbFunction();
         Ptr<UbTransaction> transaction = controller->GetUbTransaction();
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-        UbCtpEntityKey key{.srcEntityId = 0, .dstNodeId = 1, .dstEntityId = 0, .vl = 7};
+        UbCtpEntityKey key{.srcEntityId = 1, .dstNodeId = 1, .dstEntityId = 1, .vl = 7};
 
         function->CreateJetty(0, key.dstNodeId, kJettyNum);
         Ptr<UbJetty> jetty = function->GetJetty(kJettyNum);
@@ -28481,12 +29651,13 @@ class UbCtpWireTaAckContinuesInflightLimitedWqeTest : public TestCase
                                              kTaskId,
                                              TaOpcode::TA_OPCODE_WRITE);
         wqe->SetPriority(key.vl);
+        wqe->SetSport(0);
+        wqe->SetDport(CTP_WILDCARD_PORT);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->SubmitCtpWqe(wqe, kJettyNum, key).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
             "Multi-segment CTP WQE should enter the inflight-limited Jetty");
 
-        service->SetSourcePortHint(key, 0);
         service->StartJetty(jetty, key);
         NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndNxtForTest(),
                               1u,
@@ -28495,11 +29666,12 @@ class UbCtpWireTaAckContinuesInflightLimitedWqeTest : public TestCase
                               1u,
                               "Only the first CTP segment should occupy the entity window");
 
-        UbCtpEntityKey ackWireKey{.srcEntityId = 0, .dstNodeId = 0, .dstEntityId = 0, .vl = key.vl};
+        UbCtpEntityKey ackWireKey{.srcEntityId = 1, .dstNodeId = 0, .dstEntityId = 1, .vl = key.vl};
         NS_TEST_ASSERT_MSG_EQ(service->HandleReceivedPacket(
                                   BuildCtpResponsePacketFromNode(remoteNode,
                                                                  CreateCtpTaAckResponseSegment(0),
-                                                                 ackWireKey)),
+                                                                 ackWireKey),
+                                  0),
                               true,
                               "First wire TAACK should be accepted");
         NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndUnaForTest(),
@@ -28515,7 +29687,8 @@ class UbCtpWireTaAckContinuesInflightLimitedWqeTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(service->HandleReceivedPacket(
                                   BuildCtpResponsePacketFromNode(remoteNode,
                                                                  CreateCtpTaAckResponseSegment(1),
-                                                                 ackWireKey)),
+                                                                 ackWireKey),
+                                  0),
                               true,
                               "Second wire TAACK should be accepted");
         NS_TEST_ASSERT_MSG_EQ(m_completions,
@@ -28560,6 +29733,7 @@ class UbCtpOutOfOrderWireTaAckCompletesContiguousJettyRangeTest : public TestCas
     {
         Ptr<Node> node = BuildSinglePortCtpNode();
         Ptr<Node> remoteNode = CreateObject<Node>();
+        InitNode(remoteNode, UB_DEVICE, 1);
         Ptr<UbController> controller = node->GetObject<UbController>();
         Ptr<UbFunction> function = controller->GetUbFunction();
 
@@ -28576,31 +29750,32 @@ class UbCtpOutOfOrderWireTaAckCompletesContiguousJettyRangeTest : public TestCas
                                 kTaskId,
                                 TaOpcode::TA_OPCODE_WRITE);
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-        UbCtpEntityKey key{.srcEntityId = 0,
+        UbCtpEntityKey key{.srcEntityId = 1,
                            .dstNodeId = 1,
-                           .dstEntityId = 0,
+                           .dstEntityId = 1,
                            .vl = 7};
         wqe->SetPriority(key.vl);
+        wqe->SetSport(0);
+        wqe->SetDport(CTP_WILDCARD_PORT);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->SubmitCtpWqe(wqe, kJettyNum, key).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
             "test setup should admit the CTP WQE through the Transaction owner");
-        service->SetSourcePortHint(key, 0);
-
         service->StartJetty(jetty, key);
         NS_TEST_ASSERT_MSG_EQ(service->GetOrCreateTransactionContext(key)->GetOutstandingCount(),
                               2u,
                               "test setup should make both CTP transactions outstanding");
 
-        UbCtpEntityKey ackWireKey{.srcEntityId = 0,
+        UbCtpEntityKey ackWireKey{.srcEntityId = 1,
                                   .dstNodeId = 0,
-                                  .dstEntityId = 0,
+                                  .dstEntityId = 1,
                                   .vl = 7};
         NS_TEST_ASSERT_MSG_EQ(service->HandleReceivedPacket(
                                   BuildCtpResponsePacketFromNode(
                                       remoteNode,
                                       CreateCtpTaAckResponseSegment(1),
-                                      ackWireKey)),
+                                      ackWireKey),
+                                  0),
                               true,
                               "out-of-order TAACK should be accepted");
         NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndUnaForTest(),
@@ -28614,7 +29789,8 @@ class UbCtpOutOfOrderWireTaAckCompletesContiguousJettyRangeTest : public TestCas
                                   BuildCtpResponsePacketFromNode(
                                       remoteNode,
                                       CreateCtpTaAckResponseSegment(0),
-                                      ackWireKey)),
+                                      ackWireKey),
+                                  0),
                               true,
                               "base TAACK should complete the contiguous range");
         NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndUnaForTest(),
@@ -28655,13 +29831,15 @@ class UbCtpTerminalRecoveryWithoutTaAckContinuesWaitingJettyWqeTest : public Tes
     void DoRun() override
     {
         Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<Node> peer = CreateObject<Node>();
+        InitNode(peer, UB_DEVICE, 1);
         Ptr<UbController> controller = node->GetObject<UbController>();
         Ptr<UbFunction> function = controller->GetUbFunction();
         Ptr<UbTransaction> transaction = controller->GetUbTransaction();
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-        UbCtpEntityKey key{.srcEntityId = 10,
-                           .dstNodeId = 1,
-                           .dstEntityId = 11,
+        UbCtpEntityKey key{.srcEntityId = 1,
+                           .dstNodeId = peer->GetId(),
+                           .dstEntityId = 1,
                            .vl = 7};
 
         function->CreateJetty(0, key.dstNodeId, kJettyNum);
@@ -28685,6 +29863,10 @@ class UbCtpTerminalRecoveryWithoutTaAckContinuesWaitingJettyWqeTest : public Tes
                                                 TaOpcode::TA_OPCODE_WRITE);
         first->SetPriority(key.vl);
         second->SetPriority(key.vl);
+        first->SetSport(0);
+        first->SetDport(CTP_WILDCARD_PORT);
+        second->SetSport(0);
+        second->SetDport(CTP_WILDCARD_PORT);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->SubmitCtpWqe(first, kJettyNum, key).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
@@ -28693,7 +29875,6 @@ class UbCtpTerminalRecoveryWithoutTaAckContinuesWaitingJettyWqeTest : public Tes
             static_cast<uint32_t>(function->SubmitCtpWqe(second, kJettyNum, key).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
             "Second CTP WQE should wait in the same Jetty");
-        service->SetSourcePortHint(key, 0);
         service->StartJetty(jetty, key);
 
         NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndNxtForTest(),
@@ -28772,6 +29953,7 @@ class UbCtpOutOfOrderWireTaAckTracesArrivalTest : public TestCase
     {
         Ptr<Node> node = BuildSinglePortCtpNode();
         Ptr<Node> remoteNode = CreateObject<Node>();
+        InitNode(remoteNode, UB_DEVICE, 1);
         Ptr<UbController> controller = node->GetObject<UbController>();
         Ptr<UbFunction> function = controller->GetUbFunction();
 
@@ -28788,31 +29970,32 @@ class UbCtpOutOfOrderWireTaAckTracesArrivalTest : public TestCase
             "LastPacketACKsNotify",
             MakeCallback(&UbCtpOutOfOrderWireTaAckTracesArrivalTest::OnLastPacketAck, this));
 
-        UbCtpEntityKey key{.srcEntityId = 0,
+        UbCtpEntityKey key{.srcEntityId = 1,
                            .dstNodeId = 1,
-                           .dstEntityId = 0,
+                           .dstEntityId = 1,
                            .vl = 7};
         wqe->SetPriority(key.vl);
+        wqe->SetSport(0);
+        wqe->SetDport(CTP_WILDCARD_PORT);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->SubmitCtpWqe(wqe, kJettyNum, key).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
             "test setup should admit the CTP WQE through the Transaction owner");
-        service->SetSourcePortHint(key, 0);
-
         service->StartJetty(jetty, key);
         NS_TEST_ASSERT_MSG_EQ(service->GetOrCreateTransactionContext(key)->GetOutstandingCount(),
                               2u,
                               "test setup should make both CTP transactions outstanding");
 
-        UbCtpEntityKey ackWireKey{.srcEntityId = 0,
+        UbCtpEntityKey ackWireKey{.srcEntityId = 1,
                                   .dstNodeId = 0,
-                                  .dstEntityId = 0,
+                                  .dstEntityId = 1,
                                   .vl = 7};
         NS_TEST_ASSERT_MSG_EQ(service->HandleReceivedPacket(
                                   BuildCtpResponsePacketFromNode(
                                       remoteNode,
                                       CreateCtpTaAckResponseSegment(1),
-                                      ackWireKey)),
+                                      ackWireKey),
+                                  0),
                               true,
                               "out-of-order TAACK should be accepted");
         NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndUnaForTest(),
@@ -28956,47 +30139,46 @@ class UbCtpCongestionKeyUsesDestinationAndVlTest : public TestCase
         Ptr<UbCtpTransportService> service =
             localNode->GetObject<UbController>()->GetCtpTransportService();
 
-        UbCtpEntityKey entity5{.srcEntityId = 5,
+        UbCtpEntityKey entity1{.srcEntityId = 1,
                                .dstNodeId = remoteNode1->GetId(),
                                .dstEntityId = 50,
                                .vl = 7};
-        UbCtpEntityKey entity7 = entity5;
-        entity7.srcEntityId = 7;
-        service->RecordCnpForTest(entity5);
-        service->RecordCnpForTest(entity7);
+        UbCtpEntityKey entity2 = entity1;
+        entity2.srcEntityId = 2;
+        service->RecordCnpForTest(entity1);
+        service->RecordCnpForTest(entity2);
         NS_TEST_ASSERT_MSG_EQ(service->GetCongestionStateCountForTest(),
                               1u,
                               "source Entities sharing destination and VL should share congestion");
 
-        UbCtpEntityKey otherVl = entity5;
+        UbCtpEntityKey otherVl = entity1;
         otherVl.vl = 6;
         service->RecordCnpForTest(otherVl);
         NS_TEST_ASSERT_MSG_EQ(service->GetCongestionStateCountForTest(),
                               2u,
                               "different VLs must keep separate congestion contexts");
 
-        UbCtpEntityKey otherDestination = entity5;
+        UbCtpEntityKey otherDestination = entity1;
         otherDestination.dstNodeId = remoteNode2->GetId();
         service->RecordCnpForTest(otherDestination);
         NS_TEST_ASSERT_MSG_EQ(service->GetCongestionStateCountForTest(),
                               3u,
                               "the same destination Entity on different nodes must stay separate");
 
-        UbCtpEntityKey entityZero{.srcEntityId = 0,
-                                  .dstNodeId = remoteNode1->GetId(),
-                                  .dstEntityId = 0,
-                                  .vl = 7};
-        service->RecordCnpForTest(entityZero);
+        UbCtpEntityKey otherDestinationEntity = entity1;
+        otherDestinationEntity.dstEntityId = 51;
+        service->RecordCnpForTest(otherDestinationEntity);
         NS_TEST_ASSERT_MSG_EQ(service->GetCongestionStateCountForTest(),
                               4u,
-                              "entity-zero destination should create its own context");
+                              "a different destination Entity should create its own context");
 
-        UbCtpEntityKey reverseWireKey{.srcEntityId = 0,
+        UbCtpEntityKey reverseWireKey{.srcEntityId = 51,
                                       .dstNodeId = localNode->GetId(),
-                                      .dstEntityId = 0,
+                                      .dstEntityId = 1,
                                       .vl = 7};
         NS_TEST_ASSERT_MSG_EQ(service->HandleReceivedPacket(
-                                  BuildCtpCnpPacket(remoteNode1->GetId(), reverseWireKey)),
+                                  BuildCtpCnpPacket(remoteNode1->GetId(), reverseWireKey),
+                                  0),
                               true,
                               "reverse-direction CNP should parse through the production boundary");
         NS_TEST_ASSERT_MSG_EQ(service->GetCongestionStateCountForTest(),
@@ -29004,7 +30186,8 @@ class UbCtpCongestionKeyUsesDestinationAndVlTest : public TestCase
                               "reverse normalization should find the outbound destination context");
 
         NS_TEST_ASSERT_MSG_EQ(service->HandleReceivedPacket(
-                                  BuildCtpCnpPacket(remoteNode2->GetId(), reverseWireKey)),
+                                  BuildCtpCnpPacket(remoteNode2->GetId(), reverseWireKey),
+                                  0),
                               true,
                               "a second remote CNP should parse through the production boundary");
         NS_TEST_ASSERT_MSG_EQ(service->GetCongestionStateCountForTest(),
@@ -29068,10 +30251,14 @@ class UbCtpWireAckRequiresExactEntityContextTest : public TestCase
   private:
     void DoRun() override
     {
-        Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<Node> node = CreateObject<Node>();
+        InitNode(node, UB_DEVICE, 1, false);
+        Ptr<UbController> controller = node->GetObject<UbController>();
+        controller->CreateCtpEntity(5, {0});
+        controller->CreateCtpEntity(7, {0});
+        controller->FreezeCtpEntities();
         Ptr<Node> remoteNode = CreateObject<Node>();
-        Ptr<UbCtpTransportService> service =
-            node->GetObject<UbController>()->GetCtpTransportService();
+        Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
         UbCtpEntityKey entity5{.srcEntityId = 5,
                                .dstNodeId = 1,
                                .dstEntityId = 50,
@@ -29087,31 +30274,31 @@ class UbCtpWireAckRequiresExactEntityContextTest : public TestCase
                               true,
                               "entity 5 should have one outstanding transaction");
 
-        UbCtpEntityKey ackWireKey{.srcEntityId = 0,
-                                  .dstNodeId = 0,
-                                  .dstEntityId = 0,
+        UbCtpEntityKey ackWireKey{.srcEntityId = 70,
+                                  .dstNodeId = node->GetId(),
+                                  .dstEntityId = 7,
                                   .vl = 7};
         Ptr<Packet> ackPacket =
             BuildCtpResponsePacketFromNode(remoteNode,
                                            CreateCtpTaAckResponseSegment(0),
                                            ackWireKey);
 
-        NS_TEST_ASSERT_MSG_EQ(service->HandleReceivedPacket(ackPacket),
+        NS_TEST_ASSERT_MSG_EQ(service->HandleReceivedPacket(ackPacket, 0),
                               true,
-                              "wire TAACK should be recognized even without a matching context");
+                              "wire TAACK should remain scoped to its exact Entity context");
         NS_TEST_ASSERT_MSG_EQ(entity5Context->GetCompleteUna(),
                               0u,
-                              "wire TAACK without entity ids must not complete entity 5");
+                              "wire TAACK for Entity 7 must not complete Entity 5");
 
         Simulator::Destroy();
     }
 };
 
-class UbCtpWireTaAckCompletesReverseEntityZeroContextTest : public TestCase
+class UbCtpWireTaAckCompletesReverseEntityContextTest : public TestCase
 {
   public:
-    UbCtpWireTaAckCompletesReverseEntityZeroContextTest()
-        : TestCase("UnifiedBus - CTP wire TAACK completes reverse entity-zero context")
+    UbCtpWireTaAckCompletesReverseEntityContextTest()
+        : TestCase("UnifiedBus - CTP wire TAACK completes reverse Entity context")
     {
     }
 
@@ -29122,25 +30309,25 @@ class UbCtpWireTaAckCompletesReverseEntityZeroContextTest : public TestCase
         Ptr<Node> remoteNode = CreateObject<Node>();
         Ptr<UbCtpTransportService> service =
             node->GetObject<UbController>()->GetCtpTransportService();
-        UbCtpEntityKey requestKey{.srcEntityId = 0,
+        UbCtpEntityKey requestKey{.srcEntityId = 1,
                                   .dstNodeId = 1,
-                                  .dstEntityId = 0,
+                                  .dstEntityId = 1,
                                   .vl = 7};
         Ptr<UbCtpTransactionContext> context = service->GetOrCreateTransactionContext(requestKey);
         NS_TEST_ASSERT_MSG_EQ(context->TryAdmit(0),
                               true,
-                              "entity-zero request context should admit sequence 0");
+                              "request Entity context should admit sequence 0");
 
-        UbCtpEntityKey responseWireKey{.srcEntityId = 0,
+        UbCtpEntityKey responseWireKey{.srcEntityId = 1,
                                        .dstNodeId = 0,
-                                       .dstEntityId = 0,
+                                       .dstEntityId = 1,
                                        .vl = 7};
         Ptr<Packet> ackPacket =
             BuildCtpResponsePacketFromNode(remoteNode,
                                            CreateCtpTaAckResponseSegment(0),
                                            responseWireKey);
 
-        NS_TEST_ASSERT_MSG_EQ(service->HandleReceivedPacket(ackPacket),
+        NS_TEST_ASSERT_MSG_EQ(service->HandleReceivedPacket(ackPacket, 0),
                               true,
                               "response-direction wire TAACK should match request context");
         NS_TEST_ASSERT_MSG_EQ(context->GetCompleteUna(),
@@ -29151,45 +30338,43 @@ class UbCtpWireTaAckCompletesReverseEntityZeroContextTest : public TestCase
     }
 };
 
-class UbCtpWireTaAckDoesNotCompleteNonzeroEntityWithoutWireEntityTest : public TestCase
+class UbCtpWireTaAckRejectsUnknownDestinationEntityTest : public TestCase
 {
   public:
-    UbCtpWireTaAckDoesNotCompleteNonzeroEntityWithoutWireEntityTest()
-        : TestCase("UnifiedBus - CTP wire TAACK cannot complete nonzero entity without wire entity")
+    UbCtpWireTaAckRejectsUnknownDestinationEntityTest()
+        : TestCase("UnifiedBus - CTP wire TAACK rejects an unknown destination Entity")
     {
     }
 
   private:
     void DoRun() override
     {
-        Ptr<Node> node = BuildSinglePortCtpNode();
-        Ptr<Node> remoteNode = CreateObject<Node>();
-        Ptr<UbCtpTransportService> service =
-            node->GetObject<UbController>()->GetCtpTransportService();
-        UbCtpEntityKey entity5{.srcEntityId = 5,
-                               .dstNodeId = 1,
-                               .dstEntityId = 5,
-                               .vl = 7};
-        Ptr<UbCtpTransactionContext> context = service->GetOrCreateTransactionContext(entity5);
-        NS_TEST_ASSERT_MSG_EQ(context->TryAdmit(0),
-                              true,
-                              "nonzero entity context should have one outstanding transaction");
-
-        UbCtpEntityKey responseWireKey{.srcEntityId = 0,
-                                       .dstNodeId = 0,
-                                       .dstEntityId = 0,
-                                       .vl = 7};
-        Ptr<Packet> ackPacket =
-            BuildCtpResponsePacketFromNode(remoteNode,
-                                           CreateCtpTaAckResponseSegment(0),
-                                           responseWireKey);
-
-        NS_TEST_ASSERT_MSG_EQ(service->HandleReceivedPacket(ackPacket),
-                              true,
-                              "wire TAACK should be recognized even without a matching context");
-        NS_TEST_ASSERT_MSG_EQ(context->GetCompleteUna(),
-                              0u,
-                              "nonzero entity context should remain incomplete");
+#ifndef _WIN32
+        const int status = RunInChildProcess([]() {
+            Ptr<Node> node = BuildSinglePortCtpNode();
+            Ptr<Node> remoteNode = CreateObject<Node>();
+            Ptr<UbCtpTransportService> service =
+                node->GetObject<UbController>()->GetCtpTransportService();
+            UbCtpEntityKey responseWireKey{.srcEntityId = 9,
+                                           .dstNodeId = node->GetId(),
+                                           .dstEntityId = 2,
+                                           .vl = 7};
+            Ptr<Packet> ackPacket =
+                BuildCtpResponsePacketFromNode(remoteNode,
+                                               CreateCtpTaAckResponseSegment(0),
+                                               responseWireKey);
+            service->HandleReceivedPacket(ackPacket, 0);
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status),
+                              1,
+                              "TAACK for an unknown local Entity should abort");
+        if (WIFSIGNALED(status))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status),
+                                  SIGABRT,
+                                  "unknown destination Entity should fail with SIGABRT");
+        }
+#endif
 
         Simulator::Destroy();
     }
@@ -29210,23 +30395,23 @@ class UbCtpWireTaAckUnwrapsLogicalTassnTest : public TestCase
         Ptr<Node> remoteNode = CreateObject<Node>();
         Ptr<UbCtpTransportService> service =
             node->GetObject<UbController>()->GetCtpTransportService();
-        UbCtpEntityKey requestKey{.srcEntityId = 0,
+        UbCtpEntityKey requestKey{.srcEntityId = 1,
                                   .dstNodeId = 1,
-                                  .dstEntityId = 0,
+                                  .dstEntityId = 1,
                                   .vl = 7};
         Ptr<UbCtpTransactionContext> context = service->GetOrCreateTransactionContext(requestKey);
         context->SetWindowForTest(65536, 65537);
 
-        UbCtpEntityKey responseWireKey{.srcEntityId = 0,
+        UbCtpEntityKey responseWireKey{.srcEntityId = 1,
                                        .dstNodeId = 0,
-                                       .dstEntityId = 0,
+                                       .dstEntityId = 1,
                                        .vl = 7};
         Ptr<Packet> ackPacket =
             BuildCtpResponsePacketFromNode(remoteNode,
                                            CreateCtpTaAckResponseSegment(65536),
                                            responseWireKey);
 
-        NS_TEST_ASSERT_MSG_EQ(service->HandleReceivedPacket(ackPacket),
+        NS_TEST_ASSERT_MSG_EQ(service->HandleReceivedPacket(ackPacket, 0),
                               true,
                               "wire TAACK should unwrap low 16 bits into outstanding range");
         NS_TEST_ASSERT_MSG_EQ(context->GetCompleteUna(),
@@ -29254,8 +30439,6 @@ class UbCtpSendSegmentFragmentsPayloadTest : public TestCase
                            .dstNodeId = 1,
                            .dstEntityId = 11,
                            .vl = 7};
-        service->SetSourcePortHint(key, 0);
-
         constexpr uint32_t payloadBytes = 4u * 1024u * 1024u;
         Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(0);
         segment->SetSize(payloadBytes);
@@ -29299,8 +30482,6 @@ class UbCtpSendSegmentRemainderPayloadTest : public TestCase
                            .dstNodeId = 1,
                            .dstEntityId = 11,
                            .vl = 7};
-        service->SetSourcePortHint(key, 0);
-
         constexpr uint32_t payloadBytes = UB_MTU_BYTE + 123u;
         Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(0);
         segment->SetSize(payloadBytes);
@@ -29334,14 +30515,16 @@ class UbCtpFragmentedSegmentDoesNotBlockNextTaSsnTest : public TestCase
     void DoRun() override
     {
         Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<Node> peer = CreateObject<Node>();
+        InitNode(peer, UB_DEVICE, 1);
         Ptr<UbCtpTransportService> service = node->GetObject<UbController>()->GetCtpTransportService();
-        UbCtpEntityKey key{.srcEntityId = 10,
-                           .dstNodeId = 1,
-                           .dstEntityId = 11,
+        UbCtpEntityKey key{.srcEntityId = 1,
+                           .dstNodeId = peer->GetId(),
+                           .dstEntityId = 1,
                            .vl = 7};
-        service->SetSourcePortHint(key, 0);
 
         Ptr<UbWqeSegment> first = CreateCtpWriteSegment(0);
+        first->SetSport(0);
         first->SetSize(16u * UB_MTU_BYTE);
         first->SetPayloadBytes(16u * UB_MTU_BYTE);
         first->SetResLenBytes(16u * UB_MTU_BYTE);
@@ -29350,7 +30533,9 @@ class UbCtpFragmentedSegmentDoesNotBlockNextTaSsnTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(service->SendSegment(first, key),
                               false,
                               "Oversized segment should be rejected at the CTP seam");
-        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(CreateCtpWriteSegment(0), key),
+        Ptr<UbWqeSegment> valid = CreateCtpWriteSegment(0);
+        valid->SetSport(0);
+        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(valid, key),
                               true,
                               "Next valid segment should retain TASSN 0 after rejection");
         NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(key),
@@ -29381,21 +30566,26 @@ class UbCtpSendSegmentQueueTest : public TestCase
     void DoRun() override
     {
         Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<Node> peer = CreateObject<Node>();
+        InitNode(peer, UB_DEVICE, 1);
         Ptr<UbCtpTransportService> service = node->GetObject<UbController>()->GetCtpTransportService();
-        UbCtpEntityKey key{.srcEntityId = 10,
-                           .dstNodeId = 1,
-                           .dstEntityId = 11,
+        UbCtpEntityKey key{.srcEntityId = 1,
+                           .dstNodeId = peer->GetId(),
+                           .dstEntityId = 1,
                            .vl = 7};
-        service->SetSourcePortHint(key, 0);
 
-        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(CreateCtpWriteSegment(0), key),
+        Ptr<UbWqeSegment> first = CreateCtpWriteSegment(0);
+        first->SetSport(0);
+        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(first, key),
                               true,
                               "first in-order CTP segment should be queued");
         NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(key),
                               1u,
                               "successful CTP send should enqueue exactly one packet");
 
-        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(CreateCtpWriteSegment(0), key),
+        Ptr<UbWqeSegment> duplicate = CreateCtpWriteSegment(0);
+        duplicate->SetSport(0);
+        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(duplicate, key),
                               false,
                               "duplicate TA SSN should be rejected by TryAdmit");
         NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(key),
@@ -29443,46 +30633,82 @@ class UbCtpRejectedSegmentDoesNotCreateQueueOrRequireRouteTest : public TestCase
     }
 };
 
-class UbCtpPortHintRejectsUnencodableCna16PortTest : public TestCase
+class UbCtpExplicitSourcePortRequiresPeerEntityTest : public TestCase
 {
   public:
-    UbCtpPortHintRejectsUnencodableCna16PortTest()
-        : TestCase("UnifiedBus - CTP port hints reject unencodable CNA16 ports")
+    UbCtpExplicitSourcePortRequiresPeerEntityTest()
+        : TestCase("UnifiedBus - CTP explicit source port still requires the peer Entity")
     {
     }
 
   private:
-    void ExpectPortHintAbort(const std::function<void(Ptr<UbCtpTransportService>,
-                                                      const UbCtpEntityKey&)>& setHint)
+    void DoRun() override
     {
-        int status = RunInChildProcess([&setHint]() {
-            Ptr<UbCtpTransportService> service = CreateObject<UbCtpTransportService>();
-            UbCtpEntityKey key{.srcEntityId = 10,
-                               .dstNodeId = 1,
-                               .dstEntityId = 11,
+        const int status = RunInChildProcess([]() {
+            Ptr<Node> source = BuildSinglePortCtpNode();
+            Ptr<Node> destination = CreateObject<Node>();
+            InitNode(destination, UB_DEVICE, 1);
+
+            Ptr<UbCtpTransportService> service =
+                source->GetObject<UbController>()->GetCtpTransportService();
+            UbCtpEntityKey key{.srcEntityId = 1,
+                               .dstNodeId = destination->GetId(),
+                               .dstEntityId = 2,
                                .vl = 7};
-            setHint(service, key);
+            Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(0);
+            segment->SetSport(0);
+            service->SendSegment(segment, key);
         });
 
         NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status),
                               1,
-                              "Unencodable CTP port hint should abort");
+                              "an explicit source port must not bypass peer Entity validation");
+        if (WIFSIGNALED(status))
+        {
+            NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status),
+                                  SIGABRT,
+                                  "an unknown peer Entity should fail with SIGABRT");
+        }
+        Simulator::Destroy();
+    }
+};
+
+class UbCtpEndpointPortRejectsUnencodableCna16PortTest : public TestCase
+{
+  public:
+    UbCtpEndpointPortRejectsUnencodableCna16PortTest()
+        : TestCase("UnifiedBus - CTP endpoint ports reject unencodable CNA16 values")
+    {
+    }
+
+  private:
+    void ExpectEndpointPortAbort(const std::function<void(Ptr<UbWqeSegment>)>& setPort)
+    {
+        int status = RunInChildProcess([&setPort]() {
+            Ptr<UbCtpTransportService> service = CreateObject<UbCtpTransportService>();
+            service->SetNode(CreateObject<Node>());
+            UbCtpEntityKey key{.srcEntityId = 10,
+                               .dstNodeId = 1,
+                               .dstEntityId = 11,
+                               .vl = 7};
+            Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(0);
+            setPort(segment);
+            service->BuildDataPacket(segment, key);
+        });
+
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status),
+                              1,
+                              "Unencodable CTP endpoint port should abort");
         NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status),
                               SIGABRT,
-                              "Unencodable CTP port hint should fail with SIGABRT");
+                              "Unencodable CTP endpoint port should fail with SIGABRT");
     }
 
     void DoRun() override
     {
-        ExpectPortHintAbort([](Ptr<UbCtpTransportService> service, const UbCtpEntityKey& key) {
-            service->SetSourcePortHint(key, 15);
-        });
-        ExpectPortHintAbort([](Ptr<UbCtpTransportService> service, const UbCtpEntityKey& key) {
-            service->SetDestinationPortHint(key, 15);
-        });
-        ExpectPortHintAbort([](Ptr<UbCtpTransportService> service, const UbCtpEntityKey& key) {
-            service->SetDestinationPortHint(key, 16);
-        });
+        ExpectEndpointPortAbort([](Ptr<UbWqeSegment> segment) { segment->SetSport(15); });
+        ExpectEndpointPortAbort([](Ptr<UbWqeSegment> segment) { segment->SetDport(15); });
+        ExpectEndpointPortAbort([](Ptr<UbWqeSegment> segment) { segment->SetDport(16); });
     }
 };
 #endif
@@ -29500,16 +30726,16 @@ class UbCtpSendSegmentRegistersAndTriggersPortTest : public TestCase
     {
         LocalTpTopology topo = BuildLocalTpTopology();
         Ptr<UbCtpTransportService> service = topo.sender->GetObject<UbController>()->GetCtpTransportService();
-        UbCtpEntityKey key{.srcEntityId = 10,
+        UbCtpEntityKey key{.srcEntityId = 1,
                            .dstNodeId = topo.receiver->GetId(),
-                           .dstEntityId = 11,
+                           .dstEntityId = 1,
                            .vl = 7};
         const uint32_t outPort = topo.senderPort->GetIfIndex();
 
-        service->SetSourcePortHint(key, outPort);
         Ptr<UbWqeSegment> first = CreateCtpWriteSegment(0);
         first->SetSrc(topo.sender->GetId());
         first->SetDest(topo.receiver->GetId());
+        first->SetSport(static_cast<uint8_t>(outPort));
         NS_TEST_ASSERT_MSG_EQ(service->SendSegment(first, key),
                               true,
                               "CTP send should admit and enqueue seq 0");
@@ -29523,6 +30749,7 @@ class UbCtpSendSegmentRegistersAndTriggersPortTest : public TestCase
         Ptr<UbWqeSegment> second = CreateCtpWriteSegment(1);
         second->SetSrc(topo.sender->GetId());
         second->SetDest(topo.receiver->GetId());
+        second->SetSport(static_cast<uint8_t>(outPort));
         NS_TEST_ASSERT_MSG_EQ(service->SendSegment(second, key),
                               true,
                               "CTP send should admit and enqueue seq 1");
@@ -29567,17 +30794,16 @@ class UbCtpQueueBackpressurePreservesPacketAndRegistrationTest : public TestCase
         LocalTpTopology topo = BuildLocalTpTopology();
         Ptr<UbCtpTransportService> service =
             topo.sender->GetObject<UbController>()->GetCtpTransportService();
-        UbCtpEntityKey key{.srcEntityId = 10,
+        UbCtpEntityKey key{.srcEntityId = 1,
                            .dstNodeId = topo.receiver->GetId(),
-                           .dstEntityId = 11,
+                           .dstEntityId = 1,
                            .vl = 7};
         const uint32_t outPort = topo.senderPort->GetIfIndex();
         topo.senderPort->GetUbQueue()->SetAttribute("MaxEgressBytes", UintegerValue(0));
-        service->SetSourcePortHint(key, outPort);
-
         Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(0);
         segment->SetSrc(topo.sender->GetId());
         segment->SetDest(topo.receiver->GetId());
+        segment->SetSport(static_cast<uint8_t>(outPort));
         NS_TEST_ASSERT_MSG_EQ(service->SendSegment(segment, key),
                               true,
                               "CTP send should enqueue before egress backpressure is observed");
@@ -29626,15 +30852,15 @@ class UbCtpDataAckLifecycleAndTransactionCleanupTest : public TestCase
         LocalTpTopology topo = BuildLocalTpTopology();
         Ptr<UbController> senderController = topo.sender->GetObject<UbController>();
         Ptr<UbCtpTransportService> senderService = senderController->GetCtpTransportService();
-        UbCtpEntityKey key{.srcEntityId = 10,
+        UbCtpEntityKey key{.srcEntityId = 1,
                            .dstNodeId = topo.receiver->GetId(),
-                           .dstEntityId = 11,
+                           .dstEntityId = 1,
                            .vl = 7};
-        senderService->SetSourcePortHint(key, topo.senderPort->GetIfIndex());
 
         Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(0);
         segment->SetSrc(topo.sender->GetId());
         segment->SetDest(topo.receiver->GetId());
+        segment->SetSport(static_cast<uint8_t>(topo.senderPort->GetIfIndex()));
         NS_TEST_ASSERT_MSG_EQ(senderService->SendSegment(segment, key),
                               true,
                               "CTP DATA should enter the production transmit path");
@@ -29673,11 +30899,10 @@ class UbCtpRouteLossKeepsTransactionOutstandingTest : public TestCase
         LocalTpTopology topo = BuildLocalTpTopology();
         Ptr<UbController> controller = topo.sender->GetObject<UbController>();
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-        UbCtpEntityKey key{.srcEntityId = 10,
+        UbCtpEntityKey key{.srcEntityId = 1,
                            .dstNodeId = topo.receiver->GetId(),
-                           .dstEntityId = 11,
+                           .dstEntityId = 1,
                            .vl = 7};
-        service->SetSourcePortHint(key, topo.senderPort->GetIfIndex());
 
         Ptr<UbRoutingProcess> switchRouting =
             topo.switch0->GetObject<UbSwitch>()->GetRoutingProcess();
@@ -29688,6 +30913,7 @@ class UbCtpRouteLossKeepsTransactionOutstandingTest : public TestCase
         Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(0);
         segment->SetSrc(topo.sender->GetId());
         segment->SetDest(topo.receiver->GetId());
+        segment->SetSport(static_cast<uint8_t>(topo.senderPort->GetIfIndex()));
         NS_TEST_ASSERT_MSG_EQ(service->SendSegment(segment, key),
                               true,
                               "CTP DATA should be admitted before downstream route loss");
@@ -29832,7 +31058,7 @@ class UbSwitchLdstRoutingKeyKeepsLegacySourcePortTest : public TestCase
     {
         constexpr uint32_t srcNodeId = 7;
         constexpr uint32_t dstNodeId = 8;
-        constexpr uint32_t sourcePortHint = 15;
+        constexpr uint32_t sourcePortId = 15;
         constexpr uint8_t priority = 6;
         constexpr uint8_t loadBalance = 3;
 
@@ -29842,7 +31068,7 @@ class UbSwitchLdstRoutingKeyKeepsLegacySourcePortTest : public TestCase
         packet->AddHeader(dummyTah);
 
         UbCna16NetworkHeader cnaHeader;
-        cnaHeader.SetScna(static_cast<uint16_t>(NodeIdToCna16(srcNodeId, sourcePortHint)));
+        cnaHeader.SetScna(static_cast<uint16_t>(NodeIdToCna16(srcNodeId, sourcePortId)));
         cnaHeader.SetDcna(static_cast<uint16_t>(NodeIdToCna16(dstNodeId)));
         cnaHeader.SetLb(loadBalance);
         cnaHeader.SetServiceLevel(priority);
@@ -29862,7 +31088,7 @@ class UbSwitchLdstRoutingKeyKeepsLegacySourcePortTest : public TestCase
 
         NS_TEST_ASSERT_MSG_EQ(rtKey.sip,
                               NodeIdToIp(srcNodeId, Cna16ToPortId(NodeIdToCna16(srcNodeId,
-                                                                                 sourcePortHint)))
+                                                                                 sourcePortId)))
                                   .Get(),
                               "LDST routing key should preserve legacy CNA16 source port decoding");
         NS_TEST_ASSERT_MSG_EQ(rtKey.sport,
@@ -29993,9 +31219,9 @@ class UbSwitchForwardsCtpCnaPacketTest : public TestCase
         LocalTpTopology topo = BuildLocalTpTopology();
         Ptr<UbCtpTransportService> service = CreateObject<UbCtpTransportService>();
         service->SetNode(topo.sender);
-        UbCtpEntityKey key{.srcEntityId = 10,
+        UbCtpEntityKey key{.srcEntityId = 1,
                            .dstNodeId = topo.receiver->GetId(),
-                           .dstEntityId = 11,
+                           .dstEntityId = 1,
                            .vl = 7};
         Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(0);
         segment->SetSrc(topo.sender->GetId());
@@ -30015,6 +31241,61 @@ class UbSwitchForwardsCtpCnaPacketTest : public TestCase
     }
 };
 
+class UbSwitchRoutesCtpPrimaryCnaToDestinationEntityMemberTest : public TestCase
+{
+  public:
+    UbSwitchRoutesCtpPrimaryCnaToDestinationEntityMemberTest()
+        : TestCase("UnifiedBus - switch routes CTP Primary CNA to a destination Entity member")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<Node> source = CreateObject<Node>();
+        Ptr<Node> transit = CreateObject<Node>();
+        Ptr<Node> destination = CreateObject<Node>();
+        InitNode(source, UB_DEVICE, 1);
+        InitNode(transit, UB_SWITCH, 3);
+        InitNode(destination, UB_DEVICE, 2, false);
+
+        Ptr<UbController> destinationController = destination->GetObject<UbController>();
+        destinationController->CreateCtpEntity(2, {1});
+        destinationController->FreezeCtpEntities();
+
+        Ptr<UbRoutingProcess> routing = transit->GetObject<UbSwitch>()->GetRoutingProcess();
+        routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(destination->GetId()).Get(), {1});
+        routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(destination->GetId(), 1).Get(), {2});
+
+        Ptr<UbCtpTransportService> builder = CreateObject<UbCtpTransportService>();
+        builder->SetNode(source);
+        const UbCtpEntityKey key{.srcEntityId = 1,
+                                 .dstNodeId = destination->GetId(),
+                                 .dstEntityId = 2,
+                                 .vl = 7};
+        Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(0);
+        segment->SetSrc(source->GetId());
+        segment->SetDest(destination->GetId());
+        Ptr<Packet> packet = builder->BuildDataPacket(segment, key);
+
+        Ptr<UbPort> ingressPort = DynamicCast<UbPort>(transit->GetDevice(0));
+        transit->GetObject<UbSwitch>()->SwitchHandlePacket(ingressPort, packet);
+
+        NS_TEST_ASSERT_MSG_EQ(transit->GetObject<UbSwitch>()->GetVoqPacketCountForTest(1,
+                                                                                      key.vl,
+                                                                                      0),
+                              0u,
+                              "Primary-CNA-only route must not bypass destination Entity membership");
+        NS_TEST_ASSERT_MSG_EQ(transit->GetObject<UbSwitch>()->GetVoqPacketCountForTest(2,
+                                                                                      key.vl,
+                                                                                      0),
+                              1u,
+                              "switch should reuse the destination Entity endpoint route");
+
+        Simulator::Destroy();
+    }
+};
+
 class UbSwitchLocalCtpSinkParsesCnpTest : public TestCase
 {
   public:
@@ -30029,9 +31310,9 @@ class UbSwitchLocalCtpSinkParsesCnpTest : public TestCase
         LocalTpTopology topo = BuildLocalTpTopology();
         Ptr<UbCtpTransportService> receiverService =
             topo.receiver->GetObject<UbController>()->GetCtpTransportService();
-        UbCtpEntityKey cnpKey{.srcEntityId = 0,
+        UbCtpEntityKey cnpKey{.srcEntityId = 1,
                               .dstNodeId = topo.receiver->GetId(),
-                              .dstEntityId = 0,
+                              .dstEntityId = 1,
                               .vl = 7};
         Ptr<Packet> cnpPacket = BuildCtpCnpPacket(topo.sender->GetId(), cnpKey);
 
@@ -30111,6 +31392,8 @@ class UbCtpReadWriteUsesTransactionLifecycleTest : public TestCase
     void DoRun() override
     {
         Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<Node> peer = CreateObject<Node>();
+        InitNode(peer, UB_DEVICE, 1);
         Ptr<UbController> controller = node->GetObject<UbController>();
         Ptr<UbTransaction> transaction = controller->GetUbTransaction();
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
@@ -30120,20 +31403,21 @@ class UbCtpReadWriteUsesTransactionLifecycleTest : public TestCase
         node->AddApplication(app);
         app->SetTransportMode(TransportMode::CTP);
 
-        UbCtpEntityKey key{.srcEntityId = 0,
-                           .dstNodeId = 1,
-                           .dstEntityId = 0,
+        UbCtpEntityKey key{.srcEntityId = 1,
+                           .dstNodeId = peer->GetId(),
+                           .dstEntityId = 1,
                            .vl = 7};
-        service->SetSourcePortHint(key, 0);
 
         UbTrafficGen::RuntimeTask task;
         task.taskId = 100;
         task.sourceNode = node->GetId();
-        task.destNode = 1;
+        task.destNode = peer->GetId();
         task.dataSize = 2 * UB_MTU_BYTE;
         task.phaseId = 1;
         task.priority = key.vl;
         task.op = UbTrafficGen::RuntimeTaskOp::URMA_WRITE;
+        task.srcPortId = 0;
+        task.hasSrcPortId = true;
         app->SendCtpUrmaTraffic(task);
 
         NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
@@ -30196,6 +31480,8 @@ class UbCtpForcedTerminalCleansTransactionStateTest : public TestCase
     void DoRun() override
     {
         Ptr<Node> node = BuildSinglePortCtpNode();
+        Ptr<Node> peer = CreateObject<Node>();
+        InitNode(peer, UB_DEVICE, 1);
         Ptr<UbController> controller = node->GetObject<UbController>();
         Ptr<UbFunction> function = controller->GetUbFunction();
         Ptr<UbTransaction> transaction = controller->GetUbTransaction();
@@ -30204,20 +31490,21 @@ class UbCtpForcedTerminalCleansTransactionStateTest : public TestCase
         node->AddApplication(app);
         app->SetTransportMode(TransportMode::CTP);
 
-        UbCtpEntityKey key{.srcEntityId = 0,
-                           .dstNodeId = 1,
-                           .dstEntityId = 0,
+        UbCtpEntityKey key{.srcEntityId = 1,
+                           .dstNodeId = peer->GetId(),
+                           .dstEntityId = 1,
                            .vl = 7};
-        controller->GetCtpTransportService()->SetSourcePortHint(key, 0);
 
         UbTrafficGen::RuntimeTask task;
         task.taskId = 102;
         task.sourceNode = node->GetId();
-        task.destNode = 1;
+        task.destNode = peer->GetId();
         task.dataSize = 2 * UB_MTU_BYTE;
         task.phaseId = 1;
         task.priority = key.vl;
         task.op = UbTrafficGen::RuntimeTaskOp::URMA_WRITE;
+        task.srcPortId = 0;
+        task.hasSrcPortId = true;
         app->SendCtpUrmaTraffic(task);
 
         const UbCtpTransactionState* before = transaction->FindCtpTransactionState(key);
@@ -30662,11 +31949,19 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbTrafficConfigEndpointPortFieldsTest(), TestCase::Duration::QUICK);
 #ifndef _WIN32
     AddTestCase(new UbTrafficConfigEntityAndEndpointPortFieldsTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbTrafficConfigPreservesTransportPortRangeTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbAppCtpRejectsUnencodableTrafficPortTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTrafficConfigRejectsRowHeaderWidthMismatchTest(), TestCase::Duration::QUICK);
 #endif
     AddTestCase(new UbAppCtpTransportModeEntryTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTrafficGenRuntimeTaskEndpointPortFieldsTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbAppCtpRuntimeTaskEntityAndEndpointPortTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbJettyCopiesCtpEndpointPortSentinelsTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbAppCtpEndpointConstraintsDoNotLeakBetweenTasksTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbAppCtpMultipleEntitiesSelectIndependentPortsTest(),
+                TestCase::Duration::QUICK);
     AddTestCase(new UbAppCtpAdmissionBackpressurePreservesJettyTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbAppCtpForwardsRoutingTypeToServiceTest(), TestCase::Duration::QUICK);
@@ -30697,8 +31992,24 @@ UbTestSuite::UbTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbCtpTransactionContextAckWindowAdmissionTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpServiceDoesNotCreateRtpTpTest(), TestCase::Duration::QUICK);
-    AddTestCase(new UbCtpPortHintsDoNotCreateEntityStateTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpEntityRegistryLifecycleTest(), TestCase::Duration::QUICK);
+#ifndef _WIN32
+    AddTestCase(new UbCtpEntityRegistryRejectsInvalidDefinitionsTest(),
+                TestCase::Duration::QUICK);
+#endif
+    AddTestCase(new UbTransportEntityConfigProvisioningTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbTransportEntityDefaultProvisioningTest(), TestCase::Duration::QUICK);
+#ifndef _WIN32
+    AddTestCase(new UbTransportEntityDefaultRejectsUnencodablePortTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbTransportEntityConfigRejectsInvalidRowsTest(), TestCase::Duration::QUICK);
+#endif
     AddTestCase(new UbCtpBuildDataPacketHeaderTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpCnaPortEncodingBoundaryTest(), TestCase::Duration::QUICK);
+#ifndef _WIN32
+    AddTestCase(new UbCtpReceiveRejectsEntityIngressViolationsTest(),
+                TestCase::Duration::QUICK);
+#endif
     AddTestCase(new UbCtpBuildResponsePacketTaAckTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpLocalDataPacketGeneratesTaAckTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpDelayedRemoteProcessorPreservesEndpointPortsTest(),
@@ -30718,9 +32029,9 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbCtpCongestionKeyUsesDestinationAndVlTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpTaAckCompletionHelperTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpWireAckRequiresExactEntityContextTest(), TestCase::Duration::QUICK);
-    AddTestCase(new UbCtpWireTaAckCompletesReverseEntityZeroContextTest(),
+    AddTestCase(new UbCtpWireTaAckCompletesReverseEntityContextTest(),
                 TestCase::Duration::QUICK);
-    AddTestCase(new UbCtpWireTaAckDoesNotCompleteNonzeroEntityWithoutWireEntityTest(),
+    AddTestCase(new UbCtpWireTaAckRejectsUnknownDestinationEntityTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbCtpWireTaAckUnwrapsLogicalTassnTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpSendSegmentFragmentsPayloadTest(), TestCase::Duration::QUICK);
@@ -30731,7 +32042,9 @@ UbTestSuite::UbTestSuite()
 #ifndef _WIN32
     AddTestCase(new UbCtpRejectedSegmentDoesNotCreateQueueOrRequireRouteTest(),
                 TestCase::Duration::QUICK);
-    AddTestCase(new UbCtpPortHintRejectsUnencodableCna16PortTest(),
+    AddTestCase(new UbCtpExplicitSourcePortRequiresPeerEntityTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpEndpointPortRejectsUnencodableCna16PortTest(),
                 TestCase::Duration::QUICK);
 #endif
     AddTestCase(new UbCtpSendSegmentRegistersAndTriggersPortTest(), TestCase::Duration::QUICK);
@@ -30831,6 +32144,8 @@ UbTestSuite::UbTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnCnpOpcodeIsValidTransportOpcodeTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbRoutingProcessRangeRouteTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbRoutingRestrictedCandidatesAllocateOnlyForFilteringTest(),
+                TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnSwitchDoesNotRemarkMarkedFecnTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnSenderCutsRateOnCnpTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnCnpDoesNotAdvanceAckStateTest(), TestCase::Duration::QUICK);
@@ -31001,16 +32316,16 @@ UbCtpTransactionTestSuite::UbCtpTransactionTestSuite()
     AddTestCase(new UbCtpTransactionStateCreatesSendContextLazilyTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbCtpServiceDoesNotCreateRtpTpTest(), TestCase::Duration::QUICK);
-    AddTestCase(new UbCtpPortHintsDoNotCreateEntityStateTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpEntityRegistryLifecycleTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpWireTaAckContinuesInflightLimitedWqeTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbCtpCnpDoesNotAckTransactionTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpCongestionKeyUsesDestinationAndVlTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpTaAckCompletionHelperTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpWireAckRequiresExactEntityContextTest(), TestCase::Duration::QUICK);
-    AddTestCase(new UbCtpWireTaAckCompletesReverseEntityZeroContextTest(),
+    AddTestCase(new UbCtpWireTaAckCompletesReverseEntityContextTest(),
                 TestCase::Duration::QUICK);
-    AddTestCase(new UbCtpWireTaAckDoesNotCompleteNonzeroEntityWithoutWireEntityTest(),
+    AddTestCase(new UbCtpWireTaAckRejectsUnknownDestinationEntityTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbCtpWireTaAckUnwrapsLogicalTassnTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpSendSegmentFragmentsPayloadTest(), TestCase::Duration::QUICK);
@@ -31053,6 +32368,83 @@ UbCtpLifecycleTestSuite::UbCtpLifecycleTestSuite()
 
 static UbCtpLifecycleTestSuite g_ubCtpLifecycleTestSuite;
 
+class UbCtpInputTestSuite : public TestSuite
+{
+  public:
+    UbCtpInputTestSuite()
+        : TestSuite("unified-bus-ctp-input", Type::UNIT)
+    {
+        AddTestCase(new UbTrafficConfigEndpointPortFieldsTest(), TestCase::Duration::QUICK);
+#ifndef _WIN32
+        AddTestCase(new UbTrafficConfigEntityAndEndpointPortFieldsTest(),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbTrafficConfigPreservesTransportPortRangeTest(),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbTrafficConfigRejectsRowHeaderWidthMismatchTest(),
+                    TestCase::Duration::QUICK);
+#endif
+        AddTestCase(new UbCtpEntityRegistryLifecycleTest(), TestCase::Duration::QUICK);
+#ifndef _WIN32
+        AddTestCase(new UbCtpEntityRegistryRejectsInvalidDefinitionsTest(),
+                    TestCase::Duration::QUICK);
+#endif
+        AddTestCase(new UbTransportEntityConfigProvisioningTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbTransportEntityDefaultProvisioningTest(), TestCase::Duration::QUICK);
+#ifndef _WIN32
+        AddTestCase(new UbTransportEntityDefaultRejectsUnencodablePortTest(),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbTransportEntityConfigRejectsInvalidRowsTest(),
+                    TestCase::Duration::QUICK);
+#endif
+    }
+};
+
+static UbCtpInputTestSuite g_ubCtpInputTestSuite;
+
+class UbCtpEndpointTestSuite : public TestSuite
+{
+  public:
+    UbCtpEndpointTestSuite()
+        : TestSuite("unified-bus-ctp-endpoint", Type::UNIT)
+    {
+        AddTestCase(new UbTrafficGenRuntimeTaskEndpointPortFieldsTest(),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbAppCtpRuntimeTaskEntityAndEndpointPortTest(),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbJettyCopiesCtpEndpointPortSentinelsTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbAppCtpEndpointConstraintsDoNotLeakBetweenTasksTest(),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbAppCtpMultipleEntitiesSelectIndependentPortsTest(),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbAppCtpWildcardDestinationUsesPeerEntityRouteTest(),
+                    TestCase::Duration::QUICK);
+#ifndef _WIN32
+        AddTestCase(new UbAppCtpRejectsUnencodableTrafficPortTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbAppCtpRejectsRouteOutsideSourceEntityTest(),
+                    TestCase::Duration::QUICK);
+#endif
+        AddTestCase(new UbCtpBuildDataPacketHeaderTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbCtpCnaPortEncodingBoundaryTest(), TestCase::Duration::QUICK);
+#ifndef _WIN32
+        AddTestCase(new UbCtpReceiveRejectsEntityIngressViolationsTest(),
+                    TestCase::Duration::QUICK);
+#endif
+        AddTestCase(new UbCtpDelayedRemoteProcessorPreservesEndpointPortsTest(),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbSwitchRoutesCtpPrimaryCnaToDestinationEntityMemberTest(),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbCtpReadResponseReversesEndpointPortsTest(), TestCase::Duration::QUICK);
+#ifndef _WIN32
+        AddTestCase(new UbCtpExplicitSourcePortRequiresPeerEntityTest(),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbCtpEndpointPortRejectsUnencodableCna16PortTest(),
+                    TestCase::Duration::QUICK);
+#endif
+    }
+};
+
+static UbCtpEndpointTestSuite g_ubCtpEndpointTestSuite;
+
 UbLdstLifecycleTestSuite::UbLdstLifecycleTestSuite()
     : TestSuite("unified-bus-ldst-lifecycle", Type::UNIT)
 {
@@ -31071,6 +32463,8 @@ UbRoutingTestSuite::UbRoutingTestSuite()
     : TestSuite("unified-bus-routing", Type::UNIT)
 {
     AddTestCase(new UbRoutingProcessRangeRouteTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbRoutingRestrictedCandidatesAllocateOnlyForFilteringTest(),
+                TestCase::Duration::QUICK);
 }
 
 static UbRoutingTestSuite g_ubRoutingTestSuite;

@@ -69,6 +69,7 @@ struct ParsedCtpHeaders {
     UbCna16NetworkHeader cna16NetworkHeader;
     UbCna24NetworkHeader cna24NetworkHeader;
     UbCtpHeader ctpHeader;
+    UbCompactEidHeader compactEidHeader;
     bool isCna24{false};
 };
 

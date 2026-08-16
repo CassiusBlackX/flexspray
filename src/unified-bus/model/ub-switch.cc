@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <limits>
 #include "ns3/ipv4.h"
+#include "ns3/node-list.h"
 #include "ns3/packet.h"
 #include "ns3/flow-id-tag.h"
 #include "ns3/ub-switch-allocator.h"
@@ -1044,7 +1045,38 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
     const bool hasExplicitDestinationPort = headers.isCna24
                                                 ? (headers.cna24NetworkHeader.GetDcna() & 0xff) != 0
                                                 : (headers.cna16NetworkHeader.GetDcna() & 0xf) != 0;
-    int outPort = hasExplicitDestinationPort
+    const bool hasCompactEntityId =
+        headers.ctpHeader.GetNlp() == UB_CTPH_NLP_UPI16_EID40_TAH;
+    if (!hasExplicitDestinationPort && hasCompactEntityId)
+    {
+        const uint32_t destinationNodeId =
+            headers.isCna24
+                ? utils::Cna24ToNodeId(headers.cna24NetworkHeader.GetDcna())
+                : utils::Cna16ToNodeId(headers.cna16NetworkHeader.GetDcna());
+        NS_ABORT_MSG_IF(destinationNodeId >= NodeList::GetNNodes(),
+                        "CTP destination node does not exist: " << destinationNodeId);
+        Ptr<UbController> destinationController =
+            NodeList::GetNode(destinationNodeId)->GetObject<UbController>();
+        NS_ABORT_MSG_IF(destinationController == nullptr ||
+                            !destinationController->AreCtpEntitiesFrozen(),
+                        "CTP destination Entity registry must be frozen before forwarding to node "
+                            << destinationNodeId);
+        const uint32_t destinationEntityId =
+            headers.compactEidHeader.GetDestinationEid();
+        NS_ABORT_MSG_IF(!destinationController->HasCtpEntity(destinationEntityId),
+                        "CTP destination Entity " << destinationEntityId
+                                                   << " is not configured on node "
+                                                   << destinationNodeId);
+        const uint8_t loadBalanceField =
+            headers.isCna24 ? headers.cna24NetworkHeader.GetLb()
+                            : headers.cna16NetworkHeader.GetLb();
+        const uint16_t destinationPort = destinationController->SelectCtpEntityMemberPort(
+            destinationEntityId,
+            loadBalanceField);
+        rtKey.dip = utils::NodeIdToIp(destinationNodeId, destinationPort).Get();
+        rtKey.dport = destinationPort;
+    }
+    int outPort = hasExplicitDestinationPort || hasCompactEntityId
                       ? m_routingProcess->GetOutPortForEndpoint(
                             rtKey, selectedShortestPath, port->GetIfIndex())
                       : m_routingProcess->GetOutPort(rtKey,
@@ -1125,7 +1157,15 @@ void UbSwitch::ParseCtpPacketHeader(Ptr<Packet> packet, ParsedCtpHeaders &header
     } else {
         packet->RemoveHeader(headers.cna16NetworkHeader);
     }
-    packet->PeekHeader(headers.ctpHeader);
+    packet->RemoveHeader(headers.ctpHeader);
+    if (headers.ctpHeader.GetNlp() == UB_CTPH_NLP_UPI16_EID40_TAH)
+    {
+        UbCompactUpiHeader upiHeader;
+        packet->RemoveHeader(upiHeader);
+        packet->PeekHeader(headers.compactEidHeader);
+        packet->AddHeader(upiHeader);
+    }
+    packet->AddHeader(headers.ctpHeader);
     if (headers.isCna24) {
         packet->AddHeader(headers.cna24NetworkHeader);
     } else {

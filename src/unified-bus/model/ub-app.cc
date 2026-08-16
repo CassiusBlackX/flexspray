@@ -170,10 +170,6 @@ UbApp::SendTraffic(TrafficRecord record)
     task.dataSize = static_cast<uint32_t>(record.dataSize);
     task.priority = static_cast<uint8_t>(record.priority);
     task.delay = record.delay.empty() ? Time(0) : Time(record.delay);
-    task.srcEntityId = record.srcEntityId;
-    task.dstEntityId = record.dstEntityId;
-    task.hasSrcEntityId = record.hasSrcEntityId;
-    task.hasDstEntityId = record.hasDstEntityId;
     task.srcPortId = record.srcPortId;
     task.dstPortId = record.dstPortId;
     task.hasSrcPortId = record.hasSrcPortId;
@@ -222,10 +218,6 @@ UbApp::SendCtpUrmaTraffic(TrafficRecord record)
     task.destNode = static_cast<uint32_t>(record.destNode);
     task.dataSize = static_cast<uint32_t>(record.dataSize);
     task.priority = static_cast<uint8_t>(record.priority);
-    task.srcEntityId = record.srcEntityId;
-    task.dstEntityId = record.dstEntityId;
-    task.hasSrcEntityId = record.hasSrcEntityId;
-    task.hasDstEntityId = record.hasDstEntityId;
     task.srcPortId = record.srcPortId;
     task.dstPortId = record.dstPortId;
     task.hasSrcPortId = record.hasSrcPortId;
@@ -262,8 +254,35 @@ UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
     Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
     service->SetRoutingType(m_routingType);
 
-    const uint32_t srcEntityId = task.hasSrcEntityId ? task.srcEntityId : m_localEntityId;
-    const uint32_t dstEntityId = task.hasDstEntityId ? task.dstEntityId : m_peerEntityId;
+    const uint32_t srcEntityId = m_localEntityId;
+    const uint32_t dstEntityId = m_peerEntityId;
+    NS_ABORT_MSG_IF(task.hasSrcPortId && task.srcPortId > CTP_MAX_CNA16_PORT_ID,
+                    "CTP source port " << task.srcPortId << " cannot be encoded as CNA16");
+    NS_ABORT_MSG_IF(task.hasDstPortId && task.dstPortId > CTP_MAX_CNA16_PORT_ID,
+                    "CTP destination port " << task.dstPortId << " cannot be encoded as CNA16");
+    NS_ABORT_MSG_IF(!controller->AreCtpEntitiesFrozen(),
+                    "CTP source Entity registry must be frozen before traffic activation");
+    NS_ABORT_MSG_IF(!controller->HasCtpEntity(srcEntityId),
+                    "CTP source Entity " << srcEntityId << " is not configured on node "
+                                          << GetNode()->GetId());
+    NS_ABORT_MSG_IF(task.hasSrcPortId &&
+                        !controller->IsCtpEntityPortMember(srcEntityId, task.srcPortId),
+                    "CTP source port " << task.srcPortId << " is not a member of Entity "
+                                       << srcEntityId);
+
+    Ptr<Node> peerNode = NodeList::GetNode(task.destNode);
+    Ptr<UbController> peerController =
+        peerNode == nullptr ? nullptr : peerNode->GetObject<UbController>();
+    NS_ABORT_MSG_IF(peerController == nullptr, "CTP destination requires a peer UbController");
+    NS_ABORT_MSG_IF(!peerController->AreCtpEntitiesFrozen(),
+                    "CTP destination Entity registry must be frozen before traffic activation");
+    NS_ABORT_MSG_IF(!peerController->HasCtpEntity(dstEntityId),
+                    "CTP destination Entity " << dstEntityId << " is not configured on node "
+                                               << task.destNode);
+    NS_ABORT_MSG_IF(task.hasDstPortId &&
+                        !peerController->IsCtpEntityPortMember(dstEntityId, task.dstPortId),
+                    "CTP destination port " << task.dstPortId << " is not a member of Entity "
+                                            << dstEntityId);
     const uint8_t vl = task.priority;
     uint32_t jettyNum = m_jettyNum;
     Ptr<UbJetty> jetty;
@@ -297,6 +316,10 @@ UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
         ubFunc->CreateWqe(task.sourceNode, task.destNode, task.dataSize, task.taskId, type);
     wqe->SetSrcEntityId(srcEntityId);
     wqe->SetDstEntityId(dstEntityId);
+    wqe->SetSport(task.hasSrcPortId ? static_cast<uint8_t>(task.srcPortId)
+                                    : CTP_WILDCARD_PORT);
+    wqe->SetDport(task.hasDstPortId ? static_cast<uint8_t>(task.dstPortId)
+                                    : CTP_WILDCARD_PORT);
     wqe->SetPriority(task.priority);
     controller->GetUbTransaction()->SetTransactionServiceMode(jettyNum,
                                                               TransactionServiceMode::ROI);
@@ -306,14 +329,6 @@ UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
                        .dstNodeId = task.destNode,
                        .dstEntityId = dstEntityId,
                        .vl = vl};
-    if (task.hasSrcPortId)
-    {
-        service->SetSourcePortHint(key, task.srcPortId);
-    }
-    if (task.hasDstPortId)
-    {
-        service->SetDestinationPortHint(key, task.dstPortId);
-    }
     const UbCtpEntityKey jettyKey =
         m_ctpUseUnboundSourceJetty ? service->MakeSourceGroupKeyForRequest(key) : key;
     const UbWqeSubmissionResult submission = ubFunc->SubmitCtpWqe(wqe, jettyNum, jettyKey);

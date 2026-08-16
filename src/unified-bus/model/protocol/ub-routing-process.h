@@ -79,12 +79,36 @@ class UbRoutingProcess : public Object
     bool RemoveShortestRoute(uint32_t destIp);
     bool RemoveOtherRoute(uint32_t destIp);
 
-    int GetOutPort(RoutingKey& key,
-                   bool& selectedShortestPath,
-                   uint16_t inPort = UINT16_MAX);
+    int GetOutPort(RoutingKey& key, bool& selectedShortestPath, uint16_t inPort = UINT16_MAX);
+
+    /**
+     * @brief Select an output port from the ordinary route candidates and an allow-list.
+     * @param key Routing lookup and selector input.
+     * @param allowedOutPorts Output ports eligible for selection, in any order.
+     * @param selectedShortestPath Set when the selected candidate is a shortest path.
+     * @param inPort Ingress port to exclude, or UINT16_MAX when none applies.
+     * @return Selected output port, or -1 when no eligible route exists.
+     */
+    int GetOutPortRestricted(RoutingKey& key,
+                             const std::vector<uint16_t>& allowedOutPorts,
+                             bool& selectedShortestPath,
+                             uint16_t inPort = UINT16_MAX);
     int GetOutPortForEndpoint(RoutingKey& key,
                               bool& selectedShortestPath,
                               uint16_t inPort = UINT16_MAX);
+
+    /**
+     * @brief Select an output port from exact endpoint candidates and an allow-list.
+     * @param key Endpoint routing lookup and selector input.
+     * @param allowedOutPorts Output ports eligible for selection, in any order.
+     * @param selectedShortestPath Set when the selected candidate is a shortest path.
+     * @param inPort Ingress port to exclude, or UINT16_MAX when none applies.
+     * @return Selected output port, or -1 when no eligible route exists.
+     */
+    int GetOutPortForEndpointRestricted(RoutingKey& key,
+                                        const std::vector<uint16_t>& allowedOutPorts,
+                                        bool& selectedShortestPath,
+                                        uint16_t inPort = UINT16_MAX);
     int SelectOutPort(RoutingKey& key,
                       const std::vector<uint16_t>& shortestPorts,
                       const std::vector<uint16_t>& nonShortestPorts,
@@ -117,6 +141,14 @@ class UbRoutingProcess : public Object
                         const UbRoutingCandidateView& candidates,
                         bool& selectedShortestPath,
                         uint16_t inPort);
+    int GetOutPortInternal(RoutingKey& key,
+                           const std::vector<uint16_t>* allowedOutPorts,
+                           bool& selectedShortestPath,
+                           uint16_t inPort);
+    int GetOutPortForEndpointInternal(RoutingKey& key,
+                                      const std::vector<uint16_t>* allowedOutPorts,
+                                      bool& selectedShortestPath,
+                                      uint16_t inPort);
     bool TryGetIndexedCandidates(uint32_t dip,
                                  std::vector<uint16_t>& shortestPorts,
                                  std::vector<uint16_t>& nonShortestPorts) const;

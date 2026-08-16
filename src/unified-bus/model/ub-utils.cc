@@ -342,32 +342,21 @@ SplitCsvRow(const std::string& line)
 
 struct TrafficCsvOptionalFields
 {
-    bool hasEntityIds{false};
     bool hasPortIds{false};
 };
 
 TrafficCsvOptionalFields
 ValidateTrafficCsvHeader(const std::vector<std::string>& header)
 {
-    NS_ABORT_MSG_IF(header.size() != 9 && header.size() != 11 && header.size() != 13,
-                    "traffic.csv header must have 9 base fields, one optional entity or port "
-                    "pair, or both pairs");
+    NS_ABORT_MSG_IF(header.size() != 9 && header.size() != 11,
+                    "traffic.csv header must have 9 base fields and may end with "
+                    "srcPortId,dstPortId");
     TrafficCsvOptionalFields fields;
     if (header.size() == 11)
     {
-        fields.hasEntityIds = header[9] == "srcEntityId" && header[10] == "dstEntityId";
         fields.hasPortIds = header[9] == "srcPortId" && header[10] == "dstPortId";
-        NS_ABORT_MSG_IF(!fields.hasEntityIds && !fields.hasPortIds,
-                        "traffic.csv 11-field header must end with srcEntityId,dstEntityId or "
-                        "srcPortId,dstPortId");
-    }
-    if (header.size() == 13)
-    {
-        fields.hasEntityIds = header[9] == "srcEntityId" && header[10] == "dstEntityId";
-        fields.hasPortIds = header[11] == "srcPortId" && header[12] == "dstPortId";
-        NS_ABORT_MSG_IF(!fields.hasEntityIds || !fields.hasPortIds,
-                        "traffic.csv 13-field header must end with "
-                        "srcEntityId,dstEntityId,srcPortId,dstPortId");
+        NS_ABORT_MSG_IF(!fields.hasPortIds,
+                        "traffic.csv 11-field header must end with srcPortId,dstPortId");
     }
     return fields;
 }
@@ -558,36 +547,20 @@ SetTrafficRecordField(int fieldCount,
         AppendDependencyPhases(field, record);
         break;
     case 9:
-        if (optionalFields.hasEntityIds)
-        {
-            record.srcEntityId = field.empty() ? 0 : ParseUint32Field(field);
-            record.hasSrcEntityId = true;
-        }
-        else if (optionalFields.hasPortIds)
+        if (optionalFields.hasPortIds)
         {
             record.hasSrcPortId = !field.empty();
-            record.srcPortId = record.hasSrcPortId ? ParseUint32Field(field) : 0;
+            record.srcPortId =
+                record.hasSrcPortId ? ParseTrafficPortField(field) : 0;
         }
         break;
     case 10:
-        if (optionalFields.hasEntityIds)
-        {
-            record.dstEntityId = field.empty() ? 0 : ParseUint32Field(field);
-            record.hasDstEntityId = true;
-        }
-        else if (optionalFields.hasPortIds)
+        if (optionalFields.hasPortIds)
         {
             record.hasDstPortId = !field.empty();
-            record.dstPortId = record.hasDstPortId ? ParseUint32Field(field) : 0;
+            record.dstPortId =
+                record.hasDstPortId ? ParseTrafficPortField(field) : 0;
         }
-        break;
-    case 11:
-        record.hasSrcPortId = !field.empty();
-        record.srcPortId = record.hasSrcPortId ? ParseUint32Field(field) : 0;
-        break;
-    case 12:
-        record.hasDstPortId = !field.empty();
-        record.dstPortId = record.hasDstPortId ? ParseUint32Field(field) : 0;
         break;
     }
 }
@@ -1040,36 +1013,20 @@ SetTrafficRecordViewField(int fieldCount,
         record.dependOnPhases = field;
         break;
     case 9:
-        if (optionalFields.hasEntityIds)
-        {
-            record.srcEntityId = field.empty() ? 0 : ParseUint32Field(field);
-            record.hasSrcEntityId = true;
-        }
-        else if (optionalFields.hasPortIds)
+        if (optionalFields.hasPortIds)
         {
             record.hasSrcPortId = !field.empty();
-            record.srcPortId = record.hasSrcPortId ? ParseUint32Field(field) : 0;
+            record.srcPortId =
+                record.hasSrcPortId ? ParseTrafficPortField(field) : 0;
         }
         break;
     case 10:
-        if (optionalFields.hasEntityIds)
-        {
-            record.dstEntityId = field.empty() ? 0 : ParseUint32Field(field);
-            record.hasDstEntityId = true;
-        }
-        else if (optionalFields.hasPortIds)
+        if (optionalFields.hasPortIds)
         {
             record.hasDstPortId = !field.empty();
-            record.dstPortId = record.hasDstPortId ? ParseUint32Field(field) : 0;
+            record.dstPortId =
+                record.hasDstPortId ? ParseTrafficPortField(field) : 0;
         }
-        break;
-    case 11:
-        record.hasSrcPortId = !field.empty();
-        record.srcPortId = record.hasSrcPortId ? ParseUint32Field(field) : 0;
-        break;
-    case 12:
-        record.hasDstPortId = !field.empty();
-        record.dstPortId = record.hasDstPortId ? ParseUint32Field(field) : 0;
         break;
     }
 }
@@ -4375,10 +4332,6 @@ UbUtils::ForEachTrafficRecordInternal(const string& filename,
         record.delay.clear();
         record.phaseId = 0;
         record.dependOnPhases.clear();
-        record.srcEntityId = 0;
-        record.dstEntityId = 0;
-        record.hasSrcEntityId = false;
-        record.hasDstEntityId = false;
         record.srcPortId = 0;
         record.dstPortId = 0;
         record.hasSrcPortId = false;
