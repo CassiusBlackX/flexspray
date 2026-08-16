@@ -352,11 +352,10 @@ When the user asks for a non-template topology but provides bounded node/link fa
 - `on-demand`: `transport_channel.csv` may be omitted; topology generation should call `graph.write_config(include_transport=False)` so large cases do not precompute host-pair TP mappings. Compressed route generators require this mode.
 - `traffic.csv` may include trailing `srcPortId,dstPortId`. Empty port cells are independent
   wildcards and explicit `0` means port 0. Traffic never selects CTP Entity IDs.
-- CTP Entity membership uses optional `transport_entity.csv` rows with the fixed schema
-  `nodeId,entityId,portId`. If the file is absent, the runner creates Entity 1 on each Host with all
-  local CNA16-encodable UB ports; if present, only declared Entities are created.
+- The runner internally creates Entity 1 on each Host with all local CNA16-encodable UB ports;
+  Entity membership is not a case-file input.
 - Advanced multi-Entity cases select `LocalEntityId` and `PeerEntityId` through separate
-  `UbApp`/Jetty configurations. RTP TP records remain protocol-internal.
+  `UbApp`/Jetty configurations and the controller API. RTP TP records remain protocol-internal.
 - CTP multipath remains entity based internally and should not be represented by multiple RTP TP rows.
 
 ## Observability Slot → Observability Overrides

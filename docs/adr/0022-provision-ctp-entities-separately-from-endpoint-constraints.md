@@ -41,19 +41,13 @@ CNA16-encodable UB ports. Different Entities may share ports. Registries are pro
 topology and routes exist and are frozen before traffic registration; runtime Entity mutation and
 deletion are outside this decision.
 
-The optional control-plane input is `transport_entity.csv`:
-
-```csv
-nodeId,entityId,portId
-0,1,0
-0,1,1
-0,2,1
-```
-
-When the file exists, all rows are parsed and validated before any registry is installed, and only
-declared Entities are created. When it does not exist, the standard runner creates EID 1 on every
-`UB_DEVICE` Host and binds every local CNA16-encodable `UbPort`. A Host with an unencodable port
-fails instead of silently truncating the default Entity.
+The standard runner has one internal provisioning path: after topology and routes are created, it
+validates every `UB_DEVICE` Host and creates EID 1 with every local CNA16-encodable `UbPort`, then
+freezes each registry before traffic registration. Validation is completed for all Hosts before
+any default Entity is installed, and an unencodable port fails instead of being silently truncated.
+There is no Entity CSV input or runner option. Additional Entities remain available to programmatic
+callers through the controller API; they must be created before the registry is frozen and are
+selected by the owning `UbApp`/Jetty configuration.
 
 `traffic.csv` contains no Entity IDs. It supports the nine-column base schema or the eleven-column
 schema ending in `srcPortId,dstPortId`. Each port cell may be empty independently: empty is a

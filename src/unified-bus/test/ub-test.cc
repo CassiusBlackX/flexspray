@@ -1222,10 +1222,10 @@ class UbTrafficConfigEndpointPortFieldsTest : public TestCase
 };
 
 #ifndef _WIN32
-class UbTrafficConfigEntityAndEndpointPortFieldsTest : public TestCase
+class UbTrafficConfigRejectsEntityColumnsTest : public TestCase
 {
   public:
-    UbTrafficConfigEntityAndEndpointPortFieldsTest()
+    UbTrafficConfigRejectsEntityColumnsTest()
         : TestCase("UnifiedBus - traffic parser rejects Entity columns")
     {
     }
@@ -1570,10 +1570,10 @@ class UbTrafficGenRuntimeTaskEndpointPortFieldsTest : public TestCase
     }
 };
 
-class UbAppCtpRuntimeTaskEntityAndEndpointPortTest : public TestCase
+class UbAppCtpRuntimeTaskUsesAppEntityAndWqePortsTest : public TestCase
 {
   public:
-    UbAppCtpRuntimeTaskEntityAndEndpointPortTest()
+    UbAppCtpRuntimeTaskUsesAppEntityAndWqePortsTest()
         : TestCase("UnifiedBus - app CTP runtime task uses App Entity and WQE ports")
     {
     }
@@ -28561,64 +28561,11 @@ class UbCtpEntityRegistryRejectsInvalidDefinitionsTest : public TestCase
 };
 #endif
 
-class UbTransportEntityConfigProvisioningTest : public TestCase
+class UbDefaultCtpEntityProvisioningTest : public TestCase
 {
   public:
-    UbTransportEntityConfigProvisioningTest()
-        : TestCase("UnifiedBus - transport Entity CSV provisions host registries")
-    {
-    }
-
-  private:
-    void DoRun() override
-    {
-        Ptr<Node> configuredHost = CreateObject<Node>();
-        Ptr<Node> emptyHost = CreateObject<Node>();
-        InitNode(configuredHost, UB_DEVICE, 2, false);
-        InitNode(emptyHost, UB_DEVICE, 2, false);
-
-        const auto path =
-            std::filesystem::temp_directory_path() / "ub-transport-entity-valid.csv";
-        {
-            std::ofstream file(path);
-            NS_TEST_ASSERT_MSG_EQ(file.good(), true, "transport Entity file should open");
-            file << "nodeId,entityId,portId\n"
-                 << configuredHost->GetId() << ",2,1\n"
-                 << configuredHost->GetId() << ",2,0\n"
-                 << configuredHost->GetId() << ",3,1\n";
-        }
-
-        UbUtils::Get()->CreateCtpEntities(path.string());
-
-        Ptr<UbController> configured = configuredHost->GetObject<UbController>();
-        Ptr<UbController> empty = emptyHost->GetObject<UbController>();
-        NS_TEST_ASSERT_MSG_EQ(configured->AreCtpEntitiesFrozen(),
-                              true,
-                              "configured host registry should freeze");
-        const auto& configuredPorts = configured->GetCtpEntityPorts(2);
-        NS_TEST_ASSERT_MSG_EQ(configuredPorts.size(), 2u, "CSV should retain both members");
-        NS_TEST_ASSERT_MSG_EQ(configuredPorts[0], 0u, "CSV members should be sorted");
-        NS_TEST_ASSERT_MSG_EQ(configuredPorts[1], 1u, "CSV members should be sorted");
-        NS_TEST_ASSERT_MSG_EQ(configured->IsCtpEntityPortMember(3, 1),
-                              true,
-                              "different CSV Entities may share a port");
-        NS_TEST_ASSERT_MSG_EQ(empty->AreCtpEntitiesFrozen(),
-                              true,
-                              "unlisted host registry should still freeze");
-        NS_TEST_ASSERT_MSG_EQ(empty->HasCtpEntity(1),
-                              false,
-                              "preconfigured mode should not synthesize Entities for unlisted hosts");
-
-        std::filesystem::remove(path);
-        Simulator::Destroy();
-    }
-};
-
-class UbTransportEntityDefaultProvisioningTest : public TestCase
-{
-  public:
-    UbTransportEntityDefaultProvisioningTest()
-        : TestCase("UnifiedBus - missing transport Entity CSV provisions default Entity 1")
+    UbDefaultCtpEntityProvisioningTest()
+        : TestCase("UnifiedBus - standard runner provisions default CTP Entity 1")
     {
     }
 
@@ -28629,11 +28576,7 @@ class UbTransportEntityDefaultProvisioningTest : public TestCase
         Ptr<Node> secondHost = CreateObject<Node>();
         InitNode(firstHost, UB_DEVICE, 2, false);
         InitNode(secondHost, UB_DEVICE, 1, false);
-        const auto missingPath =
-            std::filesystem::temp_directory_path() / "ub-transport-entity-missing.csv";
-        std::filesystem::remove(missingPath);
-
-        UbUtils::Get()->CreateCtpEntities(missingPath.string());
+        UbUtils::Get()->CreateDefaultCtpEntities();
 
         const auto& firstPorts =
             firstHost->GetObject<UbController>()->GetCtpEntityPorts(1);
@@ -28660,10 +28603,10 @@ class UbTransportEntityDefaultProvisioningTest : public TestCase
 };
 
 #ifndef _WIN32
-class UbTransportEntityDefaultRejectsUnencodablePortTest : public TestCase
+class UbDefaultCtpEntityRejectsUnencodablePortTest : public TestCase
 {
   public:
-    UbTransportEntityDefaultRejectsUnencodablePortTest()
+    UbDefaultCtpEntityRejectsUnencodablePortTest()
         : TestCase("UnifiedBus - default CTP Entity rejects a host port above CNA16 range")
     {
     }
@@ -28671,13 +28614,10 @@ class UbTransportEntityDefaultRejectsUnencodablePortTest : public TestCase
   private:
     void DoRun() override
     {
-        const auto missingPath =
-            std::filesystem::temp_directory_path() / "ub-transport-entity-missing-wide-host.csv";
-        std::filesystem::remove(missingPath);
-        const int status = RunInChildProcess([missingPath]() {
+        const int status = RunInChildProcess([]() {
             Ptr<Node> host = CreateObject<Node>();
             InitNode(host, UB_DEVICE, 16, false);
-            UbUtils::Get()->CreateCtpEntities(missingPath.string());
+            UbUtils::Get()->CreateDefaultCtpEntities();
         });
         NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status),
                               1,
@@ -28688,73 +28628,6 @@ class UbTransportEntityDefaultRejectsUnencodablePortTest : public TestCase
                                   SIGABRT,
                                   "default Entity port overflow should fail with SIGABRT");
         }
-    }
-};
-
-class UbTransportEntityConfigRejectsInvalidRowsTest : public TestCase
-{
-  public:
-    UbTransportEntityConfigRejectsInvalidRowsTest()
-        : TestCase("UnifiedBus - transport Entity CSV rejects invalid rows")
-    {
-    }
-
-  private:
-    void ExpectInvalidConfig(uint32_t variant, const std::string& reason)
-    {
-        const auto path = std::filesystem::temp_directory_path() /
-                          ("ub-transport-entity-invalid-" + std::to_string(variant) + ".csv");
-        const int status = RunInChildProcess([path, variant]() {
-            Ptr<Node> host = CreateObject<Node>();
-            Ptr<Node> switchNode = CreateObject<Node>();
-            InitNode(host, UB_DEVICE, 1, false);
-            InitNode(switchNode, UB_SWITCH, 1);
-
-            std::ofstream file(path);
-            NS_ABORT_MSG_IF(!file.good(), "invalid transport Entity fixture should open");
-            file << "nodeId,entityId,portId\n";
-            switch (variant)
-            {
-            case 0:
-                file << host->GetId() << ",2,0\n" << host->GetId() << ",2,0\n";
-                break;
-            case 1:
-                file << NodeList::GetNNodes() + 100 << ",2,0\n";
-                break;
-            case 2:
-                file << switchNode->GetId() << ",2,0\n";
-                break;
-            case 3:
-                file << host->GetId() << ",2,15\n";
-                break;
-            case 4:
-                file << host->GetId() << ",2,1\n";
-                break;
-            default:
-                file << host->GetId() << ",2\n";
-                break;
-            }
-            file.close();
-            UbUtils::Get()->CreateCtpEntities(path.string());
-        });
-        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, reason << " should abort");
-        if (WIFSIGNALED(status))
-        {
-            NS_TEST_ASSERT_MSG_EQ(WTERMSIG(status),
-                                  SIGABRT,
-                                  reason << " should fail with SIGABRT");
-        }
-        std::filesystem::remove(path);
-    }
-
-    void DoRun() override
-    {
-        ExpectInvalidConfig(0, "duplicate membership row");
-        ExpectInvalidConfig(1, "unknown node");
-        ExpectInvalidConfig(2, "switch target");
-        ExpectInvalidConfig(3, "CNA16-unencodable port");
-        ExpectInvalidConfig(4, "missing UB port");
-        ExpectInvalidConfig(5, "malformed row");
     }
 };
 #endif
@@ -31948,7 +31821,7 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbControllerCtpLazyServiceTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTrafficConfigEndpointPortFieldsTest(), TestCase::Duration::QUICK);
 #ifndef _WIN32
-    AddTestCase(new UbTrafficConfigEntityAndEndpointPortFieldsTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbTrafficConfigRejectsEntityColumnsTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTrafficConfigPreservesTransportPortRangeTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbAppCtpRejectsUnencodableTrafficPortTest(), TestCase::Duration::QUICK);
@@ -31956,7 +31829,7 @@ UbTestSuite::UbTestSuite()
 #endif
     AddTestCase(new UbAppCtpTransportModeEntryTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTrafficGenRuntimeTaskEndpointPortFieldsTest(), TestCase::Duration::QUICK);
-    AddTestCase(new UbAppCtpRuntimeTaskEntityAndEndpointPortTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbAppCtpRuntimeTaskUsesAppEntityAndWqePortsTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbJettyCopiesCtpEndpointPortSentinelsTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbAppCtpEndpointConstraintsDoNotLeakBetweenTasksTest(),
                 TestCase::Duration::QUICK);
@@ -31997,12 +31870,10 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbCtpEntityRegistryRejectsInvalidDefinitionsTest(),
                 TestCase::Duration::QUICK);
 #endif
-    AddTestCase(new UbTransportEntityConfigProvisioningTest(), TestCase::Duration::QUICK);
-    AddTestCase(new UbTransportEntityDefaultProvisioningTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbDefaultCtpEntityProvisioningTest(), TestCase::Duration::QUICK);
 #ifndef _WIN32
-    AddTestCase(new UbTransportEntityDefaultRejectsUnencodablePortTest(),
+    AddTestCase(new UbDefaultCtpEntityRejectsUnencodablePortTest(),
                 TestCase::Duration::QUICK);
-    AddTestCase(new UbTransportEntityConfigRejectsInvalidRowsTest(), TestCase::Duration::QUICK);
 #endif
     AddTestCase(new UbCtpBuildDataPacketHeaderTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpCnaPortEncodingBoundaryTest(), TestCase::Duration::QUICK);
@@ -32376,7 +32247,7 @@ class UbCtpInputTestSuite : public TestSuite
     {
         AddTestCase(new UbTrafficConfigEndpointPortFieldsTest(), TestCase::Duration::QUICK);
 #ifndef _WIN32
-        AddTestCase(new UbTrafficConfigEntityAndEndpointPortFieldsTest(),
+        AddTestCase(new UbTrafficConfigRejectsEntityColumnsTest(),
                     TestCase::Duration::QUICK);
         AddTestCase(new UbTrafficConfigPreservesTransportPortRangeTest(),
                     TestCase::Duration::QUICK);
@@ -32388,12 +32259,9 @@ class UbCtpInputTestSuite : public TestSuite
         AddTestCase(new UbCtpEntityRegistryRejectsInvalidDefinitionsTest(),
                     TestCase::Duration::QUICK);
 #endif
-        AddTestCase(new UbTransportEntityConfigProvisioningTest(), TestCase::Duration::QUICK);
-        AddTestCase(new UbTransportEntityDefaultProvisioningTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbDefaultCtpEntityProvisioningTest(), TestCase::Duration::QUICK);
 #ifndef _WIN32
-        AddTestCase(new UbTransportEntityDefaultRejectsUnencodablePortTest(),
-                    TestCase::Duration::QUICK);
-        AddTestCase(new UbTransportEntityConfigRejectsInvalidRowsTest(),
+        AddTestCase(new UbDefaultCtpEntityRejectsUnencodablePortTest(),
                     TestCase::Duration::QUICK);
 #endif
     }
@@ -32409,7 +32277,7 @@ class UbCtpEndpointTestSuite : public TestSuite
     {
         AddTestCase(new UbTrafficGenRuntimeTaskEndpointPortFieldsTest(),
                     TestCase::Duration::QUICK);
-        AddTestCase(new UbAppCtpRuntimeTaskEntityAndEndpointPortTest(),
+        AddTestCase(new UbAppCtpRuntimeTaskUsesAppEntityAndWqePortsTest(),
                     TestCase::Duration::QUICK);
         AddTestCase(new UbJettyCopiesCtpEndpointPortSentinelsTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbAppCtpEndpointConstraintsDoNotLeakBetweenTasksTest(),

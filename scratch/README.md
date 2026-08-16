@@ -170,12 +170,11 @@ topology.csv
 routing_table.csv
 traffic.csv
 transport_channel.csv       可选
-transport_entity.csv        可选，CTP Entity 与本地 UB 端口的成员关系
 ```
 
-`transport_entity.csv` 缺省时，runner 会为每个 Host 创建绑定全部可编码 UB 端口的默认
-Entity 1；显式提供时只创建文件声明的 Entity，并在流量注册前统一冻结。Entity 不在
-`traffic.csv` 中选择。详细 CSV 字段、trace 字段和旧 case 行为保留在
+runner 会为每个 Host 创建绑定全部可编码 UB 端口的默认 Entity 1，并在流量注册前统一冻结。
+Entity 不在 case CSV 中选择；多 Entity 只通过 controller/App 的程序化 API 保留能力。详细
+CSV 字段、trace 字段和旧 case 行为保留在
 [English reference](README_en.md) 。
 
 ## PFC 模式选择

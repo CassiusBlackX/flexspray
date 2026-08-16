@@ -60,10 +60,9 @@ An explicit `0` selects endpoint port 0; an empty port cell is a wildcard. The e
 `sourceNode,destNode,srcPortId,dstPortId` constrain routing. In CTP mode, each explicit port must be
 a member of the Entity selected by the application's `LocalEntityId` or `PeerEntityId`.
 
-CTP Entity membership is a separate case input. `transport_entity.csv` uses
-`nodeId,entityId,portId` rows. If it is absent, the runner creates Entity ID 1 on every Host and
-binds all local CNA16-encodable UB ports. Multiple Entities are selected by separate `UbApp`/Jetty
-configurations, not by traffic rows.
+The standard runner creates and freezes Entity ID 1 on every Host, binding all local CNA16-encodable
+UB ports; Entity membership is not a workload or case-file input. Multiple Entities are selected
+through separate `UbApp`/Jetty configurations and the controller API, not by traffic rows.
 
 ### Valid `opType` values
 

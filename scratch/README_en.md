@@ -167,7 +167,6 @@ Each case directory under `scratch/` usually contains:
 - `topology.csv` — L2 links between ports, with bandwidth and propagation delay.
 - `routing_table.csv` — Per-node forwarding rules for a given destination and destination-port.
 - `transport_channel.csv` — Optional explicit Transport Path Numbers (TPNs) and priorities between endpoints and ports.
-- `transport_entity.csv` — Optional CTP Entity membership, expressed as Host, Entity ID, and UB port rows.
 - `traffic.csv` — Application-level tasks (ops, size, priority, dependency, timing).
 - `fault.csv` — Optional, only if faults are enabled (see `UB_FAULT_ENABLE`).
 
@@ -181,7 +180,7 @@ The entry program (`scratch/ub-quick-example`, or `src/unified-bus/examples/ub-q
 3) `topology.csv` → `UbUtils::CreateTopo`
 4) `routing_table.csv` → `UbUtils::AddRoutingTable`
 5) optional `transport_channel.csv` → `UbUtils::CreateTp`
-6) optional `transport_entity.csv` → provision and freeze CTP Entity registries
+6) internal default CTP Entity provisioning → create and freeze Entity 1 on every Host
 7) `traffic.csv` → reserve missing RTP connection records on every process → schedule tasks
 
 ---
@@ -483,23 +482,11 @@ The file may still be present and loaded during setup, but CTP does not create R
 channels and does not use TPN, PSN, TPACK, TPNAK, TPSACK, or end-to-end RTP retransmission.
 Optional `traffic.csv` fields `srcPortId` and `dstPortId` constrain the source and destination
 endpoint ports independently. An empty field is a wildcard, while an explicit `0` selects port 0.
-The selected port must belong to the Entity used by the application.
-
-CTP Entity membership is configured separately from traffic. If `transport_entity.csv` is absent,
-the runner creates Entity ID 1 on every `UB_DEVICE` Host, binds all local CNA16-encodable `UbPort`s,
-and freezes the registry before traffic registration. If the file is present, only its declared
-Entities are created; all rows are validated before any Host registry is changed. The schema is:
-
-```csv
-nodeId,entityId,portId
-0,1,0
-0,1,1
-0,2,1
-```
-
-Entity ID 0 is reserved and is rejected. Different Entities may share a member port. A Host that
-needs multiple Entities uses separate `UbApp`/Jetty configurations with their own `LocalEntityId`
-and `PeerEntityId`; the standard runner uses Entity 1. Entity IDs are not exposed in `traffic.csv`.
+The selected port must belong to the application's Entity. The standard runner internally creates
+and freezes Entity ID 1 on every `UB_DEVICE` Host, binding all local CNA16-encodable `UbPort`s;
+there is no Entity CSV input in a case directory. Multiple Entities and overlapping membership
+remain available through the controller and separate `UbApp`/Jetty configurations for
+programmatic callers. Entity IDs are not exposed in `traffic.csv`.
 
 ### TPN in the code (what it does and how to set it)
 

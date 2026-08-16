@@ -255,11 +255,13 @@ public:
     void CreateTp(const std::string& filename);
 
     /**
-     * @brief Provision and freeze Host CTP Entity registries.
-     * @param filename Optional transport_entity.csv input path. When absent, each Host receives
-     *        one default all-port Entity with EID 1.
+     * @brief Provision and freeze the standard Host CTP Entity registries.
+     *
+     * The runner-only setup creates Entity 1 on each UB_DEVICE host and binds every local
+     * CNA16-encodable UB port. Additional Entity definitions remain a controller API concern;
+     * there is no case-file input for them.
      */
-    void CreateCtpEntities(const std::string& filename);
+    void CreateDefaultCtpEntities();
 
     void SetComponentsAttribute(const std::string& filename);
 
