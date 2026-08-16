@@ -204,6 +204,7 @@ ls scratch/2dfm4x4-multipath_a2a/output/
 - `topology.csv` - 拓扑连接
 - `routing_table.csv` - 路由表
 - `transport_channel.csv` - 可选的显式 RTP 传输通道；省略时会在流量加载阶段自动预留
+- `transport_entity.csv` - 可选的 CTP Entity 成员关系；省略时每个 Host 使用默认 Entity 1
 - `traffic.csv` - 流量定义
 
 有关 `ub-quick-example` 的入口说明、配置文件格式与典型命令，请参见 [scratch/README.md](scratch/README.md)。

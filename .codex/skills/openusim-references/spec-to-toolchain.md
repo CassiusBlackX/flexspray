@@ -198,11 +198,11 @@ If the workload is a reference `traffic.csv`, copy it into the case directory.
 If the spec workload is `custom-traffic-skeleton`, generate `{case_dir}/traffic.csv` directly by following the decomposition steps in `workload-options.md`. The generated CSV must conform to the `traffic.csv Schema` section in that document.
 
 Use the Write tool to create the CSV. Verify:
-- Header is the nine-column base form, the 11-column entity or endpoint-port form, or the
-  13-column form with `srcEntityId,dstEntityId,srcPortId,dstPortId` in that order
+- Header is the nine-column base form or the 11-column endpoint-port form ending in
+  `srcPortId,dstPortId`; Entity-bearing 11-column and 13-column headers are invalid
 - `taskId` is 0-indexed and sequential
 - `sourceNode` and `destNode` are valid host IDs for the topology (0 to `host_num - 1`)
-- `srcPortId` and `dstPortId`, when present, are valid endpoint ports; each may be empty independently, and an explicit `0` means port 0. Entity IDs remain independent CTP identities.
+- `srcPortId` and `dstPortId`, when present, are valid endpoint ports; each may be empty independently, and an explicit `0` means port 0
 - `opType` is a valid value from the runtime traffic-op parser (see `workload-options.md` "Valid `opType` values" and `ParseOpLocked` in `src/unified-bus/model/ub-traffic-gen.cc`); MegaMoE cases may additionally use `COMPUTE` and `LOCAL_READY`
 - `dependOnPhases` is empty string for first-phase tasks, space-separated phaseIds otherwise
 
@@ -350,11 +350,13 @@ When the user asks for a non-template topology but provides bounded node/link fa
 - Default to `on-demand`; do not ask the user to precompute TP mappings unless they explicitly want fixed TP ids / priorities / endpoint pairs.
 - `precomputed`: topology generation should call `config_transport_channel(...)` and `graph.write_config(include_transport=True)`; the case checker should require `transport_channel.csv`
 - `on-demand`: `transport_channel.csv` may be omitted; topology generation should call `graph.write_config(include_transport=False)` so large cases do not precompute host-pair TP mappings. Compressed route generators require this mode.
-- `traffic.csv` may include trailing `srcEntityId,dstEntityId` or `srcPortId,dstPortId`; use the
-  13-column form to supply both pairs. Empty port cells are independent wildcards, while missing
-  Entity IDs use the application's CTP defaults.
-- The endpoint tuple constrains transport routing independently of CTP Entity IDs. RTP TP records
-  remain protocol-internal.
+- `traffic.csv` may include trailing `srcPortId,dstPortId`. Empty port cells are independent
+  wildcards and explicit `0` means port 0. Traffic never selects CTP Entity IDs.
+- CTP Entity membership uses optional `transport_entity.csv` rows with the fixed schema
+  `nodeId,entityId,portId`. If the file is absent, the runner creates Entity 1 on each Host with all
+  local CNA16-encodable UB ports; if present, only declared Entities are created.
+- Advanced multi-Entity cases select `LocalEntityId` and `PeerEntityId` through separate
+  `UbApp`/Jetty configurations. RTP TP records remain protocol-internal.
 - CTP multipath remains entity based internally and should not be represented by multiple RTP TP rows.
 
 ## Observability Slot → Observability Overrides

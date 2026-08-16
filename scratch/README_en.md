@@ -167,6 +167,7 @@ Each case directory under `scratch/` usually contains:
 - `topology.csv` — L2 links between ports, with bandwidth and propagation delay.
 - `routing_table.csv` — Per-node forwarding rules for a given destination and destination-port.
 - `transport_channel.csv` — Optional explicit Transport Path Numbers (TPNs) and priorities between endpoints and ports.
+- `transport_entity.csv` — Optional CTP Entity membership, expressed as Host, Entity ID, and UB port rows.
 - `traffic.csv` — Application-level tasks (ops, size, priority, dependency, timing).
 - `fault.csv` — Optional, only if faults are enabled (see `UB_FAULT_ENABLE`).
 
@@ -180,7 +181,8 @@ The entry program (`scratch/ub-quick-example`, or `src/unified-bus/examples/ub-q
 3) `topology.csv` → `UbUtils::CreateTopo`
 4) `routing_table.csv` → `UbUtils::AddRoutingTable`
 5) optional `transport_channel.csv` → `UbUtils::CreateTp`
-6) `traffic.csv` → reserve missing RTP connection records on every process → schedule tasks
+6) optional `transport_entity.csv` → provision and freeze CTP Entity registries
+7) `traffic.csv` → reserve missing RTP connection records on every process → schedule tasks
 
 ---
 
@@ -480,9 +482,24 @@ In `CTP` mode, CTP traffic does not use RTP TP mappings from `transport_channel.
 The file may still be present and loaded during setup, but CTP does not create RTP TP
 channels and does not use TPN, PSN, TPACK, TPNAK, TPSACK, or end-to-end RTP retransmission.
 Optional `traffic.csv` fields `srcPortId` and `dstPortId` constrain the source and destination
-endpoint ports independently; an empty field leaves that endpoint unconstrained. CTP Entity IDs
-remain independent traffic inputs through `srcEntityId,dstEntityId`, or use the application's
-`LocalEntityId` and `PeerEntityId` defaults when those fields are absent.
+endpoint ports independently. An empty field is a wildcard, while an explicit `0` selects port 0.
+The selected port must belong to the Entity used by the application.
+
+CTP Entity membership is configured separately from traffic. If `transport_entity.csv` is absent,
+the runner creates Entity ID 1 on every `UB_DEVICE` Host, binds all local CNA16-encodable `UbPort`s,
+and freezes the registry before traffic registration. If the file is present, only its declared
+Entities are created; all rows are validated before any Host registry is changed. The schema is:
+
+```csv
+nodeId,entityId,portId
+0,1,0
+0,1,1
+0,2,1
+```
+
+Entity ID 0 is reserved and is rejected. Different Entities may share a member port. A Host that
+needs multiple Entities uses separate `UbApp`/Jetty configurations with their own `LocalEntityId`
+and `PeerEntityId`; the standard runner uses Entity 1. Entity IDs are not exposed in `traffic.csv`.
 
 ### TPN in the code (what it does and how to set it)
 
@@ -502,13 +519,12 @@ TP channel and TP group in code:
 Schema:
 ```
 taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases
-taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,srcEntityId,dstEntityId
 taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,srcPortId,dstPortId
-taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,srcEntityId,dstEntityId,srcPortId,dstPortId
 ```
 
-Use the nine-column form when no optional fields are needed. The eleven-column form adds either
-the entity pair or endpoint-port pair; use the thirteen-column form when both are needed.
+Use the nine-column form when no optional fields are needed. The eleven-column form adds the
+endpoint-port pair. The former Entity-bearing eleven-column header and the thirteen-column
+Entity-plus-port header are rejected instead of being interpreted as endpoint ports.
 
 Recommendation: Generate `traffic.csv` (e.g., all-to-all, RDMA-like patterns, collective-like workloads) via `scratch/ns-3-ub-tools/traffic_maker/`. See `traffic_maker/README.md` in the `open-usim/ns-3-ub-tools` submodule repository.
 - `taskId` — integer ID (unique per file).
@@ -538,9 +554,9 @@ Examples:
 
 Current URMA read/write constraints in `traffic.csv`:
 - `URMA_WRITE` and `URMA_READ` do not require extra CSV columns for remote address, token, local address, or read offset in this iteration.
-- In `CTP` mode, `URMA_WRITE` and `URMA_READ` may use optional trailing `srcEntityId,dstEntityId`
-  or `srcPortId,dstPortId` columns. The thirteen-column form keeps entity identity and endpoint
-  routing constraints independent; absent Entity IDs use the application's defaults.
+- In `CTP` mode, `URMA_WRITE` and `URMA_READ` may use optional trailing
+  `srcPortId,dstPortId` columns. Each field may be empty independently; an empty cell is a wildcard
+  and an explicit `0` is port 0. Entity selection remains an application/control-plane decision.
 - `URMA_WRITE` and `URMA_READ` complete on transaction responses (`TAACK` / `READ_RESPONSE`), not when the request's TP ACK arrives.
 - Only the ROI success path is modeled for URMA read/write at the transaction layer right now; other service modes are rejected explicitly.
 - `URMA_READ` is sliced at the TA layer. Each read request slice sends exactly one TP request packet with zero wire payload; the logical slice length is carried in `MAETAH.Length`.
