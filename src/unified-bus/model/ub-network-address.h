@@ -2,6 +2,7 @@
 #ifndef UB_NETWORK_ADDRESS_H
 #define UB_NETWORK_ADDRESS_H
 
+#include <cstdint>
 #include <chrono>
 #include <iomanip>
 #include <iostream>
@@ -14,6 +15,11 @@ using namespace std;
 using namespace ns3;
 
 namespace utils {
+
+// CTP uses the existing WQE/segment sport and dport fields.  UINT8_MAX is
+// reserved for a wildcard; CNA16 can encode only port ids 0 through 14.
+constexpr uint8_t CTP_WILDCARD_PORT = UINT8_MAX;
+constexpr uint32_t CTP_MAX_CNA16_PORT_ID = 14;
 
 // brief
 struct TrafficRecord

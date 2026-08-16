@@ -252,9 +252,16 @@ public:
                                                    ns3::Time offsetWindow,
                                                    uint32_t offsetSeed);
 
-    void CreateTp(const std::string &filename);
+    void CreateTp(const std::string& filename);
 
-    void SetComponentsAttribute(const std::string &filename);
+    /**
+     * @brief Provision and freeze Host CTP Entity registries.
+     * @param filename Optional transport_entity.csv input path. When absent, each Host receives
+     *        one default all-port Entity with EID 1.
+     */
+    void CreateCtpEntities(const std::string& filename);
+
+    void SetComponentsAttribute(const std::string& filename);
 
     // Runtime trace wiring / attribute query / fault helpers.
     void TopoTraceConnect();

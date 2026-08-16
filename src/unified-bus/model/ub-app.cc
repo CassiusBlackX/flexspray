@@ -67,12 +67,12 @@ UbApp::GetTypeId(void)
                           MakeEnumChecker(TransportMode::RTP, "RTP", TransportMode::CTP, "CTP"))
             .AddAttribute("LocalEntityId",
                           "Default local entity id used for CTP URMA traffic.",
-                          UintegerValue(0),
+                          UintegerValue(1),
                           MakeUintegerAccessor(&UbApp::m_localEntityId),
                           MakeUintegerChecker<uint32_t>())
             .AddAttribute("PeerEntityId",
                           "Default peer entity id used for CTP URMA traffic.",
-                          UintegerValue(0),
+                          UintegerValue(1),
                           MakeUintegerAccessor(&UbApp::m_peerEntityId),
                           MakeUintegerChecker<uint32_t>())
             .AddAttribute(

@@ -63,6 +63,7 @@ UbController::~UbController()
     m_rtpTpGroups.clear();
     m_rtpTpGroupByTpn.clear();
     m_portsByDestination.clear();
+    m_ctpEntityPorts.clear();
 }
 
 void
@@ -109,6 +110,7 @@ UbController::DoDispose()
     m_ldstEndpoint = nullptr;
     m_transportChannelManager = nullptr;
     m_portsByDestination.clear();
+    m_ctpEntityPorts.clear();
     m_tpConnectionManager = nullptr;
     Object::DoDispose();
 }
@@ -605,6 +607,126 @@ UbController::SubmitUrmaWqe(uint32_t jettyNum,
 Ptr<UbLdstEndpoint> UbController::GetLdstEndpoint()
 {
     return m_ldstEndpoint;
+}
+
+void
+UbController::CreateCtpEntity(uint32_t entityId, const std::vector<uint32_t>& memberPorts)
+{
+    std::vector<uint16_t> ports = ValidateCtpEntityDefinition(entityId, memberPorts);
+    m_ctpEntityPorts.emplace(entityId, std::move(ports));
+}
+
+std::vector<uint16_t>
+UbController::ValidateCtpEntityDefinition(uint32_t entityId,
+                                          const std::vector<uint32_t>& memberPorts) const
+{
+    NS_ABORT_MSG_IF(m_ctpEntitiesFrozen, "Cannot create a CTP Entity after the registry is frozen");
+    NS_ABORT_MSG_IF(entityId == 0 || entityId > UB_COMPACT_EID_MAX,
+                    "CTP Entity ID must be in the non-zero compact EID range: " << entityId);
+    NS_ABORT_MSG_IF(memberPorts.empty(), "Cannot create an empty CTP Entity " << entityId);
+    NS_ABORT_MSG_IF(m_ctpEntityPorts.contains(entityId), "Duplicate CTP Entity ID " << entityId);
+    Ptr<Node> node = GetObject<Node>();
+    NS_ABORT_MSG_IF(node == nullptr, "CTP Entity registry requires an owning node");
+    Ptr<UbSwitch> sw = node->GetObject<UbSwitch>();
+    NS_ABORT_MSG_IF(sw == nullptr || sw->GetNodeType() != UB_DEVICE,
+                    "CTP Entity registry can only be installed on a UB_DEVICE host");
+    std::vector<uint16_t> ports;
+    ports.reserve(memberPorts.size());
+    for (uint32_t portId : memberPorts)
+    {
+        NS_ABORT_MSG_IF(portId > CTP_MAX_CNA16_PORT_ID,
+                        "CTP Entity " << entityId << " port " << portId
+                                      << " cannot be encoded as CNA16");
+        Ptr<UbPort> port = nullptr;
+        for (uint32_t deviceIndex = 0; deviceIndex < node->GetNDevices(); ++deviceIndex)
+        {
+            Ptr<UbPort> candidate = DynamicCast<UbPort>(node->GetDevice(deviceIndex));
+            if (candidate != nullptr && candidate->GetIfIndex() == portId)
+            {
+                port = candidate;
+                break;
+            }
+        }
+        NS_ABORT_MSG_IF(port == nullptr,
+                        "CTP Entity " << entityId << " port " << portId
+                                      << " is not a UB port on node " << node->GetId());
+        ports.push_back(static_cast<uint16_t>(portId));
+    }
+    std::sort(ports.begin(), ports.end());
+    ports.erase(std::unique(ports.begin(), ports.end()), ports.end());
+    NS_ABORT_MSG_IF(ports.empty(), "CTP Entity " << entityId << " has no unique ports");
+    return ports;
+}
+
+bool
+UbController::HasCtpEntity(uint32_t entityId) const
+{
+    return m_ctpEntityPorts.contains(entityId);
+}
+
+bool
+UbController::IsCtpEntityPortMember(uint32_t entityId, uint32_t portId) const
+{
+    const auto entity = m_ctpEntityPorts.find(entityId);
+    return entity != m_ctpEntityPorts.end() &&
+           std::binary_search(entity->second.begin(), entity->second.end(), portId);
+}
+
+const std::vector<uint16_t>&
+UbController::GetCtpEntityPorts(uint32_t entityId) const
+{
+    const auto entity = m_ctpEntityPorts.find(entityId);
+    NS_ABORT_MSG_IF(entity == m_ctpEntityPorts.end(), "Unknown CTP Entity ID " << entityId);
+    return entity->second;
+}
+
+uint16_t
+UbController::SelectCtpEntityMemberPort(uint32_t entityId, uint8_t loadBalanceField) const
+{
+    NS_ABORT_MSG_IF(!m_ctpEntitiesFrozen,
+                    "Cannot select a CTP Entity member before the registry is frozen");
+    const std::vector<uint16_t>& ports = GetCtpEntityPorts(entityId);
+    return ports[loadBalanceField % ports.size()];
+}
+
+std::vector<uint32_t>
+UbController::CollectDefaultCtpEntityPorts() const
+{
+    Ptr<Node> node = GetObject<Node>();
+    NS_ABORT_MSG_IF(node == nullptr, "Default CTP Entity requires a host node");
+    Ptr<UbSwitch> sw = node->GetObject<UbSwitch>();
+    NS_ABORT_MSG_IF(sw == nullptr || sw->GetNodeType() != UB_DEVICE,
+                    "Default CTP Entity requires a UB_DEVICE host");
+
+    std::vector<uint32_t> memberPorts;
+    for (uint32_t deviceIndex = 0; deviceIndex < node->GetNDevices(); ++deviceIndex)
+    {
+        Ptr<UbPort> port = DynamicCast<UbPort>(node->GetDevice(deviceIndex));
+        if (port != nullptr)
+        {
+            memberPorts.push_back(port->GetIfIndex());
+        }
+    }
+    return memberPorts;
+}
+
+void
+UbController::CreateDefaultCtpEntity(uint32_t entityId)
+{
+    NS_ABORT_MSG_IF(HasCtpEntity(entityId), "Default CTP Entity " << entityId << " already exists");
+    CreateCtpEntity(entityId, CollectDefaultCtpEntityPorts());
+}
+
+void
+UbController::FreezeCtpEntities()
+{
+    m_ctpEntitiesFrozen = true;
+}
+
+bool
+UbController::AreCtpEntitiesFrozen() const
+{
+    return m_ctpEntitiesFrozen;
 }
 
 Ptr<UbCtpTransportService> UbController::GetCtpTransportService()

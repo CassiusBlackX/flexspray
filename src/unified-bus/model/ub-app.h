@@ -144,8 +144,8 @@ private:
 
     uint32_t m_jettyNum = 0;       // 当前节点维护的jettynum,不会重复
     TransportMode m_transportMode{TransportMode::RTP};
-    uint32_t m_localEntityId{0};
-    uint32_t m_peerEntityId{0};
+    uint32_t m_localEntityId{1};
+    uint32_t m_peerEntityId{1};
 
 };
 

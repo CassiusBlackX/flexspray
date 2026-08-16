@@ -292,6 +292,12 @@ ParseTrafficPriorityField(std::string_view field)
     return static_cast<uint8_t>(priority);
 }
 
+uint32_t
+ParseTrafficPortField(std::string_view field)
+{
+    return ParseUint32Field(field);
+}
+
 std::string_view
 TrimField(std::string_view field)
 {
@@ -4040,51 +4046,181 @@ void UbUtils::CreateTp(const string &filename)
     return ;
 }
 
-void UbUtils::SetRecord(int fieldCount, string field, TrafficRecord &record)
+void
+UbUtils::CreateCtpEntities(const string& filename)
 {
-    switch (static_cast<FIELDCOUNT>(fieldCount)) {
-        case FIELDCOUNT::TASKID:
-            record.taskId = stoi(field);
-            break;
-        case FIELDCOUNT::SOURCENODE:
-            record.sourceNode = stoi(field);
-            break;
-        case FIELDCOUNT::DESTNODE:
-            record.destNode = stoi(field);
-            break;
-        case FIELDCOUNT::DATASIZE:
-            record.dataSize = stoi(field);
-            break;
-        case FIELDCOUNT::OPTYPE:
-            record.opType = field;
-            break;
-        case FIELDCOUNT::PRIORITY:
-            record.priority = static_cast<int>(ParseTrafficPriorityField(field));
-            break;
-        case FIELDCOUNT::DELAY:
-            record.delay = field;
-            break;
-        case FIELDCOUNT::PHASEID:
-            record.phaseId = stoi(field);
-            break;
-        case FIELDCOUNT::DEPENDONPHASES: {
-            if (!field.empty()) {
-                stringstream depStream(field);
-                string dep;
-                while (depStream >> dep) {
-                    record.dependOnPhases.push_back(stoi(dep));
-                }
+    using EntityRows = std::map<uint32_t, std::map<uint32_t, std::vector<uint32_t>>>;
+    EntityRows rows;
+    const bool configured = std::filesystem::exists(filename);
+
+    if (configured)
+    {
+        PrintTimestamp("[setup] Load " + DisplayFilename(filename));
+        std::ifstream file(filename);
+        NS_ABORT_MSG_IF(!file.is_open(), "Cannot open transport_entity.csv: " << filename);
+
+        std::string line;
+        NS_ABORT_MSG_IF(!std::getline(file, line),
+                        "transport_entity.csv is missing its header");
+        const auto header = SplitCsvRow(line);
+        NS_ABORT_MSG_IF(header.size() != 3 || TrimField(header[0]) != "nodeId" ||
+                            TrimField(header[1]) != "entityId" || TrimField(header[2]) != "portId",
+                        "transport_entity.csv header must be nodeId,entityId,portId");
+
+        std::set<std::tuple<uint32_t, uint32_t, uint32_t>> seen;
+        while (std::getline(file, line))
+        {
+            const std::string_view trimmedLine = TrimField(line);
+            if (trimmedLine.empty() || trimmedLine[0] == '#')
+            {
+                continue;
             }
-            break;
+            const auto fields = SplitCsvRow(std::string(trimmedLine));
+            NS_ABORT_MSG_IF(fields.size() != 3,
+                            "transport_entity.csv row must contain exactly three fields");
+            const uint32_t nodeId = ParseUint32Field(TrimField(fields[0]));
+            const uint32_t entityId = ParseUint32Field(TrimField(fields[1]));
+            const uint32_t portId = ParseUint32Field(TrimField(fields[2]));
+            NS_ABORT_MSG_IF(entityId == 0 || entityId > UB_COMPACT_EID_MAX,
+                            "transport_entity.csv entityId must be in the non-zero compact EID "
+                            "range: "
+                                << entityId);
+            NS_ABORT_MSG_IF(portId > CTP_MAX_CNA16_PORT_ID,
+                            "transport_entity.csv portId cannot be encoded as CNA16: "
+                                << portId);
+            NS_ABORT_MSG_IF(!seen.emplace(nodeId, entityId, portId).second,
+                            "Duplicate transport_entity.csv membership row: node=" << nodeId
+                                                                                     << ", entity="
+                                                                                     << entityId
+                                                                                     << ", port="
+                                                                                     << portId);
+            rows[nodeId][entityId].push_back(portId);
         }
-        case FIELDCOUNT::SRCPORTID:
-            record.hasSrcPortId = !field.empty();
-            record.srcPortId = record.hasSrcPortId ? static_cast<uint32_t>(std::stoul(field)) : 0;
-            break;
-        case FIELDCOUNT::DSTPORTID:
-            record.hasDstPortId = !field.empty();
-            record.dstPortId = record.hasDstPortId ? static_cast<uint32_t>(std::stoul(field)) : 0;
-            break;
+    }
+    else
+    {
+        PrintTimestamp("[setup] Skip " + DisplayFilename(filename) +
+                       " (not found; provision default CTP Entity 1 per host).");
+    }
+
+    std::map<uint32_t, Ptr<Node>> nodesById;
+    std::map<uint32_t, std::pair<Ptr<Node>, Ptr<UbController>>> hostControllers;
+    for (uint32_t index = 0; index < NodeList::GetNNodes(); ++index)
+    {
+        Ptr<Node> node = NodeList::GetNode(index);
+        if (node == nullptr)
+        {
+            continue;
+        }
+        const uint32_t nodeId = node->GetId();
+        nodesById.emplace(nodeId, node);
+        Ptr<UbController> controller = node->GetObject<UbController>();
+        Ptr<UbSwitch> sw = node->GetObject<UbSwitch>();
+        if (sw != nullptr && sw->GetNodeType() == UB_DEVICE)
+        {
+            NS_ABORT_MSG_IF(controller == nullptr,
+                            "UB_DEVICE node " << nodeId << " has no UbController");
+            hostControllers.emplace(nodeId, std::make_pair(node, controller));
+        }
+    }
+
+    for (const auto& [nodeId, host] : hostControllers)
+    {
+        NS_ABORT_MSG_IF(host.second->AreCtpEntitiesFrozen(),
+                        "CTP Entity registry for node " << nodeId << " is already frozen");
+    }
+
+    // Validate every row and every default membership before mutating any controller registry.
+    for (const auto& [nodeId, nodeRows] : rows)
+    {
+        NS_ABORT_MSG_IF(nodesById.find(nodeId) == nodesById.end(),
+                        "transport_entity.csv references unknown node " << nodeId);
+        const auto hostIt = hostControllers.find(nodeId);
+        NS_ABORT_MSG_IF(hostIt == hostControllers.end(),
+                        "transport_entity.csv can only configure UB_DEVICE hosts: node " << nodeId);
+        Ptr<UbController> controller = hostIt->second.second;
+        for (const auto& [entityId, memberPorts] : nodeRows)
+        {
+            (void)controller->ValidateCtpEntityDefinition(entityId, memberPorts);
+        }
+    }
+
+    if (!configured)
+    {
+        for (const auto& [nodeId, host] : hostControllers)
+        {
+            Ptr<UbController> controller = host.second;
+            std::vector<uint32_t> memberPorts = controller->CollectDefaultCtpEntityPorts();
+            (void)controller->ValidateCtpEntityDefinition(1, memberPorts);
+            rows[nodeId][1] = std::move(memberPorts);
+        }
+    }
+
+    // Install only after all input rows and topology references have passed validation.
+    for (const auto& [nodeId, host] : hostControllers)
+    {
+        Ptr<UbController> controller = host.second;
+        const auto nodeRows = rows.find(nodeId);
+        if (nodeRows != rows.end())
+        {
+            for (const auto& [entityId, memberPorts] : nodeRows->second)
+            {
+                controller->CreateCtpEntity(entityId, memberPorts);
+            }
+        }
+        controller->FreezeCtpEntities();
+    }
+}
+
+void
+UbUtils::SetRecord(int fieldCount, string field, TrafficRecord& record)
+{
+    switch (static_cast<FIELDCOUNT>(fieldCount))
+    {
+    case FIELDCOUNT::TASKID:
+        record.taskId = stoi(field);
+        break;
+    case FIELDCOUNT::SOURCENODE:
+        record.sourceNode = stoi(field);
+        break;
+    case FIELDCOUNT::DESTNODE:
+        record.destNode = stoi(field);
+        break;
+    case FIELDCOUNT::DATASIZE:
+        record.dataSize = stoi(field);
+        break;
+    case FIELDCOUNT::OPTYPE:
+        record.opType = field;
+        break;
+    case FIELDCOUNT::PRIORITY:
+        record.priority = static_cast<int>(ParseTrafficPriorityField(field));
+        break;
+    case FIELDCOUNT::DELAY:
+        record.delay = field;
+        break;
+    case FIELDCOUNT::PHASEID:
+        record.phaseId = stoi(field);
+        break;
+    case FIELDCOUNT::DEPENDONPHASES: {
+        if (!field.empty())
+        {
+            stringstream depStream(field);
+            string dep;
+            while (depStream >> dep)
+            {
+                record.dependOnPhases.push_back(stoi(dep));
+            }
+        }
+        break;
+    }
+    case FIELDCOUNT::SRCPORTID:
+        record.hasSrcPortId = !field.empty();
+        record.srcPortId = record.hasSrcPortId ? ParseTrafficPortField(field) : 0;
+        break;
+    case FIELDCOUNT::DSTPORTID:
+        record.hasDstPortId = !field.empty();
+        record.dstPortId = record.hasDstPortId ? ParseTrafficPortField(field) : 0;
+        break;
     }
 }
 

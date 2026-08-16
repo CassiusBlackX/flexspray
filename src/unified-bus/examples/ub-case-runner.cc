@@ -584,6 +584,7 @@ BuildScenarioFromConfig(const QuickExampleOptions& options, const RuntimeSelecti
         }
     }
     UbUtils::Get()->CreateTp(configPath + "/transport_channel.csv");
+    UbUtils::Get()->CreateCtpEntities(configPath + "/transport_entity.csv");
     UbUtils::Get()->TopoTraceConnect();
 
     const bool shouldPrint = !runtime.enableMpi || runtime.mpiRank == 0;
