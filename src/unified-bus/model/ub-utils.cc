@@ -14,6 +14,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <initializer_list>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -21,6 +22,7 @@
 #include <set>
 #include <sstream>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #ifndef _WIN32
 #include <sys/resource.h>
@@ -73,6 +75,70 @@ AccumulateLifecycleKindStorage(UbLifecycleKindStorageSnapshot& aggregate,
     aggregate.activeStateCount += value.activeStateCount;
     aggregate.retainedSummaryCount += value.retainedSummaryCount;
     aggregate.activeLeaseCount += value.activeLeaseCount;
+}
+
+std::string
+CsvEscape(std::string_view value)
+{
+    const bool quote = value.find_first_of(",\"\r\n") != std::string_view::npos;
+    if (!quote)
+    {
+        return std::string(value);
+    }
+
+    std::string escaped;
+    escaped.reserve(value.size() + 2);
+    escaped.push_back('"');
+    for (const char c : value)
+    {
+        if (c == '"')
+        {
+            escaped.push_back('"');
+        }
+        escaped.push_back(c);
+    }
+    escaped.push_back('"');
+    return escaped;
+}
+
+std::string
+CsvRow(std::initializer_list<std::string> fields)
+{
+    std::string row;
+    bool first = true;
+    for (const auto& field : fields)
+    {
+        if (!first)
+        {
+            row.push_back(',');
+        }
+        first = false;
+        row += CsvEscape(field);
+    }
+    return row;
+}
+
+template <typename T>
+std::string
+CsvVector(const std::vector<T>& values)
+{
+    std::ostringstream out;
+    for (std::size_t i = 0; i < values.size(); ++i)
+    {
+        if (i != 0)
+        {
+            out << ';';
+        }
+        if constexpr (std::is_same_v<std::remove_cv_t<T>, uint8_t>)
+        {
+            out << static_cast<unsigned int>(values[i]);
+        }
+        else
+        {
+            out << values[i];
+        }
+    }
+    return out.str();
 }
 
 struct LegacyNetworkAttributeKey
@@ -1481,6 +1547,7 @@ UbUtils::CommitTraceChunk(TraceFileState& fileState, std::string& chunk)
         return;
     }
 
+    std::string header;
     {
         std::lock_guard<std::mutex> filesGuard(files_mutex);
         if (!fileState.open)
@@ -1522,12 +1589,22 @@ UbUtils::CommitTraceChunk(TraceFileState& fileState, std::string& chunk)
             trace_writer_stats.peakOpenFiles =
                 std::max(trace_writer_stats.peakOpenFiles, trace_open_files);
         }
+        if (!fileState.headerCommitted && !fileState.csvHeader.empty())
+        {
+            fileState.headerCommitted = true;
+            header = fileState.csvHeader;
+        }
         ++fileState.activeWrites;
         fileState.lastUse = ++trace_lru_clock;
     }
 
     {
         std::lock_guard<std::mutex> fileGuard(fileState.mutex);
+        if (!header.empty())
+        {
+            fileState.stream.write(header.data(), static_cast<std::streamsize>(header.size()));
+            fileState.stream.put('\n');
+        }
         fileState.stream.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
         NS_ABORT_MSG_IF(fileState.stream.fail(),
                         "Failed to write trace file: " << fileState.fileName);
@@ -2012,14 +2089,20 @@ UbUtils::QueueSampleNotify(uint32_t nodeId, uint32_t portId)
     const uint64_t egressBytes = port->GetUbQueue()->GetCurrentBytes();
     const uint64_t totalBytes = voqBytes + egressBytes;
 
-    std::ostringstream oss;
-    oss << "Queue Update, source: SAMPLE"
-        << " voqBytes: " << voqBytes
-        << " egressBytes: " << egressBytes
-        << " totalBytes: " << totalBytes;
     const std::string fileName =
-        trace_path + "runlog/QueueTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".tr";
-    PrintTraceInfo(fileName, oss.str());
+        trace_path + "runlog/QueueTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,source,port_id,in_port,priority,voq_bytes,egress_bytes,total_bytes,bytes",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "Queue Update",
+                         "SAMPLE",
+                         std::to_string(portId),
+                         "",
+                         "",
+                         std::to_string(voqBytes),
+                         std::to_string(egressBytes),
+                         std::to_string(totalBytes),
+                         ""}));
 }
 
 void
@@ -2103,6 +2186,25 @@ void UbUtils::PrintTraceInfoNoTs(const string& fileName, const string& info)
 }
 
 void
+UbUtils::AppendCsvRow(const std::string& fileName,
+                      const std::string& header,
+                      const std::string& row)
+{
+    const auto sink = GetCachedTraceSink(fileName);
+    {
+        std::lock_guard<std::mutex> filesGuard(files_mutex);
+        auto& state = *static_cast<TraceFileState*>(sink.state);
+        if (!state.headerWritten)
+        {
+            state.headerWritten = true;
+            state.csvHeader = header;
+        }
+    }
+
+    AppendTraceLine(sink, row);
+}
+
+void
 UbUtils::TpgPhaseCreateNotify(uint32_t srcNode,
                               uint32_t dstNode,
                               uint32_t taskId,
@@ -2121,64 +2223,129 @@ UbUtils::TpgPhaseCreateNotify(uint32_t srcNode,
     {
         return;
     }
-    std::ostringstream oss;
-    oss << "TPG_CREATE: src=" << srcNode << " dst=" << dstNode << " taskId=" << taskId
-        << " memberCount=" << memberCount << " initialIndex=" << initialIndex
-        << " initialPort=" << initialPort << " strategy=" << strategy << " memberPorts=";
-    for (size_t i = 0; i < memberPorts.size(); ++i)
-    {
-        if (i != 0)
-        {
-            oss << ',';
-        }
-        oss << memberPorts[i];
-    }
-    PrintTraceInfoNoTs(trace_path + "runlog/TPGPhaseTrace.tr", oss.str());
+    AppendCsvRow(trace_path + "runlog/TPGPhaseTrace.csv",
+                 "time_ps,src_node,dst_node,task_id,member_count,initial_index,initial_port,strategy,member_ports",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         std::to_string(srcNode),
+                         std::to_string(dstNode),
+                         std::to_string(taskId),
+                         std::to_string(memberCount),
+                         std::to_string(initialIndex),
+                         std::to_string(initialPort),
+                         strategy,
+                         CsvVector(memberPorts)}));
 }
 
 inline void UbUtils::TpFirstPacketSendsNotify(
     uint32_t nodeId, uint32_t taskId, uint32_t tpn, uint32_t dstTpn, uint32_t tpMsn, uint32_t psnSndNxt, uint32_t sPort)
 {
-    // 使用 std::ostringstream 来减少字符串构造的次数
-    std::ostringstream oss;
-    oss << "First Packet Sends, taskId: " << taskId << " srcTpn: " << tpn << " destTpn: " << dstTpn
-        << " tpMsn: " << tpMsn << " psn: " << psnSndNxt << " portId: " << sPort << " lastPacket: 0";
-    string info = oss.str();
-    string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "First Packet Sends",
+                         std::to_string(taskId),
+                         "TP",
+                         std::to_string(tpn),
+                         std::to_string(dstTpn),
+                         std::to_string(tpMsn),
+                         std::to_string(psnSndNxt),
+                         std::to_string(sPort),
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         ""}));
 }
 
 inline void UbUtils::TpLastPacketSendsNotify(
     uint32_t nodeId, uint32_t taskId, uint32_t tpn, uint32_t dstTpn, uint32_t tpMsn, uint32_t psnSndNxt, uint32_t sPort)
 {
-    std::ostringstream oss;
-    oss << "Last Packet Sends,taskId: " << taskId << " srcTpn: " << tpn << " destTpn: " << dstTpn << " tpMsn: " << tpMsn
-        << " psn: " << psnSndNxt << " portId: " << sPort << " lastPacket: 1";
-    string info = oss.str();
-    string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "Last Packet Sends",
+                         std::to_string(taskId),
+                         "TP",
+                         std::to_string(tpn),
+                         std::to_string(dstTpn),
+                         std::to_string(tpMsn),
+                         std::to_string(psnSndNxt),
+                         std::to_string(sPort),
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         ""}));
 }
 
 inline void UbUtils::TpLastPacketACKsNotify(
     uint32_t nodeId, uint32_t taskId, uint32_t tpn, uint32_t dstTpn, uint32_t tpMsn, uint32_t psn, uint32_t sPort)
 {
-    std::ostringstream oss;
-    oss << "Last Packet ACKs,taskId: " << taskId << " srcTpn: " << tpn << " destTpn: " << dstTpn << " tpMsn: " << tpMsn
-        << " psn: " << psn << " portId: " << sPort << " lastPacket: 1";
-    string info = oss.str();
-    string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "Last Packet ACKs",
+                         std::to_string(taskId),
+                         "TP",
+                         std::to_string(tpn),
+                         std::to_string(dstTpn),
+                         std::to_string(tpMsn),
+                         std::to_string(psn),
+                         std::to_string(sPort),
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         ""}));
 }
 
 inline void UbUtils::TpLastPacketReceivesNotify(
     uint32_t nodeId, uint32_t srcTpn, uint32_t dstTpn, uint32_t tpMsn, uint32_t psn, uint32_t dPort)
 {
-    std::ostringstream oss;
-    oss << "Last Packet Receives,srcTpn: " << srcTpn << " destTpn: " << dstTpn << " tpMsn: " << tpMsn
-        << " psn: " << psn << " inportId: " << dPort << " lastPacket: 1";
-    string info = oss.str();
-    string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "Last Packet Receives",
+                         "",
+                         "TP",
+                         std::to_string(srcTpn),
+                         std::to_string(dstTpn),
+                         std::to_string(tpMsn),
+                         std::to_string(psn),
+                         std::to_string(dPort),
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         ""}));
 }
 
 inline void
@@ -2194,15 +2361,29 @@ UbUtils::CtpFirstPacketSendsNotify(uint32_t nodeId,
                                    uint32_t payloadBytes,
                                    uint32_t opcode)
 {
-    std::ostringstream oss;
-    oss << "First Packet Sends, taskId: " << taskId << " transport: CTP"
-        << " srcNode: " << srcNodeId << " dstNode: " << dstNodeId
-        << " srcEntity: " << srcEntityId << " dstEntity: " << dstEntityId
-        << " vl: " << vl << " taSsn: " << taSsn << " outPort: " << outPort
-        << " payloadBytes: " << payloadBytes << " taOpcode: " << opcode << " lastPacket: 0";
-    string info = oss.str();
-    string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "First Packet Sends",
+                         std::to_string(taskId),
+                         "CTP",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         std::to_string(srcNodeId),
+                         std::to_string(dstNodeId),
+                         std::to_string(srcEntityId),
+                         std::to_string(dstEntityId),
+                         std::to_string(vl),
+                         std::to_string(taSsn),
+                         outPort == UINT32_MAX ? std::string{} : std::to_string(outPort),
+                         std::to_string(payloadBytes),
+                         std::to_string(opcode),
+                         "",
+                         ""}));
 }
 
 inline void
@@ -2218,37 +2399,53 @@ UbUtils::CtpLastPacketACKsNotify(uint32_t nodeId,
                                  uint32_t payloadBytes,
                                  uint32_t opcode)
 {
-    std::ostringstream oss;
-    oss << "Last Packet ACKs, taskId: " << taskId << " transport: CTP"
-        << " srcNode: " << srcNodeId << " dstNode: " << dstNodeId
-        << " srcEntity: " << srcEntityId << " dstEntity: " << dstEntityId
-        << " vl: " << vl << " taSsn: " << taSsn;
-    if (outPort != UINT32_MAX)
-    {
-        oss << " outPort: " << outPort;
-    }
-    oss << " payloadBytes: " << payloadBytes << " taOpcode: " << opcode << " lastPacket: 1";
-    string info = oss.str();
-    string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "Last Packet ACKs",
+                         std::to_string(taskId),
+                         "CTP",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         std::to_string(srcNodeId),
+                         std::to_string(dstNodeId),
+                         std::to_string(srcEntityId),
+                         std::to_string(dstEntityId),
+                         std::to_string(vl),
+                         std::to_string(taSsn),
+                         outPort == UINT32_MAX ? std::string{} : std::to_string(outPort),
+                         std::to_string(payloadBytes),
+                         std::to_string(opcode),
+                         "",
+                         ""}));
 }
 
 inline void UbUtils::TpWqeSegmentSendsNotify(uint32_t nodeId, uint32_t taskId, uint32_t taSsn)
 {
-    std::ostringstream oss;
-    oss << "WQE Segment Sends,taskId: " << taskId << " TASSN: " << taSsn;
-    string info = oss.str();
-    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,task_id,jetty_num,ta_ssn",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "WQE Segment Sends",
+                         std::to_string(taskId),
+                         "",
+                         std::to_string(taSsn)}));
 }
 
 inline void UbUtils::TpWqeSegmentCompletesNotify(uint32_t nodeId, uint32_t taskId, uint32_t taSsn)
 {
-    std::ostringstream oss;
-    oss << "WQE Segment Completes,taskId: " << taskId << " TASSN: " << taSsn;
-    string info = oss.str();
-    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,task_id,jetty_num,ta_ssn",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "WQE Segment Completes",
+                         std::to_string(taskId),
+                         "",
+                         std::to_string(taSsn)}));
 }
 
 inline string UbUtils::Among(string s, string ts)
@@ -2287,47 +2484,41 @@ void UbUtils::TpRecvNotify(uint32_t packetUid, uint32_t psn, uint32_t src, uint3
         break;
     }
 
-    std::ostringstream oss;
-    oss << "Uid:" << packetUid << " Psn:" << psn << " Src:" << src << " Dst:" << dst << " SrcTpn:" << srcTpn
-        << " DstTpn:" << dstTpn << " Type:" << pktType;
-    if (!ackInfo.empty()) {
-        oss << " AckInfo:" << ackInfo;
+    std::vector<std::string> pathNodes;
+    std::vector<std::string> recvPorts;
+    std::vector<std::string> sendPorts;
+    std::vector<std::string> recvTimes;
+    std::vector<std::string> sendTimes;
+    for (uint32_t i = 0; i < traceTag.GetTraceLenth(); ++i)
+    {
+        const uint32_t node = traceTag.GetNodeTrace(i);
+        const PortTrace trace = traceTag.GetPortTrace(node);
+        pathNodes.push_back(std::to_string(node));
+        recvPorts.push_back(std::to_string(trace.recvPort));
+        sendPorts.push_back(std::to_string(trace.sendPort));
+        recvTimes.push_back(std::to_string(trace.recvTime));
+        sendTimes.push_back(std::to_string(trace.sendTime));
     }
-    oss << " Size:" << size << " TaskId:" << taskId << '\n';
-    for (uint32_t i = 0; i < traceTag.GetTraceLenth(); i++) {
-        uint32_t node = traceTag.GetNodeTrace(i);
-        PortTrace trace = traceTag.GetPortTrace(node);
-        if (i == 0) {
-            oss << "[" << node << "][" << Among(std::to_string(trace.sendPort), std::to_string(trace.sendTime)) << "]"
-                << "--->";
-        } else if (i == traceTag.GetTraceLenth() - 1) {
-            oss << "[" << Among(std::to_string(trace.recvPort), std::to_string(trace.recvTime)) << "][" << node << "]"
-                << '\n';
-        } else {
-            oss << "[" << Among(std::to_string(trace.recvPort), std::to_string(trace.recvTime)) << "]"
-                << "[" << node << "]"
-                << "[" << Among(std::to_string(trace.sendPort), std::to_string(trace.sendTime)) << "]"
-                << "--->";
-        }
-    }
-    for (uint32_t i = 0; i < traceTag.GetTraceLenth(); i++) {
-        uint32_t node = traceTag.GetNodeTrace(i);
-        PortTrace trace = traceTag.GetPortTrace(node);
-        if (i == 0) {
-            oss << std::string(std::to_string(node).size() + 2, ' ') << "["
-                << Among(std::to_string(trace.sendTime), std::to_string(trace.sendTime)) << "]" << std::string(4, ' ');
-        } else if (i == traceTag.GetTraceLenth() - 1) {
-            oss << "[" << Among(std::to_string(trace.recvTime), std::to_string(trace.recvTime)) << "]" << '\n';
-        } else {
-            oss << "[" << Among(std::to_string(trace.recvTime), std::to_string(trace.recvTime)) << "]"
-                << std::string(std::to_string(node).size() + 2, ' ') << "["
-                << Among(std::to_string(trace.sendTime), std::to_string(trace.sendTime)) << "]" << std::string(4, ' ');
-        }
-    }
-    string info = oss.str();
     const char* fileType = (type == PacketType::NAK || type == PacketType::SACK) ? "ACK" : pktType;
-    string fileName = trace_path + "runlog/AllPacketTrace_" + fileType + "_node_" + to_string(src) + ".tr";
-    PrintTraceInfoNoTs(fileName, info);
+    string fileName = trace_path + "runlog/AllPacketTrace_" + fileType + "_node_" + to_string(src) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,packet_uid,psn,src,dst,src_tpn,dst_tpn,type,ack_info,size_bytes,task_id,path_nodes,recv_ports,send_ports,recv_times_ns,send_times_ns",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         std::to_string(packetUid),
+                         std::to_string(psn),
+                         std::to_string(src),
+                         std::to_string(dst),
+                         std::to_string(srcTpn),
+                         std::to_string(dstTpn),
+                         pktType,
+                         ackInfo,
+                         std::to_string(size),
+                         std::to_string(taskId),
+                         CsvVector(pathNodes),
+                         CsvVector(recvPorts),
+                         CsvVector(sendPorts),
+                         CsvVector(recvTimes),
+                         CsvVector(sendTimes)}));
 }
 
 void UbUtils::LdstRecvNotify(uint32_t packetUid, uint32_t src, uint32_t dst, PacketType type,
@@ -2351,121 +2542,174 @@ void UbUtils::LdstRecvNotify(uint32_t packetUid, uint32_t src, uint32_t dst, Pac
         break;
     }
 
-    std::ostringstream oss;
-    oss << "Uid:" << packetUid << " Src:" << src << " Dst:" << dst
-        << " Type:" << pktType << " Size:" << size << " TaskId:" << taskId << '\n';
-    for (uint32_t i = 0; i < traceTag.GetTraceLenth(); i++) {
-        uint32_t node = traceTag.GetNodeTrace(i);
-        PortTrace trace = traceTag.GetPortTrace(node);
-        if (i == 0) {
-            oss << "[" << node << "][" << Among(std::to_string(trace.sendPort), std::to_string(trace.sendTime)) << "]"
-                << "--->";
-        } else if (i == traceTag.GetTraceLenth() - 1) {
-            oss << "[" << Among(std::to_string(trace.recvPort), std::to_string(trace.recvTime)) << "][" << node << "]"
-                << '\n';
-        } else {
-            oss << "[" << Among(std::to_string(trace.recvPort), std::to_string(trace.recvTime)) << "]"
-                << "[" << node << "]"
-                << "[" << Among(std::to_string(trace.sendPort), std::to_string(trace.sendTime)) << "]"
-                << "--->";
-        }
+    std::vector<std::string> pathNodes;
+    std::vector<std::string> recvPorts;
+    std::vector<std::string> sendPorts;
+    std::vector<std::string> recvTimes;
+    std::vector<std::string> sendTimes;
+    for (uint32_t i = 0; i < traceTag.GetTraceLenth(); ++i)
+    {
+        const uint32_t node = traceTag.GetNodeTrace(i);
+        const PortTrace trace = traceTag.GetPortTrace(node);
+        pathNodes.push_back(std::to_string(node));
+        recvPorts.push_back(std::to_string(trace.recvPort));
+        sendPorts.push_back(std::to_string(trace.sendPort));
+        recvTimes.push_back(std::to_string(trace.recvTime));
+        sendTimes.push_back(std::to_string(trace.sendTime));
     }
-    for (uint32_t i = 0; i < traceTag.GetTraceLenth(); i++) {
-        uint32_t node = traceTag.GetNodeTrace(i);
-        PortTrace trace = traceTag.GetPortTrace(node);
-        if (i == 0) {
-            oss << std::string(std::to_string(node).size() + 2, ' ') << "["
-                << Among(std::to_string(trace.sendTime), std::to_string(trace.sendTime)) << "]" << std::string(4, ' ');
-        } else if (i == traceTag.GetTraceLenth() - 1) {
-            oss << "[" << Among(std::to_string(trace.recvTime), std::to_string(trace.recvTime)) << "]" << '\n';
-        } else {
-            oss << "[" << Among(std::to_string(trace.recvTime), std::to_string(trace.recvTime)) << "]"
-                << std::string(std::to_string(node).size() + 2, ' ') << "["
-                << Among(std::to_string(trace.sendTime), std::to_string(trace.sendTime)) << "]" << std::string(4, ' ');
-        }
-    }
-    string info = oss.str();
     const char* fileType = (type == PacketType::NAK || type == PacketType::SACK) ? "ACK" : pktType;
-    string fileName = trace_path + "runlog/AllPacketTrace_" + fileType + "_node_" + to_string(src) + ".tr";
-    PrintTraceInfoNoTs(fileName, info);
+    string fileName = trace_path + "runlog/AllPacketTrace_" + fileType + "_node_" + to_string(src) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,packet_uid,psn,src,dst,src_tpn,dst_tpn,type,ack_info,size_bytes,task_id,path_nodes,recv_ports,send_ports,recv_times_ns,send_times_ns",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         std::to_string(packetUid),
+                         "",
+                         std::to_string(src),
+                         std::to_string(dst),
+                         "",
+                         "",
+                         pktType,
+                         "",
+                         std::to_string(size),
+                         std::to_string(taskId),
+                         CsvVector(pathNodes),
+                         CsvVector(recvPorts),
+                         CsvVector(sendPorts),
+                         CsvVector(recvTimes),
+                         CsvVector(sendTimes)}));
 }
 
 inline void UbUtils::LdstFirstPacketSendsNotify(uint32_t nodeId, uint32_t taskId)
 {
-    string info = "First Packet Sends,taskId: " + std::to_string(taskId);
-    string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "First Packet Sends",
+                         std::to_string(taskId),
+                         "LDST",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         ""}));
 }
 
 inline void UbUtils::DagMemTaskStartsNotify(uint32_t nodeId, uint32_t taskId)
 {
-    string info = "MEM Task Starts, taskId: " + std::to_string(taskId);
-    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,task_id,jetty_num,ta_ssn",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "MEM Task Starts",
+                         std::to_string(taskId),
+                         "",
+                         ""}));
 }
 
 inline void UbUtils::DagMemTaskCompletesNotify(uint32_t nodeId, uint32_t taskId)
 {
-    string info = "MEM Task Completes, taskId: " + std::to_string(taskId);
-    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,task_id,jetty_num,ta_ssn",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "MEM Task Completes",
+                         std::to_string(taskId),
+                         "",
+                         ""}));
 }
 
 inline void UbUtils::DagComputeTaskQueuedNotify(uint32_t nodeId, uint32_t taskId)
 {
-    string info = "COMPUTE Task Queued, taskId: " + std::to_string(taskId);
-    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,task_id,jetty_num,ta_ssn",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "COMPUTE Task Queued",
+                         std::to_string(taskId),
+                         "",
+                         ""}));
 }
 
 inline void UbUtils::DagComputeTaskStartsNotify(uint32_t nodeId, uint32_t taskId)
 {
-    string info = "COMPUTE Task Starts, taskId: " + std::to_string(taskId);
-    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,task_id,jetty_num,ta_ssn",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "COMPUTE Task Starts",
+                         std::to_string(taskId),
+                         "",
+                         ""}));
 }
 
 inline void UbUtils::DagComputeTaskCompletesNotify(uint32_t nodeId, uint32_t taskId)
 {
-    string info = "COMPUTE Task Completes, taskId: " + std::to_string(taskId);
-    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,task_id,jetty_num,ta_ssn",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "COMPUTE Task Completes",
+                         std::to_string(taskId),
+                         "",
+                         ""}));
 }
 
 inline void UbUtils::DagWqeTaskStartsNotify(uint32_t nodeId, uint32_t jettyNum, uint32_t taskId)
 {
-    std::ostringstream oss;
-    oss << "WQE Starts, jettyNum: " << jettyNum << " taskId: " << taskId;
-    string info = oss.str();
-    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,task_id,jetty_num,ta_ssn",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "WQE Starts",
+                         std::to_string(taskId),
+                         std::to_string(jettyNum),
+                         ""}));
 }
 
 inline void UbUtils::DagWqeTaskCompletesNotify(uint32_t nodeId, uint32_t jettyNum, uint32_t taskId)
 {
-    std::ostringstream oss;
-    oss << "WQE Completes, jettyNum: " << jettyNum << " taskId: " << taskId;
-    string info = oss.str();
-    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,task_id,jetty_num,ta_ssn",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "WQE Completes",
+                         std::to_string(taskId),
+                         std::to_string(jettyNum),
+                         ""}));
 }
 
 inline void UbUtils::PortTxNotify(uint32_t nodeId, uint32_t portId, uint32_t size)
 {
-    std::ostringstream oss;
-    oss << "Port Tx, port ID: " << portId << " PacketSize: " << size;
-    string info = oss.str();
-    string fileName = trace_path + "runlog/PortTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/PortTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,port_id,packet_size_bytes",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "Port Tx",
+                         std::to_string(portId),
+                         std::to_string(size)}));
 }
 
 inline void UbUtils::PortRxNotify(uint32_t nodeId, uint32_t portId, uint32_t size)
 {
-    std::ostringstream oss;
-    oss << "Port Rx, port ID: " << portId << " PacketSize: " << size;
-    string info = oss.str();
-    string fileName = trace_path + "runlog/PortTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/PortTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,port_id,packet_size_bytes",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "Port Rx",
+                         std::to_string(portId),
+                         std::to_string(size)}));
 }
 
 void UbUtils::PfcStateNotify(uint32_t nodeId,
@@ -2478,13 +2722,14 @@ void UbUtils::PfcStateNotify(uint32_t nodeId,
     {
         return;
     }
-    std::ostringstream oss;
-    oss << "PFC " << action
-        << ", priority: " << priority
-        << " ingressBytes: " << ingressBytes;
-    string info = oss.str();
-    string fileName = trace_path + "runlog/PfcTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/PfcTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,action,priority,ingress_bytes",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "PFC",
+                         action,
+                         std::to_string(priority),
+                         std::to_string(ingressBytes)}));
 }
 
 void UbUtils::PfcDynamicStateNotify(uint32_t nodeId,
@@ -2501,18 +2746,19 @@ void UbUtils::PfcDynamicStateNotify(uint32_t nodeId,
     {
         return;
     }
-    std::ostringstream oss;
-    oss << "PFC_DYNAMIC " << (pause ? "PAUSE" : "RESUME")
-        << ", priority: " << priority
-        << " ingressTotalBytes: " << ingressTotalBytes
-        << " sharedUsedBytes: " << sharedUsedBytes
-        << " headroomUsedBytes: " << headroomUsedBytes
-        << " xoffBytes: " << xoffBytes
-        << " xonBytes: " << xonBytes;
-    string info = oss.str();
     string fileName =
-        trace_path + "runlog/PfcDynamicTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".tr";
-    PrintTraceInfo(fileName, info);
+        trace_path + "runlog/PfcDynamicTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,action,priority,ingress_total_bytes,shared_used_bytes,headroom_used_bytes,xoff_bytes,xon_bytes",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "PFC_DYNAMIC",
+                         pause ? "PAUSE" : "RESUME",
+                         std::to_string(priority),
+                         std::to_string(ingressTotalBytes),
+                         std::to_string(sharedUsedBytes),
+                         std::to_string(headroomUsedBytes),
+                         std::to_string(xoffBytes),
+                         std::to_string(xonBytes)}));
 }
 
 void UbUtils::CbfcStateNotify(uint32_t nodeId,
@@ -2526,14 +2772,22 @@ void UbUtils::CbfcStateNotify(uint32_t nodeId,
     {
         return;
     }
-    std::ostringstream oss;
-    oss << "CBFC " << action
-        << ", priority: " << priority
-        << " availableCredits: " << availableCredits
-        << " nextPacketBytes: " << nextPacketBytes;
-    string info = oss.str();
-    string fileName = trace_path + "runlog/CbfcTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/CbfcTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,action,reason,priority,available_credits,next_packet_bytes,delta_credits,trigger_threshold_cells,emit_min_pending_cells,credits,pending_credits,send_credits",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "CBFC",
+                         action,
+                         "",
+                         std::to_string(priority),
+                         std::to_string(availableCredits),
+                         std::to_string(nextPacketBytes),
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         ""}));
 }
 
 void UbUtils::CbfcCreditRestoreTraceNotify(uint32_t nodeId,
@@ -2544,15 +2798,22 @@ void UbUtils::CbfcCreditRestoreTraceNotify(uint32_t nodeId,
     {
         return;
     }
-    std::ostringstream oss;
-    oss << "CBFC CREDIT_RESTORE";
-    for (size_t i = 0; i < credits.size(); ++i)
-    {
-        oss << (i == 0 ? ", credits:" : " ") << static_cast<uint32_t>(credits[i]);
-    }
-    string info = oss.str();
-    string fileName = trace_path + "runlog/CbfcTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/CbfcTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,action,reason,priority,available_credits,next_packet_bytes,delta_credits,trigger_threshold_cells,emit_min_pending_cells,credits,pending_credits,send_credits",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "CBFC",
+                         "CREDIT_RESTORE",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         CsvVector(credits),
+                         "",
+                         ""}));
 }
 
 void UbUtils::CbfcCreditLevelNotify(uint32_t nodeId,
@@ -2566,15 +2827,22 @@ void UbUtils::CbfcCreditLevelNotify(uint32_t nodeId,
     {
         return;
     }
-    std::ostringstream oss;
-    oss << "CBFC CREDIT_LEVEL"
-        << ", reason: " << reason
-        << " priority: " << priority
-        << " availableCredits: " << availableCredits
-        << " deltaCredits: " << deltaCredits;
-    string info = oss.str();
-    string fileName = trace_path + "runlog/CbfcTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/CbfcTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,action,reason,priority,available_credits,next_packet_bytes,delta_credits,trigger_threshold_cells,emit_min_pending_cells,credits,pending_credits,send_credits",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "CBFC",
+                         "CREDIT_LEVEL",
+                         reason,
+                         std::to_string(priority),
+                         std::to_string(availableCredits),
+                         "",
+                         std::to_string(deltaCredits),
+                         "",
+                         "",
+                         "",
+                         "",
+                         ""}));
 }
 
 void UbUtils::CbfcControlSendNotify(uint32_t nodeId,
@@ -2589,24 +2857,22 @@ void UbUtils::CbfcControlSendNotify(uint32_t nodeId,
     {
         return;
     }
-    std::ostringstream oss;
-    oss << "CBFC CONTROL_SEND"
-        << ", reason: " << reason
-        << " triggerThresholdCells: " << triggerThresholdCells
-        << " emitMinPendingCells: " << emitMinPendingCells
-        << " pendingCredits:";
-    for (size_t i = 0; i < pendingCredits.size(); ++i)
-    {
-        oss << (i == 0 ? "" : " ") << pendingCredits[i];
-    }
-    oss << " sendCredits:";
-    for (size_t i = 0; i < sendCredits.size(); ++i)
-    {
-        oss << (i == 0 ? "" : " ") << static_cast<uint32_t>(sendCredits[i]);
-    }
-    string info = oss.str();
-    string fileName = trace_path + "runlog/CbfcTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/CbfcTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,action,reason,priority,available_credits,next_packet_bytes,delta_credits,trigger_threshold_cells,emit_min_pending_cells,credits,pending_credits,send_credits",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "CBFC",
+                         "CONTROL_SEND",
+                         reason,
+                         "",
+                         "",
+                         "",
+                         "",
+                         std::to_string(triggerThresholdCells),
+                         std::to_string(emitMinPendingCells),
+                         "",
+                         CsvVector(pendingCredits),
+                         CsvVector(sendCredits)}));
 }
 
 void UbUtils::DcqcnMarkNotify(uint32_t nodeId,
@@ -2618,15 +2884,17 @@ void UbUtils::DcqcnMarkNotify(uint32_t nodeId,
     {
         return;
     }
-    std::ostringstream oss;
-    oss << std::fixed << std::setprecision(6)
-        << "DCQCN MARK, outPort: " << outPort
-        << " totalQueueBytes: " << totalQueueBytes
-        << " markProbability: " << markProbability;
-    string info = oss.str();
     string fileName =
-        trace_path + "runlog/DcqcnMarkTrace_node_" + to_string(nodeId) + "_port_" + to_string(outPort) + ".tr";
-    PrintTraceInfo(fileName, info);
+        trace_path + "runlog/DcqcnMarkTrace_node_" + to_string(nodeId) + "_port_" + to_string(outPort) + ".csv";
+    std::ostringstream probability;
+    probability << std::fixed << std::setprecision(6) << markProbability;
+    AppendCsvRow(fileName,
+                 "time_ps,event,out_port,total_queue_bytes,mark_probability",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "DCQCN MARK",
+                         std::to_string(outPort),
+                         std::to_string(totalQueueBytes),
+                         probability.str()}));
 }
 
 void UbUtils::DcqcnCnpNotify(uint32_t nodeId,
@@ -2639,13 +2907,14 @@ void UbUtils::DcqcnCnpNotify(uint32_t nodeId,
     {
         return;
     }
-    std::ostringstream oss;
-    oss << "DCQCN CNP " << action
-        << ", ecn: " << static_cast<uint32_t>(ecn)
-        << " location: " << static_cast<uint32_t>(location);
-    string info = oss.str();
-    string fileName = trace_path + "runlog/DcqcnCnpTrace_node_" + to_string(nodeId) + "_tpn_" + to_string(tpn) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/DcqcnCnpTrace_node_" + to_string(nodeId) + "_tpn_" + to_string(tpn) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,action,ecn,location",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "DCQCN CNP",
+                         action,
+                         std::to_string(static_cast<uint32_t>(ecn)),
+                         std::to_string(static_cast<uint32_t>(location))}));
 }
 
 void UbUtils::DcqcnSenderStateNotify(uint32_t nodeId,
@@ -2662,19 +2931,21 @@ void UbUtils::DcqcnSenderStateNotify(uint32_t nodeId,
     {
         return;
     }
-    std::ostringstream oss;
-    oss << std::fixed << std::setprecision(6)
-        << "DCQCN SENDER " << reason
-        << ", alpha: " << alpha
-        << " currentRateBps: " << currentRateBps
-        << " targetRateBps: " << targetRateBps
-        << " bytesSinceLastIncrease: " << bytesSinceLastIncrease
-        << " timeRecoveryEvents: " << timeRecoveryEvents
-        << " byteRecoveryEvents: " << byteRecoveryEvents;
-    string info = oss.str();
     string fileName =
-        trace_path + "runlog/DcqcnSenderTrace_node_" + to_string(nodeId) + "_tpn_" + to_string(tpn) + ".tr";
-    PrintTraceInfo(fileName, info);
+        trace_path + "runlog/DcqcnSenderTrace_node_" + to_string(nodeId) + "_tpn_" + to_string(tpn) + ".csv";
+    std::ostringstream alphaValue;
+    alphaValue << std::fixed << std::setprecision(6) << alpha;
+    AppendCsvRow(fileName,
+                 "time_ps,event,reason,alpha,current_rate_bps,target_rate_bps,bytes_since_last_increase,time_recovery_events,byte_recovery_events",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "DCQCN SENDER",
+                         reason,
+                         alphaValue.str(),
+                         std::to_string(currentRateBps),
+                         std::to_string(targetRateBps),
+                         std::to_string(bytesSinceLastIncrease),
+                         std::to_string(timeRecoveryEvents),
+                         std::to_string(byteRecoveryEvents)}));
 }
 
 void
@@ -2694,16 +2965,16 @@ UbUtils::CaqmAckNotify(uint32_t nodeId,
     {
         return;
     }
-    std::ostringstream oss;
-    oss << "CAQM ACK"
-        << ", psnStart: " << psnStart
-        << " psnEnd: " << psnEnd
-        << " cE: " << static_cast<uint32_t>(cE)
-        << " iE: " << static_cast<uint32_t>(iE)
-        << " hintE: " << hintE;
-    string info = oss.str();
-    string fileName = trace_path + "runlog/CaqmAckTrace_node_" + to_string(nodeId) + "_tpn_" + to_string(tpn) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/CaqmAckTrace_node_" + to_string(nodeId) + "_tpn_" + to_string(tpn) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,psn_start,psn_end,ce,ie,hint_e",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "CAQM ACK",
+                         std::to_string(psnStart),
+                         std::to_string(psnEnd),
+                         std::to_string(static_cast<uint32_t>(cE)),
+                         std::to_string(static_cast<uint32_t>(iE)),
+                         std::to_string(hintE)}));
 }
 
 void
@@ -2725,19 +2996,19 @@ UbUtils::CaqmSenderStateNotify(uint32_t nodeId,
     {
         return;
     }
-    std::ostringstream oss;
-    oss << "CAQM SENDER"
-        << ", psn: " << psn
-        << " sequence: " << sequence
-        << " inFlight: " << inFlight
-        << " cwnd: " << cwnd
-        << " cE: " << static_cast<uint32_t>(cE)
-        << " iE: " << static_cast<uint32_t>(iE)
-        << " hint: " << hint;
-    string info = oss.str();
     string fileName =
-        trace_path + "runlog/CaqmSenderTrace_node_" + to_string(nodeId) + "_tpn_" + to_string(tpn) + ".tr";
-    PrintTraceInfo(fileName, info);
+        trace_path + "runlog/CaqmSenderTrace_node_" + to_string(nodeId) + "_tpn_" + to_string(tpn) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,psn,sequence,in_flight,cwnd,ce,ie,hint",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "CAQM SENDER",
+                         std::to_string(psn),
+                         std::to_string(sequence),
+                         std::to_string(inFlight),
+                         std::to_string(cwnd),
+                         std::to_string(static_cast<uint32_t>(cE)),
+                         std::to_string(static_cast<uint32_t>(iE)),
+                         std::to_string(hint)}));
 }
 
 bool UbUtils::IsTpDebugEnabledFor(uint32_t nodeId, uint32_t tpn)
@@ -2795,23 +3066,24 @@ void UbUtils::TpDebugStateNotify(uint32_t nodeId,
         return;
     }
 
-    std::ostringstream oss;
-    oss << "TP DEBUG " << reason
-        << " psnSndNxt: " << psnSndNxt
-        << " psnSndUna: " << psnSndUna
-        << " inflightPackets: " << inflightPackets
-        << " maxInflightPackets: " << maxInflightPackets
-        << " inflightLimited: " << static_cast<uint32_t>(inflightLimited)
-        << " ccLimited: " << static_cast<uint32_t>(ccLimited)
-        << " sendWindowLimited: " << static_cast<uint32_t>(sendWindowLimited)
-        << " activeSegments: " << activeSegments
-        << " totalSegments: " << totalSegments
-        << " ackQueueLen: " << ackQueueLen
-        << " cnpQueueLen: " << cnpQueueLen;
-    const string info = oss.str();
     const string fileName =
-        trace_path + "runlog/TpDebugTrace_node_" + to_string(nodeId) + "_tpn_" + to_string(tpn) + ".tr";
-    PrintTraceInfo(fileName, info);
+        trace_path + "runlog/TpDebugTrace_node_" + to_string(nodeId) + "_tpn_" + to_string(tpn) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,reason,psn_snd_nxt,psn_snd_una,inflight_packets,max_inflight_packets,inflight_limited,cc_limited,send_window_limited,active_segments,total_segments,ack_queue_len,cnp_queue_len",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "TP DEBUG",
+                         reason,
+                         std::to_string(psnSndNxt),
+                         std::to_string(psnSndUna),
+                         std::to_string(inflightPackets),
+                         std::to_string(maxInflightPackets),
+                         std::to_string(static_cast<uint32_t>(inflightLimited)),
+                         std::to_string(static_cast<uint32_t>(ccLimited)),
+                         std::to_string(static_cast<uint32_t>(sendWindowLimited)),
+                         std::to_string(activeSegments),
+                         std::to_string(totalSegments),
+                         std::to_string(ackQueueLen),
+                         std::to_string(cnpQueueLen)}));
 }
 
 inline void UbUtils::QueueVoqNotify(uint32_t nodeId, uint32_t portId, uint64_t voqBytes)
@@ -2821,14 +3093,19 @@ inline void UbUtils::QueueVoqNotify(uint32_t nodeId, uint32_t portId, uint64_t v
     const uint64_t egressBytes = port != nullptr ? port->GetUbQueue()->GetCurrentBytes() : 0;
     const uint64_t totalBytes = voqBytes + egressBytes;
 
-    std::ostringstream oss;
-    oss << "Queue Update, source: VOQ"
-        << " voqBytes: " << voqBytes
-        << " egressBytes: " << egressBytes
-        << " totalBytes: " << totalBytes;
-    string info = oss.str();
-    string fileName = trace_path + "runlog/QueueTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/QueueTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,source,port_id,in_port,priority,voq_bytes,egress_bytes,total_bytes,bytes",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "Queue Update",
+                         "VOQ",
+                         std::to_string(portId),
+                         "",
+                         "",
+                         std::to_string(voqBytes),
+                         std::to_string(egressBytes),
+                         std::to_string(totalBytes),
+                         ""}));
 }
 
 inline void
@@ -2837,15 +3114,20 @@ UbUtils::QueueIngressOccupancyNotify(uint32_t nodeId,
                                      uint32_t priority,
                                      uint64_t bytes)
 {
-    std::ostringstream oss;
-    oss << "Queue Update, source: ingress"
-        << " inPort: " << inPort
-        << " priority: " << priority
-        << " bytes: " << bytes;
-    string info = oss.str();
     string fileName =
-        trace_path + "runlog/QueueTrace_node_" + to_string(nodeId) + "_port_" + to_string(inPort) + ".tr";
-    PrintTraceInfo(fileName, info);
+        trace_path + "runlog/QueueTrace_node_" + to_string(nodeId) + "_port_" + to_string(inPort) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,source,port_id,in_port,priority,voq_bytes,egress_bytes,total_bytes,bytes",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "Queue Update",
+                         "ingress",
+                         std::to_string(inPort),
+                         std::to_string(inPort),
+                         std::to_string(priority),
+                         "",
+                         "",
+                         "",
+                         std::to_string(bytes)}));
 }
 
 inline void UbUtils::QueueEgressEnqueueNotify(uint32_t nodeId,
@@ -2859,14 +3141,19 @@ inline void UbUtils::QueueEgressEnqueueNotify(uint32_t nodeId,
     const uint64_t voqBytes = sw != nullptr ? sw->GetQueueManager()->GetTotalOutPortBufferUsed(portId) : 0;
     const uint64_t totalBytes = voqBytes + egressBytes;
 
-    std::ostringstream oss;
-    oss << "Queue Update, source: EGRESS_ENQUEUE"
-        << " voqBytes: " << voqBytes
-        << " egressBytes: " << egressBytes
-        << " totalBytes: " << totalBytes;
-    string info = oss.str();
-    string fileName = trace_path + "runlog/QueueTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/QueueTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,source,port_id,in_port,priority,voq_bytes,egress_bytes,total_bytes,bytes",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "Queue Update",
+                         "EGRESS_ENQUEUE",
+                         std::to_string(portId),
+                         "",
+                         "",
+                         std::to_string(voqBytes),
+                         std::to_string(egressBytes),
+                         std::to_string(totalBytes),
+                         ""}));
 }
 
 inline void UbUtils::QueueEgressDequeueNotify(uint32_t nodeId,
@@ -2880,70 +3167,179 @@ inline void UbUtils::QueueEgressDequeueNotify(uint32_t nodeId,
     const uint64_t voqBytes = sw != nullptr ? sw->GetQueueManager()->GetTotalOutPortBufferUsed(portId) : 0;
     const uint64_t totalBytes = voqBytes + egressBytes;
 
-    std::ostringstream oss;
-    oss << "Queue Update, source: EGRESS_DEQUEUE"
-        << " voqBytes: " << voqBytes
-        << " egressBytes: " << egressBytes
-        << " totalBytes: " << totalBytes;
-    string info = oss.str();
-    string fileName = trace_path + "runlog/QueueTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/QueueTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,source,port_id,in_port,priority,voq_bytes,egress_bytes,total_bytes,bytes",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "Queue Update",
+                         "EGRESS_DEQUEUE",
+                         std::to_string(portId),
+                         "",
+                         "",
+                         std::to_string(voqBytes),
+                         std::to_string(egressBytes),
+                         std::to_string(totalBytes),
+                         ""}));
 }
 
 inline void UbUtils::LdstThreadMemTaskStartsNotify(uint32_t nodeId, uint32_t memTaskId)
 {
-    string info = "Mem Task Starts,taskId: " + std::to_string(memTaskId);
-    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,task_id,jetty_num,ta_ssn",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "Mem Task Starts",
+                         std::to_string(memTaskId),
+                         "",
+                         ""}));
 }
 
 inline void UbUtils::LdstMemTaskCompletesNotify(uint32_t nodeId, uint32_t taskId)
 {
-    string info = "Mem Task Completes,taskId: " + std::to_string(taskId);
-    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/TaskTrace_node_" + to_string(nodeId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,task_id,jetty_num,ta_ssn",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "Mem Task Completes",
+                         std::to_string(taskId),
+                         "",
+                         ""}));
 }
 
 inline void UbUtils::LdstThreadFirstPacketSendsNotify(uint32_t nodeId, uint32_t memTaskId)
 {
-    string info = "First Packet Sends, taskId: " + std::to_string(memTaskId);
-    string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "First Packet Sends",
+                         std::to_string(memTaskId),
+                         "LDST",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         ""}));
 }
 
 inline void UbUtils::LdstThreadLastPacketSendsNotify(uint32_t nodeId, uint32_t memTaskId)
 {
-    string info = "Last Packet Sends, taskId: " + std::to_string(memTaskId);
-    string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "Last Packet Sends",
+                         std::to_string(memTaskId),
+                         "LDST",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         ""}));
 }
 
 inline void UbUtils::LdstLastPacketACKsNotify(uint32_t nodeId, uint32_t taskId)
 {
-    string info = "Last Packet ACKs,taskId: " + std::to_string(taskId);
-    string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "Last Packet ACKs",
+                         std::to_string(taskId),
+                         "LDST",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         ""}));
 }
 
 inline void UbUtils::LdstPeerSendFirstPacketACKsNotify(uint32_t nodeId, uint32_t taskId, uint32_t type)
 {
-    std::ostringstream oss;
-    oss << "Peer Send First Packet ACKs, taskId: " << taskId << " type: " << type;
-    string info = oss.str();
-    string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".tr";
-    PrintTraceInfo(fileName, info);
+    string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".csv";
+    AppendCsvRow(fileName,
+                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type",
+                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                         "Peer Send First Packet ACKs",
+                         std::to_string(taskId),
+                         "LDST",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         "",
+                         std::to_string(type)}));
 }
 
 inline void UbUtils::SwitchLastPacketTraversesNotify(uint32_t nodeId, UbTransportHeader ubTpHeader)
 {
     if (ubTpHeader.GetLastPacket()) {
-        std::ostringstream oss;
-        oss << "Last Packet Traverses ,NodeId: " << nodeId << " srcTpn: " << ubTpHeader.GetSrcTpn()
-            << " destTpn: " << ubTpHeader.GetDestTpn() << " tpMsn: " << ubTpHeader.GetTpMsn()
-            << " psn:" << ubTpHeader.GetPsn();
-        string info = oss.str();
-        string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".tr";
-        PrintTraceInfo(fileName, info);
+        string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".csv";
+        AppendCsvRow(fileName,
+                     "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type",
+                     CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                             "Last Packet Traverses ",
+                             "",
+                             "TP",
+                             std::to_string(ubTpHeader.GetSrcTpn()),
+                             std::to_string(ubTpHeader.GetDestTpn()),
+                             std::to_string(ubTpHeader.GetTpMsn()),
+                             std::to_string(ubTpHeader.GetPsn()),
+                             "",
+                             std::to_string(nodeId),
+                             "",
+                             "",
+                             "",
+                             "",
+                             "",
+                             "",
+                             "",
+                             "",
+                             "",
+                             ""}));
     }
 }
 

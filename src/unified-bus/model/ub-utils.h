@@ -425,6 +425,9 @@ private:
         std::mutex mutex;
         uint64_t lastUse{0};
         uint32_t activeWrites{0};
+        bool headerWritten{false};
+        bool headerCommitted{false};
+        std::string csvHeader;
         bool open{false};
     };
 
@@ -728,6 +731,10 @@ private:
     static TraceOwnerState& GetTraceOwner(uint32_t ownerId);
 
     static void AppendTraceLine(const TraceSinkHandle& sink, std::string line);
+
+    static void AppendCsvRow(const std::string& fileName,
+                             const std::string& header,
+                             const std::string& row);
 
     static void CommitTraceChunk(TraceFileState& fileState, std::string& chunk);
 

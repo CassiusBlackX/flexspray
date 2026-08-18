@@ -126,7 +126,7 @@ GetRecordFilename(uint32_t ownerNode)
     {
         leaf += "_rank_" + std::to_string(g_rank);
     }
-    return (runlog / (leaf + ".tr")).string();
+    return (runlog / (leaf + ".csv")).string();
 }
 
 template <typename Enum, std::size_t Size>
@@ -179,7 +179,6 @@ ResolveRecordSinkLocked(uint32_t ownerNode)
     NS_ABORT_MSG_IF(!sink->second, "Lifecycle record sink resolver returned an empty sink");
     if (g_initializedRecordFiles.insert(filename).second)
     {
-        sink->second("# schema=ub.lifecycle.v1,timeUnit=ns");
         sink->second(UbLifecycleTrace::GetRecordHeader());
     }
     return sink->second;

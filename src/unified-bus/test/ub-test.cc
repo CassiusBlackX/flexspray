@@ -24102,10 +24102,10 @@ class UbAlgorithmTraceGateDefaultOffTest : public TestCase
         utils::UbUtils::DcqcnMarkNotify(3, 2, 67890, 0.5);
         utils::UbUtils::Get()->Destroy();
 
-        NS_TEST_ASSERT_MSG_EQ(fs::exists(runlogDir / "PfcTrace_node_3_port_1.tr"),
+        NS_TEST_ASSERT_MSG_EQ(fs::exists(runlogDir / "PfcTrace_node_3_port_1.csv"),
                               false,
                               "Flow-control trace should stay off by default");
-        NS_TEST_ASSERT_MSG_EQ(fs::exists(runlogDir / "DcqcnMarkTrace_node_3_port_2.tr"),
+        NS_TEST_ASSERT_MSG_EQ(fs::exists(runlogDir / "DcqcnMarkTrace_node_3_port_2.csv"),
                               false,
                               "Congestion-control trace should stay off by default");
 
@@ -24146,10 +24146,10 @@ class UbAlgorithmTraceCategoryGateTest : public TestCase
         utils::UbUtils::DcqcnMarkNotify(5, 0, 333, 0.25);
         utils::UbUtils::Get()->Destroy();
 
-        NS_TEST_ASSERT_MSG_EQ(fs::exists(runlogDir / "PfcTrace_node_5_port_0.tr"),
+        NS_TEST_ASSERT_MSG_EQ(fs::exists(runlogDir / "PfcTrace_node_5_port_0.csv"),
                               true,
                               "Flow-control trace file should be emitted when flow-control gate is on");
-        NS_TEST_ASSERT_MSG_EQ(fs::exists(runlogDir / "DcqcnMarkTrace_node_5_port_0.tr"),
+        NS_TEST_ASSERT_MSG_EQ(fs::exists(runlogDir / "DcqcnMarkTrace_node_5_port_0.csv"),
                               false,
                               "Congestion-control trace file should stay off when its gate is off");
 
@@ -24168,10 +24168,10 @@ class UbAlgorithmTraceCategoryGateTest : public TestCase
         utils::UbUtils::DcqcnMarkNotify(6, 1, 555, 0.75);
         utils::UbUtils::Get()->Destroy();
 
-        NS_TEST_ASSERT_MSG_EQ(fs::exists(runlogDir / "PfcTrace_node_6_port_1.tr"),
+        NS_TEST_ASSERT_MSG_EQ(fs::exists(runlogDir / "PfcTrace_node_6_port_1.csv"),
                               false,
                               "Flow-control trace file should stay off when flow-control gate is off");
-        NS_TEST_ASSERT_MSG_EQ(fs::exists(runlogDir / "DcqcnMarkTrace_node_6_port_1.tr"),
+        NS_TEST_ASSERT_MSG_EQ(fs::exists(runlogDir / "DcqcnMarkTrace_node_6_port_1.csv"),
                               true,
                               "Congestion-control trace file should be emitted when its gate is on");
         fs::remove_all(caseDir, ec);
@@ -24214,7 +24214,7 @@ class UbQueueTraceCategoryGateTest : public TestCase
         Simulator::Destroy();
         utils::UbUtils::Get()->Destroy();
 
-        NS_TEST_ASSERT_MSG_EQ(fs::exists(runlogDir / "QueueTrace_node_0_port_0.tr"),
+        NS_TEST_ASSERT_MSG_EQ(fs::exists(runlogDir / "QueueTrace_node_0_port_0.csv"),
                               false,
                               "Queue trace file should stay off when queue-trace gate is off");
 
@@ -24239,7 +24239,7 @@ class UbQueueTraceCategoryGateTest : public TestCase
         Simulator::Destroy();
         utils::UbUtils::Get()->Destroy();
 
-        const fs::path queueTraceFile = runlogDir / "QueueTrace_node_0_port_0.tr";
+        const fs::path queueTraceFile = runlogDir / "QueueTrace_node_0_port_0.csv";
         NS_TEST_ASSERT_MSG_EQ(fs::exists(queueTraceFile),
                               true,
                               "Queue trace file should be emitted when queue-trace gate is on");
@@ -24251,10 +24251,10 @@ class UbQueueTraceCategoryGateTest : public TestCase
                                            return oss.str();
                                        }()
                                      : "";
-        NS_TEST_ASSERT_MSG_NE(text.find("source: SAMPLE"),
+        NS_TEST_ASSERT_MSG_NE(text.find(",SAMPLE,"),
                               std::string::npos,
                               "Queue trace file should contain sampled queue state when gate is on");
-        NS_TEST_ASSERT_MSG_NE(text.find("source: EGRESS_ENQUEUE"),
+        NS_TEST_ASSERT_MSG_NE(text.find(",EGRESS_ENQUEUE,"),
                               std::string::npos,
                               "QueueTrace should include egress rows even when port trace is disabled");
         NS_TEST_ASSERT_MSG_NE(text.find("ingress"),
@@ -24367,7 +24367,7 @@ class UbCtpPacketTraceConnectsLazyServiceTest : public TestCase
                               false,
                               "CTP packet timing should use unified PacketTrace output");
 
-        const fs::path traceFile = runlogDir / "PacketTrace_node_0.tr";
+        const fs::path traceFile = runlogDir / "PacketTrace_node_0.csv";
         NS_TEST_ASSERT_MSG_EQ(fs::exists(traceFile),
                               true,
                               "CTP packet timing trace should be emitted for lazy service");
@@ -24381,18 +24381,15 @@ class UbCtpPacketTraceConnectsLazyServiceTest : public TestCase
         NS_TEST_ASSERT_MSG_NE(text.find("Last Packet ACKs"),
                               std::string::npos,
                               "CTP packet trace should include last-ACK timestamp");
-        NS_TEST_ASSERT_MSG_NE(text.find("transport: CTP"),
+        NS_TEST_ASSERT_MSG_NE(text.find(",CTP,"),
                               std::string::npos,
                               "CTP packet trace should identify CTP transport");
-        NS_TEST_ASSERT_MSG_NE(text.find("taskId: 0"),
+        NS_TEST_ASSERT_MSG_NE(text.find(",0,CTP,"),
                               std::string::npos,
                               "CTP packet trace should include the task id");
-        NS_TEST_ASSERT_MSG_NE(text.find("srcNode: 0"),
+        NS_TEST_ASSERT_MSG_NE(text.find(",0,3,"),
                               std::string::npos,
-                              "CTP packet trace should include source node");
-        NS_TEST_ASSERT_MSG_NE(text.find("dstNode: 3"),
-                              std::string::npos,
-                              "CTP packet trace should include destination node");
+                              "CTP packet trace should include source and destination nodes");
 
         fs::remove_all(caseDir, ec);
     }

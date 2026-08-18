@@ -8,7 +8,8 @@
 
 ## Hard Facts
 
-- `throughput.csv` is produced from `PortTrace_node_*_port_*.tr`.
+- `throughput.csv` is produced from canonical `PortTrace_node_*_port_*.csv` files.
+  The parser also accepts legacy `.tr` files so old runlogs remain replayable.
 - `throughput.csv` records per-port-direction throughput with `type = Rx` or `type = Tx`.
 - `task_statistics.csv` records per-task throughput using `traffic.csv` data size plus task start and end times.
 - The current stage skills do not automatically normalize measured throughput against configured line rate.
