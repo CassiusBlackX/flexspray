@@ -58,6 +58,13 @@ On macOS, set `DYLD_LIBRARY_PATH` to the selected variant's `lib/` directory.
 Prepend the artifact-root `.venv-parser/bin` directory to `PATH` when producing
 `task_statistics.csv` and `throughput.csv`.
 
+Reference runlogs are emitted as UTF-8 CSV files with a header row under
+`case/runlog/`. Column names carry their units (for example, `time_ps`), and
+variable-length path fields use CSV-quoted semicolon-separated values. New runs
+do not emit `.tr` files; analysis tools retain `.tr` input fallback for older
+artifacts. `canonical.rank*.txt` is the separate lifecycle comparison output,
+not a runlog trace.
+
 ## Compare outputs
 
 Candidate outputs must contain the exact managed file set and use the same

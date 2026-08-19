@@ -2253,7 +2253,7 @@ inline void UbUtils::TpFirstPacketSendsNotify(
 {
     string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".csv";
     AppendCsvRow(fileName,
-                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type",
+                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type,traversal_node",
                  CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
                          "First Packet Sends",
                          std::to_string(taskId),
@@ -2273,6 +2273,7 @@ inline void UbUtils::TpFirstPacketSendsNotify(
                          "",
                          "",
                          "",
+                         "",
                          ""}));
 }
 
@@ -2281,7 +2282,7 @@ inline void UbUtils::TpLastPacketSendsNotify(
 {
     string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".csv";
     AppendCsvRow(fileName,
-                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type",
+                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type,traversal_node",
                  CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
                          "Last Packet Sends",
                          std::to_string(taskId),
@@ -2301,6 +2302,7 @@ inline void UbUtils::TpLastPacketSendsNotify(
                          "",
                          "",
                          "",
+                         "",
                          ""}));
 }
 
@@ -2309,7 +2311,7 @@ inline void UbUtils::TpLastPacketACKsNotify(
 {
     string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".csv";
     AppendCsvRow(fileName,
-                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type",
+                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type,traversal_node",
                  CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
                          "Last Packet ACKs",
                          std::to_string(taskId),
@@ -2329,6 +2331,7 @@ inline void UbUtils::TpLastPacketACKsNotify(
                          "",
                          "",
                          "",
+                         "",
                          ""}));
 }
 
@@ -2337,7 +2340,7 @@ inline void UbUtils::TpLastPacketReceivesNotify(
 {
     string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".csv";
     AppendCsvRow(fileName,
-                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type",
+                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type,traversal_node",
                  CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
                          "Last Packet Receives",
                          "",
@@ -2347,6 +2350,7 @@ inline void UbUtils::TpLastPacketReceivesNotify(
                          std::to_string(tpMsn),
                          std::to_string(psn),
                          std::to_string(dPort),
+                         "",
                          "",
                          "",
                          "",
@@ -2375,7 +2379,7 @@ UbUtils::CtpFirstPacketSendsNotify(uint32_t nodeId,
 {
     string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".csv";
     AppendCsvRow(fileName,
-                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type",
+                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type,traversal_node",
                  CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
                          "First Packet Sends",
                          std::to_string(taskId),
@@ -2395,6 +2399,7 @@ UbUtils::CtpFirstPacketSendsNotify(uint32_t nodeId,
                          std::to_string(payloadBytes),
                          std::to_string(opcode),
                          "",
+                         "",
                          ""}));
 }
 
@@ -2413,7 +2418,7 @@ UbUtils::CtpLastPacketACKsNotify(uint32_t nodeId,
 {
     string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".csv";
     AppendCsvRow(fileName,
-                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type",
+                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type,traversal_node",
                  CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
                          "Last Packet ACKs",
                          std::to_string(taskId),
@@ -2432,6 +2437,7 @@ UbUtils::CtpLastPacketACKsNotify(uint32_t nodeId,
                          outPort == UINT32_MAX ? std::string{} : std::to_string(outPort),
                          std::to_string(payloadBytes),
                          std::to_string(opcode),
+                         "",
                          "",
                          ""}));
 }
@@ -2595,11 +2601,12 @@ inline void UbUtils::LdstFirstPacketSendsNotify(uint32_t nodeId, uint32_t taskId
 {
     string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".csv";
     AppendCsvRow(fileName,
-                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type",
+                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type,traversal_node",
                  CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
                          "First Packet Sends",
                          std::to_string(taskId),
                          "LDST",
+                         "",
                          "",
                          "",
                          "",
@@ -3222,11 +3229,12 @@ inline void UbUtils::LdstThreadFirstPacketSendsNotify(uint32_t nodeId, uint32_t 
 {
     string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".csv";
     AppendCsvRow(fileName,
-                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type",
+                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type,traversal_node",
                  CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
                          "First Packet Sends",
                          std::to_string(memTaskId),
                          "LDST",
+                         "",
                          "",
                          "",
                          "",
@@ -3249,11 +3257,12 @@ inline void UbUtils::LdstThreadLastPacketSendsNotify(uint32_t nodeId, uint32_t m
 {
     string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".csv";
     AppendCsvRow(fileName,
-                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type",
+                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type,traversal_node",
                  CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
                          "Last Packet Sends",
                          std::to_string(memTaskId),
                          "LDST",
+                         "",
                          "",
                          "",
                          "",
@@ -3276,11 +3285,12 @@ inline void UbUtils::LdstLastPacketACKsNotify(uint32_t nodeId, uint32_t taskId)
 {
     string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".csv";
     AppendCsvRow(fileName,
-                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type",
+                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type,traversal_node",
                  CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
                          "Last Packet ACKs",
                          std::to_string(taskId),
                          "LDST",
+                         "",
                          "",
                          "",
                          "",
@@ -3303,7 +3313,7 @@ inline void UbUtils::LdstPeerSendFirstPacketACKsNotify(uint32_t nodeId, uint32_t
 {
     string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".csv";
     AppendCsvRow(fileName,
-                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type",
+                 "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type,traversal_node",
                  CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
                          "Peer Send First Packet ACKs",
                          std::to_string(taskId),
@@ -3323,7 +3333,8 @@ inline void UbUtils::LdstPeerSendFirstPacketACKsNotify(uint32_t nodeId, uint32_t
                          "",
                          "",
                          "",
-                         std::to_string(type)}));
+                         std::to_string(type),
+                         ""}));
 }
 
 inline void UbUtils::SwitchLastPacketTraversesNotify(uint32_t nodeId, UbTransportHeader ubTpHeader)
@@ -3331,9 +3342,9 @@ inline void UbUtils::SwitchLastPacketTraversesNotify(uint32_t nodeId, UbTranspor
     if (ubTpHeader.GetLastPacket()) {
         string fileName = trace_path + "runlog/PacketTrace_node_" + to_string(nodeId) + ".csv";
         AppendCsvRow(fileName,
-                     "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type",
+                     "time_ps,event,task_id,transport,src_tpn,dst_tpn,tp_msn,psn,port_id,src_node,dst_node,src_entity,dst_entity,vl,ta_ssn,out_port,payload_bytes,ta_opcode,packet_type,peer_type,traversal_node",
                      CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
-                             "Last Packet Traverses ",
+                             "Last Packet Traverses",
                              "",
                              "TP",
                              std::to_string(ubTpHeader.GetSrcTpn()),
@@ -3351,7 +3362,8 @@ inline void UbUtils::SwitchLastPacketTraversesNotify(uint32_t nodeId, UbTranspor
                              "",
                              "",
                              "",
-                             ""}));
+                             "",
+                             std::to_string(nodeId)}));
     }
 }
 
