@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import gzip
 import math
 import re
 from pathlib import Path
@@ -26,16 +27,15 @@ QUEUE_PATTERN = re.compile(
 PFC_PATTERN = re.compile(
     r"\[(\d+(?:\.\d+)?)us\]\s+PFC\s+(PAUSE|RESUME), priority: (\d+)\s+ingressBytes: (\d+)"
 )
-PFC_FILE_PATTERN = re.compile(r"PfcTrace_node_(\d+)_port_(\d+)\.(?:tr|csv)")
+PFC_FILE_PATTERN = re.compile(r"PfcTrace_node_(\d+)_port_(\d+)\.(?:tr|csv)(?:\.gz)?$")
+TRACE_SUFFIX_PRIORITY = {".csv": 0, ".csv.gz": 1, ".tr": 2, ".tr.gz": 3}
 
 
 def preferred_trace_path(stem: str) -> Path:
-    csv_path = RUNLOG_DIR / f"{stem}.csv"
-    if csv_path.is_file():
-        return csv_path
-    tr_path = RUNLOG_DIR / f"{stem}.tr"
-    if tr_path.is_file():
-        return tr_path
+    for suffix in TRACE_SUFFIX_PRIORITY:
+        trace_path = RUNLOG_DIR / f"{stem}{suffix}"
+        if trace_path.is_file():
+            return trace_path
     raise FileNotFoundError(f"missing trace file for {stem}")
 
 
@@ -72,8 +72,10 @@ def identify_bottleneck_port() -> tuple[int, int]:
 
 def load_port_events(trace_file: Path) -> pd.DataFrame:
     records = []
-    if trace_file.suffix == ".csv":
-        with trace_file.open(newline="", encoding="utf-8") as handle:
+    if trace_file.name.endswith((".csv", ".csv.gz")):
+        open_trace = gzip.open if trace_file.name.endswith(".gz") else open
+        open_args = ("rt",) if trace_file.name.endswith(".gz") else ()
+        with open_trace(trace_file, *open_args, newline="", encoding="utf-8") as handle:
             for row in csv.DictReader(handle):
                 if row.get("event") not in {"Port Tx", "Port Rx"}:
                     continue
@@ -134,12 +136,17 @@ def compute_realtime_throughput(port_df: pd.DataFrame, bin_us: float) -> pd.Data
 
 def load_queue_events(trace_file: Path) -> pd.DataFrame:
     records = []
-    if trace_file.suffix == ".csv":
-        with trace_file.open(newline="", encoding="utf-8") as handle:
+    if trace_file.name.endswith((".csv", ".csv.gz")):
+        open_trace = gzip.open if trace_file.name.endswith(".gz") else open
+        open_args = ("rt",) if trace_file.name.endswith(".gz") else ()
+        with open_trace(trace_file, *open_args, newline="", encoding="utf-8") as handle:
             for row in csv.DictReader(handle):
                 try:
                     timestamp = float(row["time_ps"]) / 1_000_000.0
-                    voq_bytes = int(row.get("voq_bytes") or 0)
+                    voq_value = row.get("out_port_voq_bytes")
+                    if voq_value in (None, ""):
+                        voq_value = row.get("voq_bytes")
+                    voq_bytes = int(voq_value or 0)
                     egress_bytes = int(row.get("egress_bytes") or 0)
                     total_bytes = int(row["total_bytes"])
                 except (KeyError, TypeError, ValueError):
@@ -195,17 +202,26 @@ def build_queue_step_series(queue_df: pd.DataFrame, bin_us: float) -> pd.DataFra
 def load_pfc_events() -> pd.DataFrame:
     records = []
     paths = {}
-    for suffix in ("tr", "csv"):
-        for trace_file in RUNLOG_DIR.glob(f"PfcTrace_node_*_port_*.{suffix}"):
-            paths[trace_file.stem] = trace_file
+    for trace_file in RUNLOG_DIR.glob("PfcTrace_node_*_port_*.csv"):
+        paths[trace_file.name[: -len(".csv")]] = trace_file
+    for trace_file in RUNLOG_DIR.glob("PfcTrace_node_*_port_*.csv.gz"):
+        paths[trace_file.name[: -len(".csv.gz")]] = trace_file
+    for trace_file in RUNLOG_DIR.glob("PfcTrace_node_*_port_*.tr"):
+        key = trace_file.name[: -len(".tr")]
+        paths.setdefault(key, trace_file)
+    for trace_file in RUNLOG_DIR.glob("PfcTrace_node_*_port_*.tr.gz"):
+        key = trace_file.name[: -len(".tr.gz")]
+        paths.setdefault(key, trace_file)
     for trace_file in sorted(paths.values(), key=lambda path: path.name):
         match_file = PFC_FILE_PATTERN.fullmatch(trace_file.name)
         if match_file is None:
             continue
         node_id = int(match_file.group(1))
         port_id = int(match_file.group(2))
-        if trace_file.suffix == ".csv":
-            with trace_file.open(newline="", encoding="utf-8") as handle:
+        if trace_file.name.endswith((".csv", ".csv.gz")):
+            open_trace = gzip.open if trace_file.name.endswith(".gz") else open
+            open_args = ("rt",) if trace_file.name.endswith(".gz") else ()
+            with open_trace(trace_file, *open_args, newline="", encoding="utf-8") as handle:
                 rows = csv.DictReader(handle)
                 for row in rows:
                     if row.get("event") != "PFC":
@@ -229,7 +245,11 @@ def load_pfc_events() -> pd.DataFrame:
                         }
                     )
         else:
-            for line in trace_file.read_text().splitlines():
+            open_trace = gzip.open if trace_file.name.endswith(".gz") else open
+            open_args = ("rt",) if trace_file.name.endswith(".gz") else ()
+            with open_trace(trace_file, *open_args, encoding="utf-8") as handle:
+                lines = handle.read().splitlines()
+            for line in lines:
                 match = PFC_PATTERN.search(line)
                 if not match:
                     continue

@@ -103,6 +103,7 @@ __MACOSX/
 docs/
 !docs/
 docs/*
+!docs/trace-runlog-format.md
 !docs/agents/
 docs/agents/*
 !docs/agents/implementation-workflow.md

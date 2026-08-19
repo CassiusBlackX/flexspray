@@ -357,7 +357,7 @@ UbLifecycleTrace::EmitMetadata()
 const char*
 UbLifecycleTrace::GetRecordHeader()
 {
-    return "time,ownerNode,ownerSequence,recordType,resourceKind,localId,generation,"
+    return "time_ns,ownerNode,ownerSequence,recordType,resourceKind,localId,generation,"
            "subjectKind,subjectId,event,before,delta,after,outcome,reason,siteId";
 }
 

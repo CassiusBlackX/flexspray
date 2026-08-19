@@ -24176,12 +24176,32 @@ class UbAlgorithmTraceCategoryGateTest : public TestCase
         utils::UbUtils::SetTracePathForTest(caseDir.string());
 
         utils::UbUtils::PfcStateNotify(5, 0, "PAUSE", 7, 222);
+        utils::UbUtils::CbfcStateNotify(5, 0, "BLOCK", 7, 10, 320, 160);
         utils::UbUtils::DcqcnMarkNotify(5, 0, 333, 0.25);
         utils::UbUtils::Get()->Destroy();
 
         NS_TEST_ASSERT_MSG_EQ(fs::exists(runlogDir / "PfcTrace_node_5_port_0.csv"),
                               true,
                               "Flow-control trace file should be emitted when flow-control gate is on");
+        const fs::path cbfcTraceFile = runlogDir / "CbfcTrace_node_5_port_0.csv";
+        NS_TEST_ASSERT_MSG_EQ(fs::exists(cbfcTraceFile),
+                              true,
+                              "CBFC trace file should be emitted when flow-control gate is on");
+        const std::string cbfcText = std::ifstream(cbfcTraceFile).good()
+                                         ? [&cbfcTraceFile]() {
+                                               std::ifstream input(cbfcTraceFile);
+                                               std::ostringstream oss;
+                                               oss << input.rdbuf();
+                                               return oss.str();
+                                           }()
+                                         : "";
+        NS_TEST_ASSERT_MSG_NE(
+            cbfcText.find("time_ps,event,action,reason,vl,available_credit_bytes,"),
+            std::string::npos,
+            "CBFC trace should use the fixed bytes-valued header");
+        NS_TEST_ASSERT_MSG_NE(cbfcText.find(",BLOCK,,7,1600,320,"),
+                              std::string::npos,
+                              "CBFC trace should align VL and byte-valued credit fields");
         NS_TEST_ASSERT_MSG_EQ(fs::exists(runlogDir / "DcqcnMarkTrace_node_5_port_0.csv"),
                               false,
                               "Congestion-control trace file should stay off when its gate is off");
@@ -24284,6 +24304,10 @@ class UbQueueTraceCategoryGateTest : public TestCase
                                            return oss.str();
                                        }()
                                      : "";
+        NS_TEST_ASSERT_MSG_NE(
+            text.find("time_ps,event,source,port_id,in_port,priority,out_port_voq_bytes,egress_bytes,total_bytes,ingress_occupancy_bytes"),
+            std::string::npos,
+            "QueueTrace should use explicit output-port VOQ and ingress occupancy columns");
         NS_TEST_ASSERT_MSG_NE(text.find(",SAMPLE,"),
                               std::string::npos,
                               "Queue trace file should contain sampled queue state when gate is on");

@@ -153,6 +153,12 @@ CsvOptionalTime(uint32_t port, uint64_t time)
     return port == UINT32_MAX ? std::string{} : std::to_string(time);
 }
 
+std::string
+CreditBytes(int64_t cells, uint32_t creditCellBytes)
+{
+    return std::to_string(cells * static_cast<int64_t>(creditCellBytes));
+}
+
 struct LegacyNetworkAttributeKey
 {
     const char* legacy;
@@ -2072,7 +2078,6 @@ void UbUtils::CreateTraceDir()
                                         UbUtils::AppendTraceInfoNoTs(sink, line);
                                     };
                                 });
-    UbLifecycleTrace::EmitMetadata();
     PrintTimestamp("[setup] Prepare runlog directory: " + trace_path + "runlog");
 }
 
@@ -2104,7 +2109,7 @@ UbUtils::QueueSampleNotify(uint32_t nodeId, uint32_t portId)
     const std::string fileName =
         trace_path + "runlog/QueueTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".csv";
     AppendCsvRow(fileName,
-                 "time_ps,event,source,port_id,in_port,priority,voq_bytes,egress_bytes,total_bytes,bytes",
+                 "time_ps,event,source,port_id,in_port,priority,out_port_voq_bytes,egress_bytes,total_bytes,ingress_occupancy_bytes",
                  CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
                          "Queue Update",
                          "SAMPLE",
@@ -2783,9 +2788,10 @@ void UbUtils::PfcDynamicStateNotify(uint32_t nodeId,
 void UbUtils::CbfcStateNotify(uint32_t nodeId,
                               uint32_t portId,
                               const std::string& action,
-                              uint32_t priority,
+                              uint32_t vl,
                               int32_t availableCredits,
-                              uint32_t nextPacketBytes)
+                              uint32_t nextPacketBytes,
+                              uint32_t creditCellBytes)
 {
     if (trace_path.empty() || !IsFlowControlTraceEnabled())
     {
@@ -2793,54 +2799,61 @@ void UbUtils::CbfcStateNotify(uint32_t nodeId,
     }
     string fileName = trace_path + "runlog/CbfcTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".csv";
     AppendCsvRow(fileName,
-                 "time_ps,event,action,reason,priority,available_credits,next_packet_bytes,delta_credits,trigger_threshold_cells,emit_min_pending_cells,credits,pending_credits,send_credits",
+                 "time_ps,event,action,reason,vl,available_credit_bytes,next_packet_bytes,delta_credit_bytes,trigger_threshold_bytes,emit_min_pending_bytes,credit_bytes,pending_credit_bytes,send_credit_bytes,credit_cell_bytes",
                  CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
                          "CBFC",
                          action,
                          "",
-                         std::to_string(priority),
-                         std::to_string(availableCredits),
+                         std::to_string(vl),
+                         CreditBytes(availableCredits, creditCellBytes),
                          std::to_string(nextPacketBytes),
                          "",
                          "",
                          "",
                          "",
                          "",
-                         ""}));
+                         "",
+                         std::to_string(creditCellBytes)}));
 }
 
 void UbUtils::CbfcCreditRestoreTraceNotify(uint32_t nodeId,
                                            uint32_t portId,
-                                           const std::vector<uint8_t>& credits)
+                                           const std::vector<int32_t>& creditCells,
+                                           uint32_t creditCellBytes)
 {
     if (trace_path.empty() || !IsFlowControlTraceEnabled())
     {
         return;
     }
     string fileName = trace_path + "runlog/CbfcTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".csv";
-    AppendCsvRow(fileName,
-                 "time_ps,event,action,reason,priority,available_credits,next_packet_bytes,delta_credits,trigger_threshold_cells,emit_min_pending_cells,credits,pending_credits,send_credits",
-                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
-                         "CBFC",
-                         "CREDIT_RESTORE",
-                         "",
-                         "",
-                         "",
-                         "",
-                         "",
-                         "",
-                         "",
-                         CsvVector(credits),
-                         "",
-                         ""}));
+    for (std::size_t vl = 0; vl < creditCells.size(); ++vl)
+    {
+        AppendCsvRow(fileName,
+                     "time_ps,event,action,reason,vl,available_credit_bytes,next_packet_bytes,delta_credit_bytes,trigger_threshold_bytes,emit_min_pending_bytes,credit_bytes,pending_credit_bytes,send_credit_bytes,credit_cell_bytes",
+                     CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                             "CBFC",
+                             "CREDIT_RESTORE",
+                             "",
+                             std::to_string(vl),
+                             "",
+                             "",
+                             "",
+                             "",
+                             "",
+                             CreditBytes(creditCells[vl], creditCellBytes),
+                             "",
+                             "",
+                             std::to_string(creditCellBytes)}));
+    }
 }
 
 void UbUtils::CbfcCreditLevelNotify(uint32_t nodeId,
                                     uint32_t portId,
                                     const std::string& reason,
-                                    uint32_t priority,
+                                    uint32_t vl,
                                     int32_t availableCredits,
-                                    int32_t deltaCredits)
+                                    int32_t deltaCredits,
+                                    uint32_t creditCellBytes)
 {
     if (trace_path.empty() || !IsFlowControlTraceEnabled())
     {
@@ -2848,20 +2861,21 @@ void UbUtils::CbfcCreditLevelNotify(uint32_t nodeId,
     }
     string fileName = trace_path + "runlog/CbfcTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".csv";
     AppendCsvRow(fileName,
-                 "time_ps,event,action,reason,priority,available_credits,next_packet_bytes,delta_credits,trigger_threshold_cells,emit_min_pending_cells,credits,pending_credits,send_credits",
+                 "time_ps,event,action,reason,vl,available_credit_bytes,next_packet_bytes,delta_credit_bytes,trigger_threshold_bytes,emit_min_pending_bytes,credit_bytes,pending_credit_bytes,send_credit_bytes,credit_cell_bytes",
                  CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
                          "CBFC",
                          "CREDIT_LEVEL",
                          reason,
-                         std::to_string(priority),
-                         std::to_string(availableCredits),
+                         std::to_string(vl),
+                         CreditBytes(availableCredits, creditCellBytes),
                          "",
-                         std::to_string(deltaCredits),
-                         "",
-                         "",
+                         CreditBytes(deltaCredits, creditCellBytes),
                          "",
                          "",
-                         ""}));
+                         "",
+                         "",
+                         "",
+                         std::to_string(creditCellBytes)}));
 }
 
 void UbUtils::CbfcControlSendNotify(uint32_t nodeId,
@@ -2869,29 +2883,37 @@ void UbUtils::CbfcControlSendNotify(uint32_t nodeId,
                                     const std::string& reason,
                                     int32_t triggerThresholdCells,
                                     int32_t emitMinPendingCells,
-                                    const std::vector<int32_t>& pendingCredits,
-                                    const std::vector<uint8_t>& sendCredits)
+                                    const std::vector<int32_t>& pendingCreditCells,
+                                    const std::vector<int32_t>& sendCreditCells,
+                                    uint32_t creditCellBytes)
 {
     if (trace_path.empty() || !IsFlowControlTraceEnabled())
     {
         return;
     }
     string fileName = trace_path + "runlog/CbfcTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".csv";
-    AppendCsvRow(fileName,
-                 "time_ps,event,action,reason,priority,available_credits,next_packet_bytes,delta_credits,trigger_threshold_cells,emit_min_pending_cells,credits,pending_credits,send_credits",
-                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
-                         "CBFC",
-                         "CONTROL_SEND",
-                         reason,
-                         "",
-                         "",
-                         "",
-                         "",
-                         std::to_string(triggerThresholdCells),
-                         std::to_string(emitMinPendingCells),
-                         "",
-                         CsvVector(pendingCredits),
-                         CsvVector(sendCredits)}));
+    const std::size_t vlCount = std::max(pendingCreditCells.size(), sendCreditCells.size());
+    for (std::size_t vl = 0; vl < vlCount; ++vl)
+    {
+        const int64_t pendingCells = vl < pendingCreditCells.size() ? pendingCreditCells[vl] : 0;
+        const int64_t sendCells = vl < sendCreditCells.size() ? sendCreditCells[vl] : 0;
+        AppendCsvRow(fileName,
+                     "time_ps,event,action,reason,vl,available_credit_bytes,next_packet_bytes,delta_credit_bytes,trigger_threshold_bytes,emit_min_pending_bytes,credit_bytes,pending_credit_bytes,send_credit_bytes,credit_cell_bytes",
+                     CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
+                             "CBFC",
+                             "CONTROL_SEND",
+                             reason,
+                             std::to_string(vl),
+                             "",
+                             "",
+                             "",
+                             CreditBytes(triggerThresholdCells, creditCellBytes),
+                             CreditBytes(emitMinPendingCells, creditCellBytes),
+                             "",
+                             CreditBytes(pendingCells, creditCellBytes),
+                             CreditBytes(sendCells, creditCellBytes),
+                             std::to_string(creditCellBytes)}));
+    }
 }
 
 void UbUtils::DcqcnMarkNotify(uint32_t nodeId,
@@ -3114,7 +3136,7 @@ inline void UbUtils::QueueVoqNotify(uint32_t nodeId, uint32_t portId, uint64_t v
 
     string fileName = trace_path + "runlog/QueueTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".csv";
     AppendCsvRow(fileName,
-                 "time_ps,event,source,port_id,in_port,priority,voq_bytes,egress_bytes,total_bytes,bytes",
+                 "time_ps,event,source,port_id,in_port,priority,out_port_voq_bytes,egress_bytes,total_bytes,ingress_occupancy_bytes",
                  CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
                          "Queue Update",
                          "VOQ",
@@ -3131,12 +3153,12 @@ inline void
 UbUtils::QueueIngressOccupancyNotify(uint32_t nodeId,
                                      uint32_t inPort,
                                      uint32_t priority,
-                                     uint64_t bytes)
+                                     uint64_t ingressOccupancyBytes)
 {
     string fileName =
         trace_path + "runlog/QueueTrace_node_" + to_string(nodeId) + "_port_" + to_string(inPort) + ".csv";
     AppendCsvRow(fileName,
-                 "time_ps,event,source,port_id,in_port,priority,voq_bytes,egress_bytes,total_bytes,bytes",
+                 "time_ps,event,source,port_id,in_port,priority,out_port_voq_bytes,egress_bytes,total_bytes,ingress_occupancy_bytes",
                  CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
                          "Queue Update",
                          "ingress",
@@ -3146,7 +3168,7 @@ UbUtils::QueueIngressOccupancyNotify(uint32_t nodeId,
                          "",
                          "",
                          "",
-                         std::to_string(bytes)}));
+                         std::to_string(ingressOccupancyBytes)}));
 }
 
 inline void UbUtils::QueueEgressEnqueueNotify(uint32_t nodeId,
@@ -3162,7 +3184,7 @@ inline void UbUtils::QueueEgressEnqueueNotify(uint32_t nodeId,
 
     string fileName = trace_path + "runlog/QueueTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".csv";
     AppendCsvRow(fileName,
-                 "time_ps,event,source,port_id,in_port,priority,voq_bytes,egress_bytes,total_bytes,bytes",
+                 "time_ps,event,source,port_id,in_port,priority,out_port_voq_bytes,egress_bytes,total_bytes,ingress_occupancy_bytes",
                  CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
                          "Queue Update",
                          "EGRESS_ENQUEUE",
@@ -3188,7 +3210,7 @@ inline void UbUtils::QueueEgressDequeueNotify(uint32_t nodeId,
 
     string fileName = trace_path + "runlog/QueueTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".csv";
     AppendCsvRow(fileName,
-                 "time_ps,event,source,port_id,in_port,priority,voq_bytes,egress_bytes,total_bytes,bytes",
+                 "time_ps,event,source,port_id,in_port,priority,out_port_voq_bytes,egress_bytes,total_bytes,ingress_occupancy_bytes",
                  CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
                          "Queue Update",
                          "EGRESS_DEQUEUE",

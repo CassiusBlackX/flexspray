@@ -8,6 +8,9 @@ or a prepared structured topology compiled from Python/NetworkX or JSON/YAML.
 Use `ns-3-ub-tools` to prepare topology, routing, and traffic, then start the simulation with a scratch
 runner. The tools do not start ns-3, and the runner does not import Python or NetworkX at runtime.
 
+See the [Unified Bus trace runlog format](../docs/trace-runlog-format.md) for the `runlog/` CSV
+categories, fields, and units.
+
 ---
 
 ## Build once before running cases

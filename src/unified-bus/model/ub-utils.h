@@ -291,28 +291,32 @@ public:
     static void CbfcStateNotify(uint32_t nodeId,
                                 uint32_t portId,
                                 const std::string& action,
-                                uint32_t priority,
+                                uint32_t vl,
                                 int32_t availableCredits,
-                                uint32_t nextPacketBytes);
+                                uint32_t nextPacketBytes,
+                                uint32_t creditCellBytes);
 
     static void CbfcCreditRestoreTraceNotify(uint32_t nodeId,
                                              uint32_t portId,
-                                             const std::vector<uint8_t>& credits);
+                                             const std::vector<int32_t>& creditCells,
+                                             uint32_t creditCellBytes);
 
     static void CbfcCreditLevelNotify(uint32_t nodeId,
                                       uint32_t portId,
                                       const std::string& reason,
-                                      uint32_t priority,
+                                      uint32_t vl,
                                       int32_t availableCredits,
-                                      int32_t deltaCredits);
+                                      int32_t deltaCredits,
+                                      uint32_t creditCellBytes);
 
     static void CbfcControlSendNotify(uint32_t nodeId,
                                       uint32_t portId,
                                       const std::string& reason,
                                       int32_t triggerThresholdCells,
                                       int32_t emitMinPendingCells,
-                                      const std::vector<int32_t>& pendingCredits,
-                                      const std::vector<uint8_t>& sendCredits);
+                                      const std::vector<int32_t>& pendingCreditCells,
+                                      const std::vector<int32_t>& sendCreditCells,
+                                      uint32_t creditCellBytes);
 
     static void DcqcnMarkNotify(uint32_t nodeId,
                                 uint32_t outPort,

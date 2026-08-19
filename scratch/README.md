@@ -11,6 +11,9 @@ VOQ + egress，不含 processing。Ingress admission 和 PFC 仍统计处理中�
 现有 QueueTrace 输出是缓冲占用口径，具体接口见
 [交换机缓冲架构](../src/unified-bus/doc/switch-buffer-architecture.md#23-buffer-occupancy-与-queue-backlog)。
 
+仿真产生的 `runlog/` CSV 文件类别、字段和单位见
+[Unified Bus trace runlog 格式说明](../docs/trace-runlog-format.md)。
+
 ## 构建一次
 
 在 parent 仓库根目录执行：
