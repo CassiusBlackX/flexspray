@@ -141,6 +141,18 @@ CsvVector(const std::vector<T>& values)
     return out.str();
 }
 
+std::string
+CsvOptionalPort(uint32_t port)
+{
+    return port == UINT32_MAX ? std::string{} : std::to_string(port);
+}
+
+std::string
+CsvOptionalTime(uint32_t port, uint64_t time)
+{
+    return port == UINT32_MAX ? std::string{} : std::to_string(time);
+}
+
 struct LegacyNetworkAttributeKey
 {
     const char* legacy;
@@ -2494,10 +2506,10 @@ void UbUtils::TpRecvNotify(uint32_t packetUid, uint32_t psn, uint32_t src, uint3
         const uint32_t node = traceTag.GetNodeTrace(i);
         const PortTrace trace = traceTag.GetPortTrace(node);
         pathNodes.push_back(std::to_string(node));
-        recvPorts.push_back(std::to_string(trace.recvPort));
-        sendPorts.push_back(std::to_string(trace.sendPort));
-        recvTimes.push_back(std::to_string(trace.recvTime));
-        sendTimes.push_back(std::to_string(trace.sendTime));
+        recvPorts.push_back(CsvOptionalPort(trace.recvPort));
+        sendPorts.push_back(CsvOptionalPort(trace.sendPort));
+        recvTimes.push_back(CsvOptionalTime(trace.recvPort, trace.recvTime));
+        sendTimes.push_back(CsvOptionalTime(trace.sendPort, trace.sendTime));
     }
     const char* fileType = (type == PacketType::NAK || type == PacketType::SACK) ? "ACK" : pktType;
     string fileName = trace_path + "runlog/AllPacketTrace_" + fileType + "_node_" + to_string(src) + ".csv";
@@ -2552,10 +2564,10 @@ void UbUtils::LdstRecvNotify(uint32_t packetUid, uint32_t src, uint32_t dst, Pac
         const uint32_t node = traceTag.GetNodeTrace(i);
         const PortTrace trace = traceTag.GetPortTrace(node);
         pathNodes.push_back(std::to_string(node));
-        recvPorts.push_back(std::to_string(trace.recvPort));
-        sendPorts.push_back(std::to_string(trace.sendPort));
-        recvTimes.push_back(std::to_string(trace.recvTime));
-        sendTimes.push_back(std::to_string(trace.sendTime));
+        recvPorts.push_back(CsvOptionalPort(trace.recvPort));
+        sendPorts.push_back(CsvOptionalPort(trace.sendPort));
+        recvTimes.push_back(CsvOptionalTime(trace.recvPort, trace.recvTime));
+        sendTimes.push_back(CsvOptionalTime(trace.sendPort, trace.sendTime));
     }
     const char* fileType = (type == PacketType::NAK || type == PacketType::SACK) ? "ACK" : pktType;
     string fileName = trace_path + "runlog/AllPacketTrace_" + fileType + "_node_" + to_string(src) + ".csv";
@@ -3188,7 +3200,7 @@ inline void UbUtils::LdstThreadMemTaskStartsNotify(uint32_t nodeId, uint32_t mem
     AppendCsvRow(fileName,
                  "time_ps,event,task_id,jetty_num,ta_ssn",
                  CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
-                         "Mem Task Starts",
+                         "MEM Task Starts",
                          std::to_string(memTaskId),
                          "",
                          ""}));
@@ -3200,7 +3212,7 @@ inline void UbUtils::LdstMemTaskCompletesNotify(uint32_t nodeId, uint32_t taskId
     AppendCsvRow(fileName,
                  "time_ps,event,task_id,jetty_num,ta_ssn",
                  CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
-                         "Mem Task Completes",
+                         "MEM Task Completes",
                          std::to_string(taskId),
                          "",
                          ""}));
@@ -3329,7 +3341,7 @@ inline void UbUtils::SwitchLastPacketTraversesNotify(uint32_t nodeId, UbTranspor
                              std::to_string(ubTpHeader.GetTpMsn()),
                              std::to_string(ubTpHeader.GetPsn()),
                              "",
-                             std::to_string(nodeId),
+                             "",
                              "",
                              "",
                              "",

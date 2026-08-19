@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #ifndef UB_TAG_H
 #define UB_TAG_H
+#include <cstdint>
 #include <unordered_map>
 #include <vector>
 #include "ns3/tag.h"
@@ -19,10 +20,12 @@ enum class PacketType {
   * @brief UbPacketTraceTag use this struct to record path.
   */
 struct PortTrace {
-    uint32_t recvPort;
-    uint64_t recvTime;
-    uint32_t sendPort;
-    uint64_t sendTime;
+    // A path endpoint may only have a send or receive observation. Keep the
+    // missing side explicit so trace consumers do not mistake it for port 0.
+    uint32_t recvPort{UINT32_MAX};
+    uint64_t recvTime{0};
+    uint32_t sendPort{UINT32_MAX};
+    uint64_t sendTime{0};
 
     bool operator()(const PortTrace& p1, const PortTrace& p2) const
     {
@@ -172,7 +175,7 @@ public:
         if (m_portTrace.find(node) != m_portTrace.end()) {
             return m_portTrace[node];
         } else {
-            return {0};
+            return {};
         }
     }
 

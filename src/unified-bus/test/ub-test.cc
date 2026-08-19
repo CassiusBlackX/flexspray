@@ -24068,6 +24068,39 @@ class UbTraceDirSetupTest : public TestCase
     }
 };
 
+class UbCsvTraceEndpointSemanticsTest : public TestCase
+{
+  public:
+    UbCsvTraceEndpointSemanticsTest()
+        : TestCase("UnifiedBus - CSV traces preserve missing packet endpoints")
+    {
+    }
+
+    void DoRun() override
+    {
+        UbPacketTraceTag sourceTag;
+        sourceTag.AddPortSendTrace(7, 3, 11);
+        const PortTrace sourceTrace = sourceTag.GetPortTrace(7);
+        NS_TEST_ASSERT_MSG_EQ(sourceTrace.recvPort,
+                              UINT32_MAX,
+                              "A source-only path entry must not invent a receive port");
+        NS_TEST_ASSERT_MSG_EQ(sourceTrace.recvTime,
+                              0u,
+                              "A source-only path entry must not invent a receive timestamp");
+
+        UbPacketTraceTag destinationTag;
+        destinationTag.AddPortRecvTrace(8, 4, 22);
+        const PortTrace destinationTrace = destinationTag.GetPortTrace(8);
+        NS_TEST_ASSERT_MSG_EQ(destinationTrace.sendPort,
+                              UINT32_MAX,
+                              "A destination-only path entry must not invent a send port");
+        NS_TEST_ASSERT_MSG_EQ(destinationTrace.sendTime,
+                              0u,
+                              "A destination-only path entry must not invent a send timestamp");
+
+    }
+};
+
 class UbAlgorithmTraceGateDefaultOffTest : public TestCase
 {
   public:
@@ -32038,6 +32071,7 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbUrmaReadMultiPacketResponseCountTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbUrmaReadMultiSliceRequestPacketSemanticsTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTraceDirSetupTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCsvTraceEndpointSemanticsTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbAlgorithmTraceGateDefaultOffTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbAlgorithmTraceCategoryGateTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbQueueTraceCategoryGateTest(), TestCase::Duration::QUICK);
@@ -32955,6 +32989,7 @@ UbRuntimeToolsTestSuite::UbRuntimeToolsTestSuite()
     : TestSuite("unified-bus-runtime-tools", Type::UNIT)
 {
     AddTestCase(new UbTraceDirSetupTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCsvTraceEndpointSemanticsTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbAlgorithmTraceGateDefaultOffTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbAlgorithmTraceCategoryGateTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbQueueTraceCategoryGateTest(), TestCase::Duration::QUICK);
