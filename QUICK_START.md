@@ -13,7 +13,7 @@
 | 下载       | git（Git 下载）<br/>或：tar 与 bunzip2（Web 下载）               | 无最低版本要求       |
 | 编译器     | g++<br/>或：clang++           | >= 10<br/>>= 11      |
 | 配置       | python3                       | >= 3.8               |
-| 构建系统   | cmake<br/>以及 make / ninja / Xcode 其一 | cmake >= 3.13<br/>无最低版本要求 |
+| 构建系统   | cmake，以及系统可用的构建工具其一 | cmake >= 3.13<br/>按平台提供 |
 
 如使用 Conda/virtualenv，请确保后续运行的 `python3` 与安装依赖的解释器一致。
 
@@ -27,6 +27,7 @@
 | clang++ | `clang++ --version` |
 | python3 | `python3 -V`        |
 | cmake   | `cmake --version`   |
+| make    | `make --version`    |
 
 ## 获取代码
 
@@ -83,11 +84,14 @@ conda install pandas matplotlib seaborn
 BUILD_JOBS=${BUILD_JOBS:-$(python3.12 -c 'import os; print(os.cpu_count() or 1)')}
 
 # 配置 UB 仿真所需模块
-python3.12 ./ns3 configure --enable-modules=unified-bus --disable-werror -d release -G Ninja
+python3.12 ./ns3 configure --enable-modules=unified-bus --disable-werror -d release
 
 # 编译 UB 仿真入口及其依赖
 python3.12 ./ns3 build -j "$BUILD_JOBS" ub-quick-example
 ```
+
+省略 `-G` 时，`./ns3` 会自动选择本机可用的 CMake 构建工具。用户无需指定或安装
+某个特定的构建工具；如果本机没有可用工具，CMake 配置阶段会报告缺少构建生成器。
 
 如果需要开发或验证 ns-3 其他模块，再使用不带 `--enable-modules` 的全量配置。
 
@@ -96,7 +100,7 @@ python3.12 ./ns3 build -j "$BUILD_JOBS" ub-quick-example
 如需启用 Unison for ns-3 的多线程并行仿真（MTP），请在配置阶段加入 `--enable-mtp`（可同时启用示例）：
 
 ```bash
-python3.12 ./ns3 configure --enable-modules=unified-bus --enable-mtp --disable-werror -d release -G Ninja
+python3.12 ./ns3 configure --enable-modules=unified-bus --enable-mtp --disable-werror -d release
 python3.12 ./ns3 build -j "$BUILD_JOBS" ub-quick-example
 
 # 运行时可通过 --mtp-threads 参数启用多线程（需 >= 2）
