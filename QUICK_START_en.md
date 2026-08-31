@@ -13,7 +13,7 @@ The core build depends on the following tools. Download can be via either Git or
 | Download      | git (for Git download) <br/>or: tar and bunzip2 (Web)      | No minimum version     |
 | Compiler      | g++<br/>or: clang++          | >= 10<br/>>= 11        |
 | Configuration | python3                      | >= 3.8                 |
-| Build system  | cmake<br/>plus one of make / ninja / Xcode | cmake >= 3.13<br/>No minimum version |
+| Build system  | cmake plus one system-provided build tool | cmake >= 3.13<br/>Platform-dependent |
 
 If using Conda/virtualenv, please ensure that the `python3` used later matches the interpreter used to install dependencies.
 
@@ -27,6 +27,7 @@ From the command line, you can check the versions as follows:
 | clang++ | `clang++ --version`   |
 | python3 | `python3 -V`          |
 | cmake   | `cmake --version`     |
+| make    | `make --version`      |
 
 ## Get the Code
 
@@ -83,11 +84,15 @@ Tip: If you use an agent that supports repo-local skills, this repository includ
 BUILD_JOBS=${BUILD_JOBS:-$(python3.12 -c 'import os; print(os.cpu_count() or 1)')}
 
 # Configure only modules required by UB simulations
-python3.12 ./ns3 configure --enable-modules=unified-bus --disable-werror -d release -G Ninja
+python3.12 ./ns3 configure --enable-modules=unified-bus --disable-werror -d release
 
 # Build the UB simulation entry and its dependencies
 python3.12 ./ns3 build -j "$BUILD_JOBS" ub-quick-example
 ```
+
+When `-G` is omitted, `./ns3` automatically selects an available CMake build tool.
+Users do not need to select or install a specific tool; if no build tool is
+available, CMake reports the missing generator during configuration.
 
 If you need to develop or validate other ns-3 modules, use a full configuration without `--enable-modules`.
 
@@ -96,7 +101,7 @@ If you need to develop or validate other ns-3 modules, use a full configuration 
 To enable Unison for ns-3 multi-threaded parallel simulation (MTP), add `--enable-mtp` during configuration (you may also enable examples):
 
 ```bash
-python3.12 ./ns3 configure --enable-modules=unified-bus --enable-mtp --disable-werror -d release -G Ninja
+python3.12 ./ns3 configure --enable-modules=unified-bus --enable-mtp --disable-werror -d release
 python3.12 ./ns3 build -j "$BUILD_JOBS" ub-quick-example
 
 # Use --mtp-threads to enable multi-threading at runtime (must be >= 2)
