@@ -2,20 +2,22 @@
 #ifndef UB_TRANSACTION_H
 #define UB_TRANSACTION_H
 
+#include "ns3/callback.h"
+#include "ns3/random-variable-stream.h"
+#include "ns3/ub-datatype.h"
+#include "ns3/ub-lifecycle.h"
+#include "ns3/ub-network-address.h"
+#include "ns3/ub-sliding-bitmap-window.h"
+#include <ns3/event-id.h>
 #include <ns3/node.h>
 #include <ns3/simple-ref-count.h>
+
 #include <deque>
 #include <map>
 #include <optional>
 #include <tuple>
-#include <vector>
 #include <unordered_map>
-#include "ns3/ub-datatype.h"
-#include "ns3/ub-network-address.h"
-#include "ns3/random-variable-stream.h"
-#include "ns3/callback.h"
-#include "ns3/ub-lifecycle.h"
-#include "ns3/ub-sliding-bitmap-window.h"
+#include <vector>
 
 namespace ns3 {
     /**
@@ -208,6 +210,7 @@ namespace ns3 {
         void TriggerScheduleWqeSegment(uint32_t jettyNum,
                                        Ptr<UbWqe> originatingWqe,
                                        bool lifecycleOperation);
+        void TriggerScheduleCtpWqe(uint32_t jettyNum, uint32_t wqeId);
         void TryContinueJettyTransmission(uint32_t jettyNum);
         void TryContinueJettyTransmission(Ptr<UbTransportChannel> tp);
         void TryContinueJettyTransmission(Ptr<UbTransportGroup> tpGroup);
@@ -271,6 +274,7 @@ namespace ns3 {
                             Ptr<UbWqe> wqe,
                             const UbLifecycleResourceIdentity& wqeIdentity,
                             const UbCtpEntityKey& key);
+        bool IsCtpWqeDispatchReady(uint32_t jettyNum, uint32_t wqeId) const;
         bool HasWqeOperation(uint32_t jettyNum, uint32_t wqeId) const;
         bool HasLifecycleOperationForJetty(uint32_t jettyNum) const;
         bool HasRtpTpGroupWork(
@@ -504,6 +508,14 @@ namespace ns3 {
 
         void NotifyRtpTpGroupWorkChanged(
             const UbRtpTransportReference& reference);
+        void StartDispatchGate(uint32_t jettyNum, uint32_t wqeId, bool ctp);
+        void RunDispatchGate(uint32_t jettyNum,
+                             uint32_t wqeId,
+                             UbLifecycleResourceIdentity operationIdentity);
+        void CancelDispatchEvent(OperationRecord& operation);
+        void RunDelayedInboundRequest(uint32_t localTpn, Ptr<UbWqeSegment> segment);
+        void ProcessInboundTaRequestNow(uint32_t localTpn, Ptr<UbWqeSegment> segment);
+        std::vector<EventId> m_delayedInboundEvents;
 
         uint32_t m_nodeId;
         UbController* m_ownerController{nullptr};
@@ -542,6 +554,9 @@ namespace ns3 {
             bool rtpWqeSegmentTxActive{false};
             bool txEntryQueued{false};
             bool awaitingTpSegmentCleanup{false};
+            bool dispatchReady{false};
+            bool dispatchEventPending{false};
+            EventId dispatchEvent;
             bool ctp{false};
             UbCtpEntityKey ctpKey;
             struct SegmentRecord

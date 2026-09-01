@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-only
+#include "ub-transaction.h"
+
+#include "ub-ctp.h"
+
+#include "ns3/hash.h"
 #include "ns3/log.h"
 #include "ns3/simulator.h"
-
-#include "ns3/ub-datatype.h"
 #include "ns3/ub-controller.h"
-#include "ns3/hash.h"
-#include "ub-ctp.h"
+#include "ns3/ub-datatype.h"
 #include "ns3/ub-modulo-sequence.h"
-#include "ub-transaction.h"
 #include "ns3/ub-utils.h"
 
 #include <sstream>
@@ -584,7 +585,134 @@ UbTransaction::TriggerScheduleWqeSegment(uint32_t jettyNum,
 {
     NS_ABORT_MSG_IF(!lifecycleOperation,
                     "Non-lifecycle local RTP scheduling has no live caller");
-    EnqueueRtpWqe(jettyNum, originatingWqe, false);
+    if (originatingWqe != nullptr)
+    {
+        StartDispatchGate(jettyNum, originatingWqe->GetWqeId(), false);
+    }
+}
+
+void
+UbTransaction::TriggerScheduleCtpWqe(uint32_t jettyNum, uint32_t wqeId)
+{
+    const auto operation = m_operations.find({jettyNum, wqeId});
+    if (operation != m_operations.end() && operation->second.ctp &&
+        operation->second.wqe != nullptr && !operation->second.wqe->IsSentCompleted())
+    {
+        StartDispatchGate(jettyNum, wqeId, true);
+    }
+}
+
+void
+UbTransaction::StartDispatchGate(uint32_t jettyNum, uint32_t wqeId, bool ctp)
+{
+    auto operation = m_operations.find({jettyNum, wqeId});
+    if (operation == m_operations.end() || operation->second.wqe == nullptr ||
+        operation->second.ctp != ctp || operation->second.awaitingTpSegmentCleanup)
+    {
+        return;
+    }
+
+    OperationRecord& record = operation->second;
+    if (record.dispatchReady)
+    {
+        if (ctp)
+        {
+            Ptr<UbController> controller = GetOwnerController();
+            Ptr<UbCtpTransportService> service =
+                controller == nullptr ? nullptr : controller->PeekCtpTransportService();
+            if (service != nullptr)
+            {
+                service->NotifyJettyWork(jettyNum);
+            }
+        }
+        else
+        {
+            EnqueueRtpWqe(jettyNum, record.wqe, false);
+        }
+        return;
+    }
+
+    Ptr<UbController> controller = GetOwnerController();
+    const Time delay =
+        controller == nullptr ? NanoSeconds(0) : controller->GetInitiatorProtocolDispatchDelay();
+    if (!delay.IsStrictlyPositive())
+    {
+        record.dispatchReady = true;
+        if (ctp)
+        {
+            Ptr<UbCtpTransportService> service =
+                controller == nullptr ? nullptr : controller->PeekCtpTransportService();
+            if (service != nullptr)
+            {
+                service->NotifyJettyWork(jettyNum);
+            }
+        }
+        else
+        {
+            EnqueueRtpWqe(jettyNum, record.wqe, false);
+        }
+        return;
+    }
+
+    if (record.dispatchEventPending)
+    {
+        return;
+    }
+
+    record.dispatchEventPending = true;
+    const UbLifecycleResourceIdentity operationIdentity = record.operationIdentity;
+    record.dispatchEvent = Simulator::Schedule(delay,
+                                               &UbTransaction::RunDispatchGate,
+                                               this,
+                                               jettyNum,
+                                               wqeId,
+                                               operationIdentity);
+}
+
+void
+UbTransaction::RunDispatchGate(uint32_t jettyNum,
+                               uint32_t wqeId,
+                               UbLifecycleResourceIdentity operationIdentity)
+{
+    auto operation = m_operations.find({jettyNum, wqeId});
+    if (operation == m_operations.end() || operation->second.operationIdentity != operationIdentity)
+    {
+        return;
+    }
+
+    OperationRecord& record = operation->second;
+    record.dispatchEventPending = false;
+    record.dispatchEvent = EventId();
+    if (record.awaitingTpSegmentCleanup || record.wqe == nullptr)
+    {
+        return;
+    }
+    record.dispatchReady = true;
+    if (record.ctp)
+    {
+        Ptr<UbController> controller = GetOwnerController();
+        Ptr<UbCtpTransportService> service =
+            controller == nullptr ? nullptr : controller->PeekCtpTransportService();
+        if (service != nullptr)
+        {
+            service->NotifyJettyWork(jettyNum);
+        }
+    }
+    else
+    {
+        EnqueueRtpWqe(jettyNum, record.wqe, false);
+    }
+}
+
+void
+UbTransaction::CancelDispatchEvent(OperationRecord& operation)
+{
+    if (operation.dispatchEventPending)
+    {
+        Simulator::Cancel(operation.dispatchEvent);
+        operation.dispatchEventPending = false;
+        operation.dispatchEvent = EventId();
+    }
 }
 
 void
@@ -614,8 +742,8 @@ UbTransaction::TryContinueJettyTransmission(uint32_t jettyNum)
     {
         OperationRecord& record = operation->second;
         Ptr<UbWqe> wqe = record.wqe;
-        if (record.ctp || record.awaitingTpSegmentCleanup || wqe == nullptr ||
-            wqe->GetBytesLeft() == 0 || wqe->IsSentCompleted() ||
+        if (record.ctp || !record.dispatchReady || record.awaitingTpSegmentCleanup ||
+            wqe == nullptr || wqe->GetBytesLeft() == 0 || wqe->IsSentCompleted() ||
             (!wqe->CanSend() && !IsOrderedByInitiator(jettyNum, wqe)))
         {
             continue;
@@ -1126,7 +1254,8 @@ UbTransaction::StartRtpWqeSegmentTx(uint32_t jettyNum, Ptr<UbWqe> originatingWqe
                                ? m_operations.end()
                                : m_operations.find({jettyNum, originatingWqe->GetWqeId()});
     if (operation == m_operations.end() || operation->second.wqe != originatingWqe ||
-        operation->second.awaitingTpSegmentCleanup || operation->second.rtpWqeSegmentTxActive)
+        !operation->second.dispatchReady || operation->second.awaitingTpSegmentCleanup ||
+        operation->second.rtpWqeSegmentTxActive)
     {
         return;
     }
@@ -1728,6 +1857,38 @@ void UbTransaction::HandleInboundTaUnit(uint32_t localTpn, Ptr<UbWqeSegment> seg
         return;
     }
 
+    Ptr<UbController> controller = GetOwnerController();
+    const Time delay =
+        controller == nullptr ? NanoSeconds(0) : controller->GetTargetProtocolProcessingDelay();
+    if (delay.IsStrictlyPositive())
+    {
+        std::erase_if(m_delayedInboundEvents,
+                      [](const EventId& event) { return event.IsExpired(); });
+        m_delayedInboundEvents.push_back(
+            Simulator::Schedule(delay,
+                                &UbTransaction::RunDelayedInboundRequest,
+                                this,
+                                localTpn,
+                                segment));
+        return;
+    }
+    ProcessInboundTaRequestNow(localTpn, segment);
+}
+
+void
+UbTransaction::RunDelayedInboundRequest(uint32_t localTpn, Ptr<UbWqeSegment> segment)
+{
+    std::erase_if(m_delayedInboundEvents, [](const EventId& event) { return event.IsExpired(); });
+    if (m_ownerController == nullptr || m_ownerController->IsDisposing())
+    {
+        return;
+    }
+    ProcessInboundTaRequestNow(localTpn, segment);
+}
+
+void
+UbTransaction::ProcessInboundTaRequestNow(uint32_t localTpn, Ptr<UbWqeSegment> segment)
+{
     if (IsUrmaReadWriteRequest(segment) && HasRemoteUrmaRequestProcessor())
     {
         Ptr<UbTransaction> self(this);
@@ -1739,9 +1900,7 @@ void UbTransaction::HandleInboundTaUnit(uint32_t localTpn, Ptr<UbWqeSegment> seg
         DispatchRemoteUrmaRequest(segment, responseSender);
         return;
     }
-
-    Ptr<UbWqeSegment> response = ProcessInboundTaRequest(segment);
-    EnqueueInboundTaResponse(localTpn, response);
+    EnqueueInboundTaResponse(localTpn, ProcessInboundTaRequest(segment));
 }
 
 bool
@@ -2257,6 +2416,14 @@ UbTransaction::TryAdmitCtpWqe(uint32_t jettyNum,
     return true;
 }
 
+bool
+UbTransaction::IsCtpWqeDispatchReady(uint32_t jettyNum, uint32_t wqeId) const
+{
+    const auto operation = m_operations.find({jettyNum, wqeId});
+    return operation != m_operations.end() && operation->second.ctp &&
+           operation->second.dispatchReady && !operation->second.awaitingTpSegmentCleanup;
+}
+
 void
 UbTransaction::NotifyRtpTpGroupWorkChanged(
     const UbRtpTransportReference& reference)
@@ -2442,6 +2609,7 @@ UbTransaction::FinishWqe(uint32_t jettyNum,
                     "WqeFinish references an unknown, duplicate, or stale direct WQE");
     if (operation != m_operations.end() && operation->second.ctp)
     {
+        CancelDispatchEvent(operation->second);
         const UbCtpEntityKey ctpKey = operation->second.ctpKey;
         const UbLifecycleResourceIdentity wqeIdentity = operation->second.wqeIdentity;
         auto transactionState = m_ctpTransactionStates.find(operation->second.ctpKey);
@@ -2517,6 +2685,7 @@ UbTransaction::FinishWqe(uint32_t jettyNum,
         NS_ABORT_MSG_IF(operation->second.awaitingTpSegmentCleanup,
                         "WqeFinish references an operation already awaiting transport cleanup");
         hadLifecycleOperation = true;
+        CancelDispatchEvent(operation->second);
         DetachRtpTxEntry(operation->second);
         wqeIdentity = operation->second.wqeIdentity;
         Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
@@ -2745,6 +2914,11 @@ UbTransaction::DiscardJettyRetainedWqeSegmentsForSimulationStop(uint32_t jettyNu
 void
 UbTransaction::DoDispose()
 {
+    for (const auto& event : m_delayedInboundEvents)
+    {
+        Simulator::Cancel(event);
+    }
+    m_delayedInboundEvents.clear();
     NS_LOG_FUNCTION(this);
     for (auto& [key, queue] : m_rtpTxQueues)
     {
@@ -2775,6 +2949,11 @@ UbTransaction::DoDispose()
     m_serviceMode.clear();
     m_remoteUrmaRequestProcessor = UbRemoteUrmaRequestProcessor();
     m_memoryStore.clear();
+    for (auto& [key, operation] : m_operations)
+    {
+        (void)key;
+        CancelDispatchEvent(operation);
+    }
     m_operations.clear();
     m_tpgsBlockingJettyRetry.clear();
     m_coordinator = nullptr;

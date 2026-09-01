@@ -18,10 +18,28 @@ NS_OBJECT_ENSURE_REGISTERED(UbController);
 
 TypeId UbController::GetTypeId()
 {
-    static TypeId tid = TypeId("ns3::UbController")
-        .SetParent<Object>()
-        .SetGroupName("UnifiedBus")
-        .AddConstructor<UbController>();
+    static TypeId tid =
+        TypeId("ns3::UbController")
+            .SetParent<Object>()
+            .SetGroupName("UnifiedBus")
+            .AddConstructor<UbController>()
+            .AddAttribute(
+                "InitiatorProtocolDispatchDelay",
+                "Delay between synchronous WQE admission and the first transport dispatch.",
+                TimeValue(NanoSeconds(0)),
+                MakeTimeAccessor(&UbController::m_initiatorProtocolDispatchDelay),
+                MakeTimeChecker(TimeStep(0)))
+            .AddAttribute("TargetProtocolProcessingDelay",
+                          "Delay between complete inbound request receipt and target processing.",
+                          TimeValue(NanoSeconds(0)),
+                          MakeTimeAccessor(&UbController::m_targetProtocolProcessingDelay),
+                          MakeTimeChecker(TimeStep(0)))
+            .AddAttribute(
+                "InitiatorProtocolCompletionVisibilityDelay",
+                "Delay between protocol completion and initiator application visibility.",
+                TimeValue(NanoSeconds(0)),
+                MakeTimeAccessor(&UbController::m_initiatorProtocolCompletionVisibilityDelay),
+                MakeTimeChecker(TimeStep(0)));
     return tid;
 }
 

@@ -923,7 +923,6 @@ UbCtpTransportService::SubmitPreparedWqe(uint32_t jettyNum, Ptr<UbWqe> wqe)
     {
         return false;
     }
-    TryContinueJettyTransmission(key);
     return true;
 }
 
@@ -1159,6 +1158,12 @@ UbCtpTransportService::TryContinueJettyTransmission(const UbCtpEntityKey& entity
                 segment = controller->GetUbTransaction()->PrepareNextCtpWqeSegment(
                     jettys[idx],
                     GetTransactionConstraints().maxSegmentBytes);
+                if (segment != nullptr && !controller->GetUbTransaction()->IsCtpWqeDispatchReady(
+                                              jettys[idx]->GetJettyNum(),
+                                              segment->GetTaskId()))
+                {
+                    segment = nullptr;
+                }
                 if (segment != nullptr)
                 {
                     rrIndex = (idx + 1) % count;
@@ -1443,17 +1448,51 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t ingress
     }
     localState.Tx().routing.routingType = linkHeader.GetRoutingType();
 
+    const Time targetDelay =
+        controller == nullptr ? NanoSeconds(0) : controller->GetTargetProtocolProcessingDelay();
+    if (targetDelay.IsStrictlyPositive())
+    {
+        std::erase_if(m_delayedInboundEvents,
+                      [](const EventId& event) { return event.IsExpired(); });
+        m_delayedInboundEvents.push_back(
+            Simulator::Schedule(targetDelay,
+                                &UbCtpTransportService::RunDelayedInboundRequest,
+                                this,
+                                request,
+                                localKey));
+        return true;
+    }
+    return ProcessInboundTaRequestNow(request, localKey);
+}
+
+void
+UbCtpTransportService::RunDelayedInboundRequest(Ptr<UbWqeSegment> request, UbCtpEntityKey key)
+{
+    std::erase_if(m_delayedInboundEvents, [](const EventId& event) { return event.IsExpired(); });
+    Ptr<UbController> controller = m_node == nullptr ? nullptr : m_node->GetObject<UbController>();
+    if (controller == nullptr || controller->IsDisposing())
+    {
+        return;
+    }
+    ProcessInboundTaRequestNow(request, key);
+}
+
+bool
+UbCtpTransportService::ProcessInboundTaRequestNow(Ptr<UbWqeSegment> request,
+                                                  const UbCtpEntityKey& key)
+{
+    Ptr<UbController> controller = m_node == nullptr ? nullptr : m_node->GetObject<UbController>();
     Ptr<UbTransaction> transaction =
         controller == nullptr ? nullptr : controller->GetUbTransaction();
-    Ptr<UbCtpTransportService> self(this);
-    UbRemoteUrmaResponseSender responseSender =
-        MakeBoundCallback(&UbCtpTransportService::SendBoundRemoteUrmaResponse,
-                          self,
-                          transaction,
-                          request,
-                          localKey);
     if (transaction != nullptr && transaction->HasRemoteUrmaRequestProcessor())
     {
+        Ptr<UbCtpTransportService> self(this);
+        UbRemoteUrmaResponseSender responseSender =
+            MakeBoundCallback(&UbCtpTransportService::SendBoundRemoteUrmaResponse,
+                              self,
+                              transaction,
+                              request,
+                              key);
         transaction->DispatchRemoteUrmaRequest(request, responseSender);
         return true;
     }
@@ -1463,10 +1502,10 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t ingress
     {
         return true;
     }
-    ++localState.Rx().generatedResponses;
-
-    const bool sent = SendResponseSegment(response, localState);
-    TryRetireTransactionState(localKey);
+    UbCtpEntityState& state = GetOrCreateEntityState(key);
+    ++state.Rx().generatedResponses;
+    const bool sent = SendResponseSegment(response, state);
+    TryRetireTransactionState(key);
     return sent;
 }
 
@@ -1970,6 +2009,11 @@ UbCtpTransportService::CompleteFromTaAckNow(const UbCtpEntityKey& key,
 void
 UbCtpTransportService::DoDispose()
 {
+    for (const auto& event : m_delayedInboundEvents)
+    {
+        Simulator::Cancel(event);
+    }
+    m_delayedInboundEvents.clear();
     if (m_lifecycleOwner.generation != 0)
     {
         const std::vector<Callback<void>> cleanups =

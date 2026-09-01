@@ -197,8 +197,30 @@ public:
         return m_tpConnectionManager;
     }
 
-    uint32_t GetActiveSenderFlowCount() const { return m_activeSenderFlowCount; }
-    bool IsDisposing() const { return m_disposing; }
+    uint32_t GetActiveSenderFlowCount() const
+    {
+        return m_activeSenderFlowCount;
+    }
+
+    bool IsDisposing() const
+    {
+        return m_disposing;
+    }
+
+    Time GetInitiatorProtocolDispatchDelay() const
+    {
+        return m_initiatorProtocolDispatchDelay;
+    }
+
+    Time GetTargetProtocolProcessingDelay() const
+    {
+        return m_targetProtocolProcessingDelay;
+    }
+
+    Time GetInitiatorProtocolCompletionVisibilityDelay() const
+    {
+        return m_initiatorProtocolCompletionVisibilityDelay;
+    }
     void IncrementActiveSenderFlowCount() { ++m_activeSenderFlowCount; }
     void DecrementActiveSenderFlowCount()
     {
@@ -237,6 +259,9 @@ public:
     Ptr<TpConnectionManager> m_tpConnectionManager;
     uint32_t m_activeSenderFlowCount{0};
     bool m_disposing{false};
+    Time m_initiatorProtocolDispatchDelay{NanoSeconds(0)};
+    Time m_targetProtocolProcessingDelay{NanoSeconds(0)};
+    Time m_initiatorProtocolCompletionVisibilityDelay{NanoSeconds(0)};
 };
 
 } // namespace ns3

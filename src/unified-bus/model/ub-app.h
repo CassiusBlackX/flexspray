@@ -109,6 +109,8 @@ private:
         bool destroyTaskScopedJetty,
         bool releasePlannedTpBinding,
         const std::vector<UbLifecycleResourceIdentity>& plannedTpConnections);
+    void OnTaskCompletedVisible(uint32_t taskId, uint32_t jettyNum);
+    std::map<std::pair<uint32_t, uint32_t>, EventId> m_completionVisibilityEvents;
 
     TracedCallback<uint32_t, uint32_t> m_traceMemTaskStartsNotify;
     TracedCallback<uint32_t, uint32_t> m_traceMemTaskCompletesNotify;

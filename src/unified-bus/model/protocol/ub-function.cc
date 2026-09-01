@@ -244,6 +244,7 @@ UbFunction::SubmitCtpWqe(Ptr<UbWqe> wqe,
     jetty->PushWqe(wqe, UbCtpTransportConstraints{}.maxSegmentBytes);
     m_jettyManager->RegisterWqe(jettyNum, wqe->GetWqeId(), wqeIdentity);
     GetTransaction()->AddWqe(jettyNum, wqe);
+    GetTransaction()->TriggerScheduleCtpWqe(jettyNum, wqe->GetWqeId());
     return {UbWqeSubmissionStatus::ACCEPTED, wqeIdentity};
 }
 

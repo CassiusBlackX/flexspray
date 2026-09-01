@@ -135,6 +135,11 @@ UbApp::SetFinishCallback(Callback<void, uint32_t> cb, Ptr<UbLdstInstance> ubLdst
 void
 UbApp::DoDispose(void)
 {
+    for (auto& entry : m_completionVisibilityEvents)
+    {
+        Simulator::Cancel(entry.second);
+    }
+    m_completionVisibilityEvents.clear();
     Application::DoDispose();
 }
 
@@ -523,26 +528,61 @@ UbApp::CompleteComputeTask(uint32_t taskId)
 void
 UbApp::OnTaskCompleted(uint32_t taskId, uint32_t jettyNum)
 {
+    Ptr<UbController> controller =
+        GetNode() == nullptr ? nullptr : GetNode()->GetObject<UbController>();
+    const Time delay = controller == nullptr
+                           ? NanoSeconds(0)
+                           : controller->GetInitiatorProtocolCompletionVisibilityDelay();
+    if (delay.IsStrictlyPositive())
+    {
+        const auto key = std::make_pair(taskId, jettyNum);
+        auto it = m_completionVisibilityEvents.find(key);
+        if (it != m_completionVisibilityEvents.end())
+        {
+            Simulator::Cancel(it->second);
+        }
+        m_completionVisibilityEvents[key] =
+            Simulator::Schedule(delay, &UbApp::OnTaskCompletedVisible, this, taskId, jettyNum);
+        return;
+    }
+    OnTaskCompletedVisible(taskId, jettyNum);
+}
+
+void
+UbApp::OnTaskCompletedVisible(uint32_t taskId, uint32_t jettyNum)
+{
+    m_completionVisibilityEvents.erase(std::make_pair(taskId, jettyNum));
+    Ptr<Node> node = GetNode();
+    if (node == nullptr)
+    {
+        UbTrafficGen::Get()->OnTaskCompleted(taskId);
+        return;
+    }
     NS_LOG_FUNCTION(this << taskId);
     NS_LOG_INFO("WQE Completes, jettyNum: " << jettyNum << " taskId: " << taskId);
-    WqeTaskCompletesNotify(GetNode()->GetId(), jettyNum, taskId);
+    WqeTaskCompletesNotify(node->GetId(), jettyNum, taskId);
     NS_LOG_INFO("[APPLICATION INFO] taskId: " << taskId << ",finish time:"
                                               << Simulator::Now().GetNanoSeconds() << "ns");
     if (m_transportMode == TransportMode::RTP)
     {
-        Ptr<UbFunction> function = GetNode()->GetObject<UbController>()->GetUbFunction();
-        UbJettyLifetime lifetime = UbJettyLifetime::REUSABLE;
-        const bool destroyTaskScopedJetty = m_enableTaskScopedJettyDestroy &&
-                                            function->TryGetJettyLifetime(jettyNum, lifetime) &&
-                                            lifetime == UbJettyLifetime::TASK_SCOPED;
-        if (destroyTaskScopedJetty || m_enablePlannedTpConnectionDestroy)
+        Ptr<UbController> controller = node->GetObject<UbController>();
+        if (controller != nullptr && !controller->IsDisposing() &&
+            controller->GetUbFunction() != nullptr)
         {
-            UbTrafficGen::Get()->OnTaskCompleted(taskId,
-                                                 this,
-                                                 jettyNum,
-                                                 destroyTaskScopedJetty,
-                                                 m_enablePlannedTpConnectionDestroy);
-            return;
+            Ptr<UbFunction> function = controller->GetUbFunction();
+            UbJettyLifetime lifetime = UbJettyLifetime::REUSABLE;
+            const bool destroyTaskScopedJetty = m_enableTaskScopedJettyDestroy &&
+                                                function->TryGetJettyLifetime(jettyNum, lifetime) &&
+                                                lifetime == UbJettyLifetime::TASK_SCOPED;
+            if (destroyTaskScopedJetty || m_enablePlannedTpConnectionDestroy)
+            {
+                UbTrafficGen::Get()->OnTaskCompleted(taskId,
+                                                     this,
+                                                     jettyNum,
+                                                     destroyTaskScopedJetty,
+                                                     m_enablePlannedTpConnectionDestroy);
+                return;
+            }
         }
     }
     UbTrafficGen::Get()->OnTaskCompleted(taskId);

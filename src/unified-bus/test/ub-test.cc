@@ -1048,6 +1048,334 @@ class UbControllerCtpLazyServiceTest : public TestCase
     }
 };
 
+class UbControllerProtocolDelayAttributesTest : public TestCase
+{
+  public:
+    UbControllerProtocolDelayAttributesTest()
+        : TestCase("UnifiedBus - controller protocol delay attributes")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Ptr<Node> node = CreateObject<Node>(0);
+        Ptr<UbController> controller = CreateObject<UbController>();
+        node->AggregateObject(controller);
+
+        for (const char* name : {"InitiatorProtocolDispatchDelay",
+                                 "TargetProtocolProcessingDelay",
+                                 "InitiatorProtocolCompletionVisibilityDelay"})
+        {
+            TimeValue value;
+            NS_TEST_ASSERT_MSG_EQ(controller->GetAttributeFailSafe(name, value),
+                                  true,
+                                  "Protocol delay attribute should be readable");
+            NS_TEST_ASSERT_MSG_EQ(value.Get(), NanoSeconds(0), "Protocol delay default is 0ns");
+            NS_TEST_ASSERT_MSG_EQ(controller->SetAttributeFailSafe(name, TimeValue(NanoSeconds(7))),
+                                  true,
+                                  "Non-negative protocol delay should be accepted");
+            NS_TEST_ASSERT_MSG_EQ(controller->GetAttributeFailSafe(name, value),
+                                  true,
+                                  "Protocol delay attribute should remain readable");
+            NS_TEST_ASSERT_MSG_EQ(value.Get(),
+                                  NanoSeconds(7),
+                                  "Protocol delay value should round-trip");
+            NS_TEST_ASSERT_MSG_EQ(
+                controller->SetAttributeFailSafe(name, TimeValue(NanoSeconds(-1))),
+                false,
+                "Negative protocol delay should be rejected");
+        }
+
+        Simulator::Destroy();
+    }
+};
+
+class UbTargetProtocolDelayPipelinesTaUnitsTest : public TestCase
+{
+  public:
+    UbTargetProtocolDelayPipelinesTaUnitsTest()
+        : TestCase("UnifiedBus - target protocol delay pipelines complete TA units")
+    {
+    }
+
+  private:
+    Ptr<UbWqeSegment> MakeRequest(uint32_t taSsn)
+    {
+        Ptr<UbWqeSegment> request = CreateObject<UbWqeSegment>();
+        request->SetSrc(1);
+        request->SetDest(0);
+        request->SetType(TaOpcode::TA_OPCODE_WRITE);
+        request->SetRequestOpcode(TaOpcode::TA_OPCODE_WRITE);
+        request->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
+        request->SetTaskId(77);
+        request->SetOriginJettyNum(9);
+        request->SetTaSsn(taSsn);
+        request->SetRequestTassn(taSsn);
+        request->SetSize(64);
+        request->SetWqeSize(128);
+        return request;
+    }
+
+    void DoRun() override
+    {
+        Ptr<Node> node = CreateObject<Node>(0);
+        InitNode(node, UB_DEVICE, 0, false);
+        Ptr<UbController> controller = node->GetObject<UbController>();
+        controller->SetAttribute("TargetProtocolProcessingDelay", TimeValue(NanoSeconds(216)));
+
+        std::vector<Time> processingTimes;
+        controller->GetUbTransaction()->SetRemoteUrmaRequestProcessor(UbRemoteUrmaRequestProcessor(
+            [&processingTimes](const UbRemoteUrmaRequestContext&, UbRemoteUrmaResponseSender) {
+                processingTimes.push_back(Simulator::Now());
+                return true;
+            }));
+
+        controller->GetUbTransaction()->HandleInboundTaUnit(11, MakeRequest(0));
+        controller->GetUbTransaction()->HandleInboundTaUnit(12, MakeRequest(1));
+        NS_TEST_ASSERT_MSG_EQ(processingTimes.size(),
+                              0u,
+                              "Target processing must not run before the configured delay");
+
+        Simulator::Stop(NanoSeconds(216));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(processingTimes.size(),
+                              2u,
+                              "Every complete TA unit must be processed even when task IDs match");
+        NS_TEST_ASSERT_MSG_EQ(processingTimes[0],
+                              NanoSeconds(216),
+                              "The first TA unit should observe the target delay once");
+        NS_TEST_ASSERT_MSG_EQ(processingTimes[1],
+                              NanoSeconds(216),
+                              "Independent TA-unit delays should overlap rather than serialize");
+        Simulator::Destroy();
+    }
+};
+
+class UbInitiatorProtocolDispatchDelayRtpTest : public TestCase
+{
+  public:
+    UbInitiatorProtocolDispatchDelayRtpTest()
+        : TestCase("UnifiedBus - RTP dispatch delay starts independent WQEs after admission")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Config::Reset();
+        const Time dispatchDelay = NanoSeconds(188);
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        controller->SetAttribute("InitiatorProtocolDispatchDelay", TimeValue(dispatchDelay));
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        Ptr<UbTransportChannel> transport =
+            controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
+        transport->TraceConnectWithoutContext(
+            "WqeSegmentSendsNotify",
+            MakeCallback(&UbInitiatorProtocolDispatchDelayRtpTest::OnSegmentSent, this));
+
+        constexpr uint32_t firstJetty = 100;
+        constexpr uint32_t secondJetty = 101;
+        constexpr uint32_t firstTask = 910001;
+        constexpr uint32_t secondTask = 910002;
+        for (const auto [jettyNum, taskId] :
+             {std::pair<uint32_t, uint32_t>{firstJetty, firstTask},
+              std::pair<uint32_t, uint32_t>{secondJetty, secondTask}})
+        {
+            function->CreateJetty(topo.sender->GetId(), topo.receiver->GetId(), jettyNum);
+            NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
+                                                           topo.receiver->GetId(),
+                                                           jettyNum,
+                                                           false,
+                                                           {kUrmaWriteRegressionSenderTpn}),
+                                  true,
+                                  "RTP WQE should bind before dispatch-delay admission");
+            Ptr<UbWqe> wqe = function->CreateWqe(topo.sender->GetId(),
+                                                 topo.receiver->GetId(),
+                                                 64,
+                                                 taskId,
+                                                 TaOpcode::TA_OPCODE_WRITE);
+            wqe->SetOrderType(OrderType::ORDER_NO);
+            NS_TEST_ASSERT_MSG_EQ(
+                static_cast<uint32_t>(function->SubmitWqe(wqe, jettyNum).status),
+                static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+                "RTP WQE admission must remain synchronous with dispatch delay enabled");
+        }
+
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetResidentOperationCount(),
+                              2u,
+                              "Both RTP operations must be resident before dispatch is ready");
+        NS_TEST_ASSERT_MSG_EQ(m_dispatchTimes.empty(),
+                              true,
+                              "Dispatch delay must prevent an immediate RTP segment dispatch");
+
+        Simulator::Stop(NanoSeconds(187));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(m_dispatchTimes.empty(),
+                              true,
+                              "RTP segment dispatch must not precede the configured delay");
+
+        // The gate and its ScheduleNow follow-ups are all timestamped at 188ns.  Stop after
+        // that timestamp so the follow-ups are not left behind by a same-time stop event.
+        Simulator::Stop(NanoSeconds(2));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(m_dispatchTimes.size(),
+                              2u,
+                              "Both independent RTP WQEs should dispatch after one gate delay");
+        uint32_t firstDispatchCount = 0;
+        uint32_t secondDispatchCount = 0;
+        for (const auto& [taskId, timestamp] : m_dispatchTimes)
+        {
+            NS_TEST_ASSERT_MSG_EQ(timestamp,
+                                  dispatchDelay,
+                                  "RTP segment dispatch should occur at the configured gate delay");
+            NS_TEST_ASSERT_MSG_EQ((taskId == firstTask || taskId == secondTask),
+                                  true,
+                                  "RTP dispatch trace should identify a submitted WQE");
+            if (taskId == firstTask)
+            {
+                ++firstDispatchCount;
+            }
+            else
+            {
+                ++secondDispatchCount;
+            }
+        }
+        NS_TEST_ASSERT_MSG_EQ(firstDispatchCount,
+                              1u,
+                              "The first RTP WQE should dispatch exactly once");
+        NS_TEST_ASSERT_MSG_EQ(secondDispatchCount,
+                              1u,
+                              "The second RTP WQE should dispatch exactly once");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+    void OnSegmentSent(uint32_t, uint32_t taskId, uint32_t)
+    {
+        m_dispatchTimes.emplace_back(taskId, Simulator::Now());
+    }
+
+    std::vector<std::pair<uint32_t, Time>> m_dispatchTimes;
+};
+
+class UbInitiatorProtocolDispatchDelayCtpTest : public TestCase
+{
+  public:
+    UbInitiatorProtocolDispatchDelayCtpTest()
+        : TestCase("UnifiedBus - CTP dispatch delay starts independent WQEs after admission")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Config::Reset();
+        const Time dispatchDelay = NanoSeconds(188);
+        LocalTpTopology topo = BuildLocalTpTopology();
+        Ptr<UbController> controller = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
+        controller->SetAttribute("InitiatorProtocolDispatchDelay", TimeValue(dispatchDelay));
+        service->TraceConnectWithoutContext(
+            "FirstPacketSendsNotify",
+            MakeCallback(&UbInitiatorProtocolDispatchDelayCtpTest::OnFirstPacket, this));
+
+        constexpr uint32_t jettyNum = 102;
+        constexpr uint32_t firstTask = 910003;
+        constexpr uint32_t secondTask = 910004;
+        const UbCtpEntityKey key{.srcEntityId = 1,
+                                 .dstNodeId = topo.receiver->GetId(),
+                                 .dstEntityId = 1,
+                                 .vl = 7};
+        function->CreateJetty(topo.sender->GetId(), topo.receiver->GetId(), jettyNum);
+        Ptr<UbJetty> jetty = function->GetJetty(jettyNum);
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(jetty, key),
+                              true,
+                              "CTP Jetty should prepare before dispatch-delay admission");
+        for (const uint32_t taskId : {firstTask, secondTask})
+        {
+            Ptr<UbWqe> wqe = CreateCtpWqeForKey(function, topo.sender->GetId(), key, taskId);
+            wqe->SetSport(static_cast<uint8_t>(topo.senderPort->GetIfIndex()));
+            NS_TEST_ASSERT_MSG_EQ(
+                controller->SubmitUrmaWqe(jettyNum, wqe),
+                true,
+                "CTP WQE admission must remain synchronous with dispatch delay enabled");
+        }
+
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetResidentOperationCount(),
+                              2u,
+                              "Both CTP operations must be resident before dispatch is ready");
+        NS_TEST_ASSERT_MSG_EQ(m_firstPacketTimes.empty(),
+                              true,
+                              "Dispatch delay must prevent an immediate CTP first packet");
+
+        Simulator::Stop(NanoSeconds(187));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(m_firstPacketTimes.empty(),
+                              true,
+                              "CTP first packets must not precede the configured delay");
+
+        // The gate and its ScheduleNow follow-ups are all timestamped at 188ns.  Stop after
+        // that timestamp so the follow-ups are not left behind by a same-time stop event.
+        Simulator::Stop(NanoSeconds(2));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(m_firstPacketTimes.size(),
+                              2u,
+                              "Both independent CTP WQEs should dispatch after one delay");
+        uint32_t firstDispatchCount = 0;
+        uint32_t secondDispatchCount = 0;
+        for (const auto& [taskId, timestamp] : m_firstPacketTimes)
+        {
+            NS_TEST_ASSERT_MSG_EQ(timestamp,
+                                  dispatchDelay,
+                                  "CTP first dispatch should occur at the configured delay");
+            NS_TEST_ASSERT_MSG_EQ((taskId == firstTask || taskId == secondTask),
+                                  true,
+                                  "CTP dispatch trace should identify a submitted WQE");
+            if (taskId == firstTask)
+            {
+                ++firstDispatchCount;
+            }
+            else
+            {
+                ++secondDispatchCount;
+            }
+        }
+        NS_TEST_ASSERT_MSG_EQ(firstDispatchCount,
+                              1u,
+                              "The first CTP WQE should dispatch exactly once");
+        NS_TEST_ASSERT_MSG_EQ(secondDispatchCount,
+                              1u,
+                              "The second CTP WQE should dispatch exactly once");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+    void OnFirstPacket(uint32_t,
+                       uint32_t taskId,
+                       uint32_t,
+                       uint32_t,
+                       uint32_t,
+                       uint32_t,
+                       uint32_t,
+                       uint32_t,
+                       uint32_t,
+                       uint32_t,
+                       uint32_t)
+    {
+        m_firstPacketTimes.emplace_back(taskId, Simulator::Now());
+    }
+
+    std::vector<std::pair<uint32_t, Time>> m_firstPacketTimes;
+};
+
 class UbTrafficConfigEndpointPortFieldsTest : public TestCase
 {
   public:
@@ -17588,9 +17916,16 @@ class UbLifecycleTaskCompletionPrecedesJettyRetirementTest : public TestCase
         Ptr<UbApp> app = CreateObject<UbApp>();
         app->SetAttribute("EnableTaskScopedJettyDestroy", BooleanValue(true));
         topo.sender->AddApplication(app);
+        topo.sender->GetObject<UbController>()->SetAttribute(
+            "InitiatorProtocolCompletionVisibilityDelay",
+            TimeValue(NanoSeconds(143)));
         app->TraceConnectWithoutContext(
             "WqeTaskStartsNotify",
             MakeCallback(&UbLifecycleTaskCompletionPrecedesJettyRetirementTest::OnTaskStarted,
+                         this));
+        app->TraceConnectWithoutContext(
+            "WqeTaskCompletesNotify",
+            MakeCallback(&UbLifecycleTaskCompletionPrecedesJettyRetirementTest::OnTaskCompleted,
                          this));
         Ptr<UbFunction> function = topo.sender->GetObject<UbController>()->GetUbFunction();
         constexpr uint32_t taskId = 900002;
@@ -17619,6 +17954,7 @@ class UbLifecycleTaskCompletionPrecedesJettyRetirementTest : public TestCase
         record.priority = 1;
         record.delay = "0ns";
         UbTrafficGen* trafficGen = UbTrafficGen::Get();
+        trafficGen->SetDependencyVisibilityDelay(TimeStep(0));
         trafficGen->AddTask(record);
 
         TrafficRecord dependent = record;
@@ -17640,11 +17976,32 @@ class UbLifecycleTaskCompletionPrecedesJettyRetirementTest : public TestCase
             static_cast<uint32_t>(UbJettyLifecycleState::ACTIVE),
             "Task-scoped Jetty cleanup must not begin before completion is visible");
 
+        Simulator::Stop(NanoSeconds(100));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(trafficGen->GetCompletedTaskCount(),
+                              completedBefore,
+                              "Completion visibility must wait for the configured delay");
+        NS_TEST_ASSERT_MSG_EQ(m_completionTimes.size(),
+                              0u,
+                              "Application completion trace must wait for the configured delay");
+        const bool dependentStartedEarly =
+            std::find(m_startedTaskIds.begin(), m_startedTaskIds.end(), dependentTaskId) !=
+            m_startedTaskIds.end();
+        NS_TEST_ASSERT_MSG_EQ(dependentStartedEarly,
+                              false,
+                              "Dependent work must remain blocked before completion visibility");
+
         Simulator::Stop(NanoSeconds(200));
         Simulator::Run();
         NS_TEST_ASSERT_MSG_EQ(trafficGen->GetCompletedTaskCount(),
                               completedBefore + 1,
                               "Scheduled completion visibility must not wait for Jetty cleanup");
+        NS_TEST_ASSERT_MSG_EQ(m_completionTimes.size(),
+                              1u,
+                              "Application completion trace should be emitted once");
+        NS_TEST_ASSERT_MSG_EQ(m_completionTimes.front(),
+                              NanoSeconds(143),
+                              "Application completion trace should observe the visibility delay");
         NS_TEST_ASSERT_MSG_EQ(
             function->IsJettyExists(jettyNum),
             true,
@@ -17685,7 +18042,16 @@ class UbLifecycleTaskCompletionPrecedesJettyRetirementTest : public TestCase
         m_startedTaskIds.push_back(taskId);
     }
 
+    void OnTaskCompleted(uint32_t, uint32_t, uint32_t taskId)
+    {
+        if (taskId == 900002)
+        {
+            m_completionTimes.push_back(Simulator::Now());
+        }
+    }
+
     std::vector<uint32_t> m_startedTaskIds;
+    std::vector<Time> m_completionTimes;
 };
 
 class UbLifecycleCtpCompletionDoesNotScheduleRtpCleanupTest : public TestCase
@@ -29162,15 +29528,20 @@ class UbCtpDelayedRemoteProcessorPreservesEndpointPortsTest : public TestCase
             topo.sender->GetObject<UbController>()->GetCtpTransportService();
         Ptr<UbController> receiverController = topo.receiver->GetObject<UbController>();
         Ptr<UbCtpTransportService> receiverService = receiverController->GetCtpTransportService();
+        receiverController->SetAttribute("TargetProtocolProcessingDelay",
+                                         TimeValue(NanoSeconds(216)));
         topo.receiverPort->GetUbQueue()->SetAttribute("MaxEgressBytes", UintegerValue(0));
 
         UbCtpEntityKey requestKey{.srcEntityId = 1,
                                   .dstNodeId = topo.receiver->GetId(),
                                   .dstEntityId = 1,
                                   .vl = 7};
+        Time processorTime = NanoSeconds(0);
         receiverController->GetUbTransaction()->SetRemoteUrmaRequestProcessor(
             UbRemoteUrmaRequestProcessor(
-                [](const UbRemoteUrmaRequestContext&, UbRemoteUrmaResponseSender responseSender) {
+                [&processorTime](const UbRemoteUrmaRequestContext&,
+                                 UbRemoteUrmaResponseSender responseSender) {
+                    processorTime = Simulator::Now();
                     Simulator::Schedule(NanoSeconds(1), responseSender);
                     return true;
                 }));
@@ -29182,8 +29553,11 @@ class UbCtpDelayedRemoteProcessorPreservesEndpointPortsTest : public TestCase
         request->SetDport(static_cast<uint8_t>(topo.receiverPort->GetIfIndex()));
         Ptr<Packet> requestPacket = senderService->BuildDataPacket(request, requestKey);
         topo.receiver->GetObject<UbSwitch>()->SwitchHandlePacket(topo.receiverPort, requestPacket);
-        Simulator::Stop(NanoSeconds(100));
+        Simulator::Stop(NanoSeconds(300));
         Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(processorTime,
+                              NanoSeconds(216),
+                              "CTP remote processing should start after the target protocol delay");
 
         UbCtpEntityKey responseKey{.srcEntityId = requestKey.dstEntityId,
                                    .dstNodeId = topo.sender->GetId(),
@@ -29213,6 +29587,102 @@ class UbCtpDelayedRemoteProcessorPreservesEndpointPortsTest : public TestCase
                 "delayed response should retain the request source endpoint as its destination");
         }
 
+        Simulator::Destroy();
+    }
+};
+
+class UbProtocolDelayedInboundDisposeCancelsCallbacksTest : public TestCase
+{
+  public:
+    UbProtocolDelayedInboundDisposeCancelsCallbacksTest()
+        : TestCase("UnifiedBus - protocol disposal cancels delayed inbound callbacks")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        RunRtpScenario();
+        RunCtpScenario();
+    }
+
+    void RunRtpScenario()
+    {
+        Config::Reset();
+        Ptr<Node> node = CreateObject<Node>(0);
+        InitNode(node, UB_DEVICE, 0, false);
+        Ptr<UbController> controller = node->GetObject<UbController>();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        controller->SetAttribute("TargetProtocolProcessingDelay", TimeValue(NanoSeconds(216)));
+
+        uint32_t processorCalls = 0;
+        transaction->SetRemoteUrmaRequestProcessor(UbRemoteUrmaRequestProcessor(
+            [&processorCalls](const UbRemoteUrmaRequestContext&, UbRemoteUrmaResponseSender) {
+                ++processorCalls;
+                return true;
+            }));
+
+        Ptr<UbWqeSegment> request = CreateObject<UbWqeSegment>();
+        request->SetSrc(1);
+        request->SetDest(0);
+        request->SetType(TaOpcode::TA_OPCODE_WRITE);
+        request->SetRequestOpcode(TaOpcode::TA_OPCODE_WRITE);
+        request->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
+        request->SetTaskId(920001);
+        request->SetOriginJettyNum(1);
+        request->SetTaSsn(0);
+        request->SetRequestTassn(0);
+        request->SetSize(64);
+        request->SetWqeSize(64);
+        transaction->HandleInboundTaUnit(11, request);
+        transaction->Dispose();
+
+        Simulator::Stop(NanoSeconds(300));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(processorCalls,
+                              0u,
+                              "Disposed RTP transaction must cancel target processing callback");
+        Simulator::Destroy();
+    }
+
+    void RunCtpScenario()
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        Ptr<UbCtpTransportService> senderService =
+            topo.sender->GetObject<UbController>()->GetCtpTransportService();
+        Ptr<UbController> receiverController = topo.receiver->GetObject<UbController>();
+        Ptr<UbCtpTransportService> receiverService = receiverController->GetCtpTransportService();
+        receiverController->SetAttribute("TargetProtocolProcessingDelay",
+                                         TimeValue(NanoSeconds(216)));
+
+        uint32_t processorCalls = 0;
+        receiverController->GetUbTransaction()->SetRemoteUrmaRequestProcessor(
+            UbRemoteUrmaRequestProcessor(
+                [&processorCalls](const UbRemoteUrmaRequestContext&,
+                                  UbRemoteUrmaResponseSender) {
+                    ++processorCalls;
+                    return true;
+                }));
+
+        UbCtpEntityKey requestKey{.srcEntityId = 1,
+                                  .dstNodeId = topo.receiver->GetId(),
+                                  .dstEntityId = 1,
+                                  .vl = 7};
+        Ptr<UbWqeSegment> request = CreateCtpWriteSegment(0);
+        request->SetSrc(topo.sender->GetId());
+        request->SetDest(topo.receiver->GetId());
+        request->SetSport(static_cast<uint8_t>(topo.senderPort->GetIfIndex()));
+        request->SetDport(static_cast<uint8_t>(topo.receiverPort->GetIfIndex()));
+        Ptr<Packet> requestPacket = senderService->BuildDataPacket(request, requestKey);
+        topo.receiver->GetObject<UbSwitch>()->SwitchHandlePacket(topo.receiverPort, requestPacket);
+        receiverService->Dispose();
+
+        Simulator::Stop(NanoSeconds(300));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(processorCalls,
+                              0u,
+                              "Disposed CTP service must cancel target processing callback");
         Simulator::Destroy();
     }
 };
@@ -31873,6 +32343,10 @@ UbTestSuite::UbTestSuite()
 {
     AddTestCase(new UbFunctionalityTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbControllerCtpLazyServiceTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbControllerProtocolDelayAttributesTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbTargetProtocolDelayPipelinesTaUnitsTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbInitiatorProtocolDispatchDelayRtpTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbInitiatorProtocolDispatchDelayCtpTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTrafficConfigEndpointPortFieldsTest(), TestCase::Duration::QUICK);
 #ifndef _WIN32
     AddTestCase(new UbTrafficConfigRejectsEntityColumnsTest(), TestCase::Duration::QUICK);
@@ -31938,6 +32412,8 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbCtpBuildResponsePacketTaAckTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpLocalDataPacketGeneratesTaAckTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpDelayedRemoteProcessorPreservesEndpointPortsTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbProtocolDelayedInboundDisposeCancelsCallbacksTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbCtpTaAckInheritsPacketSprayRoutingPolicyTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpCompactQueueCarriesLocalGenerationMetadataTest(),

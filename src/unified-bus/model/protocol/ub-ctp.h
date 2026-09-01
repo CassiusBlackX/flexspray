@@ -216,6 +216,8 @@ class UbCtpTransportService : public Object
     void SendRemoteUrmaResponse(Ptr<UbTransaction> transaction,
                                 Ptr<UbWqeSegment> request,
                                 const UbCtpEntityKey& responseKey);
+    void RunDelayedInboundRequest(Ptr<UbWqeSegment> request, UbCtpEntityKey key);
+    bool ProcessInboundTaRequestNow(Ptr<UbWqeSegment> request, const UbCtpEntityKey& key);
     Ptr<UbWqeSegment> ProcessInboundTaRequest(Ptr<UbWqeSegment> request) const;
     Ptr<UbWqeSegment> BuildInboundTaOperation(const UbCompactTransactionHeader& taHeader,
                                               const UbCompactMAExtTah& maHeader,
@@ -316,6 +318,7 @@ class UbCtpTransportService : public Object
     std::map<UbCtpEntityKey, uint32_t> m_keyJettyRrIndex;
     std::map<UbCtpEntityKey, UbCtpEntityState> m_entityStates;
     std::map<QueueKey, Ptr<UbCtpTxQueue>> m_queues;
+    std::vector<EventId> m_delayedInboundEvents;
     std::set<Ptr<UbCtpTxQueue>> m_registeredQueues;
     std::map<UbCtpCongestionKey, uint32_t> m_congestionSignals;
     TracedCallback<uint32_t,
