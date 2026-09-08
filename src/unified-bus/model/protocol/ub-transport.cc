@@ -1970,6 +1970,7 @@ UbTransportChannel::ResetSegmentSendProgressFromPsn(uint64_t psn)
 void UbTransportChannel::ReTxTimeout()
 {
     const UbRetransTimeoutResult timeoutResult = m_retrans->OnTimeout();
+    m_congestionCtrl->OnSenderRetransmissionRollback(timeoutResult.retransmitBytes);
     if (timeoutResult.triggerTransmit) {
         TriggerTransportTransmit();
     }
