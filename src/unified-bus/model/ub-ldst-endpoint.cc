@@ -8,7 +8,7 @@
 #include "ns3/ub-controller.h"
 #include "ns3/ub-datalink.h"
 #include "ns3/ub-header.h"
-#include "ns3/ub-network-address.h"
+#include "ns3/ub-ldst-packet-utils.h"
 #include "ns3/ub-port.h"
 #include "ns3/ub-switch.h"
 
@@ -26,10 +26,16 @@ constexpr uint64_t kCompactMaetahAddressMax = (uint64_t{1} << 58) - 1;
 TypeId
 UbLdstEndpoint::GetTypeId()
 {
-    static TypeId tid = TypeId("ns3::UbLdstEndpoint")
-                            .SetParent<Object>()
-                            .SetGroupName("UnifiedBus")
-                            .AddConstructor<UbLdstEndpoint>();
+    static TypeId tid =
+        TypeId("ns3::UbLdstEndpoint")
+            .SetParent<Object>()
+            .SetGroupName("UnifiedBus")
+            .AddConstructor<UbLdstEndpoint>()
+            .AddAttribute("HeaderConfig",
+                          "Outgoing LDST CFG: 9 (CNA16) or 7 (CNA24/NLP4 simulator extension).",
+                          EnumValue(UbDatalinkHeaderConfig::PACKET_UB_MEM),
+                          MakeEnumAccessor<UbDatalinkHeaderConfig>(&UbLdstEndpoint::m_headerConfig),
+                          MakeLdstHeaderConfigChecker());
     return tid;
 }
 
@@ -84,6 +90,12 @@ UbLdstEndpoint::IsEncodableMemorySize(uint32_t bytes, uint8_t& encodedLength) co
 bool
 UbLdstEndpoint::ValidateRequest(const UbLdstRequest& request, uint8_t& encodedLength) const
 {
+    if (!IsLdstAddressEncodable(static_cast<uint8_t>(m_headerConfig), {m_nodeId, 0, false}) ||
+        !IsLdstAddressEncodable(static_cast<uint8_t>(m_headerConfig), {request.destNode, 0, false}))
+    {
+        NS_LOG_WARN("LDST address cannot be encoded for HeaderConfig " << unsigned(m_headerConfig));
+        return false;
+    }
     if (m_inflight.find(request.requestId) != m_inflight.end())
     {
         NS_LOG_WARN("Duplicate LDST request id " << request.requestId);
@@ -206,11 +218,9 @@ UbLdstEndpoint::BuildAndSendRequestPacket(const UbLdstRequest& request, uint8_t 
     taHeader.SetIniTaSsn(request.requestId);
     packet->AddHeader(taHeader);
 
-    UbCna16NetworkHeader networkHeader;
-    networkHeader.SetScna(static_cast<uint16_t>(utils::NodeIdToCna16(m_nodeId)));
-    networkHeader.SetDcna(static_cast<uint16_t>(utils::NodeIdToCna16(request.destNode)));
-    networkHeader.SetServiceLevel(request.priority);
-    packet->AddHeader(networkHeader);
+    AddLdstNetworkHeader(packet,
+                         {{m_nodeId, 0, false}, {request.destNode, 0, false}, 0, request.priority},
+                         m_headerConfig);
 
     UbDataLink::AddPacketHeader(packet,
                                 false,
@@ -218,7 +228,7 @@ UbLdstEndpoint::BuildAndSendRequestPacket(const UbLdstRequest& request, uint8_t 
                                 request.priority,
                                 request.priority,
                                 RoutingType::PER_FLOW_SHORTEST_PATHS,
-                                UbDatalinkHeaderConfig::PACKET_UB_MEM);
+                                m_headerConfig);
 
     sw->PushPacketToVoq(packet, request.port, request.priority, request.port);
     Simulator::ScheduleNow(&UbPort::TriggerTransmit, port);

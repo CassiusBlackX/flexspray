@@ -234,7 +234,28 @@ Unknown override keys must fail before execution. Do not write keys that are not
 Runtime-catalog boundary:
 - Treat the runtime catalog as the current build + current `scratch/ub-quick-example` introspection surface.
 - Treat it as authoritative for `ns3::...` attribute keys.
+- Runtime queries use `--no-build`; build before refreshing the catalog. `runtime-query-v2`
+  preserves empty string defaults (including packet trace controls) and invalidates v1 caches.
 - For UB globals, prefer `--PrintUbGlobals`; if that surface is unavailable in the current build, fall back only to the documented minimum UB-global set used by the project tooling.
+
+### LDST network format
+
+`ns3::UbLdstApi::HeaderConfig` and `ns3::UbLdstEndpoint::HeaderConfig` are independent
+attributes, both defaulting to `9` and accepting only `7` or `9` (enum checker, not 7..9).
+They select outgoing requests; receivers parse the packet and responses retain the request
+CFG, including delayed replies. The CSV MEM task path uses Api/Instance/Thread; direct
+Endpoint behavior is covered by the module integration suite.
+
+| HeaderConfig | Network header | NLP | Transaction representation |
+| --- | --- | --- | --- |
+| 9 | CNA16 | 0 | Existing compact LDST TP bypass |
+| 7 | CNA24 | 4 | Same compact headers and payload semantics |
+
+CFG7/NLP4 is a simulator-local extension, not a standardized CFG7 bypass combination.
+CFG7/NLP0 remains CTP. Requests use validated simulator node/optional-port CNA mapping;
+CNA16 supports node 0..4095 and port 0..14, CNA24 node 0..65535 and port 0..254.
+Explicit port 0 is distinct from an unspecified port. Api aborts on unencodable addresses;
+Endpoint returns false without creating inflight state. Example: `scratch/2nodes_ldst-cfg7/`.
 
 ### Resolving natural-language parameter intent
 

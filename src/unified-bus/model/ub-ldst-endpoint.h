@@ -68,6 +68,7 @@ class UbLdstEndpoint : public Object
     bool BuildAndSendRequestPacket(const UbLdstRequest& request, uint8_t encodedLength);
     Ptr<Node> GetLocalNode() const;
 
+    UbDatalinkHeaderConfig m_headerConfig{UbDatalinkHeaderConfig::PACKET_UB_MEM};
     uint32_t m_nodeId{0};
     bool m_initialized{false};
     std::unordered_map<uint16_t, InflightRequest> m_inflight;

@@ -25,6 +25,10 @@ the CSV header itself.
 
 Files: `TaskTrace_node_*.csv`
 
+For MEM tasks, the standard runner subscribes to `UbLdstInstance` start/completion events.
+It does not also subscribe to the App's forwarded MEM events, which would write duplicate
+rows for the same task. Public App trace sources remain available to custom observers.
+
 Header:
 
 ```csv

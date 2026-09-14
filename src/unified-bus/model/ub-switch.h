@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #ifndef UB_SWITCH_H
 #define UB_SWITCH_H
+#include "ns3/ub-ldst-packet-utils.h"
 
 #include <optional>
 #include <vector>
@@ -57,7 +58,7 @@ struct ParsedURMAHeaders {
  */
 struct ParsedLdstHeaders {
     UbDatalinkPacketHeader datalinkPacketHeader;
-    UbCna16NetworkHeader cna16NetworkHeader;
+    UbLdstNetworkFields network;
     UbDummyTransactionHeader dummyTransactionHeader;  // Compatible with both Compact and CompactAck
 };
 

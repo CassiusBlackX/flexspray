@@ -106,6 +106,22 @@ class OpenUSimRunScriptsTest(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "returned no entries"):
                     network_attribute_writer.load_or_build_parameter_catalog()
 
+    def test_empty_defaults_do_not_consume_the_next_runtime_entry(self):
+        for prefix, pattern in [
+            ("Attribute", network_attribute_writer.ATTRIBUTE_BLOCK_PATTERN),
+            ("Global", network_attribute_writer.GLOBAL_ENTRY_PATTERN),
+        ]:
+            text = (
+                f"{prefix}: UB_EMPTY\nDescription: empty string\n"
+                "DataType: ns3::StringValue\nDefault: \n"
+                f"{prefix}: UB_NEXT\nDescription: next flag\n"
+                "DataType: ns3::BooleanValue\nDefault: true\n"
+            )
+            entries = list(pattern.finditer(text))
+            self.assertEqual(len(entries), 2)
+            self.assertEqual(entries[0].group("default_value"), "")
+            self.assertEqual(entries[1].group("default_value"), "true")
+
     def test_observability_preset_returns_valid_tiers(self):
         for tier in ("minimal", "balanced", "detailed"):
             overrides = network_attribute_writer.observability_preset(tier)

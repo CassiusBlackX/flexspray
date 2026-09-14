@@ -1,0 +1,31 @@
+{
+  "path": "/home/luosichen/workspace/ns-3-ub/.worktrees/ub2.1-ldst-cfg7/scratch/2nodes_ldst-cfg7/network_attribute.txt",
+  "resolution_mode": "full-catalog-snapshot",
+  "parameter_catalog_source": "/home/luosichen/workspace/ns-3-ub/.worktrees/ub2.1-ldst-cfg7/.openusim/project/parameter-catalog.json",
+  "required_project_pins": {
+    "UB_PYTHON_SCRIPT_PATH": "scratch/ns-3-ub-tools/trace_analysis/parse_trace.py"
+  },
+  "resolved_entry_count": 132,
+  "applied_overrides": {
+    "UB_TRACE_PRESET": "balanced",
+    "UB_LIFECYCLE_TRACE_LEVEL": "SUMMARY",
+    "UB_TRACE_ENABLE": "true",
+    "UB_TASK_TRACE_ENABLE": "true",
+    "UB_PACKET_TRACE_ENABLE": "true",
+    "UB_PORT_TRACE_ENABLE": "true",
+    "UB_QUEUE_TRACE_ENABLE": "true",
+    "UB_RECORD_PKT_TRACE": "false",
+    "UB_PARSE_TRACE_ENABLE": "true",
+    "ns3::UbLdstApi::HeaderConfig": "7",
+    "ns3::UbLdstEndpoint::HeaderConfig": "7",
+    "ns3::UbLdstApi::RoutingType": "PER_FLOW_SHORTEST_PATHS",
+    "ns3::UbSwitch::FlowControl": "CBFC",
+    "ns3::UbLdstInstance::ThreadNum": "1",
+    "ns3::UbLdstThread::StoreOutstanding": "4",
+    "ns3::UbLdstThread::LoadOutstanding": "4",
+    "ns3::UbLdstThread::StoreRequestSize": "512",
+    "ns3::UbLdstThread::LoadResponseSize": "512",
+    "ns3::UbLdstThread::LoadRequestSize": "64"
+  },
+  "validation_mode": "runtime-addattribute-and-global-catalog"
+}

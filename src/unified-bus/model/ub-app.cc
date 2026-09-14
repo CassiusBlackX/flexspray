@@ -445,6 +445,12 @@ UbApp::SendTraffic(UbTrafficGen::RuntimeTask task)
         NS_LOG_INFO("MEM Task Starts, taskId: " << task.taskId);
         MemTaskStartsNotify(GetNode()->GetId(), task.taskId);
         std::vector<uint32_t> threadIds = {0, 1};
+        UintegerValue threadNum;
+        ldstInstance->GetAttribute("ThreadNum", threadNum);
+        if (threadNum.Get() == 1)
+        {
+            threadIds.resize(1);
+        }
         ldstInstance->HandleLdstTask(task.sourceNode,
                                      task.destNode,
                                      task.dataSize,

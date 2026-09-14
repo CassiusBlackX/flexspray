@@ -500,7 +500,8 @@ uint32_t UbDatalinkPacketHeader::Deserialize(Buffer::Iterator start)
 
     // 验证配置项
     if (config != uint8_t(UbDatalinkHeaderConfig::PACKET_IPV4) &&
-        config != uint8_t(UbDatalinkHeaderConfig::PACKET_UB_MEM)) {
+        config != uint8_t(UbDatalinkHeaderConfig::PACKET_UB_MEM) &&
+        config != uint8_t(UbDatalinkHeaderConfig::PACKET_CNA24)) {
         NS_LOG_WARN("Invalid config value in UbDatalinkPacketHeader: got "
                     << static_cast<uint32_t>(config));
     }
@@ -1890,7 +1891,10 @@ UbCnpExtTph::GetLocation() const
  * UbCna16NetworkHeader implementation
  ***************************************************
  */
-UbCna16NetworkHeader::UbCna16NetworkHeader() = default;
+UbCna16NetworkHeader::UbCna16NetworkHeader()
+    : m_ccFields{.raw13 = 0}
+{
+}
 UbCna16NetworkHeader::~UbCna16NetworkHeader() = default;
 
 TypeId UbCna16NetworkHeader::GetTypeId()
@@ -2152,7 +2156,10 @@ bool UbCna16NetworkHeader::IsValidMode() const
  * UbCna24NetworkHeader implementation
  ***************************************************
  */
-UbCna24NetworkHeader::UbCna24NetworkHeader() = default;
+UbCna24NetworkHeader::UbCna24NetworkHeader()
+    : m_ccFields{.raw13 = 0}
+{
+}
 UbCna24NetworkHeader::~UbCna24NetworkHeader() = default;
 
 TypeId UbCna24NetworkHeader::GetTypeId()

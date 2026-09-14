@@ -17,17 +17,17 @@ PROJECT_TRACE_PARSER_PATH = "scratch/ns-3-ub-tools/trace_analysis/parse_trace.py
 
 TYPE_ID_LINE_PATTERN = re.compile(r"^\s*(?P<type_id>ns3::(?:Ub\w+|TpConnectionManager))\s*$", re.MULTILINE)
 ATTRIBUTE_BLOCK_PATTERN = re.compile(
-    r"Attribute:\s*(?P<name>[^\n]+)\n"
-    r"Description:\s*(?P<description>[^\n]*)\n"
-    r"DataType:\s*(?P<value_type>[^\n]+)\n"
-    r"Default:\s*(?P<default_value>[^\n]*)",
+    r"Attribute:[ \t]*(?P<name>[^\n]+)\n"
+    r"Description:[ \t]*(?P<description>[^\n]*)\n"
+    r"DataType:[ \t]*(?P<value_type>[^\n]+)\n"
+    r"Default:[ \t]*(?P<default_value>[^\n]*)",
     re.MULTILINE,
 )
 GLOBAL_ENTRY_PATTERN = re.compile(
-    r"Global:\s*(?P<name>UB_[^\n]+)\n"
-    r"Description:\s*(?P<description>[^\n]*)\n"
-    r"DataType:\s*(?P<value_type>[^\n]+)\n"
-    r"Default:\s*(?P<default_value>[^\n]*)",
+    r"Global:[ \t]*(?P<name>UB_[^\n]+)\n"
+    r"Description:[ \t]*(?P<description>[^\n]*)\n"
+    r"DataType:[ \t]*(?P<value_type>[^\n]+)\n"
+    r"Default:[ \t]*(?P<default_value>[^\n]*)",
     re.MULTILINE,
 )
 
@@ -55,7 +55,7 @@ def _run_query(flag: str) -> str:
     current_repo_root = repo_root()
     launcher_path = _ensure_query_prerequisites(current_repo_root)
     result = subprocess.run(
-        [sys.executable, str(launcher_path), "run", _query_command(flag)],
+        [sys.executable, str(launcher_path), "run", "--no-build", _query_command(flag)],
         cwd=current_repo_root,
         capture_output=True,
         text=True,
@@ -134,7 +134,8 @@ def _cache_is_stale(cache_path: Path) -> bool:
     if not cache_path.is_file():
         return True
     try:
-        if not _read_json(cache_path).get("entries"):
+        cached = _read_json(cache_path)
+        if cached.get("extractor_version") != "runtime-query-v2" or not cached.get("entries"):
             return True
     except (OSError, ValueError, TypeError):
         return True
@@ -156,7 +157,7 @@ def load_or_build_parameter_catalog() -> tuple[dict, Path]:
         raise RuntimeError("runtime parameter catalog query returned no entries")
     catalog = {
         "source_root": str(repo_root() / QUERY_PROGRAM),
-        "extractor_version": "runtime-query-v1",
+        "extractor_version": "runtime-query-v2",
         "entry_count": len(entries),
         "entries": entries,
     }

@@ -5001,8 +5001,8 @@ void UbUtils::ClientTraceConnect(int srcNode)
         return; // 若不开启trace或不开启task trace则直接返回
     }
     Ptr<ns3::UbApp> client = DynamicCast<ns3::UbApp>(NodeList::GetNode(srcNode)->GetApplication(0));
-    client->TraceConnectWithoutContext("MemTaskStartsNotify", MakeCallback(DagMemTaskStartsNotify));
-    client->TraceConnectWithoutContext("MemTaskCompletesNotify", MakeCallback(DagMemTaskCompletesNotify));
+    // MEM task rows already come from UbLdstInstance in TopoTraceConnect.
+    // App forwards the same events; subscribing both writes duplicate TaskTrace rows.
     client->TraceConnectWithoutContext("ComputeTaskQueuedNotify", MakeCallback(DagComputeTaskQueuedNotify));
     client->TraceConnectWithoutContext("ComputeTaskStartsNotify", MakeCallback(DagComputeTaskStartsNotify));
     client->TraceConnectWithoutContext("ComputeTaskCompletesNotify", MakeCallback(DagComputeTaskCompletesNotify));

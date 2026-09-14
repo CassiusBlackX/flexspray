@@ -474,6 +474,10 @@ _Avoid_: OpenUSim core, UB toolchain
 A replaceable simulator policy or algorithm supplied by this repository where the UB Base Specification does not prescribe one exact behavior.
 _Avoid_: normative UB behavior
 
+**CFG7 LDST extension**:
+A simulator-local Load/Store TP bypass packet format identified by LPH.CFG=7 and CNA24 NTH.NLP=4. It retains the compact transaction request, memory-access extension, and response headers of the CFG9 LDST format; the cited UB Base Specifications do not define this extension.
+_Avoid_: standard CFG7 TP bypass, CTP, full transaction-header format
+
 **Simulation boundary**:
 The set of claims that this simulator can support with its modeled protocol behavior and emitted evidence.
 _Avoid_: hardware truth, real cluster measurement

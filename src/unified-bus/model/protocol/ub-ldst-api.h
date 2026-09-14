@@ -22,6 +22,7 @@ class UbController;
 
 struct UbLdstRemoteRequestContext
 {
+    UbDatalinkHeaderConfig headerConfig{UbDatalinkHeaderConfig::PACKET_UB_MEM};
     uint16_t requestId{0};
     uint32_t srcNode{0};
     uint32_t destNode{0};
@@ -82,7 +83,6 @@ class UbLdstApi : public Object
     bool BuildRemoteRequestContext(Ptr<Packet> packet,
                                    uint32_t ingressPort,
                                    UbDatalinkPacketHeader& linkPacketHeader,
-                                   UbCna16NetworkHeader& cna16NetworkHeader,
                                    UbCompactTransactionHeader& cTaHeader,
                                    UbLdstRemoteRequestContext& context);
     void SendRemoteResponse(const UbLdstRemoteRequestContext& context,
@@ -94,6 +94,7 @@ class UbLdstApi : public Object
                                         TaOpcode responseOpcode,
                                         uint32_t payloadBytes,
                                         Ptr<Packet> payload);
+    UbDatalinkHeaderConfig m_headerConfig{UbDatalinkHeaderConfig::PACKET_UB_MEM};
     uint32_t m_nodeId{UINT32_MAX};
     uint32_t m_lbHashSalt = 0;
     RoutingType m_routingType{RoutingType::PER_FLOW_SHORTEST_PATHS};

@@ -672,6 +672,9 @@ UbPacketType_t UbSwitch::GetPacketType(Ptr<Packet> packet)
         if (cna24Header.GetNlp() == UB_CNA_NLP_CTPH) {
             return UB_CTP_DATA_PACKET;
         }
+        if (cna24Header.GetNlp() == UB_CNA_NLP_LDST_BYPASS) {
+            return UB_LDST_DATA_PACKET;
+        }
     }
     if (dlHeader.IsPacketUbMemHeader())
         return UB_LDST_DATA_PACKET;
@@ -857,15 +860,14 @@ bool UbSwitch::SinkLdstDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Pa
     // Store/load request: DLH cNTH cTAH(0x03/0x06) [cMAETAH] Payload
     // Store/load response: DLH cNTH cATAH(0x11/0x12) Payload
     NS_LOG_DEBUG("[UbPort recv] ub ldst frame");
-    uint16_t dCna = headers.cna16NetworkHeader.GetDcna();
-    uint32_t dnode = utils::Cna16ToNodeId(dCna);
+    uint32_t dnode = headers.network.destination.nodeId;
     // Forward
     if (dnode != GetObject<Node>()->GetId()) {
         return false;
     }
-    if ((dCna & 0xF) != 0)
+    if (headers.network.destination.hasPort)
     {
-        NS_ABORT_MSG_IF(utils::Cna16ToPortId(dCna) != port->GetIfIndex(),
+        NS_ABORT_MSG_IF(headers.network.destination.portId != port->GetIfIndex(),
                         "LDST destination endpoint port does not match the receiving UB port");
     }
     // Sink Packet
@@ -997,7 +999,7 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
     // Route
     bool selectedShortestPath = false;
     const bool hasExplicitDestinationPort =
-        (headers.cna16NetworkHeader.GetDcna() & 0xF) != 0;
+        headers.network.destination.hasPort;
     int outPort = hasExplicitDestinationPort
                       ? m_routingProcess->GetOutPortForEndpoint(
                             rtKey, selectedShortestPath, port->GetIfIndex())
@@ -1137,14 +1139,11 @@ void UbSwitch::ParseURMAPacketHeader(Ptr<Packet> packet, ParsedURMAHeaders &head
 
 void UbSwitch::ParseLdstPacketHeader(Ptr<Packet> packet, ParsedLdstHeaders &headers)
 {
-    // Parse only headers needed by switch for routing and forwarding
-    // Order: DLH -> CNA16NH -> dummyTA -> ...
-    // Note: dummyTA can be either UbCompactTransactionHeader or UbCompactAckTransactionHeader
-    packet->RemoveHeader(headers.datalinkPacketHeader);
-    packet->RemoveHeader(headers.cna16NetworkHeader);
-    packet->PeekHeader(headers.dummyTransactionHeader);
-    packet->AddHeader(headers.cna16NetworkHeader);
-    packet->AddHeader(headers.datalinkPacketHeader);
+    // Use a read-only view: reconstructing from decoded fields would lose CCI bits.
+    Ptr<Packet> view = CopyPacketView(packet);
+    view->RemoveHeader(headers.datalinkPacketHeader);
+    headers.network = RemoveLdstNetworkHeader(view, headers.datalinkPacketHeader.GetConfig());
+    view->PeekHeader(headers.dummyTransactionHeader);
 }
 
 void UbSwitch::ParseCtpPacketHeader(Ptr<Packet> packet, ParsedCtpHeaders &headers)
@@ -1186,15 +1185,13 @@ void UbSwitch::GetURMARoutingKey(const ParsedURMAHeaders &headers, RoutingKey &r
 
 void UbSwitch::GetLdstRoutingKey(const ParsedLdstHeaders &headers, RoutingKey &rtKey)
 {
-    uint16_t dCna = headers.cna16NetworkHeader.GetDcna();
-    uint16_t sCna = headers.cna16NetworkHeader.GetScna();
-    uint32_t snode = utils::Cna16ToNodeId(sCna);
-    uint32_t dnode = utils::Cna16ToNodeId(dCna);
-    const bool sourcePortExplicit = (sCna & 0xF) != 0;
-    const bool destinationPortExplicit = (dCna & 0xF) != 0;
-    uint16_t sport = sourcePortExplicit ? utils::Cna16ToPortId(sCna) : 0;
-    uint16_t dport = destinationPortExplicit ? utils::Cna16ToPortId(dCna) : 0;
-    uint16_t lb = headers.cna16NetworkHeader.GetLb();
+    const auto& network = headers.network;
+    uint32_t snode = network.source.nodeId;
+    uint32_t dnode = network.destination.nodeId;
+    const bool sourcePortExplicit = network.source.hasPort;
+    uint16_t sport = network.source.portId;
+    uint16_t dport = network.destination.portId;
+    uint16_t lb = network.lb;
     rtKey.sip = sourcePortExplicit ? utils::NodeIdToIp(snode, sport).Get()
                                    : utils::NodeIdToIp(snode).Get();
     // Keep the legacy LDST destination lookup key for wildcard CNA16 addresses. The

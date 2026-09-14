@@ -52,6 +52,7 @@ build_lib(
 	model/protocol/ub-routing-table.cc
 	model/ub-switch-allocator.cc
 	model/ub-utils.cc
+	model/protocol/ub-ldst-packet-utils.cc
 	model/protocol/ub-ldst-api.cc
 	model/ub-ldst-thread.cc
 	model/ub-ldst-instance.cc
@@ -98,6 +99,7 @@ build_lib(
 	model/ub-utils.h
 	model/ub-network-address.h
 	model/ub-tp-connection-manager.h
+	model/protocol/ub-ldst-packet-utils.h
 	model/protocol/ub-ldst-api.h
 	model/ub-ldst-thread.h
 	model/ub-ldst-instance.h
@@ -120,5 +122,6 @@ build_lib(
                     ${mpi_libraries}
   TEST_SOURCES
     test/ub-test.cc
+    test/ub-ldst-cfg-test.cc
     test/ub-structured-routing-test.cc
 )

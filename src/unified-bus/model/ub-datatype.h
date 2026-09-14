@@ -250,6 +250,8 @@ enum class CtpOpcode : uint8_t {
 
 constexpr uint8_t UB_CNA_NLP_CTPH = 0x0;
 constexpr uint8_t UB_CNA_NLP_RTPH = 0x2;
+// Simulator-local CFG7 compact LDST TP bypass extension (not a standard NLP).
+constexpr uint8_t UB_CNA_NLP_LDST_BYPASS = 0x4;
 constexpr uint8_t UB_CTPH_NLP_COMPACT_TAH = 0x0;
 constexpr uint8_t UB_CTPH_NLP_UPI32_EID128_TAH = 0x1;
 constexpr uint8_t UB_CTPH_NLP_UPI16_EID40_TAH = 0x2;

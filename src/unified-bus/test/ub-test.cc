@@ -7,6 +7,7 @@
  * including basic object creation, configuration, and core features.
  */
 
+#include "ub-node-test-fixture.h"
 #include "ns3/config.h"
 #include "ns3/data-rate.h"
 #include "ns3/log.h"
@@ -222,15 +223,6 @@ struct LocalTpTopology
     Ptr<UbPort> receiverPort;
 };
 
-Ptr<UbPort>
-CreatePort(Ptr<Node> node)
-{
-    Ptr<UbPort> port = CreateObject<UbPort>();
-    port->SetAddress(Mac48Address::Allocate());
-    node->AddDevice(port);
-    return port;
-}
-
 class UbFailingLink : public UbLink
 {
   public:
@@ -242,41 +234,6 @@ class UbFailingLink : public UbLink
 
     uint32_t m_transmitStartCalls{0};
 };
-
-void
-InitNode(Ptr<Node> node,
-         UbNodeType_t nodeType,
-         uint32_t portCount,
-         bool provisionDefaultCtpEntity = true)
-{
-    Ptr<UbSwitch> sw = CreateObject<UbSwitch>();
-    node->AggregateObject(sw);
-    sw->SetNodeType(nodeType);
-
-    if (nodeType == UB_DEVICE)
-    {
-        Ptr<UbController> controller = CreateObject<UbController>();
-        node->AggregateObject(controller);
-        controller->CreateUbFunction();
-        controller->CreateUbTransaction();
-    }
-
-    for (uint32_t index = 0; index < portCount; ++index)
-    {
-        CreatePort(node);
-    }
-
-    if (nodeType == UB_DEVICE && provisionDefaultCtpEntity)
-    {
-        Ptr<UbController> controller = node->GetObject<UbController>();
-        controller->CreateDefaultCtpEntity(1);
-        controller->FreezeCtpEntities();
-    }
-
-    sw->Init();
-    Ptr<UbCongestionControl> congestionCtrl = UbCongestionControl::Create(UB_SWITCH);
-    congestionCtrl->OnSwitchAttached(sw);
-}
 
 class UbTestIngressQueue : public UbIngressQueue
 {
@@ -349,15 +306,6 @@ class UbTestIngressQueue : public UbIngressQueue
     bool m_limited{false};
     IngressQueueType m_queueType{IngressQueueType::TP};
 };
-
-void
-AddShortestRoute(Ptr<Node> node, uint32_t destNodeId, uint32_t destPortId, uint16_t outPort)
-{
-    std::vector<uint16_t> outPorts = {outPort};
-    Ptr<UbRoutingProcess> routing = node->GetObject<UbSwitch>()->GetRoutingProcess();
-    routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(destNodeId).Get(), outPorts);
-    routing->GetRoutingTable().AddShortestRoute(NodeIdToIp(destNodeId, destPortId).Get(), outPorts);
-}
 
 Ptr<Node>
 BuildSinglePortCtpNode()
