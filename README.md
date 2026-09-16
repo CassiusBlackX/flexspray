@@ -10,14 +10,14 @@
   <a href="QUICK_START.md">快速开始</a> ·
   <a href="scratch/README.md">场景指南</a> ·
   <a href="docs/experiments/main-next-controlled-comparison-20260802.md">next 验证报告</a> ·
-  <a href="RELEASE_NOTES_UB.md#release-130">发布说明</a> ·
+  <a href="RELEASE_NOTES_UB.md#release-210">发布说明</a> ·
   <a href="README_en.md">English</a>
 </p>
 
 <p align="center">
   <a href="https://gitcode.com/open-usim/ns-3-ub"><img src="https://img.shields.io/static/v1?label=GitCode&message=open-usim%2Fns-3-ub&color=C71D23&logo=git&logoColor=white" alt="GitCode repository"></a>
   <a href="https://www.unifiedbus.com"><img src="https://img.shields.io/static/v1?label=spec&message=UnifiedBus&color=111827" alt="UnifiedBus specification"></a>
-  <a href="RELEASE_NOTES_UB.md#release-130"><img src="https://img.shields.io/static/v1?label=release&message=1.3.0&color=6F42C1" alt="Release 1.3.0"></a>
+  <a href="RELEASE_NOTES_UB.md#release-210"><img src="https://img.shields.io/static/v1?label=release&message=2.1.0&color=6F42C1" alt="Release 2.1.0"></a>
   <a href="LICENSE"><img src="https://img.shields.io/static/v1?label=license&message=GPL-2.0&color=97CA00" alt="GPL-2.0 license"></a>
   <br>
   <a href="src/unified-bus"><img src="https://img.shields.io/static/v1?label=language&message=C%2B%2B20&color=00599C&logo=cplusplus&logoColor=white" alt="C++20"></a>
@@ -28,9 +28,9 @@
 </p>
 
 <p align="center">
-  <strong>Release 1.3.0</strong> · 2026 年 7 月<br>
-  RTP 可靠传输 · MPI/MTP Traffic DAG · 大规模路由压缩 · 引擎效率提升<br>
-  <a href="RELEASE_NOTES_UB.md#release-130">完整发布说明 →</a>
+  <strong>Release 2.1.0</strong> · 2026 年 9 月<br>
+  灵衢基础规范 2.1 · CFG7 24-bit CNA 寻址 · Atomic 与队列事务 · 可靠重路由<br>
+  <a href="RELEASE_NOTES_UB.md#release-210">完整发布说明 →</a>
 </p>
 
 ---
@@ -303,10 +303,10 @@ Management 状态字段。BE request、ROT/ROL/UNO、LDST、真实原子值语�
 
 ```bibtex
 @software{UBNetworkSimulator,
-  month = {10},
+  month = {9},
   title = {{ns-3-UB: UnifiedBus Network Simulation Framework}},
   url = {https://gitcode.com/open-usim/ns-3-ub},
-  version = {1.3.0},
+  version = {2.1.0},
   year = {2026}
 }
 ```

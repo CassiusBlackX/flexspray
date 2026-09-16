@@ -9,14 +9,14 @@
   <a href="https://gitcode.com/open-usim/ns-3-ub">GitCode</a> ·
   <a href="QUICK_START_en.md">Quick Start</a> ·
   <a href="scratch/README.md">Case Guide</a> ·
-  <a href="RELEASE_NOTES_UB_en.md#release-130">Release Notes</a> ·
+  <a href="RELEASE_NOTES_UB_en.md#release-210">Release Notes</a> ·
   <a href="README.md">中文</a>
 </p>
 
 <p align="center">
   <a href="https://gitcode.com/open-usim/ns-3-ub"><img src="https://img.shields.io/static/v1?label=GitCode&message=open-usim%2Fns-3-ub&color=C71D23&logo=git&logoColor=white" alt="GitCode repository"></a>
   <a href="https://www.unifiedbus.com"><img src="https://img.shields.io/static/v1?label=spec&message=UnifiedBus&color=111827" alt="UnifiedBus specification"></a>
-  <a href="RELEASE_NOTES_UB_en.md#release-130"><img src="https://img.shields.io/static/v1?label=release&message=1.3.0&color=6F42C1" alt="Release 1.3.0"></a>
+  <a href="RELEASE_NOTES_UB_en.md#release-210"><img src="https://img.shields.io/static/v1?label=release&message=2.1.0&color=6F42C1" alt="Release 2.1.0"></a>
   <a href="LICENSE"><img src="https://img.shields.io/static/v1?label=license&message=GPL-2.0&color=97CA00" alt="GPL-2.0 license"></a>
   <br>
   <a href="src/unified-bus"><img src="https://img.shields.io/static/v1?label=language&message=C%2B%2B20&color=00599C&logo=cplusplus&logoColor=white" alt="C++20"></a>
@@ -27,9 +27,9 @@
 </p>
 
 <p align="center">
-  <strong>Release 1.3.0</strong> · July 2026<br>
-  RTP reliable transport · MPI/MTP Traffic DAG · Route compression · Engine performance<br>
-  <a href="RELEASE_NOTES_UB_en.md#release-130">Full release notes →</a>
+  <strong>Release 2.1.0</strong> · September 2026<br>
+  UB Base Specification 2.1 · CFG7 24-bit CNA addressing · Atomic and queue transactions · Reliable rerouting<br>
+  <a href="RELEASE_NOTES_UB_en.md#release-210">Full release notes →</a>
 </p>
 
 ---
@@ -285,10 +285,10 @@ This project follows the ns-3 license agreement, GPL v2. See the [`LICENSE`](LIC
 
 ```bibtex
 @software{UBNetworkSimulator,
-  month = {10},
+  month = {9},
   title = {{ns-3-UB: UnifiedBus Network Simulation Framework}},
   url = {https://gitcode.com/open-usim/ns-3-ub},
-  version = {1.3.0},
+  version = {2.1.0},
   year = {2026}
 }
 ```
