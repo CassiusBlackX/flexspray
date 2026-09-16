@@ -95,14 +95,14 @@
     </tr>
     <tr>
       <td>事务类型</td>
-      <td>Write、Read、Send</td>
-      <td>Atomic、Write_with_notify 等</td>
+      <td>Write、Read、Send；<a href="src/unified-bus/doc/atomic-support.md">Atomic（URMA ROI，RTP/CTP 时序模型）</a></td>
+      <td>Write_with_notify 等</td>
     </tr>
     <tr>
       <td align="center" rowspan="4">传输层</td>
       <td>服务模式</td>
-      <td>RTP</td>
-      <td>UTP、CTP</td>
+      <td>RTP、CTP（URMA ROI，既有精简封装）</td>
+      <td>UTP</td>
     </tr>
     <tr>
       <td>可靠性</td>
@@ -282,6 +282,13 @@ UB 模块是基于灵衢基础规范实现的仿真组件：
 - `openusim-capture-insights`：在用户同意后，把已经确认的根因或通用判断写成知识卡
 
 上述 Skills 与主仓代码及 `ns-3-ub-tools` 子模块紧密耦合，随仓库统一维护。
+
+### Unified Bus 事务规范范围
+
+当前实现符合 UB-DOC 2.0 的已实现子集：RTP/CTP 的 BTAH 请求与 ATAH/compact 响应、规则驱动
+的 Read/Atomic Payload、outstanding request 响应匹配、Atomic Load/Store 子操作输入校验和
+Management 状态字段。BE request、ROT/ROL/UNO、LDST、真实原子值语义、Management 命令效果及
+完整 CTP 公共格式迁移明确属于未实现/范围外；因此项目不声称完整 UB-DOC 合规。
 
 ## 许可证
 

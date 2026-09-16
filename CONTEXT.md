@@ -90,7 +90,7 @@ _Avoid_: OS MMU
 The UB layer that provides programming models and higher-level functions above transaction operations.
 _Avoid_: application layer in the simulator
 
-**Load/Store programming model**:
+**Load/Store programming model (LDST)**:
 The synchronous function-layer model where processor load/store instructions are converted into UB transaction operations.
 _Avoid_: memory traffic generator
 
@@ -136,6 +136,22 @@ _Avoid_: transport layer
 One operation identified by a transaction operation code and represented by at least one request, optionally with a response.
 _Avoid_: packet
 
+**Normalized transaction result**:
+The simulator's validated description of a transaction request, including its operation, logical length, request and response payload lengths, response requirement, and resolved field values.
+_Avoid_: recomputed payload metadata, Atomic-only resolution
+
+**Required extension header**:
+An extension header required by the selected transaction operation, independently of whether its field values are zero.
+_Avoid_: optional header, inferred header
+
+**Target transaction execution**:
+The target-side processing of one complete transaction request, producing an execution outcome and, when required by the operation, a transaction response.
+_Avoid_: target transport handling, response packet construction
+
+**Transaction response requirement**:
+Whether successful completion of a request requires its corresponding transaction response, independently of whether that response has already arrived.
+_Avoid_: response pending, response received
+
 **Transaction segment**:
 A TASSN-identified transaction-layer slice of a transaction operation that is completed by its corresponding transaction response.
 _Avoid_: WQE segment, packet, whole WQE
@@ -180,17 +196,41 @@ _Avoid_: deferred TPG, destroyed TPG, memberless TPG with active work
 The acceptance of a transaction segment by its already resolved TP channel subject to channel capacity and backpressure.
 _Avoid_: TPG member selection, second-stage TP selection
 
-**Transaction operation code (TAOpcode)**:
-The transaction-layer operation code for memory, message, maintenance, or management operations.
-_Avoid_: traffic opType unless discussing case input mapping
+**Transaction type**:
+One of the four categories of UB transactions: memory, message, maintenance, or management. Each category contains concrete transaction operations.
+_Avoid_: transaction service mode, individual TAOpcode
+
+**Transaction operation code**:
+The wire-level opcode that identifies a transaction request or its protocol response. Request opcodes map to one of the four transaction types; reserved opcodes are unsupported and have no transaction operation.
+_Avoid_: traffic opType unless discussing case input mapping; treating a reserved opcode as an operation
 
 **Memory transaction**:
 A transaction type used for memory operations such as write, read, and atomic operations.
 _Avoid_: MEM_STORE only
 
+**Atomic transaction**:
+A memory transaction that applies an indivisible operation to target memory and executes only once. Its response reports completion and, except for Atomic_store, returns the original data.
+_Avoid_: ordinary read followed by write, CPU atomic instruction
+
+**Atomic sub-operation**:
+The update operation selected within an Atomic_load or Atomic_store transaction, independently of whether the original data is returned.
+_Avoid_: LDST operation, separate transaction opcode
+
+**Atomic operand width**:
+The byte width of one operand and the target data item involved in an atomic operation; UB Base Specification 2.0.1 defines widths of 1, 2, 4, 8, 16, 32, and 64 bytes.
+_Avoid_: request payload length, operation count
+
 **Message transaction**:
 A transaction type used for two-sided message communication.
 _Avoid_: URMA write
+
+**Maintenance transaction**:
+A transaction type used to affect target operating state, such as prefetching data for a later read.
+_Avoid_: management command
+
+**Management transaction**:
+A transaction type carrying management commands or events for device configuration, resource management, and fault reporting.
+_Avoid_: message transaction, ordinary memory access
 
 **Transaction service mode**:
 The reliability and ordering mode used by a transaction operation.
@@ -221,7 +261,7 @@ The order in which completion notifications are generated.
 _Avoid_: execution order
 
 **Basic transaction header (BTAH)**:
-The base transaction request header that carries the transaction opcode and common transaction fields.
+The base transaction request header that carries the transaction opcode and common transaction fields. Its format is compact when LPH.CFG is 9 and full otherwise.
 _Avoid_: TAH when the compact/full distinction matters
 
 **Transaction header (TAH)**:
@@ -229,11 +269,11 @@ The transaction-layer header carried after transport or network-layer headers.
 _Avoid_: transport header
 
 **Memory access extended transaction header (MAETAH)**:
-The transaction extension header that carries memory-access address, token, and length information.
+The transaction extension header that carries memory-access address, token, and length information. Its full or compact format follows the BTAH format.
 _Avoid_: payload metadata
 
 **Acknowledge transaction header (ATAH)**:
-The transaction-layer acknowledgement or response header.
+The transaction-layer acknowledgement or response header, whose full or compact format matches the request's BTAH format.
 _Avoid_: TPACK
 
 ### Transport Layer
@@ -481,6 +521,14 @@ _Avoid_: standard CFG7 TP bypass, CTP, full transaction-header format
 **Simulation boundary**:
 The set of claims that this simulator can support with its modeled protocol behavior and emitted evidence.
 _Avoid_: hardware truth, real cluster measurement
+
+**Atomic timing model**:
+A simulator-local representation of atomic transaction traffic and completion timing with abstract operand and result values and no address-contention delays.
+_Avoid_: functional atomic memory model, address-contention model
+
+**Atomic request payload length**:
+The number of operand bytes carried by one simulated atomic request, including any reserved operand slots in the selected layout and excluding headers. It is distinct from operand width and has no fixed two-operand assumption in this model.
+_Avoid_: twice the operand width by definition, total wire packet length
 
 **Protocol layer**:
 One of the UB modeling layers: function, transaction, transport, network, data link, or physical.

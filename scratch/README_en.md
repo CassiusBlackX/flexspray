@@ -510,16 +510,19 @@ Schema:
 ```
 taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases
 taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,srcPortId,dstPortId
+taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,atomicSubOperation,requestPayloadBytes
+taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,srcPortId,dstPortId,atomicSubOperation,requestPayloadBytes
 ```
 
-Use the nine-column form when no optional fields are needed. The eleven-column form adds the
-endpoint-port pair. The former Entity-bearing eleven-column header and the thirteen-column
-Entity-plus-port header are rejected instead of being interpreted as endpoint ports.
+Use nine columns without options, eleven with either named pair, or thirteen with ports followed
+by atomic options. Names/order and row widths must match exactly. Entity-bearing headers remain
+invalid. For the nine ROI atomic operations over RTP/CTP, see the
+[atomic API, CSV contract and reference cases](../src/unified-bus/doc/atomic-support.md).
 
 Recommendation: Generate `traffic.csv` (e.g., all-to-all, RDMA-like patterns, collective-like workloads) via `scratch/ns-3-ub-tools/traffic_maker/`. See `traffic_maker/README.md` in the `open-usim/ns-3-ub-tools` submodule repository.
 - `taskId` — integer ID (unique per file).
 - `sourceNode` / `destNode` — end-host node IDs.
-- `dataSize(Byte)` — payload size in bytes.
+- `dataSize(Byte)` — transfer size; for atomic it is operand width N, not request Payload P.
 - `opType` — e.g., `URMA_WRITE`, `URMA_READ`, `MEM_STORE`, … (supported by `UbApp`/API LDST layer).
 - `priority` — 0..(UB_PRIORITY_NUM-1).
 - `delay` — schedule offset relative to simulation start (Time).
@@ -528,6 +531,12 @@ Recommendation: Generate `traffic.csv` (e.g., all-to-all, RDMA-like patterns, co
 - `srcPortId` / `dstPortId` — optional trailing endpoint-port constraints. Add both columns when
   using them; each cell may be empty independently. An explicit `0` means port 0, while an empty
   cell means any endpoint port.
+
+Atomic fields: `atomicSubOperation` is required for Load/Store (ADD/CLR/EOR/SET/SMAX/SMIN/UMAX/UMIN)
+and forbidden for other operations. `requestPayloadBytes` is optional P in 1..4096; empty means
+CAS=2N, other atomic=N. N is 1/2/4/8/16/32/64; Store responds with zero Payload, others with N.
+Both cells must be empty for non-atomic rows. Suboperations stay local; no actual values or address
+contention are modeled. CTP requires existing FlowTag metadata and preserves its compact format.
 
 Numeric field rules:
 - `taskId`, `sourceNode`, `destNode`, `dataSize(Byte)`, `priority`, `phaseId`, and each `dependOnPhases` token are parsed as unsigned decimal integers.

@@ -198,8 +198,14 @@ If the workload is a reference `traffic.csv`, copy it into the case directory.
 If the spec workload is `custom-traffic-skeleton`, generate `{case_dir}/traffic.csv` directly by following the decomposition steps in `workload-options.md`. The generated CSV must conform to the `traffic.csv Schema` section in that document.
 
 Use the Write tool to create the CSV. Verify:
-- Header is the nine-column base form or the 11-column endpoint-port form ending in
-  `srcPortId,dstPortId`; Entity-bearing 11-column and 13-column headers are invalid
+- Header is the nine-column base form, base + `srcPortId,dstPortId`, base +
+  `atomicSubOperation,requestPayloadBytes`, or base + ports + atomic options (in that order).
+  The two 11-column forms are distinguished by exact names; the combined form has 13 columns.
+  Entity-bearing headers remain invalid; every row must match its header width.
+- Atomic `dataSize(Byte)` is N (1/2/4/8/16/32/64), while explicit `requestPayloadBytes` is P
+  (1..4096), overriding defaults CAS=2N and other atomic=N. Load/Store requires one of the eight
+  local-only suboperations; see `workload-options.md` for all nine names and the N/P/S contract.
+  Use the reference atomic CSVs or a custom skeleton; the collective generator stays Write-only.
 - `taskId` is 0-indexed and sequential
 - `sourceNode` and `destNode` are valid host IDs for the topology (0 to `host_num - 1`)
 - `srcPortId` and `dstPortId`, when present, are valid endpoint ports; each may be empty independently, and an explicit `0` means port 0

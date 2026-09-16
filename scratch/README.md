@@ -193,3 +193,14 @@ CSV 字段、trace 字段和旧 case 行为保留在
 - [集合通信流量生成](./ns-3-ub-tools/traffic_maker/README.md)
 - [English scratch reference](README_en.md)
 - [结构化拓扑优化设计与验收](../.scratch/structured-topology-routing/README.md)
+
+## Atomic 参考用例
+
+URMA/Jetty 的九种 ROI atomic 支持 RTP/CTP；参数、四种 CSV 表头与模型限制见
+[Atomic 使用说明](../src/unified-bus/doc/atomic-support.md)。`dataSize(Byte)` 表示操作数宽度 N，
+请求 Payload P 可以独立覆盖。两个用例各含 25 个任务，覆盖混合 Read/Write 和 phase 依赖：
+
+```bash
+python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_atomic_rtp'
+python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_atomic_ctp'
+```

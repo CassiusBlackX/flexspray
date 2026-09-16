@@ -90,14 +90,14 @@
     </tr>
     <tr>
       <td>Transaction Types</td>
-      <td>Write, Read, Send</td>
-      <td>Atomic, Write_with_notify, etc.</td>
+      <td>Write, Read, Send; <a href="src/unified-bus/doc/atomic-support.md">Atomic (URMA ROI, RTP/CTP timing model)</a></td>
+      <td>Write_with_notify, etc.</td>
     </tr>
     <tr>
       <td align="center" rowspan="4">Transport Layer</td>
       <td>Service Modes</td>
-      <td>RTP</td>
-      <td>UTP, CTP</td>
+      <td>RTP, CTP (URMA ROI, existing compact format)</td>
+      <td>UTP</td>
     </tr>
     <tr>
       <td>Reliability</td>

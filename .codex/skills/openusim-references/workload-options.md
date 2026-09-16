@@ -34,11 +34,14 @@ All workload paths â€” built-in generator, reference file, or custom skeleton â€
 ```
 taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases
 taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,srcPortId,dstPortId
+taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,atomicSubOperation,requestPayloadBytes
+taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,srcPortId,dstPortId,atomicSubOperation,requestPayloadBytes
 ```
 
-The nine-column header omits optional fields. The eleven-column header adds the endpoint-port pair;
-port cells remain independently optional. Entity IDs are not workload fields. The former
-Entity-bearing eleven-column header and the thirteen-column Entity-plus-port header are rejected.
+The nine-column header omits optional fields. Either the endpoint-port pair or atomic-options pair
+makes an eleven-column header; both pairs make thirteen columns, with ports before atomic options.
+Names and order must match exactly and row width must match the header. Port cells remain
+independently optional. Entity-bearing headers are rejected.
 
 ### Column definitions
 
@@ -47,7 +50,7 @@ Entity-bearing eleven-column header and the thirteen-column Entity-plus-port hea
 | `taskId` | int | Unique task identifier | 0-indexed, monotonically increasing |
 | `sourceNode` | int | Source host node ID | Must be a valid host ID in the topology (`0 .. host_num-1`) |
 | `destNode` | int | Destination host node ID | Must be a valid host ID for network tasks; local `COMPUTE` and `LOCAL_READY` rows use `destNode = sourceNode` |
-| `dataSize(Byte)` | int | Data size in bytes | > 0 |
+| `dataSize(Byte)` | int | Data size; for atomic, operand width N (not request Payload P) | Atomic N: 1/2/4/8/16/32/64 |
 | `opType` | string | Operation type | See valid values below |
 | `priority` | int | Task priority | 0 is highest (not recommended); typical value: `7` |
 | `delay` | string | Task start delay with time unit | e.g. `10ns`, `0ns`; valid units: `ns`, `us`, `ms`, `s` |
@@ -84,6 +87,44 @@ Snapshot (verify against code before relying on this list):
 `URMA_WRITE_NOTIFY` is present in some legacy case files but is not accepted by the active
 `UbTrafficGen::ParseOpLocked` parser; do not use it for new cases without an explicit compatibility
 adapter.
+
+### Atomic inputs
+
+URMA/Jetty atomic supports ROI over RTP and CTP. One row creates one WQE, one atomic operation,
+one request segment and one request packet. `dataSize(Byte)` is operand width N, one of
+1/2/4/8/16/32/64 bytes. Request Payload P is separate; explicit `requestPayloadBytes` takes priority.
+An empty cell uses the default below. P must be an unsigned decimal integer in 1..4096 (the current
+single-packet Payload limit); explicit zero is rejected. Response Payload S is not configurable.
+
+| opType | Request opcode | Default P | S |
+| --- | --- | --- | --- |
+| `URMA_ATOMIC_COMPARE_SWAP` | 0x07 | 2N | N |
+| `URMA_ATOMIC_SWAP` | 0x08 | N | N |
+| `URMA_ATOMIC_STORE` | 0x09 | N | 0 |
+| `URMA_ATOMIC_LOAD` | 0x0A | N | N |
+| `URMA_ATOMIC_FETCH_ADD` | 0x0B | N | N |
+| `URMA_ATOMIC_FETCH_SUB` | 0x0C | N | N |
+| `URMA_ATOMIC_FETCH_AND` | 0x0D | N | N |
+| `URMA_ATOMIC_FETCH_OR` | 0x0E | N | N |
+| `URMA_ATOMIC_FETCH_XOR` | 0x0F | N | N |
+
+Load/Store requires `atomicSubOperation`: ADD, CLR, EOR, SET, SMAX, SMIN, UMAX or UMIN.
+Other operations reject a nonempty suboperation. Non-atomic rows require both atomic cells empty.
+Without atomic columns, the other seven atomic operations can use defaults. Conversion uses
+`UbTrafficGen::ParseTaskOperation` and the common `ResolveAtomicRequest` API rules.
+
+All atomic responses use 0x13; Store sends a real zero-Payload response. This is a timing and byte
+model with placeholder data: no arithmetic, old values, CAS success or address contention.
+Suboperations are validated and retained only in the local WQE, never encoded or executed remotely.
+Default runs register no remote callback. CTP keeps its existing compact packet format and obtains
+exact N from the existing FlowTag even with trace disabled; missing/invalid metadata is rejected.
+No new header or tag layout is introduced. This does not claim full CTP specification conformance.
+
+Use reference CSVs in `scratch/2nodes_atomic_rtp` and `scratch/2nodes_atomic_ctp`; the collective
+`build_traffic.py` CLI remains Write-only. The current case inspector and trace/task parsers accept
+the additional names/columns without a tool-submodule interface change. Task statistics use N for
+atomic dataSize; their taskThroughput is not wire throughput when N differs from P/S.
+See `src/unified-bus/doc/atomic-support.md` for API and runner examples.
 
 ### Phase dependency rules
 
