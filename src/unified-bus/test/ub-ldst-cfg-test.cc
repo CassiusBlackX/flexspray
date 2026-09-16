@@ -123,8 +123,8 @@ class LdstRoundTripTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(nlp, (m_config == 7 ? 4 : 0), "Format-specific NLP");
         NS_TEST_ASSERT_MSG_EQ(src.hasPort, m_explicitPorts, "Source port presence preserved");
         NS_TEST_ASSERT_MSG_EQ(dst.hasPort, m_explicitPorts, "Destination port presence preserved");
-        const bool request = tah.GetTaOpcode() == uint8_t(TaOpcode::TA_OPCODE_WRITE) ||
-                             tah.GetTaOpcode() == uint8_t(TaOpcode::TA_OPCODE_READ);
+        const bool request = tah.GetUbTransactionOpcode() == uint8_t(UbTransactionOpcode::WRITE) ||
+                             tah.GetUbTransactionOpcode() == uint8_t(UbTransactionOpcode::READ);
         const uint32_t expectedPayload = request ? (m_load ? 64 : 512) : (m_load ? 512 : 0);
         if (request)
         {
@@ -166,7 +166,7 @@ class LdstRoundTripTest : public TestCase
                                            (m_load ? 64u : 512u),
                                            "Remote request payload contract");
         const auto opcode =
-            m_load ? TaOpcode::TA_OPCODE_READ_RESPONSE : TaOpcode::TA_OPCODE_TRANSACTION_ACK;
+            m_load ? UbTransactionOpcode::READ_RESPONSE : UbTransactionOpcode::TAACK;
         Ptr<Packet> response;
         if (m_endpoint)
         {
@@ -451,7 +451,7 @@ class LdstObservationTest : public TestCase
             const uint8_t wire[] = {0x71, 0, 0x81, 0, 0xa5, 0x12, 3, 0x72};
             auto packet = Create<Packet>(64);
             UbCompactTransactionHeader tah;
-            tah.SetTaOpcode(TaOpcode::TA_OPCODE_WRITE);
+            tah.SetUbTransactionOpcode(UbTransactionOpcode::WRITE);
             packet->AddHeader(tah);
             if (cfg == UbDatalinkHeaderConfig::PACKET_CNA24)
             {
@@ -778,8 +778,8 @@ class LdstIndependentEntriesTest : public TestCase
         UbDummyTransactionHeader dummy;
         view->PeekHeader(dummy);
         uint16_t requestId = 0;
-        if (dummy.GetTaOpcode() == uint8_t(TaOpcode::TA_OPCODE_WRITE) ||
-            dummy.GetTaOpcode() == uint8_t(TaOpcode::TA_OPCODE_READ))
+        if (dummy.GetUbTransactionOpcode() == uint8_t(UbTransactionOpcode::WRITE) ||
+            dummy.GetUbTransactionOpcode() == uint8_t(UbTransactionOpcode::READ))
         {
             UbCompactTransactionHeader tah;
             view->RemoveHeader(tah);

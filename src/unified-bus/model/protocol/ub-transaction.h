@@ -5,6 +5,7 @@
 #include "ns3/callback.h"
 #include "ns3/random-variable-stream.h"
 #include "ns3/ub-datatype.h"
+#include "ub-transaction-rules.h"
 #include "ns3/ub-lifecycle.h"
 #include "ns3/ub-network-address.h"
 #include "ns3/ub-sliding-bitmap-window.h"
@@ -121,6 +122,43 @@ namespace ns3 {
         friend struct UbTransactionOperationSnapshot;
     };
 
+    enum class UbTransactionProtocolStatus : uint8_t
+    {
+        /** The target executed the request successfully. */
+        SUCCESS = 0,
+    };
+    /** Outcome one target executor reports back through its completion callback. */
+    struct UbWorkExecutionResult
+    {
+        /** Transport/lifecycle outcome of the execution attempt. */
+        UbWorkOutcome outcome{UbWorkOutcome::COMPLETED};
+        /** Protocol status of a completed execution. */
+        UbTransactionProtocolStatus protocolStatus{UbTransactionProtocolStatus::SUCCESS};
+    };
+    /**
+     * Completion callback handed to a registered target executor.
+     *
+     * It is asynchronous and may be called from any later simulation event; the first call decides
+     * the result and later calls are ignored, so an executor can defer or duplicate it safely.
+     */
+    using UbTargetCompletion = Callback<void, UbWorkExecutionResult>;
+    /**
+     * Registered target executor: the only target execution seam of a transaction.
+     *
+     * It receives one complete, already validated inbound request (with its cached
+     * `UbTransactionResolved`), its static rule, and the completion callback to report the result.
+     * The executor never builds a response packet; the transaction layer does that from the result.
+     */
+    using UbTargetExecutor = Callback<void,
+                                      Ptr<const UbWqeSegment>,
+                                      const UbTransactionRule&,
+                                      UbTargetCompletion>;
+    /**
+     * Carrier response sink: where a built response segment goes when the carrier is not the local
+     * RTP queue.
+     */
+    using UbTransactionResponseSink = Callback<void, Ptr<UbWqeSegment>>;
+
     struct UbTransactionOperationSnapshot
     {
         UbLifecycleResourceIdentity wqeIdentity;
@@ -133,21 +171,6 @@ namespace ns3 {
         std::vector<UbLifecycleResourceIdentity> resolvedTpIdentities;
     };
 
-    struct UbRemoteUrmaRequestContext
-    {
-        TaOpcode operation{TaOpcode::TA_OPCODE_WRITE};
-        uint32_t bytes{0};
-        uint32_t sourceNodeId{0};
-        uint32_t targetNodeId{0};
-        UbPriority priority{UB_PRIORITY_DEFAULT};
-        uint64_t address{0};
-        uint32_t tokenId{0};
-        Ptr<const Packet> payload;
-    };
-
-    using UbRemoteUrmaResponseSender = Callback<void>;
-    using UbRemoteUrmaRequestProcessor =
-        Callback<bool, const UbRemoteUrmaRequestContext&, UbRemoteUrmaResponseSender>;
     /**
     * @brief
     */
@@ -229,11 +252,47 @@ namespace ns3 {
         bool TryRetireCtpTransactionState(const UbCtpEntityKey& key);
 
         bool ProcessWqeSegmentComplete(Ptr<UbWqeSegment> wqeSegment);
+        Ptr<UbWqeSegment> BuildTransactionResponse(uint32_t localTpn,
+                                                    Ptr<UbWqeSegment> request,
+                                                    const UbTransactionRule& rule,
+                                                    UbWorkExecutionResult result) const;
         void HandleInboundTaUnit(uint32_t localTpn, Ptr<UbWqeSegment> segment);
-        bool DispatchRemoteUrmaRequest(Ptr<UbWqeSegment> request,
-                                       UbRemoteUrmaResponseSender responseSender);
-        Ptr<UbWqeSegment> BuildRemoteUrmaResponse(Ptr<UbWqeSegment> request) const;
-        Ptr<UbWqeSegment> ProcessInboundTaRequest(Ptr<UbWqeSegment> request);
+        /**
+         * Deliver one decoded inbound request through the asynchronous target seam.
+         *
+         * This is the only target execution entry for both carriers. It consumes the request's
+         * cached `UbTransactionResolved` (a request without one is rejected as a programming
+         * error), applies `TargetExecutionDelay` exactly once, and then invokes the registered
+         * executor or the built-in default executor. Completion is asynchronous: the response is
+         * built and handed to the sink from the completion callback.
+         *
+         * @param localTpn TPN the request arrived on, or UINT32_MAX for carriers without one.
+         * @param request Complete inbound request with its cached normalized result.
+         * @param sink Carrier response sink; the local RTP queue is used when it is null.
+         */
+        void ExecuteInboundTransaction(uint32_t localTpn,
+                                       Ptr<UbWqeSegment> request,
+                                       UbTransactionResponseSink sink = {});
+        /**
+         * Register the asynchronous target callback.
+         *
+         * Registration is frozen once the first request has entered target execution, so a run
+         * cannot change target semantics halfway.
+         *
+         * @return false when execution already started.
+         */
+        bool SetTargetExecutor(UbTargetExecutor executor);
+        /**
+         * Set the single delay applied between inbound receipt and target execution.
+         *
+         * The default is 0ns and both carriers share this one delay. A strictly negative delay is
+         * rejected, and the value is frozen once execution has started.
+         *
+         * @return false when the delay is negative or execution already started.
+         */
+        bool SetTargetExecutionDelay(Time delay);
+        /** Current target execution delay. */
+        Time GetTargetExecutionDelay() const { return m_targetExecutionDelay; }
         bool ProcessInboundTaResponse(Ptr<UbWqeSegment> response);
         uint64_t DeriveRemoteAddressForTest(const Ptr<UbWqeSegment>& request) const
         {
@@ -345,9 +404,6 @@ namespace ns3 {
 
         std::vector<uint32_t> GetUselessTpns();
 
-        void SetRemoteUrmaRequestProcessor(UbRemoteUrmaRequestProcessor processor);
-        void ClearRemoteUrmaRequestProcessor();
-        bool HasRemoteUrmaRequestProcessor() const;
 
     private:
 
@@ -487,22 +543,10 @@ namespace ns3 {
             const UbRtpTransportReference& reference,
             Ptr<UbTransportGroup> group);
 
-        bool IsUrmaReadWriteRequest(const Ptr<UbWqeSegment>& segment);
 
-        void ValidateUrmaServiceModeOrDie(uint32_t jettyNum, const Ptr<UbWqeSegment>& segment);
+        bool IsRoiMemoryRequest(const Ptr<UbWqeSegment>& segment);
+        void ValidateRoiServiceModeOrDie(uint32_t jettyNum, const Ptr<UbWqeSegment>& segment);
         void EnqueueInboundTaResponse(uint32_t localTpn, Ptr<UbWqeSegment> response);
-        static void SendBoundRemoteUrmaResponse(Ptr<UbTransaction> transaction,
-                                                uint32_t localTpn,
-                                                Ptr<UbWqeSegment> request);
-        void SendRemoteUrmaResponse(uint32_t localTpn, Ptr<UbWqeSegment> request);
-        Ptr<UbWqeSegment> BuildRemoteWriteAck(uint32_t localTpn,
-                                              Ptr<UbWqeSegment> request) const;
-        Ptr<UbWqeSegment> BuildRemoteReadResponse(uint32_t localTpn,
-                                                  Ptr<UbWqeSegment> request) const;
-        Ptr<UbWqeSegment> ExecuteRemoteWriteAndBuildAck(uint32_t localTpn,
-                                                         Ptr<UbWqeSegment> request);
-        Ptr<UbWqeSegment> ExecuteRemoteReadAndBuildResponse(uint32_t localTpn,
-                                                            Ptr<UbWqeSegment> request);
         void CompleteLocalRequestFromResponse(Ptr<UbWqeSegment> response);
         uint64_t DeriveRemoteAddress(const Ptr<UbWqeSegment>& request) const;
 
@@ -513,9 +557,19 @@ namespace ns3 {
                              uint32_t wqeId,
                              UbLifecycleResourceIdentity operationIdentity);
         void CancelDispatchEvent(OperationRecord& operation);
-        void RunDelayedInboundRequest(uint32_t localTpn, Ptr<UbWqeSegment> segment);
-        void ProcessInboundTaRequestNow(uint32_t localTpn, Ptr<UbWqeSegment> segment);
+        /**
+         * Invoke the registered target executor for one already validated inbound request.
+         *
+         * This is the delayed continuation of ExecuteInboundTransaction: the single target
+         * execution delay has already been applied when it is reached.
+         */
+        void RunInboundTransaction(uint32_t localTpn,
+                                   Ptr<UbWqeSegment> request,
+                                   UbTransactionResponseSink sink);
+        /** Drop the pending-inbound bookkeeping of one completed or rejected inbound request. */
+        void ReleasePendingInboundRequest(uint32_t localTpn);
         std::vector<EventId> m_delayedInboundEvents;
+        std::map<uint32_t, uint32_t> m_pendingInboundRequestsByTpn;
 
         uint32_t m_nodeId;
         UbController* m_ownerController{nullptr};
@@ -538,10 +592,8 @@ namespace ns3 {
 
         // 记录每个jetty对应的serviceMode
         std::map<uint32_t, TransactionServiceMode> m_serviceMode;
-        UbRemoteUrmaRequestProcessor m_remoteUrmaRequestProcessor;
         // 每个jetty存储wqe的id顺序
         std::map<uint32_t, std::vector<uint32_t>> m_orderedWqeIdsByJetty;
-        std::map<std::pair<uint32_t, uint64_t>, uint32_t> m_memoryStore;
 
         struct OperationRecord
         {
@@ -578,6 +630,9 @@ namespace ns3 {
         bool m_collectRtpResolutionCountersForTest{false};
         mutable uint64_t m_rtpResolutionCount{0};
         uint64_t m_rtpTpgMaterializationCount{0};
+        UbTargetExecutor m_targetExecutor;
+        Time m_targetExecutionDelay{NanoSeconds(0)};
+        bool m_targetExecutionStarted{false};
     };
 
 } // namespace ns3

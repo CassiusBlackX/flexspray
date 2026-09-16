@@ -68,7 +68,16 @@ public:
         MEM_STORE,
         MEM_LOAD,
         COMPUTE,
-        LOCAL_READY
+        LOCAL_READY,
+        URMA_ATOMIC_COMPARE_SWAP,
+        URMA_ATOMIC_SWAP,
+        URMA_ATOMIC_STORE,
+        URMA_ATOMIC_LOAD,
+        URMA_ATOMIC_FETCH_ADD,
+        URMA_ATOMIC_FETCH_SUB,
+        URMA_ATOMIC_FETCH_AND,
+        URMA_ATOMIC_FETCH_OR,
+        URMA_ATOMIC_FETCH_XOR
     };
 
     struct RuntimeTask
@@ -86,7 +95,16 @@ public:
         bool hasSrcPortId{false};
         bool hasDstPortId{false};
         bool hasPhaseDependencies{false};
+        std::optional<UbAtomicOptions> atomicOptions;
     };
+
+    // Shared operation conversion for CSV rows and direct UbApp record entry points.
+    static void ParseTaskOperation(RuntimeTask& task,
+                                   std::string_view opType,
+                                   std::string_view subOperation,
+                                   std::string_view requestPayloadBytes);
+    static bool IsAtomicTask(RuntimeTaskOp op);
+    static UbTransactionOpcode GetUrmaTaskOpcode(RuntimeTaskOp op);
 
     struct TaskCleanupInfo
     {
@@ -316,9 +334,9 @@ public:
 
     static bool TryParseIntegerDelay(std::string_view delay, Time* out);
 
-    RuntimeTaskOp ParseOpLocked(const std::string& opType);
+    static RuntimeTaskOp ParseOpLocked(const std::string& opType);
 
-    RuntimeTaskOp ParseOpLocked(std::string_view opType);
+    static RuntimeTaskOp ParseOpLocked(std::string_view opType);
 
     Ptr<UbApp> GetSourceAppLocked(uint32_t sourceNode) const;
 

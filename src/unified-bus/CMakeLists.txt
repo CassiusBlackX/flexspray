@@ -42,6 +42,8 @@ build_lib(
 	model/ub-tag.cc
 	model/ub-switch.cc
 	model/protocol/ub-transaction.cc
+	model/protocol/ub-transaction-rules.cc
+	model/protocol/ub-ta-codec.cc
 	model/protocol/ub-function.cc
 	model/protocol/ub-transport.cc
 	model/protocol/ub-retrans.cc
@@ -87,6 +89,8 @@ build_lib(
 	model/ub-sliding-bitmap-window.h
 	model/ub-switch.h
 	model/protocol/ub-transaction.h
+	model/protocol/ub-transaction-rules.h
+	model/protocol/ub-ta-codec.h
 	model/protocol/ub-function.h
 	model/protocol/ub-transport.h
 	model/protocol/ub-retrans.h
@@ -122,6 +126,9 @@ build_lib(
                     ${mpi_libraries}
   TEST_SOURCES
     test/ub-test.cc
+    test/ub-transaction-rules-test.cc
+    test/ub-transaction-header-extension-test.cc
+    test/ub-target-execution-test.cc
     test/ub-ldst-cfg-test.cc
     test/ub-structured-routing-test.cc
 )

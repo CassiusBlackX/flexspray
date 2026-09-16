@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "ub-transaction.h"
 
+#include "ub-transaction-rules.h"
 #include "ub-ctp.h"
 
 #include "ns3/hash.h"
@@ -11,6 +12,7 @@
 #include "ns3/ub-modulo-sequence.h"
 #include "ns3/ub-utils.h"
 
+#include <iostream>
 #include <sstream>
 
 namespace ns3 {
@@ -212,6 +214,30 @@ UbTransaction::UbTransaction()
 
 UbTransaction::~UbTransaction()
 {
+}
+
+bool
+UbTransaction::SetTargetExecutor(UbTargetExecutor executor)
+{
+    if (m_targetExecutionStarted)
+    {
+        NS_LOG_WARN("Target executor is frozen after the first inbound transaction");
+        return false;
+    }
+    m_targetExecutor = executor;
+    return true;
+}
+
+bool
+UbTransaction::SetTargetExecutionDelay(Time delay)
+{
+    // A zero delay is the default and stays settable; only a strictly negative delay is invalid.
+    if (m_targetExecutionStarted || delay.IsStrictlyNegative())
+    {
+        return false;
+    }
+    m_targetExecutionDelay = delay;
+    return true;
 }
 
 UbTransaction::UbTransaction(Ptr<Node> node)
@@ -823,7 +849,7 @@ UbTransaction::RunTrackedPrepareRtpWqeSegment(uint32_t jettyNum,
         Ptr<UbWqeSegment> segment = jetty->PrepareNextWqeSegment(originatingWqe);
         if (segment != nullptr)
         {
-            ValidateUrmaServiceModeOrDie(jettyNum, segment);
+            ValidateRoiServiceModeOrDie(jettyNum, segment);
             const uint64_t finishToken = GetFunction()->TrackJettyEvent(jettyNum);
             const EventId finishEvent = Simulator::ScheduleNow(
                 &UbTransaction::RunTrackedAdmitRtpWqeSegment,
@@ -1040,7 +1066,7 @@ UbTransaction::TryRetireCtpTransactionState(const UbCtpEntityKey& key)
     return true;
 }
 
-bool UbTransaction::IsUrmaReadWriteRequest(const Ptr<UbWqeSegment>& segment)
+bool UbTransaction::IsRoiMemoryRequest(const Ptr<UbWqeSegment>& segment)
 {
     if (segment == nullptr) {
         return false;
@@ -1048,13 +1074,13 @@ bool UbTransaction::IsUrmaReadWriteRequest(const Ptr<UbWqeSegment>& segment)
     if (segment->GetSegmentKind() != UbTransactionSegmentKind::REQUEST) {
         return false;
     }
-    return segment->GetType() == TaOpcode::TA_OPCODE_WRITE ||
-           segment->GetType() == TaOpcode::TA_OPCODE_READ;
+    return segment->GetType() == UbTransactionOpcode::WRITE ||
+           segment->GetType() == UbTransactionOpcode::READ;
 }
 
-void UbTransaction::ValidateUrmaServiceModeOrDie(uint32_t jettyNum, const Ptr<UbWqeSegment>& segment)
+void UbTransaction::ValidateRoiServiceModeOrDie(uint32_t jettyNum, const Ptr<UbWqeSegment>& segment)
 {
-    if (!IsUrmaReadWriteRequest(segment)) {
+    if (!IsRoiMemoryRequest(segment)) {
         return;
     }
     TransactionServiceMode mode = GetTransactionServiceMode(jettyNum);
@@ -1856,106 +1882,130 @@ void UbTransaction::HandleInboundTaUnit(uint32_t localTpn, Ptr<UbWqeSegment> seg
         ProcessInboundTaResponse(segment);
         return;
     }
+    ++m_pendingInboundRequestsByTpn[localTpn];
 
-    Ptr<UbController> controller = GetOwnerController();
-    const Time delay =
-        controller == nullptr ? NanoSeconds(0) : controller->GetTargetProtocolProcessingDelay();
-    if (delay.IsStrictlyPositive())
+    ExecuteInboundTransaction(localTpn, segment);
+}
+
+void
+UbTransaction::ExecuteInboundTransaction(uint32_t localTpn,
+                                          Ptr<UbWqeSegment> request,
+                                          UbTransactionResponseSink sink)
+{
+    if (request == nullptr)
+        return;
+    const auto* rule = FindTransactionRule(request->GetType());
+    if (rule == nullptr || rule->role != UbTransactionSegmentKind::REQUEST)
+    {
+        ReleasePendingInboundRequest(localTpn);
+        return;
+    }
+    if (!request->HasTransactionResolved())
+    {
+        NS_LOG_ERROR("Inbound transaction request carries no resolved result: taskId="
+                     << request->GetTaskId() << " opcode="
+                     << static_cast<uint32_t>(request->GetType()));
+        std::cerr << "Rejected inbound transaction without a resolved request: taskId="
+                  << request->GetTaskId() << " opcode="
+                  << static_cast<uint32_t>(request->GetType()) << std::endl;
+        ReleasePendingInboundRequest(localTpn);
+        return;
+    }
+    // The single target execution delay of this transaction is applied exactly once, here, for both
+    // carriers. The delayed continuation below re-enters after the delay without applying it again.
+    if (m_targetExecutionDelay.IsStrictlyPositive())
     {
         std::erase_if(m_delayedInboundEvents,
                       [](const EventId& event) { return event.IsExpired(); });
         m_delayedInboundEvents.push_back(
-            Simulator::Schedule(delay,
-                                &UbTransaction::RunDelayedInboundRequest,
+            Simulator::Schedule(m_targetExecutionDelay,
+                                &UbTransaction::RunInboundTransaction,
                                 this,
                                 localTpn,
-                                segment));
+                                request,
+                                sink));
         return;
     }
-    ProcessInboundTaRequestNow(localTpn, segment);
+    RunInboundTransaction(localTpn, request, sink);
 }
 
 void
-UbTransaction::RunDelayedInboundRequest(uint32_t localTpn, Ptr<UbWqeSegment> segment)
+UbTransaction::RunInboundTransaction(uint32_t localTpn,
+                                     Ptr<UbWqeSegment> request,
+                                     UbTransactionResponseSink sink)
 {
     std::erase_if(m_delayedInboundEvents, [](const EventId& event) { return event.IsExpired(); });
     if (m_ownerController == nullptr || m_ownerController->IsDisposing())
     {
+        ReleasePendingInboundRequest(localTpn);
         return;
     }
-    ProcessInboundTaRequestNow(localTpn, segment);
+    m_targetExecutionStarted = true;
+    const auto* rule = FindTransactionRule(request->GetType());
+    NS_ABORT_MSG_IF(rule == nullptr || rule->role != UbTransactionSegmentKind::REQUEST,
+                    "target execution requires a validated inbound request rule");
+    auto completed = std::make_shared<bool>(false);
+    UbTargetCompletion completion([this, localTpn, request, sink, completed](UbWorkExecutionResult result) {
+        if (*completed) return;
+        *completed = true;
+        auto response = BuildTransactionResponse(localTpn, request,
+                                                  *FindTransactionRule(request->GetType()), result);
+        if (sink.IsNull())
+            EnqueueInboundTaResponse(localTpn, response);
+        else
+            sink(response);
+        ReleasePendingInboundRequest(localTpn);
+    });
+    if (m_targetExecutor.IsNull())
+    {
+        m_delayedInboundEvents.push_back(
+            Simulator::ScheduleNow([completion]() mutable { completion(UbWorkExecutionResult{}); }));
+        return;
+    }
+    m_targetExecutor(request, *rule, completion);
 }
 
 void
-UbTransaction::ProcessInboundTaRequestNow(uint32_t localTpn, Ptr<UbWqeSegment> segment)
+UbTransaction::ReleasePendingInboundRequest(uint32_t localTpn)
 {
-    if (IsUrmaReadWriteRequest(segment) && HasRemoteUrmaRequestProcessor())
+    const auto pending = m_pendingInboundRequestsByTpn.find(localTpn);
+    if (pending != m_pendingInboundRequestsByTpn.end() && --pending->second == 0)
     {
-        Ptr<UbTransaction> self(this);
-        UbRemoteUrmaResponseSender responseSender =
-            MakeBoundCallback(&UbTransaction::SendBoundRemoteUrmaResponse,
-                              self,
-                              localTpn,
-                              segment);
-        DispatchRemoteUrmaRequest(segment, responseSender);
-        return;
+        m_pendingInboundRequestsByTpn.erase(pending);
     }
-    EnqueueInboundTaResponse(localTpn, ProcessInboundTaRequest(segment));
-}
-
-bool
-UbTransaction::DispatchRemoteUrmaRequest(Ptr<UbWqeSegment> request,
-                                         UbRemoteUrmaResponseSender responseSender)
-{
-    if (!IsUrmaReadWriteRequest(request) || responseSender.IsNull() ||
-        m_remoteUrmaRequestProcessor.IsNull())
-    {
-        return false;
-    }
-
-    const UbRemoteUrmaRequestContext requestContext{
-        .operation = request->GetType(),
-        .bytes = request->GetSize(),
-        .sourceNodeId = request->GetSrc(),
-        .targetNodeId = request->GetDest(),
-        .priority = request->GetPriority(),
-        .address = request->GetRemoteAddress(),
-        .tokenId = request->GetRemoteTokenId(),
-        .payload = request->GetExplicitPayload()};
-    return m_remoteUrmaRequestProcessor(requestContext, responseSender);
 }
 
 Ptr<UbWqeSegment>
-UbTransaction::BuildRemoteUrmaResponse(Ptr<UbWqeSegment> request) const
+UbTransaction::BuildTransactionResponse(uint32_t localTpn,
+                                        Ptr<UbWqeSegment> request,
+                                        const UbTransactionRule& rule,
+                                        UbWorkExecutionResult result) const
 {
-    if (request == nullptr)
+    if (request == nullptr || rule.role != UbTransactionSegmentKind::REQUEST ||
+        result.outcome != UbWorkOutcome::COMPLETED ||
+        result.protocolStatus != UbTransactionProtocolStatus::SUCCESS) return nullptr;
+    UbTransactionOpcode responseOpcode = request->HasTransactionResolved()
+                                             ? request->GetTransactionResolved().responseOpcode
+                                             : UbTransactionOpcode::TAACK;
+    uint32_t payload = request->HasTransactionResolved()
+                           ? request->GetTransactionResolved().responsePayloadBytes
+                           : 0;
+    if (!request->HasTransactionResolved() && request->GetType() == UbTransactionOpcode::READ)
+    { responseOpcode = UbTransactionOpcode::READ_RESPONSE; payload = request->GetResponseBytes() == 0 ? request->GetSize() : request->GetResponseBytes(); }
+    else if (!request->HasTransactionResolved() && IsAtomicTransaction(request->GetType()))
     {
+        // Atomic P/S is normalized at ingress and copied onto the operation. Re-deriving it here
+        // would allow a response to disagree with the request that was actually admitted.
         return nullptr;
     }
-    if (request->GetType() == TaOpcode::TA_OPCODE_WRITE)
-    {
-        return BuildRemoteWriteAck(UINT32_MAX, request);
-    }
-    if (request->GetType() == TaOpcode::TA_OPCODE_READ)
-    {
-        return BuildRemoteReadResponse(UINT32_MAX, request);
-    }
-    return nullptr;
-}
-
-void UbTransaction::SetRemoteUrmaRequestProcessor(UbRemoteUrmaRequestProcessor processor)
-{
-    m_remoteUrmaRequestProcessor = processor;
-}
-
-void UbTransaction::ClearRemoteUrmaRequestProcessor()
-{
-    m_remoteUrmaRequestProcessor = UbRemoteUrmaRequestProcessor();
-}
-
-bool UbTransaction::HasRemoteUrmaRequestProcessor() const
-{
-    return !m_remoteUrmaRequestProcessor.IsNull();
+    auto response = CreateObject<UbWqeSegment>();
+    response->SetSrc(m_nodeId); response->SetDest(request->GetSrc()); response->SetSport(request->GetDport()); response->SetDport(request->GetSport());
+    response->SetType(responseOpcode); response->SetSize(std::max(payload, 1u)); response->SetLogicalBytes(payload); response->SetPayloadBytes(payload); response->SetCarrierBytes(std::max(payload, 1u)); response->SetPriority(request->GetPriority());
+    response->SetTaskId(request->GetTaskId()); response->SetWqeSize(request->GetWqeSize()); response->SetOrderType(request->GetOrderType()); response->SetJettyNum(request->GetOriginJettyNum()); response->SetTaMsn(0); response->SetTaSsn(request->GetRequestTassn()); response->SetSegmentKind(UbTransactionSegmentKind::RESPONSE); response->SetOriginJettyNum(request->GetOriginJettyNum()); response->SetRequestTassn(request->GetRequestTassn()); response->SetRequestOpcode(request->GetType()); response->SetResponseBytes(payload); response->SetRemoteAddress(request->GetRemoteAddress()); response->SetRemoteTokenId(request->GetRemoteTokenId()); response->SetNeedsTransactionResponse(false); response->SetTpn(localTpn); response->SetTransactionFields(request->GetTransactionFields());
+    if (request->HasTransactionResolved()) response->SetTransactionResolved(request->GetTransactionResolved());
+    if (request->HasTransactionCorrelation()) response->SetTransactionCorrelation(request->GetTransactionCorrelation());
+    if (request->HasResolvedTpIdentity()) response->SetResolvedTpIdentity(request->GetResolvedTpIdentity());
+    return response;
 }
 
 void UbTransaction::EnqueueInboundTaResponse(uint32_t localTpn,
@@ -1969,175 +2019,61 @@ void UbTransaction::EnqueueInboundTaResponse(uint32_t localTpn,
     EnqueueRemoteRtpWqeSegment(localTpn, response);
 }
 
-void UbTransaction::SendBoundRemoteUrmaResponse(Ptr<UbTransaction> transaction,
-                                                uint32_t localTpn,
-                                                Ptr<UbWqeSegment> request)
-{
-    if (transaction != nullptr) {
-        transaction->SendRemoteUrmaResponse(localTpn, request);
-    }
-}
-
-void UbTransaction::SendRemoteUrmaResponse(uint32_t localTpn,
-                                           Ptr<UbWqeSegment> request)
-{
-    if (request == nullptr) {
-        return;
-    }
-    if (request->GetType() == TaOpcode::TA_OPCODE_WRITE) {
-        EnqueueInboundTaResponse(localTpn, BuildRemoteWriteAck(localTpn, request));
-        return;
-    }
-    if (request->GetType() == TaOpcode::TA_OPCODE_READ) {
-        EnqueueInboundTaResponse(localTpn, BuildRemoteReadResponse(localTpn, request));
-    }
-}
-
-Ptr<UbWqeSegment> UbTransaction::ProcessInboundTaRequest(Ptr<UbWqeSegment> request)
-{
-    if (request == nullptr) {
-        return nullptr;
-    }
-    if (request->GetType() == TaOpcode::TA_OPCODE_WRITE) {
-        return ExecuteRemoteWriteAndBuildAck(UINT32_MAX, request);
-    }
-    if (request->GetType() == TaOpcode::TA_OPCODE_READ) {
-        return ExecuteRemoteReadAndBuildResponse(UINT32_MAX, request);
-    }
-    return nullptr;
-}
-
 bool UbTransaction::ProcessInboundTaResponse(Ptr<UbWqeSegment> response)
 {
-    if (response == nullptr) {
+    if (response == nullptr)
+    {
         return false;
     }
-
-    const bool isWriteAck =
-        response->GetType() == TaOpcode::TA_OPCODE_TRANSACTION_ACK &&
-        response->GetRequestOpcode() == TaOpcode::TA_OPCODE_WRITE;
-    const bool isReadResponse =
-        response->GetType() == TaOpcode::TA_OPCODE_READ_RESPONSE &&
-        response->GetRequestOpcode() == TaOpcode::TA_OPCODE_READ;
-    if (!isWriteAck && !isReadResponse) {
+    const auto operation = m_operations.find({response->GetOriginJettyNum(), response->GetTaskId()});
+    if (operation == m_operations.end())
+    {
         return false;
     }
-
+    const auto segment = operation->second.segments.find(response->GetRequestTassn());
+    if (segment == operation->second.segments.end() || segment->second.segment == nullptr)
+    {
+        return false;
+    }
+    const auto request = segment->second.segment;
+    if (!operation->second.ctp &&
+        (response->GetSrc() != request->GetDest() || response->GetDest() != request->GetSrc()))
+    {
+        return false;
+    }
+    if (!operation->second.ctp &&
+        (!request->HasTransactionCorrelation() || !response->HasTransactionCorrelation() ||
+         response->GetTransactionOperationIdentity() != request->GetTransactionOperationIdentity() ||
+         response->GetTransactionSegmentIdentity() != request->GetTransactionSegmentIdentity()))
+    {
+        return false;
+    }
+    const auto* rule = FindTransactionRule(request->GetType());
+    if (rule == nullptr || rule->role != UbTransactionSegmentKind::REQUEST)
+        return false;
+    const auto expected = request->HasTransactionResolved()
+                              ? request->GetTransactionResolved().responseOpcode
+                              : rule->responseOpcode;
+    if (response->GetType() != expected ||
+        response->GetSegmentKind() != UbTransactionSegmentKind::RESPONSE)
+    {
+        return false;
+    }
+    const uint32_t expectedPayload = request->HasTransactionResolved()
+                                         ? request->GetTransactionResolved().responsePayloadBytes
+                                         : request->GetResponseBytes();
+    if (response->GetPayloadBytes() != expectedPayload &&
+        !(expectedPayload == 0 && response->GetPayloadBytes() == 1))
+    {
+        return false;
+    }
+    if (operation->second.ctp && request->HasTransactionCorrelation() &&
+        !response->HasTransactionCorrelation())
+    {
+        response->SetTransactionCorrelation(request->GetTransactionCorrelation());
+    }
+    response->SetRequestOpcode(request->GetType());
     return ProcessWqeSegmentComplete(response);
-}
-
-Ptr<UbWqeSegment> UbTransaction::ExecuteRemoteWriteAndBuildAck(uint32_t localTpn,
-                                                               Ptr<UbWqeSegment> request)
-{
-    if (request == nullptr) {
-        return nullptr;
-    }
-
-    const uint64_t address = DeriveRemoteAddress(request);
-    m_memoryStore[std::make_pair(m_nodeId, address)] = request->GetSize();
-
-    return BuildRemoteWriteAck(localTpn, request);
-}
-
-Ptr<UbWqeSegment> UbTransaction::BuildRemoteWriteAck(uint32_t localTpn,
-                                                     Ptr<UbWqeSegment> request) const
-{
-    if (request == nullptr) {
-        return nullptr;
-    }
-
-    Ptr<UbWqeSegment> response = CreateObject<UbWqeSegment>();
-    response->SetSrc(m_nodeId);
-    response->SetDest(request->GetSrc());
-    response->SetSport(request->GetDport());
-    response->SetDport(request->GetSport());
-    response->SetType(TaOpcode::TA_OPCODE_TRANSACTION_ACK);
-    // Keep a non-zero carrier so the existing TP scheduler will serialize one response packet.
-    response->SetSize(1);
-    response->SetPriority(request->GetPriority());
-    response->SetTaskId(request->GetTaskId());
-    response->SetWqeSize(request->GetWqeSize());
-    response->SetOrderType(request->GetOrderType());
-    response->SetJettyNum(request->GetOriginJettyNum());
-    response->SetTaMsn(0);
-    response->SetTaSsn(request->GetRequestTassn());
-    response->SetSegmentKind(UbTransactionSegmentKind::RESPONSE);
-    response->SetOriginJettyNum(request->GetOriginJettyNum());
-    response->SetRequestTassn(request->GetRequestTassn());
-    response->SetRequestOpcode(TaOpcode::TA_OPCODE_WRITE);
-    response->SetResponseBytes(0);
-    response->SetRemoteAddress(request->GetRemoteAddress());
-    response->SetRemoteTokenId(request->GetRemoteTokenId());
-    response->SetNeedsTransactionResponse(false);
-    response->SetTpn(localTpn);
-    if (request->HasTransactionCorrelation())
-    {
-        response->SetTransactionCorrelation(request->GetTransactionCorrelation());
-    }
-    if (request->HasResolvedTpIdentity())
-    {
-        response->SetResolvedTpIdentity(request->GetResolvedTpIdentity());
-    }
-    return response;
-}
-
-Ptr<UbWqeSegment> UbTransaction::ExecuteRemoteReadAndBuildResponse(uint32_t localTpn,
-                                                                   Ptr<UbWqeSegment> request)
-{
-    if (request == nullptr) {
-        return nullptr;
-    }
-
-    return BuildRemoteReadResponse(localTpn, request);
-}
-
-Ptr<UbWqeSegment> UbTransaction::BuildRemoteReadResponse(uint32_t localTpn,
-                                                          Ptr<UbWqeSegment> request) const
-{
-    if (request == nullptr) {
-        return nullptr;
-    }
-
-    const uint32_t responseBytes = request->GetResponseBytes() == 0 ? request->GetSize()
-                                                                     : request->GetResponseBytes();
-
-    Ptr<UbWqeSegment> response = CreateObject<UbWqeSegment>();
-    response->SetSrc(m_nodeId);
-    response->SetDest(request->GetSrc());
-    response->SetSport(request->GetDport());
-    response->SetDport(request->GetSport());
-    response->SetType(TaOpcode::TA_OPCODE_READ_RESPONSE);
-    response->SetSize(responseBytes);
-    response->SetPriority(request->GetPriority());
-    response->SetTaskId(request->GetTaskId());
-    response->SetWqeSize(request->GetWqeSize());
-    response->SetOrderType(request->GetOrderType());
-    response->SetJettyNum(request->GetOriginJettyNum());
-    response->SetTaMsn(0);
-    response->SetTaSsn(request->GetRequestTassn());
-    response->SetSegmentKind(UbTransactionSegmentKind::RESPONSE);
-    response->SetOriginJettyNum(request->GetOriginJettyNum());
-    response->SetRequestTassn(request->GetRequestTassn());
-    response->SetRequestOpcode(TaOpcode::TA_OPCODE_READ);
-    response->SetResponseBytes(responseBytes);
-    response->SetRemoteAddress(request->GetRemoteAddress());
-    response->SetRemoteTokenId(request->GetRemoteTokenId());
-    response->SetNeedsTransactionResponse(false);
-    response->SetTpn(localTpn);
-    if (request->HasTransactionCorrelation())
-    {
-        response->SetTransactionCorrelation(request->GetTransactionCorrelation());
-    }
-    if (request->HasResolvedTpIdentity())
-    {
-        response->SetResolvedTpIdentity(request->GetResolvedTpIdentity());
-    }
-    return response;
-}
-
-void UbTransaction::CompleteLocalRequestFromResponse(Ptr<UbWqeSegment> response)
-{
-    ProcessInboundTaResponse(response);
 }
 
 uint64_t UbTransaction::DeriveRemoteAddress(const Ptr<UbWqeSegment>& request) const
@@ -2919,6 +2855,7 @@ UbTransaction::DoDispose()
         Simulator::Cancel(event);
     }
     m_delayedInboundEvents.clear();
+    m_pendingInboundRequestsByTpn.clear();
     NS_LOG_FUNCTION(this);
     for (auto& [key, queue] : m_rtpTxQueues)
     {
@@ -2947,8 +2884,6 @@ UbTransaction::DoDispose()
     m_tpRRIndex.clear();
     m_random = nullptr;
     m_serviceMode.clear();
-    m_remoteUrmaRequestProcessor = UbRemoteUrmaRequestProcessor();
-    m_memoryStore.clear();
     for (auto& [key, operation] : m_operations)
     {
         (void)key;
@@ -3018,7 +2953,8 @@ bool
 UbTransaction::HasPendingTransportWork(uint32_t tpn) const
 {
     const auto remoteRequests = m_remoteRtpWqeSegmentsByTpn.find(tpn);
-    return remoteRequests != m_remoteRtpWqeSegmentsByTpn.end() && !remoteRequests->second.empty();
+    return m_pendingInboundRequestsByTpn.find(tpn) != m_pendingInboundRequestsByTpn.end() ||
+           (remoteRequests != m_remoteRtpWqeSegmentsByTpn.end() && !remoteRequests->second.empty());
 }
 
 bool UbTransaction::IsPeerTpInUse(uint32_t tpn)

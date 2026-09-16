@@ -350,17 +350,24 @@ ParseUint32Field(const std::string& line, size_t valueStart, size_t valueEnd)
 }
 
 uint32_t
-ParseUint32Field(std::string_view field)
+ParseUint32Field(std::string_view field, const char* fieldName = nullptr, uint32_t taskId = 0)
 {
-    NS_ABORT_MSG_IF(field.empty(), "Missing uint32 field in traffic.csv");
+    // Build diagnostic context only on rejection; valid rows retain the original parser cost.
+    const auto context = [fieldName, taskId]() {
+        return fieldName == nullptr
+                   ? std::string{}
+                   : "traffic.csv taskId=" + std::to_string(taskId) + " " + fieldName + ": ";
+    };
+    NS_ABORT_MSG_IF(field.empty(), context() << "Missing uint32 field in traffic.csv");
     uint32_t value = 0;
     for (char c : field)
     {
-        NS_ABORT_MSG_IF(c < '0' || c > '9',
-                        "Invalid uint32 field in traffic.csv; signed values are not supported");
+        NS_ABORT_MSG_IF(
+            c < '0' || c > '9',
+            context() << "Invalid uint32 field in traffic.csv; signed values are not supported");
         const uint32_t digit = static_cast<uint32_t>(c - '0');
         NS_ABORT_MSG_IF(value > (std::numeric_limits<uint32_t>::max() - digit) / 10,
-                        "traffic.csv uint32 field overflow");
+                        context() << "traffic.csv uint32 field overflow");
         value = value * 10 + digit;
     }
     return value;
@@ -427,21 +434,42 @@ SplitCsvRow(const std::string& line)
 struct TrafficCsvOptionalFields
 {
     bool hasPortIds{false};
+    bool hasAtomicOptions{false};
 };
 
 TrafficCsvOptionalFields
 ValidateTrafficCsvHeader(const std::vector<std::string>& header)
 {
-    NS_ABORT_MSG_IF(header.size() != 9 && header.size() != 11,
-                    "traffic.csv header must have 9 base fields and may end with "
-                    "srcPortId,dstPortId");
+    static const std::vector<std::string> base = {"taskId",
+                                                  "sourceNode",
+                                                  "destNode",
+                                                  "dataSize(Byte)",
+                                                  "opType",
+                                                  "priority",
+                                                  "delay",
+                                                  "phaseId",
+                                                  "dependOnPhases"};
+    NS_ABORT_MSG_IF(
+        header.size() != 9 && header.size() != 11 && header.size() != 13,
+        "traffic.csv header requires 9 base fields with optional port and atomic pairs");
+    NS_ABORT_MSG_IF(!std::equal(base.begin(), base.end(), header.begin()),
+                    "traffic.csv base field names/order must match taskId through dependOnPhases");
     TrafficCsvOptionalFields fields;
-    if (header.size() == 11)
+    std::size_t next = 9;
+    if (header.size() >= 11 && header[9] == "srcPortId" && header[10] == "dstPortId")
     {
-        fields.hasPortIds = header[9] == "srcPortId" && header[10] == "dstPortId";
-        NS_ABORT_MSG_IF(!fields.hasPortIds,
-                        "traffic.csv 11-field header must end with srcPortId,dstPortId");
+        fields.hasPortIds = true;
+        next += 2;
     }
+    if (header.size() >= next + 2 && header[next] == "atomicSubOperation" &&
+        header[next + 1] == "requestPayloadBytes")
+    {
+        fields.hasAtomicOptions = true;
+        next += 2;
+    }
+    NS_ABORT_MSG_IF(next != header.size(),
+                    "traffic.csv optional groups must be srcPortId,dstPortId then "
+                    "atomicSubOperation,requestPayloadBytes; Entity columns are not supported");
     return fields;
 }
 
@@ -601,6 +629,20 @@ SetTrafficRecordField(int fieldCount,
                       const TrafficCsvOptionalFields& optionalFields)
 {
     const std::string_view field = TrimField(rawField);
+    const int atomicStart = optionalFields.hasPortIds ? 11 : 9;
+    if (optionalFields.hasAtomicOptions && fieldCount >= atomicStart)
+    {
+        if (fieldCount == atomicStart)
+        {
+            record.atomicSubOperation = field;
+        }
+        if (fieldCount == atomicStart + 1)
+        {
+            record.requestPayloadBytes = field;
+        }
+        return;
+    }
+
     switch (fieldCount)
     {
     case 0:
@@ -613,7 +655,8 @@ SetTrafficRecordField(int fieldCount,
         record.destNode = static_cast<int>(ParseUint32Field(field));
         break;
     case 3:
-        record.dataSize = static_cast<int>(ParseUint32Field(field));
+        record.dataSize = static_cast<int>(
+            ParseUint32Field(field, "dataSize(Byte)", static_cast<uint32_t>(record.taskId)));
         break;
     case 4:
         record.opType.assign(field.data(), field.size());
@@ -1067,6 +1110,20 @@ SetTrafficRecordViewField(int fieldCount,
                           const TrafficCsvOptionalFields& optionalFields)
 {
     const std::string_view field = TrimField(rawField);
+    const int atomicStart = optionalFields.hasPortIds ? 11 : 9;
+    if (optionalFields.hasAtomicOptions && fieldCount >= atomicStart)
+    {
+        if (fieldCount == atomicStart)
+        {
+            record.atomicSubOperation = field;
+        }
+        if (fieldCount == atomicStart + 1)
+        {
+            record.requestPayloadBytes = field;
+        }
+        return;
+    }
+
     switch (fieldCount)
     {
     case 0:
@@ -1079,7 +1136,7 @@ SetTrafficRecordViewField(int fieldCount,
         record.destNode = ParseUint32Field(field);
         break;
     case 3:
-        record.dataSize = ParseUint32Field(field);
+        record.dataSize = ParseUint32Field(field, "dataSize(Byte)", record.taskId);
         break;
     case 4:
         record.opType = field;
@@ -4691,6 +4748,8 @@ UbUtils::ForEachTrafficRecordInternal(const string& filename,
         record.dstPortId = 0;
         record.hasSrcPortId = false;
         record.hasDstPortId = false;
+        record.atomicSubOperation.clear();
+        record.requestPayloadBytes.clear();
 
         int fieldCount = 0;
         size_t fieldStart = 0;

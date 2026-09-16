@@ -7,6 +7,20 @@ from openusim_run_experiment import case_checker, network_attribute_writer
 
 
 class OpenUSimRunScriptsTest(unittest.TestCase):
+    def test_empty_runtime_default_keeps_the_following_parameter(self):
+        output = (
+            "Global: UB_LIFECYCLE_TRACE_LEVEL\nDescription: Optional override\n"
+            "DataType: ns3::StringValue\nDefault: \n"
+            "Global: UB_PACKET_TRACE_ENABLE\nDescription: Packet traces\n"
+            "DataType: ns3::BooleanValue\nDefault: true\n"
+        )
+        with mock.patch.object(network_attribute_writer, "_run_query", return_value=output):
+            entries = network_attribute_writer._runtime_global_entries()
+        self.assertEqual(
+            [(entry["parameter_key"], entry["default_value"]) for entry in entries],
+            [("UB_LIFECYCLE_TRACE_LEVEL", ""), ("UB_PACKET_TRACE_ENABLE", "true")],
+        )
+
     def fake_parameter_catalog(self):
         return {
             "source_root": "scratch/ub-quick-example",

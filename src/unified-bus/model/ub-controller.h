@@ -212,11 +212,6 @@ public:
         return m_initiatorProtocolDispatchDelay;
     }
 
-    Time GetTargetProtocolProcessingDelay() const
-    {
-        return m_targetProtocolProcessingDelay;
-    }
-
     Time GetInitiatorProtocolCompletionVisibilityDelay() const
     {
         return m_initiatorProtocolCompletionVisibilityDelay;
@@ -260,7 +255,6 @@ public:
     uint32_t m_activeSenderFlowCount{0};
     bool m_disposing{false};
     Time m_initiatorProtocolDispatchDelay{NanoSeconds(0)};
-    Time m_targetProtocolProcessingDelay{NanoSeconds(0)};
     Time m_initiatorProtocolCompletionVisibilityDelay{NanoSeconds(0)};
 };
 

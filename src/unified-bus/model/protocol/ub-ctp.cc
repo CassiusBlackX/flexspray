@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "ub-ctp.h"
 
+#include "ub-ta-codec.h"
+#include "ub-transaction-rules.h"
 #include "ub-datalink.h"
 #include "ub-function.h"
 #include "ub-header.h"
@@ -11,8 +13,8 @@
 #include "ns3/global-value.h"
 #include "ns3/hash.h"
 #include "ns3/log.h"
-#include "ns3/node.h"
 #include "ns3/node-list.h"
+#include "ns3/node.h"
 #include "ns3/simulator.h"
 #include "ns3/ub-controller.h"
 #include "ns3/ub-lifecycle.h"
@@ -136,11 +138,12 @@ BuildCtpPacket(Ptr<UbWqeSegment> segment,
     NS_ABORT_MSG_IF(dstPortId != UINT32_MAX && dstPortId > CTP_MAX_CNA16_PORT_ID,
                     "CTP destination port cannot be encoded as CNA16: " << dstPortId);
 
-    const bool isAckResponse = segment->GetSegmentKind() == UbTransactionSegmentKind::RESPONSE &&
-                               segment->GetType() == TaOpcode::TA_OPCODE_TRANSACTION_ACK;
-    const bool isReadRequest = segment->GetType() == TaOpcode::TA_OPCODE_READ &&
+    const bool isAckResponse = segment->GetSegmentKind() == UbTransactionSegmentKind::RESPONSE;
+    const bool isReadRequest = segment->GetType() == UbTransactionOpcode::READ &&
                                segment->GetSegmentKind() == UbTransactionSegmentKind::REQUEST;
-    const uint32_t payloadBytes = isAckResponse || isReadRequest ? 0 : progressBytes;
+    const uint32_t payloadBytes = isAckResponse
+                                      ? segment->GetPayloadBytes()
+                                      : (isReadRequest ? 0 : progressBytes);
     const uint32_t logicalBytes =
         segment->GetLogicalBytes() == 0 ? payloadBytes : segment->GetLogicalBytes();
     NS_ABORT_MSG_IF(payloadBytes > UB_MTU_BYTE,
@@ -169,23 +172,48 @@ BuildCtpPacket(Ptr<UbWqeSegment> segment,
     UbFlowTag flowTag(segment->GetTaskId(), segment->GetWqeSize());
     packet->AddPacketTag(flowTag);
 
-    if (segment->GetSegmentKind() == UbTransactionSegmentKind::RESPONSE)
+    if (isAckResponse && segment->GetType() == UbTransactionOpcode::TAACK)
     {
         UbCompactAckTransactionHeader ackHeader;
-        ackHeader.SetTaOpcode(segment->GetType());
+        ackHeader.SetUbTransactionOpcode(segment->GetType());
         ackHeader.SetIniTaSsn(static_cast<uint16_t>(taSsn));
         packet->AddHeader(ackHeader);
     }
     else
     {
         UbCompactTransactionHeader taHeader;
-        taHeader.SetTaOpcode(segment->GetType());
+        taHeader.SetUbTransactionOpcode(segment->GetType());
         taHeader.SetIniTaSsn(static_cast<uint16_t>(taSsn));
-        UbCompactMAExtTah maHeader;
-        maHeader.SetVirtualAddress(segment->GetRemoteAddress());
-        maHeader.SetTokenId(segment->GetRemoteTokenId());
-        maHeader.SetLength(static_cast<uint8_t>(CalcCompactLength(logicalBytes)));
-        packet->AddHeader(maHeader);
+        const auto* rule = FindTransactionRule(isAckResponse ? segment->GetRequestOpcode()
+                                                               : segment->GetType());
+        if (rule != nullptr)
+        {
+            // The rule-driven plan owns the wire order and presence of every declared header; the
+            // compact basic header carries MTETAH whenever the rule lists it.
+            const UbTaHeaderPlan plan =
+                isAckResponse ? UbTaHeaderPlan::ForResponse(*rule)
+                              : UbTaHeaderPlan::ForRequest(*rule, CompactHeaderPresence(*rule));
+            // Write declared transaction extensions in reverse order because AddHeader prepends.
+            for (int index = static_cast<int>(plan.GetCount()) - 1; index >= 0; --index)
+            {
+                const auto kind = plan.GetKind(static_cast<uint8_t>(index));
+                if (kind == UbTransactionHeaderKind::MAETAH)
+                {
+                    UbCompactMAExtTah maHeader;
+                    maHeader.SetVirtualAddress(segment->GetRemoteAddress());
+                    maHeader.SetTokenId(segment->GetRemoteTokenId());
+                    maHeader.SetLength(static_cast<uint8_t>(CalcCompactLength(logicalBytes)));
+                    packet->AddHeader(maHeader);
+                    continue;
+                }
+                UbTransactionExtensionHeader extension(kind);
+                if (!WriteTransactionExtension(segment->GetTransactionFields(), extension))
+                {
+                    continue;
+                }
+                packet->AddHeader(extension);
+            }
+        }
         packet->AddHeader(taHeader);
     }
 
@@ -694,7 +722,7 @@ UbCtpTransportService::BuildDataPacket(Ptr<UbWqeSegment> segment, const UbCtpEnt
                                : segment->GetTaSsn();
     const uint32_t progressBytes =
         segment->GetSegmentKind() == UbTransactionSegmentKind::RESPONSE &&
-                segment->GetType() == TaOpcode::TA_OPCODE_TRANSACTION_ACK
+                segment->GetType() == UbTransactionOpcode::TAACK
             ? 0
             : static_cast<uint32_t>(segment->GetBytesLeft());
     const UbCtpEntityKey packetKey = MakeTxKeyForSegment(key, segment);
@@ -765,7 +793,7 @@ UbCtpTransportService::AddCtpNetworkHeaders(Ptr<Packet> packet,
     UbCtpRoutingPolicy routing{.routingType = routingType, .nextSprayIndex = 0};
     Ptr<UbWqeSegment> empty = CreateObject<UbWqeSegment>();
     empty->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
-    empty->SetType(TaOpcode::TA_OPCODE_WRITE);
+    empty->SetType(UbTransactionOpcode::WRITE);
     empty->SetPayloadBytes(packet->GetSize());
     empty->SetCarrierBytes(packet->GetSize());
     Ptr<Packet> headers = BuildCtpPacket(empty,
@@ -1325,19 +1353,23 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t ingress
         Ptr<Packet> ackCandidate = CopyPacketView(copy);
         UbCompactAckTransactionHeader ackHeader;
         if (ackCandidate->RemoveHeader(ackHeader) != 0 &&
-            (ackHeader.GetTaOpcode() == static_cast<uint8_t>(TaOpcode::TA_OPCODE_TRANSACTION_ACK) ||
-             ackHeader.GetTaOpcode() == static_cast<uint8_t>(TaOpcode::TA_OPCODE_READ_RESPONSE) ||
-             ackHeader.GetTaOpcode() == static_cast<uint8_t>(TaOpcode::TA_OPCODE_ATOMIC_RESPONSE)))
+            ackHeader.GetUbTransactionOpcode() == static_cast<uint8_t>(UbTransactionOpcode::TAACK))
         {
             UbFlowTag flowTag;
-            copy->PeekPacketTag(flowTag);
+            const bool hasFlowTag = copy->PeekPacketTag(flowTag);
+            if (!hasFlowTag)
+            {
+                std::cerr << "Rejected CTP response: missing FlowTag" << std::endl;
+                return false;
+            }
+            const uint32_t responsePayloadBytes = 0;
             UbPacketTraceTag traceTag;
             copy->PeekPacketTag(traceTag);
             CtpRecvNotify(packet->GetUid(),
                           localKey,
                           ackHeader.GetIniTaSsn(),
                           PacketType::ACK,
-                          copy->GetSize(),
+                          responsePayloadBytes,
                           flowTag.GetFlowId(),
                           traceTag);
 
@@ -1353,23 +1385,17 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t ingress
             response->SetSegmentKind(UbTransactionSegmentKind::RESPONSE);
             response->SetOriginJettyNum(ackHeader.GetIniTaSsn());
             response->SetRequestTassn(ackHeader.GetIniTaSsn());
-            response->SetType(static_cast<TaOpcode>(ackHeader.GetTaOpcode()));
-            response->SetRequestOpcode(
-                ackHeader.GetTaOpcode() == static_cast<uint8_t>(TaOpcode::TA_OPCODE_TRANSACTION_ACK)
-                    ? TaOpcode::TA_OPCODE_WRITE
-                    : TaOpcode::TA_OPCODE_READ);
-            response->SetResponseBytes(copy->GetSize());
+            response->SetType(static_cast<UbTransactionOpcode>(ackHeader.GetUbTransactionOpcode()));
+            response->SetRequestOpcode(UbTransactionOpcode::WRITE);
+            response->SetResponseBytes(responsePayloadBytes);
             response->SetNeedsTransactionResponse(false);
-            response->SetSize(ackHeader.GetTaOpcode() ==
-                                      static_cast<uint8_t>(TaOpcode::TA_OPCODE_TRANSACTION_ACK)
-                                  ? 1
-                                  : copy->GetSize());
-            response->SetLogicalBytes(copy->GetSize());
-            response->SetPayloadBytes(copy->GetSize());
+            response->SetSize(1);
+            response->SetLogicalBytes(responsePayloadBytes);
+            response->SetPayloadBytes(responsePayloadBytes);
             response->SetCarrierBytes(
-                ackHeader.GetTaOpcode() == static_cast<uint8_t>(TaOpcode::TA_OPCODE_TRANSACTION_ACK)
+                ackHeader.GetUbTransactionOpcode() == static_cast<uint8_t>(UbTransactionOpcode::TAACK)
                     ? 1
-                    : copy->GetSize());
+                    : responsePayloadBytes);
             CompleteFromTaAck(localKey, ackHeader.GetIniTaSsn(), response);
             return true;
         }
@@ -1380,20 +1406,51 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t ingress
     {
         return false;
     }
+    const auto taOpcode = static_cast<UbTransactionOpcode>(taHeader.GetUbTransactionOpcode());
+    const bool isResponse = taOpcode == UbTransactionOpcode::READ_RESPONSE ||
+                            taOpcode == UbTransactionOpcode::ATOMIC_RESPONSE;
+    if (isResponse)
+    {
+        UbFlowTag flowTag;
+        if (!copy->PeekPacketTag(flowTag))
+            return false;
+        Ptr<UbWqeSegment> response = CreateObject<UbWqeSegment>();
+        response->SetSrc(wireSrcNodeId);
+        response->SetDest(wireDstNodeId);
+        response->SetPriority(localKey.vl);
+        response->SetTaskId(flowTag.GetFlowId());
+        response->SetWqeSize(flowTag.GetFlowSize());
+        response->SetJettyNum(taHeader.GetIniTaSsn());
+        response->SetTaSsn(taHeader.GetIniTaSsn());
+        response->SetRequestTassn(taHeader.GetIniTaSsn());
+        response->SetOriginJettyNum(taHeader.GetIniTaSsn());
+        response->SetSegmentKind(UbTransactionSegmentKind::RESPONSE);
+        response->SetType(taOpcode);
+        response->SetPayloadBytes(copy->GetSize());
+        response->SetLogicalBytes(copy->GetSize());
+        response->SetResponseBytes(copy->GetSize());
+        response->SetCarrierBytes(copy->GetSize());
+        CompleteFromTaAck(localKey, taHeader.GetIniTaSsn(), response);
+        return true;
+    }
+    const auto* rule = FindTransactionRule(taOpcode);
+    if (rule == nullptr || rule->role != UbTransactionSegmentKind::REQUEST)
+    {
+        std::cerr << "Rejected unsupported CTP transaction opcode" << std::endl;
+        return false;
+    }
+    // Consume exactly the header plan a sender of this rule must have written.
+    const UbTaHeaderPlan plan = UbTaHeaderPlan::ForRequest(*rule, CompactHeaderPresence(*rule));
+    const bool maetahPlanned = plan.Contains(UbTransactionHeaderKind::MAETAH);
     UbCompactMAExtTah maHeader;
-    if (copy->RemoveHeader(maHeader) == 0)
-    {
-        return false;
-    }
-
-    const auto taOpcode = static_cast<TaOpcode>(taHeader.GetTaOpcode());
-    if (taOpcode != TaOpcode::TA_OPCODE_WRITE && taOpcode != TaOpcode::TA_OPCODE_READ)
-    {
-        return false;
-    }
 
     UbFlowTag flowTag;
-    packet->PeekPacketTag(flowTag);
+    const bool hasFlowTag = packet->PeekPacketTag(flowTag);
+    if (IsAtomicTransaction(taOpcode) && !hasFlowTag)
+    {
+        std::cerr << "Rejected CTP atomic request: missing FlowTag (operandBytes)" << std::endl;
+        return false;
+    }
     UbPacketTraceTag traceTag;
     packet->PeekPacketTag(traceTag);
     CtpRecvNotify(packet->GetUid(),
@@ -1403,6 +1460,34 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t ingress
                   copy->GetSize(),
                   flowTag.GetFlowId(),
                   traceTag);
+
+    UbTransactionFields transactionFields;
+    for (uint8_t index = 0; index < plan.GetCount(); ++index)
+    {
+        const auto kind = plan.GetKind(index);
+        if (kind == UbTransactionHeaderKind::MAETAH)
+        {
+            if (copy->RemoveHeader(maHeader) == 0)
+            {
+                std::cerr << "Rejected CTP transaction: missing or malformed MAETAH" << std::endl;
+                return false;
+            }
+            transactionFields.memoryAccess = UbMemoryAccessFields{
+                maHeader.GetVirtualAddress(),
+                maHeader.GetTokenId(),
+                static_cast<uint32_t>(64u << maHeader.GetLength())};
+            continue;
+        }
+        UbTransactionExtensionHeader extension(kind);
+        if (copy->GetSize() < extension.GetSerializedSize() ||
+            copy->RemoveHeader(extension) == 0)
+        {
+            std::cerr << "Rejected CTP transaction: missing or malformed extension header"
+                      << std::endl;
+            return false;
+        }
+        ReadTransactionExtension(extension, transactionFields);
+    }
 
     Ptr<const Packet> explicitPayload;
     UbExplicitPayloadTag explicitPayloadTag;
@@ -1416,6 +1501,8 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t ingress
     Ptr<UbWqeSegment> request = BuildInboundTaOperation(taHeader,
                                                         maHeader,
                                                         taOpcode,
+                                                        transactionFields,
+                                                        maetahPlanned,
                                                         wireSrcNodeId,
                                                         wireDstNodeId,
                                                         localKey.vl,
@@ -1425,7 +1512,7 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t ingress
                                                         explicitPayload);
     if (request == nullptr)
     {
-        return true;
+        return !IsAtomicTransaction(taOpcode);
     }
 
     request->SetDport(CTP_WILDCARD_PORT);
@@ -1448,123 +1535,37 @@ UbCtpTransportService::HandleReceivedPacket(Ptr<Packet> packet, uint32_t ingress
     }
     localState.Tx().routing.routingType = linkHeader.GetRoutingType();
 
-    const Time targetDelay =
-        controller == nullptr ? NanoSeconds(0) : controller->GetTargetProtocolProcessingDelay();
-    if (targetDelay.IsStrictlyPositive())
-    {
-        std::erase_if(m_delayedInboundEvents,
-                      [](const EventId& event) { return event.IsExpired(); });
-        m_delayedInboundEvents.push_back(
-            Simulator::Schedule(targetDelay,
-                                &UbCtpTransportService::RunDelayedInboundRequest,
-                                this,
-                                request,
-                                localKey));
-        return true;
-    }
-    return ProcessInboundTaRequestNow(request, localKey);
-}
-
-void
-UbCtpTransportService::RunDelayedInboundRequest(Ptr<UbWqeSegment> request, UbCtpEntityKey key)
-{
-    std::erase_if(m_delayedInboundEvents, [](const EventId& event) { return event.IsExpired(); });
-    Ptr<UbController> controller = m_node == nullptr ? nullptr : m_node->GetObject<UbController>();
-    if (controller == nullptr || controller->IsDisposing())
-    {
-        return;
-    }
-    ProcessInboundTaRequestNow(request, key);
+    // The target execution delay belongs to the common transaction entry, which both carriers use.
+    return DispatchInboundTransaction(request, localKey);
 }
 
 bool
-UbCtpTransportService::ProcessInboundTaRequestNow(Ptr<UbWqeSegment> request,
-                                                  const UbCtpEntityKey& key)
+UbCtpTransportService::DispatchInboundTransaction(Ptr<UbWqeSegment> request,
+                                                   const UbCtpEntityKey& key)
 {
-    Ptr<UbController> controller = m_node == nullptr ? nullptr : m_node->GetObject<UbController>();
-    Ptr<UbTransaction> transaction =
-        controller == nullptr ? nullptr : controller->GetUbTransaction();
-    if (transaction != nullptr && transaction->HasRemoteUrmaRequestProcessor())
-    {
-        Ptr<UbCtpTransportService> self(this);
-        UbRemoteUrmaResponseSender responseSender =
-            MakeBoundCallback(&UbCtpTransportService::SendBoundRemoteUrmaResponse,
-                              self,
-                              transaction,
-                              request,
-                              key);
-        transaction->DispatchRemoteUrmaRequest(request, responseSender);
-        return true;
-    }
-
-    Ptr<UbWqeSegment> response = ProcessInboundTaRequest(request);
-    if (response == nullptr)
-    {
-        return true;
-    }
-    UbCtpEntityState& state = GetOrCreateEntityState(key);
-    ++state.Rx().generatedResponses;
-    const bool sent = SendResponseSegment(response, state);
-    TryRetireTransactionState(key);
-    return sent;
-}
-
-void
-UbCtpTransportService::SendBoundRemoteUrmaResponse(Ptr<UbCtpTransportService> service,
-                                                   Ptr<UbTransaction> transaction,
-                                                   Ptr<UbWqeSegment> request,
-                                                   UbCtpEntityKey responseKey)
-{
-    if (service != nullptr)
-    {
-        service->SendRemoteUrmaResponse(transaction, request, responseKey);
-    }
-}
-
-void
-UbCtpTransportService::SendRemoteUrmaResponse(Ptr<UbTransaction> transaction,
-                                              Ptr<UbWqeSegment> request,
-                                              const UbCtpEntityKey& responseKey)
-{
-    if (transaction == nullptr || request == nullptr)
-    {
-        return;
-    }
-
-    Ptr<UbWqeSegment> response = transaction->BuildRemoteUrmaResponse(request);
-    if (response == nullptr)
-    {
-        return;
-    }
-
-    UbCtpEntityState& responseState = GetOrCreateEntityState(responseKey);
-    ++responseState.Rx().generatedResponses;
-    SendResponseSegment(response, responseState);
-}
-
-Ptr<UbWqeSegment>
-UbCtpTransportService::ProcessInboundTaRequest(Ptr<UbWqeSegment> request) const
-{
-    if (request == nullptr)
-    {
-        return nullptr;
-    }
-
     Ptr<UbController> controller = m_node == nullptr ? nullptr : m_node->GetObject<UbController>();
     Ptr<UbTransaction> transaction =
         controller == nullptr ? nullptr : controller->GetUbTransaction();
     if (transaction == nullptr)
-    {
-        return nullptr;
-    }
-
-    return transaction->ProcessInboundTaRequest(request);
+        return false;
+    UbTransactionResponseSink sink([this, key](Ptr<UbWqeSegment> response) {
+        if (response == nullptr)
+            return;
+        auto& state = GetOrCreateEntityState(key);
+        ++state.Rx().generatedResponses;
+        SendResponseSegment(response, state);
+        TryRetireTransactionState(key);
+    });
+    transaction->ExecuteInboundTransaction(UINT32_MAX, request, sink);
+    return true;
 }
 
 Ptr<UbWqeSegment>
 UbCtpTransportService::BuildInboundTaOperation(const UbCompactTransactionHeader& taHeader,
                                                const UbCompactMAExtTah& maHeader,
-                                               TaOpcode taOpcode,
+                                               UbTransactionOpcode taOpcode,
+                                               const UbTransactionFields& fields,
+                                               bool maetahPresent,
                                                uint32_t srcNodeId,
                                                uint32_t dstNodeId,
                                                uint32_t priority,
@@ -1574,9 +1575,30 @@ UbCtpTransportService::BuildInboundTaOperation(const UbCompactTransactionHeader&
                                                Ptr<const Packet> explicitPayload)
 {
     // UB Base Specification 2.0, 6.7.2: one CTP TP Packet carries one complete TA operation.
-    const bool isReadRequest = taOpcode == TaOpcode::TA_OPCODE_READ;
+    const bool isReadRequest = taOpcode == UbTransactionOpcode::READ;
     const uint32_t logicalBytes =
-        static_cast<uint32_t>(64u << static_cast<uint32_t>(maHeader.GetLength()));
+        IsAtomicTransaction(taOpcode)
+            ? flowSize
+            : (maetahPresent
+                   ? static_cast<uint32_t>(64u << static_cast<uint32_t>(maHeader.GetLength()))
+                   : payloadBytes);
+    // The complete inbound TA operation is normalized here, once; the common target entry consumes
+    // this cached result instead of validating the request again.
+    UbTransactionRequestInput request;
+    request.opcode = taOpcode;
+    request.logicalBytes = logicalBytes;
+    request.payloadBytes = payloadBytes;
+    request.fields = fields;
+    request.maxPayloadBytes = GetTransactionConstraints().maxSegmentBytes;
+    request.origin = UbTransactionRequestOrigin::INBOUND_DECODE;
+    const auto validation = ValidateTransactionRequest(request);
+    if (!validation.IsValid())
+    {
+        std::cerr << "Rejected CTP transaction taskId=" << flowId << ": " << validation.message
+                  << std::endl;
+        return nullptr;
+    }
+    const UbTransactionResolved& resolved = validation.resolved;
     if (explicitPayload != nullptr && (isReadRequest || explicitPayload->GetSize() != payloadBytes))
     {
         return nullptr;
@@ -1598,8 +1620,11 @@ UbCtpTransportService::BuildInboundTaOperation(const UbCompactTransactionHeader&
     operation->SetRequestOpcode(taOpcode);
     operation->SetRemoteAddress(maHeader.GetVirtualAddress());
     operation->SetRemoteTokenId(maHeader.GetTokenId());
-    operation->SetResponseBytes(isReadRequest ? logicalBytes : 0);
-    operation->SetNeedsTransactionResponse(taOpcode == TaOpcode::TA_OPCODE_WRITE || isReadRequest);
+    operation->SetResponseBytes(resolved.responsePayloadBytes);
+    operation->SetNeedsTransactionResponse(resolved.requiresResponse);
+    operation->SetTransactionFields(fields);
+    operation->SetTransactionResolved(resolved);
+
     operation->SetSize(logicalBytes);
     operation->SetLogicalBytes(logicalBytes);
     operation->SetPayloadBytes(payloadBytes);
@@ -1626,12 +1651,18 @@ UbCtpTransportService::CompleteFromTaAckForTest(const UbCtpEntityKey& key, uint3
     const auto outstanding = state.outstandingSegments.find(taSsn);
     const bool read = outstanding != state.outstandingSegments.end() &&
                       outstanding->second != nullptr &&
-                      outstanding->second->GetType() == TaOpcode::TA_OPCODE_READ;
+                      outstanding->second->GetType() == UbTransactionOpcode::READ;
     Ptr<UbWqeSegment> response = CreateObject<UbWqeSegment>();
     response->SetSegmentKind(UbTransactionSegmentKind::RESPONSE);
-    response->SetType(read ? TaOpcode::TA_OPCODE_READ_RESPONSE
-                           : TaOpcode::TA_OPCODE_TRANSACTION_ACK);
-    response->SetRequestOpcode(read ? TaOpcode::TA_OPCODE_READ : TaOpcode::TA_OPCODE_WRITE);
+    response->SetType(read ? UbTransactionOpcode::READ_RESPONSE
+                           : UbTransactionOpcode::TAACK);
+    response->SetRequestOpcode(read ? UbTransactionOpcode::READ : UbTransactionOpcode::WRITE);
+    if (outstanding != state.outstandingSegments.end() && outstanding->second != nullptr)
+    {
+        const uint32_t payload = outstanding->second->GetResponseBytes();
+        response->SetPayloadBytes(payload);
+        response->SetLogicalBytes(payload);
+    }
     response->SetRequestTassn(taSsn);
     response->SetTaSsn(static_cast<uint16_t>(taSsn));
     CompleteFromTaAck(key, taSsn, response);
@@ -1795,7 +1826,7 @@ bool
 UbCtpTransportService::SendResponseSegment(Ptr<UbWqeSegment> response, UbCtpEntityState& state)
 {
     NS_ABORT_MSG_IF(response == nullptr, "CTP response send requires WQE segment");
-    if (response->GetType() != TaOpcode::TA_OPCODE_TRANSACTION_ACK &&
+    if (response->GetType() != UbTransactionOpcode::TAACK &&
         response->GetBytesLeft() > GetTransactionConstraints().maxSegmentBytes)
     {
         return false;
@@ -1803,7 +1834,7 @@ UbCtpTransportService::SendResponseSegment(Ptr<UbWqeSegment> response, UbCtpEnti
 
     const UbCtpEntityKey& key = state.GetKey();
     uint32_t taSsn = response->GetRequestTassn();
-    if (response->GetType() == TaOpcode::TA_OPCODE_TRANSACTION_ACK)
+    if (response->GetType() == UbTransactionOpcode::TAACK)
     {
         const uint16_t lbSalt = NextLoadBalanceSalt(state, key);
         const uint32_t outPort = SelectOutPort(response, state, key, lbSalt);
@@ -1949,11 +1980,34 @@ UbCtpTransportService::CompleteFromTaAckNow(const UbCtpEntityKey& key,
         }
     }
 
+    if (outstandingIt != transactionState->outstandingSegments.end() && response != nullptr)
+    {
+        const auto request = outstandingIt->second;
+        if (response->GetType() != UbTransactionOpcode::TAACK && response->GetTaskId() != 0 &&
+            response->GetTaskId() != request->GetTaskId())
+            return;
+        const auto* rule = FindTransactionRule(request->GetType());
+        if (rule == nullptr || rule->role != UbTransactionSegmentKind::REQUEST)
+            return;
+        const auto expected = request->HasTransactionResolved()
+                                  ? request->GetTransactionResolved().responseOpcode
+                                  : rule->responseOpcode;
+        const uint32_t expectedPayload = request->HasTransactionResolved()
+                                             ? request->GetTransactionResolved().responsePayloadBytes
+                                             : request->GetResponseBytes();
+        if (response->GetType() != expected ||
+            response->GetSegmentKind() != UbTransactionSegmentKind::RESPONSE ||
+            response->GetPayloadBytes() != expectedPayload)
+            return;
+        response->SetRequestOpcode(request->GetType());
+    }
+
     Ptr<UbCtpTransactionContext> context = transactionState->context;
     const uint32_t oldCompleteUna = context->GetCompleteUna();
     if (outstandingIt == transactionState->outstandingSegments.end())
     {
-        context->MarkTaAck(taSsn);
+        if (response != nullptr && response->GetType() == UbTransactionOpcode::TAACK)
+            context->MarkTaAck(taSsn);
         return;
     }
 
@@ -2009,11 +2063,6 @@ UbCtpTransportService::CompleteFromTaAckNow(const UbCtpEntityKey& key,
 void
 UbCtpTransportService::DoDispose()
 {
-    for (const auto& event : m_delayedInboundEvents)
-    {
-        Simulator::Cancel(event);
-    }
-    m_delayedInboundEvents.clear();
     if (m_lifecycleOwner.generation != 0)
     {
         const std::vector<Callback<void>> cleanups =
@@ -2136,7 +2185,7 @@ UbCtpTransportService::FirstPacketSendsNotify(uint32_t taskId,
                                               uint32_t taSsn,
                                               uint32_t outPort,
                                               uint32_t payloadBytes,
-                                              TaOpcode opcode)
+                                              UbTransactionOpcode opcode)
 {
     m_traceFirstPacketSendsNotify(m_node == nullptr ? UINT32_MAX : m_node->GetId(),
                                   taskId,
@@ -2156,7 +2205,7 @@ UbCtpTransportService::LastPacketACKsNotify(uint32_t taskId,
                                             const UbCtpEntityKey& key,
                                             uint32_t taSsn,
                                             uint32_t payloadBytes,
-                                            TaOpcode opcode)
+                                            UbTransactionOpcode opcode)
 {
     m_traceLastPacketACKsNotify(m_node == nullptr ? UINT32_MAX : m_node->GetId(),
                                 taskId,

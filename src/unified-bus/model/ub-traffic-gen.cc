@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "ub-traffic-gen.h"
 
+#include "protocol/ub-transaction-rules.h"
 #include "ub-app.h"
 #include "ub-utils.h"
 
@@ -13,6 +14,8 @@
 #include "ns3/uinteger.h"
 
 #include <algorithm>
+#include <array>
+#include <charconv>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -349,7 +352,7 @@ UbTrafficGen::ConvertToRuntimeTask(const TrafficRecord& record)
     task.phaseId = static_cast<uint32_t>(record.phaseId);
     task.priority = static_cast<uint8_t>(record.priority);
     task.delay = ParseDelayLocked(record.delay);
-    task.op = ParseOpLocked(record.opType);
+    ParseTaskOperation(task, record.opType, record.atomicSubOperation, record.requestPayloadBytes);
     task.srcPortId = record.srcPortId;
     task.dstPortId = record.dstPortId;
     task.hasSrcPortId = record.hasSrcPortId;
@@ -374,7 +377,7 @@ UbTrafficGen::ConvertToRuntimeTask(const TrafficRecordView& record)
     task.phaseId = record.phaseId;
     task.priority = record.priority;
     task.delay = ParseDelayLocked(record.delay);
-    task.op = ParseOpLocked(record.opType);
+    ParseTaskOperation(task, record.opType, record.atomicSubOperation, record.requestPayloadBytes);
     task.srcPortId = record.srcPortId;
     task.dstPortId = record.dstPortId;
     task.hasSrcPortId = record.hasSrcPortId;
@@ -382,6 +385,87 @@ UbTrafficGen::ConvertToRuntimeTask(const TrafficRecordView& record)
     task.hasPhaseDependencies = !record.dependOnPhases.empty();
 
     return task;
+}
+
+bool
+UbTrafficGen::IsAtomicTask(RuntimeTaskOp op)
+{
+    return op >= RuntimeTaskOp::URMA_ATOMIC_COMPARE_SWAP &&
+           op <= RuntimeTaskOp::URMA_ATOMIC_FETCH_XOR;
+}
+
+UbTransactionOpcode
+UbTrafficGen::GetUrmaTaskOpcode(RuntimeTaskOp op)
+{
+    if (IsAtomicTask(op))
+    {
+        return static_cast<UbTransactionOpcode>(static_cast<uint8_t>(UbTransactionOpcode::ATOMIC_COMPARE_SWAP) +
+                                     static_cast<uint8_t>(op) -
+                                     static_cast<uint8_t>(RuntimeTaskOp::URMA_ATOMIC_COMPARE_SWAP));
+    }
+    NS_ABORT_MSG_IF(op != RuntimeTaskOp::URMA_WRITE && op != RuntimeTaskOp::URMA_READ,
+                    "Runtime task is not an URMA operation");
+    return op == RuntimeTaskOp::URMA_READ ? UbTransactionOpcode::READ : UbTransactionOpcode::WRITE;
+}
+
+void
+UbTrafficGen::ParseTaskOperation(RuntimeTask& task,
+                                 std::string_view opType,
+                                 std::string_view subOperation,
+                                 std::string_view requestPayloadBytes)
+{
+    task.op = ParseOpLocked(opType);
+    task.atomicOptions.reset();
+    NS_ABORT_MSG_IF(task.op == RuntimeTaskOp::UNKNOWN,
+                    "traffic.csv taskId=" << task.taskId << " opType: unknown value " << opType);
+    if (!IsAtomicTask(task.op))
+    {
+        NS_ABORT_MSG_IF(
+            !subOperation.empty() || !requestPayloadBytes.empty(),
+            "traffic.csv taskId="
+                << task.taskId
+                << " atomicSubOperation/requestPayloadBytes: forbidden on non-atomic tasks");
+        return;
+    }
+    UbAtomicOptions options;
+    if (!subOperation.empty())
+    {
+        static constexpr std::array<std::string_view, 8> names =
+            {"ADD", "CLR", "EOR", "SET", "SMAX", "SMIN", "UMAX", "UMIN"};
+        const auto found = std::find(names.begin(), names.end(), subOperation);
+        NS_ABORT_MSG_IF(found == names.end(),
+                        "traffic.csv taskId="
+                            << task.taskId
+                            << " atomicSubOperation: expected ADD/CLR/EOR/SET/SMAX/SMIN/UMAX/UMIN");
+        options.subOperation =
+            static_cast<UbAtomicSubOperation>(std::distance(names.begin(), found));
+    }
+    if (!requestPayloadBytes.empty())
+    {
+        uint32_t payload = 0;
+        const auto parsed = std::from_chars(requestPayloadBytes.data(),
+                                            requestPayloadBytes.data() + requestPayloadBytes.size(),
+                                            payload);
+        NS_ABORT_MSG_IF(parsed.ec != std::errc{} ||
+                            parsed.ptr != requestPayloadBytes.data() + requestPayloadBytes.size(),
+                        "traffic.csv taskId=" << task.taskId
+                                              << " requestPayloadBytes: expected uint32 decimal");
+        options.requestPayloadBytes = payload;
+    }
+    // Reuse the single transaction validation entry so CSV input obeys exactly the constraints a
+    // local WQE submission will enforce later.
+    UbTransactionRequestInput request;
+    request.opcode = GetUrmaTaskOpcode(task.op);
+    request.logicalBytes = task.dataSize;
+    request.payloadBytes = options.requestPayloadBytes.value_or(task.dataSize);
+    request.fields.memoryAccess = UbMemoryAccessFields{0, 0, task.dataSize};
+    request.atomicOptions = options;
+    request.maxPayloadBytes = UB_MTU_BYTE;
+    request.origin = UbTransactionRequestOrigin::LOCAL_SUBMISSION;
+    const auto validation = ValidateTransactionRequest(request);
+    NS_ABORT_MSG_IF(!validation.IsValid(),
+                    "traffic.csv taskId=" << task.taskId << ": " << validation.message);
+    task.atomicOptions = options;
 }
 
 UbTrafficGen::RuntimeTaskOp
@@ -410,6 +494,22 @@ UbTrafficGen::ParseOpLocked(std::string_view opType)
     }
     if (opType == "LOCAL_READY") {
         return RuntimeTaskOp::LOCAL_READY;
+    }
+    static constexpr std::array<std::string_view, 9> atomicNames = {"URMA_ATOMIC_COMPARE_SWAP",
+                                                                    "URMA_ATOMIC_SWAP",
+                                                                    "URMA_ATOMIC_STORE",
+                                                                    "URMA_ATOMIC_LOAD",
+                                                                    "URMA_ATOMIC_FETCH_ADD",
+                                                                    "URMA_ATOMIC_FETCH_SUB",
+                                                                    "URMA_ATOMIC_FETCH_AND",
+                                                                    "URMA_ATOMIC_FETCH_OR",
+                                                                    "URMA_ATOMIC_FETCH_XOR"};
+    const auto found = std::find(atomicNames.begin(), atomicNames.end(), opType);
+    if (found != atomicNames.end())
+    {
+        return static_cast<RuntimeTaskOp>(
+            static_cast<uint8_t>(RuntimeTaskOp::URMA_ATOMIC_COMPARE_SWAP) +
+            std::distance(atomicNames.begin(), found));
     }
     return RuntimeTaskOp::UNKNOWN;
 }

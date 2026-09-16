@@ -51,7 +51,7 @@ class UbLdstEndpoint : public Object
     bool SendRequest(const UbLdstRequest& request);
     bool CompleteRequest(uint16_t requestId,
                          const ResponseContext& responseContext,
-                         TaOpcode responseOpcode,
+                         UbTransactionOpcode responseOpcode,
                          Ptr<Packet> payload);
 
   private:

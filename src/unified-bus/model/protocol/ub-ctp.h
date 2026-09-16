@@ -209,19 +209,12 @@ class UbCtpTransportService : public Object
                               const UbCtpEntityKey& packetKey,
                               uint32_t taSsn,
                               uint32_t progressBytes);
-    static void SendBoundRemoteUrmaResponse(Ptr<UbCtpTransportService> service,
-                                            Ptr<UbTransaction> transaction,
-                                            Ptr<UbWqeSegment> request,
-                                            UbCtpEntityKey responseKey);
-    void SendRemoteUrmaResponse(Ptr<UbTransaction> transaction,
-                                Ptr<UbWqeSegment> request,
-                                const UbCtpEntityKey& responseKey);
-    void RunDelayedInboundRequest(Ptr<UbWqeSegment> request, UbCtpEntityKey key);
-    bool ProcessInboundTaRequestNow(Ptr<UbWqeSegment> request, const UbCtpEntityKey& key);
-    Ptr<UbWqeSegment> ProcessInboundTaRequest(Ptr<UbWqeSegment> request) const;
+    bool DispatchInboundTransaction(Ptr<UbWqeSegment> request, const UbCtpEntityKey& key);
     Ptr<UbWqeSegment> BuildInboundTaOperation(const UbCompactTransactionHeader& taHeader,
                                               const UbCompactMAExtTah& maHeader,
-                                              TaOpcode taOpcode,
+                                              UbTransactionOpcode taOpcode,
+                                              const UbTransactionFields& fields,
+                                              bool maetahPresent,
                                               uint32_t srcNodeId,
                                               uint32_t dstNodeId,
                                               uint32_t priority,
@@ -270,12 +263,12 @@ class UbCtpTransportService : public Object
                                 uint32_t taSsn,
                                 uint32_t outPort,
                                 uint32_t payloadBytes,
-                                TaOpcode opcode);
+                                UbTransactionOpcode opcode);
     void LastPacketACKsNotify(uint32_t taskId,
                               const UbCtpEntityKey& key,
                               uint32_t taSsn,
                               uint32_t payloadBytes,
-                              TaOpcode opcode);
+                              UbTransactionOpcode opcode);
     void CtpRecvNotify(uint32_t packetUid,
                        const UbCtpEntityKey& key,
                        uint32_t taSsn,
@@ -318,7 +311,6 @@ class UbCtpTransportService : public Object
     std::map<UbCtpEntityKey, uint32_t> m_keyJettyRrIndex;
     std::map<UbCtpEntityKey, UbCtpEntityState> m_entityStates;
     std::map<QueueKey, Ptr<UbCtpTxQueue>> m_queues;
-    std::vector<EventId> m_delayedInboundEvents;
     std::set<Ptr<UbCtpTxQueue>> m_registeredQueues;
     std::map<UbCtpCongestionKey, uint32_t> m_congestionSignals;
     TracedCallback<uint32_t,

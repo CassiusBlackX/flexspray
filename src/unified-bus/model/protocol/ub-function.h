@@ -12,6 +12,7 @@
 #include "ns3/random-variable-stream.h"
 #include "ub-ldst-api.h"
 #include "ub-transaction.h"
+#include "ub-transaction-rules.h"
 
 namespace ns3 {
     class UbController;
@@ -37,12 +38,15 @@ namespace ns3 {
         STALE_TRANSPORT_REFERENCE = 7,
         TPG_NOT_ACCEPTING = 8,
         TPG_NO_MEMBER = 9,
+        INVALID_ATOMIC_REQUEST = 10,
+        INVALID_TRANSACTION_REQUEST = 11,
     };
 
     struct UbWqeSubmissionResult
     {
         UbWqeSubmissionStatus status{UbWqeSubmissionStatus::JETTY_NOT_FOUND};
         UbLifecycleResourceIdentity wqeIdentity;
+        UbTransactionValidationResult validation;
     };
 
     struct UbWqeCompletion
@@ -110,7 +114,7 @@ namespace ns3 {
                              uint32_t dest,
                              uint32_t size,
                              uint32_t wqeId,
-                             TaOpcode type);
+                             UbTransactionOpcode type);
 
         Ptr<UbWqe> CreateWqe(uint32_t src, uint32_t dest, uint32_t size, uint32_t wqeId);
 
@@ -154,6 +158,9 @@ namespace ns3 {
                                        Ptr<UbCtpTransportService> service);
     private:
         void DoDispose() override;
+        bool ValidateAtomicWqe(Ptr<UbWqe> wqe,
+                               uint32_t jettyNum,
+                               const UbTransactionResolved& resolved);
         Ptr<UbTransaction> GetTransaction();
         Ptr<UbLdstApi> m_ldstApi;
         uint32_t m_nodeId;

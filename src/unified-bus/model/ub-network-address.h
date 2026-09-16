@@ -37,6 +37,8 @@ struct TrafficRecord
     uint32_t dstPortId = 0;
     bool hasSrcPortId{false};
     bool hasDstPortId{false};
+    std::string atomicSubOperation;
+    std::string requestPayloadBytes;
 };
 
 // Lightweight CSV row view. string_view fields are valid only during the parser callback.
@@ -55,6 +57,8 @@ struct TrafficRecordView
     uint32_t dstPortId{0};
     bool hasSrcPortId{false};
     bool hasDstPortId{false};
+    std::string_view atomicSubOperation{};
+    std::string_view requestPayloadBytes{};
 };
 
 constexpr long DEFAULT_PORT_BUFFER_SIZE = 2097152;

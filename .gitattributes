@@ -4,3 +4,8 @@
 
 # Force LF endings to text files
 * text=auto eol=lf
+
+# Preserve raw command output in the atomic validation evidence.
+.scratch/atomic-support/evidence/**/*.log -whitespace
+.scratch/atomic-support/evidence/baseline/ClassName-*.txt -whitespace
+.scratch/atomic-support/evidence/baseline/PrintUbGlobals.txt -whitespace

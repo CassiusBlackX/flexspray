@@ -19,6 +19,8 @@
 #include "ns3/simulator.h"
 #include "ns3/test.h"
 #include "ns3/ub-app.h"
+#include "ns3/ub-ta-codec.h"
+#include "ns3/ub-transaction-rules.h"
 #include "ns3/ub-caqm.h"
 #include "ns3/ub-congestion-control.h"
 #include "ns3/ub-controller.h"
@@ -27,12 +29,12 @@
 #include "ns3/ub-dcqcn.h"
 #include "ns3/ub-flow-control.h"
 #include "ns3/ub-function.h"
-#include "ns3/ub-link.h"
 #include "ns3/ub-ldst-api.h"
 #include "ns3/ub-ldst-instance.h"
 #include "ns3/ub-ldst-thread.h"
-#include "ns3/ub-lifecycle.h"
 #include "ns3/ub-lifecycle-trace.h"
+#include "ns3/ub-lifecycle.h"
+#include "ns3/ub-link.h"
 #include "ns3/ub-modulo-sequence.h"
 #include "ns3/ub-port.h"
 #include "ns3/ub-queue-manager.h"
@@ -113,7 +115,7 @@ CreateCtpWriteSegment(uint32_t taSsn = 0)
     segment->SetSport(CTP_WILDCARD_PORT);
     segment->SetDport(CTP_WILDCARD_PORT);
     segment->SetPriority(7);
-    segment->SetType(TaOpcode::TA_OPCODE_WRITE);
+    segment->SetType(UbTransactionOpcode::WRITE);
     segment->SetSize(64);
     segment->SetTaSsn(taSsn);
     segment->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
@@ -133,7 +135,7 @@ CreateCtpWqeForKey(Ptr<UbFunction> function,
                                          key.dstNodeId,
                                          64,
                                          requestId,
-                                         TaOpcode::TA_OPCODE_WRITE);
+                                         UbTransactionOpcode::WRITE);
     wqe->SetSrcEntityId(key.srcEntityId);
     wqe->SetDstEntityId(key.dstEntityId);
     wqe->SetSport(CTP_WILDCARD_PORT);
@@ -151,12 +153,12 @@ CreateCtpTaAckResponseSegment(uint32_t requestTaSsn)
     segment->SetSport(CTP_WILDCARD_PORT);
     segment->SetDport(CTP_WILDCARD_PORT);
     segment->SetPriority(7);
-    segment->SetType(TaOpcode::TA_OPCODE_TRANSACTION_ACK);
+    segment->SetType(UbTransactionOpcode::TAACK);
     segment->SetSize(0);
     segment->SetTaSsn(requestTaSsn);
     segment->SetSegmentKind(UbTransactionSegmentKind::RESPONSE);
     segment->SetRequestTassn(requestTaSsn);
-    segment->SetRequestOpcode(TaOpcode::TA_OPCODE_WRITE);
+    segment->SetRequestOpcode(UbTransactionOpcode::WRITE);
     segment->SetPayloadBytes(0);
     segment->SetResLenBytes(0);
     segment->SetRemoteAddress(0);
@@ -491,7 +493,7 @@ BuildReceiverDataPacketWithSequences(const LocalTpTopology& topo,
     data->AddHeader(maHeader);
 
     UbTransactionHeader taHeader;
-    taHeader.SetTaOpcode(TaOpcode::TA_OPCODE_WRITE);
+    taHeader.SetUbTransactionOpcode(UbTransactionOpcode::WRITE);
     taHeader.SetIniTaSsn(iniTaSsn);
     taHeader.SetIniRcId(0);
     data->AddHeader(taHeader);
@@ -543,7 +545,7 @@ BuildInboundTpPacket(const LocalTpTopology& topo,
     packet->AddHeader(maHeader);
 
     UbTransactionHeader transactionHeader;
-    transactionHeader.SetTaOpcode(TaOpcode::TA_OPCODE_WRITE);
+    transactionHeader.SetUbTransactionOpcode(UbTransactionOpcode::WRITE);
     transactionHeader.SetIniTaSsn(0);
     transactionHeader.SetIniRcId(0);
     packet->AddHeader(transactionHeader);
@@ -626,7 +628,7 @@ BuildTpsackForSender(uint32_t ackPsn, bool ackBaseReceived, bool withCetph)
     Ptr<Packet> packet = Create<Packet>(0);
 
     UbAckTransactionHeader taAck;
-    taAck.SetTaOpcode(TaOpcode::TA_OPCODE_TRANSACTION_ACK);
+    taAck.SetUbTransactionOpcode(UbTransactionOpcode::TAACK);
     packet->AddHeader(taAck);
 
     UbSelectiveAckExtTph saetph;
@@ -663,7 +665,7 @@ BuildTpsackBitmapForSender(uint32_t ackPsn,
     Ptr<Packet> packet = Create<Packet>(0);
 
     UbAckTransactionHeader taAck;
-    taAck.SetTaOpcode(TaOpcode::TA_OPCODE_TRANSACTION_ACK);
+    taAck.SetUbTransactionOpcode(UbTransactionOpcode::TAACK);
     packet->AddHeader(taAck);
 
     UbSelectiveAckExtTph saetph;
@@ -698,7 +700,7 @@ BuildTpackForSender(uint32_t ackPsn)
     Ptr<Packet> packet = Create<Packet>(0);
 
     UbAckTransactionHeader taAck;
-    taAck.SetTaOpcode(TaOpcode::TA_OPCODE_TRANSACTION_ACK);
+    taAck.SetUbTransactionOpcode(UbTransactionOpcode::TAACK);
     packet->AddHeader(taAck);
 
     UbTransportHeader tpHeader;
@@ -716,7 +718,7 @@ BuildTpnakForSender(uint32_t nakPsn, bool withCetph = false, uint32_t ackSequenc
     Ptr<Packet> packet = Create<Packet>(0);
 
     UbAckTransactionHeader taAck;
-    taAck.SetTaOpcode(TaOpcode::TA_OPCODE_TRANSACTION_ACK);
+    taAck.SetUbTransactionOpcode(UbTransactionOpcode::TAACK);
     packet->AddHeader(taAck);
 
     if (withCetph)
@@ -1012,7 +1014,6 @@ class UbControllerProtocolDelayAttributesTest : public TestCase
         node->AggregateObject(controller);
 
         for (const char* name : {"InitiatorProtocolDispatchDelay",
-                                 "TargetProtocolProcessingDelay",
                                  "InitiatorProtocolCompletionVisibilityDelay"})
         {
             TimeValue value;
@@ -1039,11 +1040,11 @@ class UbControllerProtocolDelayAttributesTest : public TestCase
     }
 };
 
-class UbTargetProtocolDelayPipelinesTaUnitsTest : public TestCase
+class UbTargetExecutionDelayPipelinesTaUnitsTest : public TestCase
 {
   public:
-    UbTargetProtocolDelayPipelinesTaUnitsTest()
-        : TestCase("UnifiedBus - target protocol delay pipelines complete TA units")
+    UbTargetExecutionDelayPipelinesTaUnitsTest()
+        : TestCase("UnifiedBus - target execution delay pipelines complete TA units")
     {
     }
 
@@ -1053,8 +1054,8 @@ class UbTargetProtocolDelayPipelinesTaUnitsTest : public TestCase
         Ptr<UbWqeSegment> request = CreateObject<UbWqeSegment>();
         request->SetSrc(1);
         request->SetDest(0);
-        request->SetType(TaOpcode::TA_OPCODE_WRITE);
-        request->SetRequestOpcode(TaOpcode::TA_OPCODE_WRITE);
+        request->SetType(UbTransactionOpcode::WRITE);
+        request->SetRequestOpcode(UbTransactionOpcode::WRITE);
         request->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
         request->SetTaskId(77);
         request->SetOriginJettyNum(9);
@@ -1062,6 +1063,17 @@ class UbTargetProtocolDelayPipelinesTaUnitsTest : public TestCase
         request->SetRequestTassn(taSsn);
         request->SetSize(64);
         request->SetWqeSize(128);
+        // An inbound request reaches target execution with its already cached normalized result.
+        UbTransactionRequestInput input;
+        input.opcode = UbTransactionOpcode::WRITE;
+        input.logicalBytes = 64;
+        input.payloadBytes = 64;
+        input.fields.memoryAccess = UbMemoryAccessFields{0, 0, 64};
+        input.maxPayloadBytes = UINT32_MAX;
+        input.origin = UbTransactionRequestOrigin::INBOUND_DECODE;
+        const auto validation = ValidateTransactionRequest(input);
+        NS_TEST_EXPECT_MSG_EQ(validation.IsValid(), true, validation.message);
+        request->SetTransactionResolved(validation.resolved);
         return request;
     }
 
@@ -1070,34 +1082,40 @@ class UbTargetProtocolDelayPipelinesTaUnitsTest : public TestCase
         Ptr<Node> node = CreateObject<Node>(0);
         InitNode(node, UB_DEVICE, 0, false);
         Ptr<UbController> controller = node->GetObject<UbController>();
-        controller->SetAttribute("TargetProtocolProcessingDelay", TimeValue(NanoSeconds(216)));
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        NS_TEST_ASSERT_MSG_EQ(transaction->SetTargetExecutionDelay(NanoSeconds(216)),
+                              true,
+                              "target execution delay before the first request");
+        NS_TEST_ASSERT_MSG_EQ(
+            transaction->SetTargetExecutor(UbTargetExecutor(
+                [this](Ptr<const UbWqeSegment>, const UbTransactionRule&, UbTargetCompletion done) {
+                    processingTimes.push_back(Simulator::Now());
+                    done(UbWorkExecutionResult{});
+                })),
+            true,
+            "executor registration");
 
-        std::vector<Time> processingTimes;
-        controller->GetUbTransaction()->SetRemoteUrmaRequestProcessor(UbRemoteUrmaRequestProcessor(
-            [&processingTimes](const UbRemoteUrmaRequestContext&, UbRemoteUrmaResponseSender) {
-                processingTimes.push_back(Simulator::Now());
-                return true;
-            }));
-
-        controller->GetUbTransaction()->HandleInboundTaUnit(11, MakeRequest(0));
-        controller->GetUbTransaction()->HandleInboundTaUnit(12, MakeRequest(1));
+        transaction->HandleInboundTaUnit(11, MakeRequest(0));
+        transaction->HandleInboundTaUnit(12, MakeRequest(1));
         NS_TEST_ASSERT_MSG_EQ(processingTimes.size(),
                               0u,
-                              "Target processing must not run before the configured delay");
+                              "Target execution must not run before the configured delay");
 
         Simulator::Stop(NanoSeconds(216));
         Simulator::Run();
         NS_TEST_ASSERT_MSG_EQ(processingTimes.size(),
                               2u,
-                              "Every complete TA unit must be processed even when task IDs match");
+                              "Every complete TA unit must be executed even when task IDs match");
         NS_TEST_ASSERT_MSG_EQ(processingTimes[0],
                               NanoSeconds(216),
-                              "The first TA unit should observe the target delay once");
+                              "The first TA unit should observe the target execution delay once");
         NS_TEST_ASSERT_MSG_EQ(processingTimes[1],
                               NanoSeconds(216),
                               "Independent TA-unit delays should overlap rather than serialize");
         Simulator::Destroy();
     }
+
+    std::vector<Time> processingTimes;
 };
 
 class UbInitiatorProtocolDispatchDelayRtpTest : public TestCase
@@ -1145,7 +1163,7 @@ class UbInitiatorProtocolDispatchDelayRtpTest : public TestCase
                                                  topo.receiver->GetId(),
                                                  64,
                                                  taskId,
-                                                 TaOpcode::TA_OPCODE_WRITE);
+                                                 UbTransactionOpcode::WRITE);
             wqe->SetOrderType(OrderType::ORDER_NO);
             NS_TEST_ASSERT_MSG_EQ(
                 static_cast<uint32_t>(function->SubmitWqe(wqe, jettyNum).status),
@@ -1921,7 +1939,7 @@ class UbJettyCopiesCtpEndpointPortSentinelsTest : public TestCase
         Ptr<UbJetty> jetty = CreateObject<UbJetty>();
 
         Ptr<UbWqe> explicitPorts =
-            function->CreateWqe(node->GetId(), 1, 64, 201, TaOpcode::TA_OPCODE_WRITE);
+            function->CreateWqe(node->GetId(), 1, 64, 201, UbTransactionOpcode::WRITE);
         explicitPorts->SetSport(0);
         explicitPorts->SetDport(14);
         Ptr<UbWqeSegment> explicitSegment = jetty->GenWqeSegment(explicitPorts, 64);
@@ -1933,7 +1951,7 @@ class UbJettyCopiesCtpEndpointPortSentinelsTest : public TestCase
                               "explicit destination port 14 must survive WQE segmentation");
 
         Ptr<UbWqe> wildcardPorts =
-            function->CreateWqe(node->GetId(), 1, 64, 202, TaOpcode::TA_OPCODE_WRITE);
+            function->CreateWqe(node->GetId(), 1, 64, 202, UbTransactionOpcode::WRITE);
         wildcardPorts->SetSport(CTP_WILDCARD_PORT);
         wildcardPorts->SetDport(CTP_WILDCARD_PORT);
         Ptr<UbWqeSegment> wildcardSegment = jetty->GenWqeSegment(wildcardPorts, 64);
@@ -4343,7 +4361,7 @@ public:
         data->AddHeader(maHeader);
 
         UbTransactionHeader taHeader;
-        taHeader.SetTaOpcode(TaOpcode::TA_OPCODE_WRITE);
+        taHeader.SetUbTransactionOpcode(UbTransactionOpcode::WRITE);
         taHeader.SetIniTaSsn(7);
         taHeader.SetIniRcId(0);
         data->AddHeader(taHeader);
@@ -4390,8 +4408,8 @@ public:
                               "Disabled congestion control should emit ACK without CETPH");
 
         ack->RemoveHeader(ackTaHeader);
-        NS_TEST_ASSERT_MSG_EQ(ackTaHeader.GetTaOpcode(),
-                              static_cast<uint8_t>(TaOpcode::TA_OPCODE_TRANSACTION_ACK),
+        NS_TEST_ASSERT_MSG_EQ(ackTaHeader.GetUbTransactionOpcode(),
+                              static_cast<uint8_t>(UbTransactionOpcode::TAACK),
                               "ACK_WITHOUT_CETPH should expose TA ACK immediately after TP header");
 
         Simulator::Destroy();
@@ -5718,8 +5736,11 @@ class UbGbnFinalAckWithPendingTaResponseLeavesTimerStoppedTest : public TestCase
         request->SetDest(topo.receiver->GetId());
         request->SetSport(topo.senderPort->GetIfIndex());
         request->SetDport(topo.receiverPort->GetIfIndex());
-        request->SetType(TaOpcode::TA_OPCODE_WRITE);
+        request->SetType(UbTransactionOpcode::WRITE);
         request->SetSize(64);
+        request->SetLogicalBytes(64);
+        request->SetPayloadBytes(64);
+        request->SetCarrierBytes(64);
         request->SetPriority(kUrmaWriteRegressionPriority);
         request->SetTaskId(kUrmaWriteRegressionTaskId);
         request->SetWqeSize(64);
@@ -5732,7 +5753,7 @@ class UbGbnFinalAckWithPendingTaResponseLeavesTimerStoppedTest : public TestCase
         request->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
         request->SetOriginJettyNum(kUrmaWriteRegressionJettyNum);
         request->SetRequestTassn(0);
-        request->SetRequestOpcode(TaOpcode::TA_OPCODE_WRITE);
+        request->SetRequestOpcode(UbTransactionOpcode::WRITE);
         request->SetNeedsTransactionResponse(true);
         request->SetResLenBytes(64);
         request->SetPayloadBytes(64);
@@ -5747,7 +5768,7 @@ class UbGbnFinalAckWithPendingTaResponseLeavesTimerStoppedTest : public TestCase
         response->SetDest(topo.receiver->GetId());
         response->SetSport(topo.senderPort->GetIfIndex());
         response->SetDport(topo.receiverPort->GetIfIndex());
-        response->SetType(TaOpcode::TA_OPCODE_TRANSACTION_ACK);
+        response->SetType(UbTransactionOpcode::TAACK);
         response->SetSize(1);
         response->SetPriority(kUrmaWriteRegressionPriority);
         response->SetTaskId(kUrmaWriteRegressionTaskId + 1);
@@ -5761,7 +5782,7 @@ class UbGbnFinalAckWithPendingTaResponseLeavesTimerStoppedTest : public TestCase
         response->SetSegmentKind(UbTransactionSegmentKind::RESPONSE);
         response->SetOriginJettyNum(kUrmaWriteRegressionJettyNum);
         response->SetRequestTassn(1);
-        response->SetRequestOpcode(TaOpcode::TA_OPCODE_WRITE);
+        response->SetRequestOpcode(UbTransactionOpcode::WRITE);
         response->SetNeedsTransactionResponse(false);
         response->SetResLenBytes(0);
         response->SetPayloadBytes(0);
@@ -5911,7 +5932,7 @@ public:
         request->SetDest(topo.receiver->GetId());
         request->SetSport(topo.senderPort->GetIfIndex());
         request->SetDport(topo.receiverPort->GetIfIndex());
-        request->SetType(TaOpcode::TA_OPCODE_WRITE);
+        request->SetType(UbTransactionOpcode::WRITE);
         request->SetSize(UB_MTU_BYTE * 4);
         request->SetPriority(kUrmaWriteRegressionPriority);
         request->SetTaskId(kUrmaWriteRegressionTaskId);
@@ -5926,7 +5947,7 @@ public:
         request->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
         request->SetOriginJettyNum(kUrmaWriteRegressionJettyNum);
         request->SetRequestTassn(0);
-        request->SetRequestOpcode(TaOpcode::TA_OPCODE_WRITE);
+        request->SetRequestOpcode(UbTransactionOpcode::WRITE);
         request->SetResponseBytes(0);
         request->SetNeedsTransactionResponse(true);
         request->SetResLenBytes(UB_MTU_BYTE * 4);
@@ -6987,7 +7008,7 @@ public:
                                                    topo.receiver->GetId(),
                                                    64 * 1024,
                                                    kUrmaWriteRegressionTaskId,
-                                                   TaOpcode::TA_OPCODE_WRITE);
+                                                   UbTransactionOpcode::WRITE);
         Simulator::ScheduleNow(&UbFunction::PushWqeToJetty,
                                senderFunction,
                                wqe,
@@ -7112,7 +7133,7 @@ public:
                                                    topo.receiver->GetId(),
                                                    4 * 1024,
                                                    kUrmaWriteRegressionTaskId,
-                                                   TaOpcode::TA_OPCODE_WRITE);
+                                                   UbTransactionOpcode::WRITE);
         Simulator::ScheduleNow(&UbFunction::PushWqeToJetty,
                                senderFunction,
                                wqe,
@@ -7278,11 +7299,11 @@ class UbUrmaReadWqeMetadataPropagationTest : public TestCase
                                              topo.receiver->GetId(),
                                              payloadBytes,
                                              taskId,
-                                             TaOpcode::TA_OPCODE_READ);
+                                             UbTransactionOpcode::READ);
         NS_TEST_ASSERT_MSG_NE(wqe, nullptr, "CreateWqe should return a valid WQE");
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint8_t>(wqe->GetType()),
-                              static_cast<uint8_t>(TaOpcode::TA_OPCODE_READ),
-                              "URMA_READ must map to TA_OPCODE_READ");
+                              static_cast<uint8_t>(UbTransactionOpcode::READ),
+                              "URMA_READ must map to READ");
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint8_t>(wqe->GetSegmentKind()),
                               static_cast<uint8_t>(UbTransactionSegmentKind::REQUEST),
                               "CreateWqe should initialize segment kind as request");
@@ -7293,7 +7314,7 @@ class UbUrmaReadWqeMetadataPropagationTest : public TestCase
                               UINT32_MAX,
                               "requestTassn should be invalid before enqueue");
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint8_t>(wqe->GetRequestOpcode()),
-                              static_cast<uint8_t>(TaOpcode::TA_OPCODE_READ),
+                              static_cast<uint8_t>(UbTransactionOpcode::READ),
                               "requestOpcode should preserve read opcode");
         NS_TEST_ASSERT_MSG_EQ(wqe->GetResponseBytes(),
                               payloadBytes,
@@ -7324,8 +7345,8 @@ class UbUrmaReadWqeMetadataPropagationTest : public TestCase
         Ptr<UbWqeSegment> segment = jetty->GetNextWqeSegment();
         NS_TEST_ASSERT_MSG_NE(segment, nullptr, "Jetty should generate a segment for queued WQE");
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint8_t>(segment->GetType()),
-                              static_cast<uint8_t>(TaOpcode::TA_OPCODE_READ),
-                              "Segment opcode should remain TA_OPCODE_READ");
+                              static_cast<uint8_t>(UbTransactionOpcode::READ),
+                              "Segment opcode should remain READ");
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint8_t>(segment->GetSegmentKind()),
                               static_cast<uint8_t>(UbTransactionSegmentKind::REQUEST),
                               "Segment should preserve request kind");
@@ -7336,7 +7357,7 @@ class UbUrmaReadWqeMetadataPropagationTest : public TestCase
                               wqe->GetRequestTassn(),
                               "Segment should inherit requestTassn");
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint8_t>(segment->GetRequestOpcode()),
-                              static_cast<uint8_t>(TaOpcode::TA_OPCODE_READ),
+                              static_cast<uint8_t>(UbTransactionOpcode::READ),
                               "Segment should preserve requestOpcode");
         NS_TEST_ASSERT_MSG_EQ(segment->GetResponseBytes(),
                               payloadBytes,
@@ -7432,7 +7453,7 @@ class UbJettyPreservesWqeRemoteAddressTest : public TestCase
                                 destNode,
                                 2 * UB_WQE_TA_SEGMENT_BYTE,
                                 100,
-                                TaOpcode::TA_OPCODE_WRITE);
+                                UbTransactionOpcode::WRITE);
         configured->SetRemoteAddress(remoteAddress);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->SubmitWqe(configured, configuredJettyNum).status),
@@ -7459,7 +7480,7 @@ class UbJettyPreservesWqeRemoteAddressTest : public TestCase
                                                         destNode,
                                                         UB_WQE_TA_SEGMENT_BYTE,
                                                         101,
-                                                        TaOpcode::TA_OPCODE_WRITE);
+                                                        UbTransactionOpcode::WRITE);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->SubmitWqe(defaultAddress, defaultJettyNum).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
@@ -7637,7 +7658,7 @@ class UbUrmaWriteCompletionNeedsTransactionResponseTest : public TestCase
                                                    topo.receiver->GetId(),
                                                    64 * 1024,
                                                    kUrmaWriteRegressionTaskId,
-                                                   TaOpcode::TA_OPCODE_WRITE);
+                                                   UbTransactionOpcode::WRITE);
         Simulator::ScheduleNow(&UbFunction::PushWqeToJetty,
                                senderFunction,
                                wqe,
@@ -7782,7 +7803,7 @@ class UbUrmaReadCompletionNeedsReadResponseTest : public TestCase
                                                    topo.receiver->GetId(),
                                                    4096,
                                                    kUrmaReadRegressionTaskId,
-                                                   TaOpcode::TA_OPCODE_READ);
+                                                   UbTransactionOpcode::READ);
         const UbWqeSubmissionResult submitted =
             senderFunction->SubmitWqe(wqe, kUrmaReadRegressionJettyNum);
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(submitted.status),
@@ -7942,7 +7963,7 @@ class UbUrmaReadMultiPacketResponseCountTest : public TestCase
                                                    topo.receiver->GetId(),
                                                    64 * 1024,
                                                    kUrmaReadMultiPacketTaskId,
-                                                   TaOpcode::TA_OPCODE_READ);
+                                                   UbTransactionOpcode::READ);
         Simulator::ScheduleNow(&UbFunction::PushWqeToJetty,
                                senderFunction,
                                wqe,
@@ -8052,7 +8073,7 @@ class UbUrmaReadMultiSliceRequestPacketSemanticsTest : public TestCase
                                                    topo.receiver->GetId(),
                                                    128 * 1024,
                                                    kUrmaReadMultiPacketTaskId,
-                                                   TaOpcode::TA_OPCODE_READ);
+                                                   UbTransactionOpcode::READ);
         Simulator::ScheduleNow(&UbFunction::PushWqeToJetty,
                                senderFunction,
                                wqe,
@@ -8218,7 +8239,7 @@ class UbUrmaWriteOutOfOrderRequestSliceCompletionTest : public TestCase
         segment->SetDest(topo.receiver->GetId());
         segment->SetSport(topo.senderPort->GetIfIndex());
         segment->SetDport(topo.receiverPort->GetIfIndex());
-        segment->SetType(TaOpcode::TA_OPCODE_WRITE);
+        segment->SetType(UbTransactionOpcode::WRITE);
         segment->SetSize(requestBytes);
         segment->SetPriority(kUrmaWriteRegressionPriority);
         segment->SetTaskId(kUrmaWriteRegressionTaskId);
@@ -8233,7 +8254,7 @@ class UbUrmaWriteOutOfOrderRequestSliceCompletionTest : public TestCase
         segment->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
         segment->SetOriginJettyNum(kUrmaWriteRegressionJettyNum);
         segment->SetRequestTassn(0);
-        segment->SetRequestOpcode(TaOpcode::TA_OPCODE_WRITE);
+        segment->SetRequestOpcode(UbTransactionOpcode::WRITE);
         segment->SetResponseBytes(0);
         segment->SetNeedsTransactionResponse(true);
         segment->SetResLenBytes(requestBytes);
@@ -8280,7 +8301,7 @@ class UbUrmaRtpWriteMaetahSegmentLengthTest : public TestCase
         segment->SetDest(topo.receiver->GetId());
         segment->SetSport(topo.senderPort->GetIfIndex());
         segment->SetDport(topo.receiverPort->GetIfIndex());
-        segment->SetType(TaOpcode::TA_OPCODE_WRITE);
+        segment->SetType(UbTransactionOpcode::WRITE);
         segment->SetSize(segmentBytes);
         segment->SetPriority(kUrmaWriteRegressionPriority);
         segment->SetTaskId(kUrmaWriteRegressionTaskId);
@@ -8293,7 +8314,7 @@ class UbUrmaRtpWriteMaetahSegmentLengthTest : public TestCase
         segment->SetPsnStart(senderTp->GetPsnCnt());
         segment->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
         segment->SetOriginJettyNum(kUrmaWriteRegressionJettyNum);
-        segment->SetRequestOpcode(TaOpcode::TA_OPCODE_WRITE);
+        segment->SetRequestOpcode(UbTransactionOpcode::WRITE);
         segment->SetNeedsTransactionResponse(true);
         segment->SetLogicalBytes(segmentBytes);
         segment->SetPayloadBytes(segmentBytes);
@@ -8334,6 +8355,179 @@ class UbUrmaRtpWriteMaetahSegmentLengthTest : public TestCase
         Simulator::Destroy();
         Config::Reset();
     }
+};
+
+/**
+ * Ticket 03: the response requirement is protocol data, so a request that requires a transaction
+ * response completes exactly once, only after that response, and keeps its requirement value.
+ */
+class UbUrmaSendCompletionNeedsTransactionResponseTest : public TestCase
+{
+  public:
+    UbUrmaSendCompletionNeedsTransactionResponseTest()
+        : TestCase("UnifiedBus - SEND completes once, only after its transaction response")
+    {
+    }
+
+    void DoRun() override
+    {
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+
+        Ptr<UbController> senderCtrl = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> senderFunction = senderCtrl->GetUbFunction();
+        Ptr<UbTransaction> senderTransaction = senderCtrl->GetUbTransaction();
+        senderFunction->CreateJetty(topo.sender->GetId(),
+                                    topo.receiver->GetId(),
+                                    kUrmaWriteRegressionJettyNum);
+        const std::vector<uint32_t> tpns = {kUrmaWriteRegressionSenderTpn};
+        NS_TEST_ASSERT_MSG_EQ(senderTransaction->JettyBindTp(topo.sender->GetId(),
+                                                             topo.receiver->GetId(),
+                                                             kUrmaWriteRegressionJettyNum,
+                                                             false,
+                                                             tpns),
+                              true,
+                              "Sender Jetty should bind to static TP pair");
+        Ptr<UbJetty> jetty = senderFunction->GetJetty(kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_NE(jetty, nullptr, "Sender Jetty should exist");
+        jetty->SetClientCallback(
+            MakeCallback(&UbUrmaSendCompletionNeedsTransactionResponseTest::OnTaskCompleted, this));
+
+        Ptr<UbWqe> wqe = senderFunction->CreateWqe(topo.sender->GetId(),
+                                                   topo.receiver->GetId(),
+                                                   64,
+                                                   kUrmaWriteRegressionTaskId,
+                                                   UbTransactionOpcode::SEND);
+        NS_TEST_ASSERT_MSG_EQ(wqe->NeedsTransactionResponse(),
+                              true,
+                              "the SEND rule requires a transaction response");
+        Simulator::ScheduleNow(&UbFunction::PushWqeToJetty,
+                               senderFunction,
+                               wqe,
+                               kUrmaWriteRegressionJettyNum);
+
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
+
+        NS_TEST_ASSERT_MSG_EQ(m_completionCount, 1u, "SEND completes exactly once");
+        NS_TEST_ASSERT_MSG_EQ(m_completedTaskId,
+                              kUrmaWriteRegressionTaskId,
+                              "Completion callback should report the original task");
+        NS_TEST_ASSERT_MSG_EQ(wqe->NeedsTransactionResponse(),
+                              true,
+                              "the protocol response requirement is not cleared by completion");
+
+        // A duplicate transaction response must not complete the WQE a second time.
+        Ptr<UbWqeSegment> duplicate = CreateObject<UbWqeSegment>();
+        duplicate->SetSegmentKind(UbTransactionSegmentKind::RESPONSE);
+        duplicate->SetType(UbTransactionOpcode::TAACK);
+        duplicate->SetRequestOpcode(UbTransactionOpcode::SEND);
+        duplicate->SetTaskId(kUrmaWriteRegressionTaskId);
+        duplicate->SetOriginJettyNum(kUrmaWriteRegressionJettyNum);
+        duplicate->SetRequestTassn(wqe->GetRequestTassn());
+        duplicate->SetTaSsn(wqe->GetRequestTassn());
+        duplicate->SetJettyNum(kUrmaWriteRegressionJettyNum);
+        senderTransaction->HandleInboundTaUnit(kUrmaWriteRegressionSenderTpn, duplicate);
+        NS_TEST_ASSERT_MSG_EQ(m_completionCount,
+                              1u,
+                              "a duplicate transaction response does not complete twice");
+
+        Simulator::Destroy();
+    }
+
+  private:
+    void OnTaskCompleted(uint32_t taskId, uint32_t)
+    {
+        ++m_completionCount;
+        m_completedTaskId = taskId;
+    }
+
+    uint32_t m_completionCount{0};
+    uint32_t m_completedTaskId{UINT32_MAX};
+};
+
+/**
+ * Ticket 03: a multi-segment WQE stays incomplete while one of its segments has no accepted
+ * transaction response; the transport ACK of that segment must not complete it.
+ */
+class UbUrmaPartialResponseDoesNotCompleteTest : public TestCase
+{
+  public:
+    UbUrmaPartialResponseDoesNotCompleteTest()
+        : TestCase("UnifiedBus - a partially answered multi-segment WQE stays incomplete")
+    {
+    }
+
+    void DoRun() override
+    {
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+
+        // The target answers only the first inbound request; the second segment stays outstanding.
+        Ptr<UbTransaction> receiverTransaction =
+            topo.receiver->GetObject<UbController>()->GetUbTransaction();
+        NS_TEST_ASSERT_MSG_EQ(
+            receiverTransaction->SetTargetExecutor(UbTargetExecutor(
+                [this](Ptr<const UbWqeSegment>, const UbTransactionRule&, UbTargetCompletion done) {
+                    if (m_inboundRequests++ == 0)
+                    {
+                        done(UbWorkExecutionResult{});
+                    }
+                })),
+            true,
+            "target executor registration");
+
+        Ptr<UbController> senderCtrl = topo.sender->GetObject<UbController>();
+        Ptr<UbFunction> senderFunction = senderCtrl->GetUbFunction();
+        Ptr<UbTransaction> senderTransaction = senderCtrl->GetUbTransaction();
+        senderFunction->CreateJetty(topo.sender->GetId(),
+                                    topo.receiver->GetId(),
+                                    kUrmaWriteRegressionJettyNum);
+        const std::vector<uint32_t> tpns = {kUrmaWriteRegressionSenderTpn};
+        NS_TEST_ASSERT_MSG_EQ(senderTransaction->JettyBindTp(topo.sender->GetId(),
+                                                             topo.receiver->GetId(),
+                                                             kUrmaWriteRegressionJettyNum,
+                                                             false,
+                                                             tpns),
+                              true,
+                              "Sender Jetty should bind to static TP pair");
+        Ptr<UbJetty> jetty = senderFunction->GetJetty(kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_NE(jetty, nullptr, "Sender Jetty should exist");
+        jetty->SetClientCallback(MakeCallback(
+            &UbUrmaPartialResponseDoesNotCompleteTest::OnTaskCompleted, this));
+
+        Ptr<UbWqe> wqe = senderFunction->CreateWqe(topo.sender->GetId(),
+                                                   topo.receiver->GetId(),
+                                                   2 * UB_WQE_TA_SEGMENT_BYTE,
+                                                   kUrmaWriteRegressionTaskId,
+                                                   UbTransactionOpcode::WRITE);
+        NS_TEST_ASSERT_MSG_EQ(wqe->GetTaSsnSize(),
+                              2u,
+                              "the WQE under test spans two transaction segments");
+        Simulator::ScheduleNow(&UbFunction::PushWqeToJetty,
+                               senderFunction,
+                               wqe,
+                               kUrmaWriteRegressionJettyNum);
+
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
+
+        NS_TEST_ASSERT_MSG_EQ(m_inboundRequests, 2u, "both segments reached the target executor");
+        NS_TEST_ASSERT_MSG_EQ(m_completionCount,
+                              0u,
+                              "the WQE must not complete while one segment is unanswered");
+
+        Simulator::Destroy();
+    }
+
+  private:
+    void OnTaskCompleted(uint32_t, uint32_t)
+    {
+        ++m_completionCount;
+    }
+
+    uint32_t m_inboundRequests{0};
+    uint32_t m_completionCount{0};
 };
 
 class UbCreateNodeSystemIdTest : public TestCase
@@ -9457,7 +9651,7 @@ class UbLifecycleAtomicWqeSubmissionTest : public TestCase
                                                     topo.receiver->GetId(),
                                                     64,
                                                     kUrmaWriteRegressionTaskId,
-                                                    TaOpcode::TA_OPCODE_WRITE);
+                                                    UbTransactionOpcode::WRITE);
         const UbWqeSubmissionResult noTransport =
             function->SubmitWqe(unboundWqe, kUrmaWriteRegressionJettyNum);
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(noTransport.status),
@@ -9474,7 +9668,7 @@ class UbLifecycleAtomicWqeSubmissionTest : public TestCase
                                                        topo.switch0->GetId(),
                                                        64,
                                                        kUrmaWriteRegressionTaskId + 1,
-                                                       TaOpcode::TA_OPCODE_WRITE);
+                                                       UbTransactionOpcode::WRITE);
         const UbWqeSubmissionResult mismatch =
             function->SubmitWqe(mismatchedWqe, kUrmaWriteRegressionJettyNum);
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(mismatch.status),
@@ -9581,7 +9775,7 @@ class UbLifecycleDuplicateDirectSubmissionTest : public TestCase
                                                  topo.receiver->GetId(),
                                                  64,
                                                  kUrmaWriteRegressionTaskId,
-                                                 TaOpcode::TA_OPCODE_WRITE);
+                                                 UbTransactionOpcode::WRITE);
             const UbWqeSubmissionResult accepted =
                 function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum);
             if (accepted.status != UbWqeSubmissionStatus::ACCEPTED)
@@ -9670,7 +9864,7 @@ class UbLifecycleStaleRtpReferenceRejectsBeforeWqeGenerationTest : public TestCa
                                                              directTopo.receiver->GetId(),
                                                              64,
                                                              kUrmaWriteRegressionTaskId,
-                                                             TaOpcode::TA_OPCODE_WRITE);
+                                                             UbTransactionOpcode::WRITE);
             const UbWqeSubmissionResult directResult =
                 directFunction->SubmitWqe(directWqe, kUrmaWriteRegressionJettyNum);
             if (directResult.status != UbWqeSubmissionStatus::STALE_TRANSPORT_REFERENCE ||
@@ -9741,7 +9935,7 @@ class UbLifecycleStaleRtpReferenceRejectsBeforeWqeGenerationTest : public TestCa
                                                        tpgTopo.receiver->GetId(),
                                                        64,
                                                        kUrmaWriteRegressionTaskId,
-                                                       TaOpcode::TA_OPCODE_WRITE);
+                                                       UbTransactionOpcode::WRITE);
             const UbWqeSubmissionResult tpgResult =
                 tpgFunction->SubmitWqe(tpgWqe, kUrmaWriteRegressionJettyNum);
             if (tpgResult.status != UbWqeSubmissionStatus::STALE_TRANSPORT_REFERENCE ||
@@ -9783,7 +9977,7 @@ class UbLifecycleStaleRtpReferenceRejectsBeforeWqeGenerationTest : public TestCa
                 useTimeTopo.receiver->GetId(),
                 64,
                 kUrmaWriteRegressionTaskId,
-                TaOpcode::TA_OPCODE_WRITE);
+                UbTransactionOpcode::WRITE);
             if (useTimeFunction->SubmitWqe(useTimeWqe, kUrmaWriteRegressionJettyNum).status !=
                 UbWqeSubmissionStatus::ACCEPTED)
             {
@@ -9884,7 +10078,7 @@ class UbLifecycleTwoMemberTpgSubmissionUsesAtomicRtpPathTest : public TestCase
                                              topo.receiver->GetId(),
                                              64,
                                              kUrmaWriteRegressionTaskId,
-                                             TaOpcode::TA_OPCODE_WRITE);
+                                             UbTransactionOpcode::WRITE);
 
         const UbWqeSubmissionResult typed =
             function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum);
@@ -9982,7 +10176,7 @@ class UbRtpValidatedResolutionReuseTest : public TestCase
                                              topo.receiver->GetId(),
                                              64,
                                              kUrmaWriteRegressionTaskId,
-                                             TaOpcode::TA_OPCODE_WRITE);
+                                             UbTransactionOpcode::WRITE);
         const UbWqeSubmissionResult result =
             function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum);
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(result.status),
@@ -10168,7 +10362,7 @@ class UbLifecycleCurrentTpgMemberBackpressurePreservesAtomicStateTest : public T
                                     topo.receiver->GetId(),
                                     64,
                                     kUrmaWriteRegressionTaskId,
-                                    TaOpcode::TA_OPCODE_WRITE);
+                                    UbTransactionOpcode::WRITE);
         m_tassnBefore = m_jetty->GetTaSsnSndNxtForTest();
 
         function->PushWqeToJetty(m_wqe, kUrmaWriteRegressionJettyNum);
@@ -10392,12 +10586,12 @@ class UbLifecycleDirectCapacityTransitionWakesDeferredSourceTest : public TestCa
                                                topo.receiver->GetId(),
                                                64,
                                                kUrmaWriteRegressionTaskId,
-                                               TaOpcode::TA_OPCODE_WRITE);
+                                               UbTransactionOpcode::WRITE);
         m_secondWqe = function->CreateWqe(topo.sender->GetId(),
                                           topo.receiver->GetId(),
                                           64,
                                           kUrmaWriteRegressionTaskId + 1,
-                                          TaOpcode::TA_OPCODE_WRITE);
+                                          UbTransactionOpcode::WRITE);
         m_secondJetty = function->GetJetty(secondJettyNum);
         m_secondTassnBefore = m_secondJetty->GetTaSsnSndNxtForTest();
         NS_TEST_ASSERT_MSG_EQ(
@@ -10544,12 +10738,12 @@ class UbLifecycleRtpTxQueueRoundRobinReportsFairnessTest : public TestCase
                                                topo.receiver->GetId(),
                                                128,
                                                m_firstTask,
-                                               TaOpcode::TA_OPCODE_WRITE);
+                                               UbTransactionOpcode::WRITE);
         Ptr<UbWqe> second = function->CreateWqe(topo.sender->GetId(),
                                                 topo.receiver->GetId(),
                                                 64,
                                                 m_secondTask,
-                                                TaOpcode::TA_OPCODE_WRITE);
+                                                UbTransactionOpcode::WRITE);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->SubmitWqe(first, firstJetty).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
@@ -10693,7 +10887,7 @@ class UbJettyInflightAckWakeCompletesMultiSegmentWqeTest : public UbJettyInfligh
                                                m_topo.receiver->GetId(),
                                                128,
                                                kUrmaWriteRegressionTaskId,
-                                               TaOpcode::TA_OPCODE_WRITE);
+                                               UbTransactionOpcode::WRITE);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(m_function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
@@ -10778,12 +10972,12 @@ class UbJettyInflightDoesNotBlockSharedTpPeerTest : public UbJettyInflightTestCa
                                                  m_topo.receiver->GetId(),
                                                  128,
                                                  m_firstTask,
-                                                 TaOpcode::TA_OPCODE_WRITE);
+                                                 UbTransactionOpcode::WRITE);
         Ptr<UbWqe> second = m_function->CreateWqe(m_topo.sender->GetId(),
                                                   m_topo.receiver->GetId(),
                                                   64,
                                                   m_secondTask,
-                                                  TaOpcode::TA_OPCODE_WRITE);
+                                                  UbTransactionOpcode::WRITE);
         first->SetOrderType(OrderType::ORDER_NO);
         second->SetOrderType(OrderType::ORDER_NO);
         NS_TEST_ASSERT_MSG_EQ(
@@ -10896,12 +11090,12 @@ class UbJettyInflightDoesNotBlockSharedTpgPeerTest : public UbJettyInflightTestC
                                                  m_topo.receiver->GetId(),
                                                  128,
                                                  m_firstTask,
-                                                 TaOpcode::TA_OPCODE_WRITE);
+                                                 UbTransactionOpcode::WRITE);
         Ptr<UbWqe> second = m_function->CreateWqe(m_topo.sender->GetId(),
                                                   m_topo.receiver->GetId(),
                                                   64,
                                                   m_secondTask,
-                                                  TaOpcode::TA_OPCODE_WRITE);
+                                                  UbTransactionOpcode::WRITE);
         first->SetOrderType(OrderType::ORDER_NO);
         second->SetOrderType(OrderType::ORDER_NO);
         NS_TEST_ASSERT_MSG_EQ(
@@ -10994,7 +11188,7 @@ class UbJettyInflightTerminalProgressWakesWaitingWqeTest : public UbJettyInfligh
                                                    m_topo.receiver->GetId(),
                                                    64,
                                                    taskId,
-                                                   TaOpcode::TA_OPCODE_WRITE);
+                                                   UbTransactionOpcode::WRITE);
             wqe->SetOrderType(OrderType::ORDER_NO);
             NS_TEST_ASSERT_MSG_EQ(
                 static_cast<uint32_t>(
@@ -11075,12 +11269,12 @@ class UbJettyInflightRepeatedKickIsIdempotentTest : public UbJettyInflightTestCa
                                                  m_topo.receiver->GetId(),
                                                  128,
                                                  m_firstTask,
-                                                 TaOpcode::TA_OPCODE_WRITE);
+                                                 UbTransactionOpcode::WRITE);
         Ptr<UbWqe> second = m_function->CreateWqe(m_topo.sender->GetId(),
                                                   m_topo.receiver->GetId(),
                                                   64,
                                                   m_secondTask,
-                                                  TaOpcode::TA_OPCODE_WRITE);
+                                                  UbTransactionOpcode::WRITE);
         first->SetOrderType(OrderType::ORDER_NO);
         second->SetOrderType(OrderType::ORDER_NO);
         NS_TEST_ASSERT_MSG_EQ(
@@ -11224,7 +11418,7 @@ class UbLifecycleLocalAndRemoteRtpTxEntriesShareFixedOrderTest : public TestCase
                                                topo.receiver->GetId(),
                                                128,
                                                m_localTask,
-                                               TaOpcode::TA_OPCODE_WRITE);
+                                               UbTransactionOpcode::WRITE);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->SubmitWqe(
                                       local,
@@ -11280,10 +11474,13 @@ class UbLifecycleLocalAndRemoteRtpTxEntriesShareFixedOrderTest : public TestCase
         request->SetDest(0);
         request->SetSport(0);
         request->SetDport(0);
-        request->SetType(TaOpcode::TA_OPCODE_WRITE);
+        request->SetType(UbTransactionOpcode::WRITE);
         request->SetSize(64);
         request->SetPriority(kUrmaWriteRegressionPriority);
         request->SetTaskId(m_remoteTask);
+        request->SetLogicalBytes(64);
+        request->SetPayloadBytes(64);
+        request->SetCarrierBytes(64);
         request->SetWqeSize(64);
         request->SetJettyNum(77);
         request->SetOriginJettyNum(77);
@@ -11292,6 +11489,8 @@ class UbLifecycleLocalAndRemoteRtpTxEntriesShareFixedOrderTest : public TestCase
         request->SetOrderType(OrderType::ORDER_NO);
         request->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
         request->SetRemoteAddress(0);
+        request->SetTransactionFields(
+            UbTransactionFields{.memoryAccess = UbMemoryAccessFields{0, 0, 64}});
         return request;
     }
 
@@ -11307,10 +11506,17 @@ class UbLifecycleLocalAndRemoteRtpTxEntriesShareFixedOrderTest : public TestCase
             m_remoteInjected = true;
             m_transaction->HandleInboundTaUnit(kUrmaWriteRegressionSenderTpn,
                                                BuildRemoteRequest());
-            m_remoteQueuedAtFirstAdmission =
-                m_transaction->GetRtpTxQueuePendingEntryCountForTest(
-                    m_tp->GetLifecycleOwner()) == 1;
+            Simulator::Schedule(NanoSeconds(1),
+                &UbLifecycleLocalAndRemoteRtpTxEntriesShareFixedOrderTest::ObserveRemoteQueue,
+                this);
         }
+    }
+
+    void ObserveRemoteQueue()
+    {
+        m_remoteQueuedAtFirstAdmission =
+            m_remoteQueuedAtFirstAdmission ||
+            m_transaction->GetRtpTxQueuePendingEntryCountForTest(m_tp->GetLifecycleOwner()) > 0;
     }
 
     void ObserveCompletion(uint32_t taskId, uint32_t)
@@ -11418,17 +11624,17 @@ class UbLifecycleTpgRealCapacityTransitionsCoalesceWakeTest : public TestCase
                                                topo.receiver->GetId(),
                                                64,
                                                m_firstTask,
-                                               TaOpcode::TA_OPCODE_WRITE);
+                                               UbTransactionOpcode::WRITE);
         Ptr<UbWqe> second = function->CreateWqe(topo.sender->GetId(),
                                                 topo.receiver->GetId(),
                                                 64,
                                                 m_secondTask,
-                                                TaOpcode::TA_OPCODE_WRITE);
+                                                UbTransactionOpcode::WRITE);
         m_tpgWqe = function->CreateWqe(topo.sender->GetId(),
                                        topo.receiver->GetId(),
                                        64,
                                        m_tpgTask,
-                                       TaOpcode::TA_OPCODE_WRITE);
+                                       UbTransactionOpcode::WRITE);
         m_tpgJetty = function->GetJetty(tpgJetty);
         m_tassnBefore = m_tpgJetty->GetTaSsnSndNxtForTest();
         NS_TEST_ASSERT_MSG_EQ(
@@ -11726,7 +11932,7 @@ class UbLifecycleLiveTpgDestroyReleasesExactBindingTest : public TestCase
                                                   topo.receiver->GetId(),
                                                   64,
                                                   kUrmaWriteRegressionTaskId + 29,
-                                                  TaOpcode::TA_OPCODE_WRITE);
+                                                  UbTransactionOpcode::WRITE);
         const UbWqeSubmissionResult result =
             function->SubmitWqe(rejected, kUrmaWriteRegressionJettyNum);
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(result.status),
@@ -11963,7 +12169,7 @@ class UbLifecycleLastTpgMemberRemovalWaitsForUseLeaseTest : public TestCase
                                              topo.receiver->GetId(),
                                              128,
                                              m_taskId,
-                                             TaOpcode::TA_OPCODE_WRITE);
+                                             UbTransactionOpcode::WRITE);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->SubmitWqe(wqe,
                                                       kUrmaWriteRegressionJettyNum).status),
@@ -12044,7 +12250,7 @@ class UbLifecycleLastTpgMemberRemovalWaitsForUseLeaseTest : public TestCase
                                                   m_lastTp->GetDest(),
                                                   64,
                                                   m_taskId + 1,
-                                                  TaOpcode::TA_OPCODE_WRITE);
+                                                  UbTransactionOpcode::WRITE);
         const UbWqeSubmissionResult result =
             function->SubmitWqe(rejected, kUrmaWriteRegressionJettyNum);
         m_rejectedStatus = result.status;
@@ -12146,7 +12352,7 @@ class UbLifecyclePendingLastRemovalAddMemberWakesHolderTest : public TestCase
                                                topo.receiver->GetId(),
                                                128,
                                                m_taskId,
-                                               TaOpcode::TA_OPCODE_WRITE);
+                                               UbTransactionOpcode::WRITE);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(m_function->SubmitWqe(
                                       wqe,
@@ -12242,7 +12448,7 @@ class UbLifecyclePendingLastRemovalAddMemberWakesHolderTest : public TestCase
                                                         topo.receiver->GetId(),
                                                         64,
                                                         m_taskId + 1,
-                                                        TaOpcode::TA_OPCODE_WRITE);
+                                                        UbTransactionOpcode::WRITE);
         const UbWqeSubmissionResult admitted =
             m_function->SubmitWqe(newOperation, kUrmaWriteRegressionJettyNum);
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(admitted.status),
@@ -12388,7 +12594,7 @@ class UbLifecycleNonLastTpgMemberRemovalPinsAcceptedSegmentTest : public TestCas
                                              topo.receiver->GetId(),
                                              128,
                                              m_taskId,
-                                             TaOpcode::TA_OPCODE_WRITE);
+                                             UbTransactionOpcode::WRITE);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->SubmitWqe(wqe,
                                                       kUrmaWriteRegressionJettyNum).status),
@@ -12567,7 +12773,7 @@ class UbLifecycleActiveUseTpgDestroyFinalizesOnceTest : public TestCase
                                                topo.receiver->GetId(),
                                                128,
                                                m_taskId,
-                                               TaOpcode::TA_OPCODE_WRITE);
+                                               UbTransactionOpcode::WRITE);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(m_function->SubmitWqe(
                                       wqe,
@@ -12634,7 +12840,7 @@ class UbLifecycleActiveUseTpgDestroyFinalizesOnceTest : public TestCase
                                                     topo.receiver->GetId(),
                                                     64,
                                                     m_taskId + 1,
-                                                    TaOpcode::TA_OPCODE_WRITE);
+                                                    UbTransactionOpcode::WRITE);
         const UbWqeSubmissionResult result =
             m_function->SubmitWqe(rejected, kUrmaWriteRegressionJettyNum);
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(result.status),
@@ -12738,7 +12944,7 @@ class UbLifecycleRepeatedDeferredTpgDestroyRetiresExactDomainTest : public TestC
                                                  topo.receiver->GetId(),
                                                  64,
                                                  taskId,
-                                                 TaOpcode::TA_OPCODE_WRITE);
+                                                 UbTransactionOpcode::WRITE);
             NS_TEST_ASSERT_MSG_EQ(
                 static_cast<uint32_t>(function->SubmitWqe(
                                           wqe,
@@ -12835,13 +13041,13 @@ class UbLifecycleTypedTpgCleanupTerminatesBlockedTailTest : public TestCase
                                                  topo.receiver->GetId(),
                                                  64,
                                                  kUrmaWriteRegressionTaskId + 80,
-                                                 TaOpcode::TA_OPCODE_WRITE);
+                                                 UbTransactionOpcode::WRITE);
         m_groupTask = kUrmaWriteRegressionTaskId + 81;
         Ptr<UbWqe> groupWqe = function->CreateWqe(topo.sender->GetId(),
                                                   topo.receiver->GetId(),
                                                   128,
                                                   m_groupTask,
-                                                  TaOpcode::TA_OPCODE_WRITE);
+                                                  UbTransactionOpcode::WRITE);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->SubmitWqe(blocker, blockerJetty).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
@@ -13061,7 +13267,7 @@ class UbLifecycleTypedLastTpgMemberRemovalTerminatesActiveUseTest : public TestC
                                                topo.receiver->GetId(),
                                                128,
                                                m_taskId,
-                                               TaOpcode::TA_OPCODE_WRITE);
+                                               UbTransactionOpcode::WRITE);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(m_function->SubmitWqe(wqe, groupJetty).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
@@ -13308,7 +13514,7 @@ class UbLifecycleReentrantTypedTpgCleanupTest : public TestCase
                                                     topo.receiver->GetId(),
                                                     64,
                                                     m_firstTask,
-                                                    TaOpcode::TA_OPCODE_WRITE);
+                                                    UbTransactionOpcode::WRITE);
         if (m_function->SubmitWqe(firstWqe, firstJetty).status !=
             UbWqeSubmissionStatus::ACCEPTED)
         {
@@ -13320,7 +13526,7 @@ class UbLifecycleReentrantTypedTpgCleanupTest : public TestCase
                                                          topo.receiver->GetId(),
                                                          64,
                                                          m_secondTask,
-                                                         TaOpcode::TA_OPCODE_WRITE);
+                                                         UbTransactionOpcode::WRITE);
             if (m_function->SubmitWqe(secondWqe, secondJetty).status !=
                 UbWqeSubmissionStatus::ACCEPTED)
             {
@@ -13461,7 +13667,7 @@ class UbLifecycleControllerDisposeForceCleansCanonicalTpgTest : public TestCase
                                              topo.receiver->GetId(),
                                              64,
                                              m_taskId,
-                                             TaOpcode::TA_OPCODE_WRITE);
+                                             UbTransactionOpcode::WRITE);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->SubmitWqe(
                                       wqe,
@@ -13585,7 +13791,7 @@ class UbLifecycleMultiSegmentTpgRoundRobinPinsGenerationsTest : public TestCase
                                              topo.receiver->GetId(),
                                              128,
                                              kUrmaWriteRegressionTaskId,
-                                             TaOpcode::TA_OPCODE_WRITE);
+                                             UbTransactionOpcode::WRITE);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
@@ -13806,7 +14012,7 @@ class UbLifecycleTpgRetransmissionPinsResolvedTpGenerationTest : public TestCase
                                              topo.receiver->GetId(),
                                              64,
                                              kUrmaWriteRegressionTaskId,
-                                             TaOpcode::TA_OPCODE_WRITE);
+                                             UbTransactionOpcode::WRITE);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
@@ -14112,7 +14318,7 @@ class UbLifecycleGbnRetransmissionTraceCleanupTest : public TestCase
                                                topo.receiver->GetId(),
                                                64,
                                                kUrmaWriteRegressionTaskId,
-                                               TaOpcode::TA_OPCODE_WRITE);
+                                               UbTransactionOpcode::WRITE);
         if (m_function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status !=
             UbWqeSubmissionStatus::ACCEPTED)
         {
@@ -14300,7 +14506,7 @@ class UbLifecycleSelectiveRetransmissionTraceCleanupTest : public TestCase
                                                topo.receiver->GetId(),
                                                64,
                                                kUrmaWriteRegressionTaskId,
-                                               TaOpcode::TA_OPCODE_WRITE);
+                                               UbTransactionOpcode::WRITE);
         if (m_function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status !=
             UbWqeSubmissionStatus::ACCEPTED)
         {
@@ -14471,12 +14677,12 @@ class UbLifecycleTpgRoundRobinPreservesCrossJettyInitialPhaseTest : public TestC
                                                   topo.receiver->GetId(),
                                                   64,
                                                   firstTask,
-                                                  TaOpcode::TA_OPCODE_WRITE);
+                                                  UbTransactionOpcode::WRITE);
         Ptr<UbWqe> secondWqe = function->CreateWqe(topo.sender->GetId(),
                                                    topo.receiver->GetId(),
                                                    64,
                                                    secondTask,
-                                                   TaOpcode::TA_OPCODE_WRITE);
+                                                   UbTransactionOpcode::WRITE);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->SubmitWqe(firstWqe, firstJetty).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
@@ -14578,7 +14784,7 @@ class UbLifecycleSameJettyConcurrentWqesMakeIndependentProgressTest : public Tes
                                                  topo.receiver->GetId(),
                                                  64,
                                                  taskId,
-                                                 TaOpcode::TA_OPCODE_WRITE);
+                                                 UbTransactionOpcode::WRITE);
             wqe->SetOrderType(OrderType::ORDER_STRONG);
             NS_TEST_ASSERT_MSG_EQ(
                 static_cast<uint32_t>(
@@ -14719,7 +14925,7 @@ class UbLifecycleStrongOrderTerminalWakesSuccessorTest : public TestCase
                                                  topo.receiver->GetId(),
                                                  64,
                                                  taskId,
-                                                 TaOpcode::TA_OPCODE_WRITE);
+                                                 UbTransactionOpcode::WRITE);
             wqe->SetOrderType(OrderType::ORDER_STRONG);
             if (taskId == kUrmaWriteRegressionTaskId + 1)
             {
@@ -15028,7 +15234,7 @@ class UbLifecycleSharedTpNonTailUnsentTerminalTest : public TestCase
                                                  topo.receiver->GetId(),
                                                  64,
                                                  kUrmaWriteRegressionTaskId + offset,
-                                                 TaOpcode::TA_OPCODE_WRITE);
+                                                 UbTransactionOpcode::WRITE);
             wqe->SetOrderType(OrderType::ORDER_NO);
             NS_TEST_ASSERT_MSG_EQ(
                 static_cast<uint32_t>(
@@ -15196,7 +15402,7 @@ class UbLifecycleStartedTerminalRetainsCorrelationUntilResponseTest : public Tes
                                                  topo.receiver->GetId(),
                                                  64,
                                                  kUrmaWriteRegressionTaskId + offset,
-                                                 TaOpcode::TA_OPCODE_WRITE);
+                                                 UbTransactionOpcode::WRITE);
             wqe->SetOrderType(OrderType::ORDER_NO);
             NS_TEST_ASSERT_MSG_EQ(
                 static_cast<uint32_t>(
@@ -15467,7 +15673,7 @@ class UbLifecycleStartedTerminalPendingForcedDrainTest : public TestCase
                                              topo.receiver->GetId(),
                                              64,
                                              kUrmaWriteRegressionTaskId,
-                                             TaOpcode::TA_OPCODE_WRITE);
+                                             UbTransactionOpcode::WRITE);
         wqe->SetOrderType(OrderType::ORDER_NO);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(
@@ -15629,7 +15835,7 @@ class UbLifecycleResponseBearingTpAckBeforeTerminalTest : public TestCase
                                              topo.receiver->GetId(),
                                              64,
                                              kUrmaWriteRegressionTaskId,
-                                             TaOpcode::TA_OPCODE_WRITE);
+                                             UbTransactionOpcode::WRITE);
         wqe->SetOrderType(OrderType::ORDER_NO);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(
@@ -15833,7 +16039,7 @@ class UbLifecycleExplicitDrainContinuesStrongSuccessorTest : public TestCase
                                                    topo.receiver->GetId(),
                                                    64,
                                                    taskId,
-                                                   TaOpcode::TA_OPCODE_WRITE);
+                                                   UbTransactionOpcode::WRITE);
             wqe->SetOrderType(OrderType::ORDER_STRONG);
             NS_TEST_ASSERT_MSG_EQ(
                 static_cast<uint32_t>(
@@ -15999,7 +16205,7 @@ class UbLifecycleGracefulAbortUpgradeTest : public TestCase
                                                    topo.receiver->GetId(),
                                                    64,
                                                    taskId,
-                                                   TaOpcode::TA_OPCODE_WRITE);
+                                                   UbTransactionOpcode::WRITE);
             wqe->SetOrderType(OrderType::ORDER_STRONG);
             NS_TEST_ASSERT_MSG_EQ(
                 static_cast<uint32_t>(
@@ -16138,7 +16344,7 @@ class UbLifecycleForcedStrongOrderDrainDoesNotWakeSuccessorTest : public TestCas
                                                    topo.receiver->GetId(),
                                                    64,
                                                    taskId,
-                                                   TaOpcode::TA_OPCODE_WRITE);
+                                                   UbTransactionOpcode::WRITE);
             wqe->SetOrderType(OrderType::ORDER_STRONG);
             NS_TEST_ASSERT_MSG_EQ(
                 static_cast<uint32_t>(
@@ -16268,7 +16474,7 @@ class UbLifecycleAcceptedTpWorkBlocksGenerationRetirementTest : public TestCase
                                                  topo.receiver->GetId(),
                                                  64,
                                                  kUrmaWriteRegressionTaskId,
-                                                 TaOpcode::TA_OPCODE_WRITE);
+                                                 UbTransactionOpcode::WRITE);
             if (function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status !=
                 UbWqeSubmissionStatus::ACCEPTED)
             {
@@ -16341,7 +16547,7 @@ class UbLifecycleRejectedTpAdmissionPreservesLazyCursorTest : public TestCase
                                              topo.receiver->GetId(),
                                              64,
                                              kUrmaWriteRegressionTaskId,
-                                             TaOpcode::TA_OPCODE_WRITE);
+                                             UbTransactionOpcode::WRITE);
         const UbWqeSubmissionResult submitted =
             function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum);
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(submitted.status),
@@ -16434,7 +16640,7 @@ class UbLifecycleSchedulerRaceBackpressureTest : public TestCase
                                     topo.receiver->GetId(),
                                     64,
                                     kUrmaWriteRegressionTaskId,
-                                    TaOpcode::TA_OPCODE_WRITE);
+                                    UbTransactionOpcode::WRITE);
         const uint64_t bytesBefore = m_wqe->GetBytesLeft();
         const uint32_t tassnBefore = m_jetty->GetTaSsnSndNxtForTest();
         const UbWqeSubmissionResult submitted =
@@ -16569,7 +16775,7 @@ class UbLifecycleDirectWriteCompletionTest : public TestCase
                                              topo.receiver->GetId(),
                                              64,
                                              kUrmaWriteRegressionTaskId,
-                                             TaOpcode::TA_OPCODE_WRITE);
+                                             UbTransactionOpcode::WRITE);
         const UbWqeSubmissionResult submitted =
             function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum);
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(submitted.status),
@@ -16813,7 +17019,7 @@ class UbLifecycleSegmentCompletionRequiresResolvedTpGenerationTest : public Test
                                              topo.receiver->GetId(),
                                              64,
                                              kUrmaWriteRegressionTaskId,
-                                             TaOpcode::TA_OPCODE_WRITE);
+                                             UbTransactionOpcode::WRITE);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
@@ -16911,8 +17117,8 @@ class UbLifecycleSegmentCompletionRequiresResolvedTpGenerationTest : public Test
         const UbLifecycleResourceIdentity& segmentIdentity) const
     {
         Ptr<UbWqeSegment> response = CreateObject<UbWqeSegment>();
-        response->SetType(TaOpcode::TA_OPCODE_TRANSACTION_ACK);
-        response->SetRequestOpcode(TaOpcode::TA_OPCODE_WRITE);
+        response->SetType(UbTransactionOpcode::TAACK);
+        response->SetRequestOpcode(UbTransactionOpcode::WRITE);
         response->SetSegmentKind(UbTransactionSegmentKind::RESPONSE);
         response->SetOriginJettyNum(kUrmaWriteRegressionJettyNum);
         response->SetRequestTassn(0);
@@ -17062,7 +17268,7 @@ class UbLifecycleLateCompletionRejectsReusedJettyWqeAndTassnTest : public TestCa
                                              topo.receiver->GetId(),
                                              64,
                                              taskId,
-                                             TaOpcode::TA_OPCODE_WRITE);
+                                             UbTransactionOpcode::WRITE);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
@@ -17076,8 +17282,8 @@ class UbLifecycleLateCompletionRejectsReusedJettyWqeAndTassnTest : public TestCa
         uint32_t taskId = kUrmaWriteRegressionTaskId) const
     {
         Ptr<UbWqeSegment> response = CreateObject<UbWqeSegment>();
-        response->SetType(TaOpcode::TA_OPCODE_TRANSACTION_ACK);
-        response->SetRequestOpcode(TaOpcode::TA_OPCODE_WRITE);
+        response->SetType(UbTransactionOpcode::TAACK);
+        response->SetRequestOpcode(UbTransactionOpcode::WRITE);
         response->SetSegmentKind(UbTransactionSegmentKind::RESPONSE);
         response->SetOriginJettyNum(kUrmaWriteRegressionJettyNum);
         response->SetRequestTassn(0);
@@ -17215,7 +17421,7 @@ class UbLifecycleLateCompletionRejectsDifferentWqeOnReusedTassnTest : public Tes
                                              topo.receiver->GetId(),
                                              64,
                                              taskId,
-                                             TaOpcode::TA_OPCODE_WRITE);
+                                             UbTransactionOpcode::WRITE);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
@@ -17229,8 +17435,8 @@ class UbLifecycleLateCompletionRejectsDifferentWqeOnReusedTassnTest : public Tes
         uint32_t taskId) const
     {
         Ptr<UbWqeSegment> response = CreateObject<UbWqeSegment>();
-        response->SetType(TaOpcode::TA_OPCODE_TRANSACTION_ACK);
-        response->SetRequestOpcode(TaOpcode::TA_OPCODE_WRITE);
+        response->SetType(UbTransactionOpcode::TAACK);
+        response->SetRequestOpcode(UbTransactionOpcode::WRITE);
         response->SetSegmentKind(UbTransactionSegmentKind::RESPONSE);
         response->SetOriginJettyNum(kUrmaWriteRegressionJettyNum);
         response->SetRequestTassn(0);
@@ -17288,7 +17494,7 @@ class UbLifecycleFailedWqeOutcomeTest : public TestCase
                                              topo.receiver->GetId(),
                                              64,
                                              kUrmaWriteRegressionTaskId,
-                                             TaOpcode::TA_OPCODE_WRITE);
+                                             UbTransactionOpcode::WRITE);
         const UbWqeSubmissionResult result =
             function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum);
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(result.status),
@@ -17389,12 +17595,12 @@ class UbLifecycleCancelFlushOutcomeTest : public TestCase
                                                   topo.receiver->GetId(),
                                                   64,
                                                   kUrmaWriteRegressionTaskId,
-                                                  TaOpcode::TA_OPCODE_WRITE);
+                                                  UbTransactionOpcode::WRITE);
         Ptr<UbWqe> flushed = function->CreateWqe(topo.sender->GetId(),
                                                  topo.receiver->GetId(),
                                                  64,
                                                  kUrmaWriteRegressionTaskId + 1,
-                                                 TaOpcode::TA_OPCODE_READ);
+                                                 UbTransactionOpcode::READ);
         const UbWqeSubmissionResult canceledSubmission =
             function->SubmitWqe(canceled, canceledJetty);
         const UbWqeSubmissionResult flushedSubmission =
@@ -18344,7 +18550,7 @@ class UbLifecycleForcedJettyDisposalTest : public TestCase
                                              topo.receiver->GetId(),
                                              64,
                                              kUrmaWriteRegressionTaskId,
-                                             TaOpcode::TA_OPCODE_WRITE);
+                                             UbTransactionOpcode::WRITE);
         const UbWqeSubmissionResult submitted =
             function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum);
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(submitted.status),
@@ -18439,7 +18645,7 @@ class UbLifecyclePendingJettyDestroyTest : public TestCase
                                                     topo.receiver->GetId(),
                                                     64,
                                                     kUrmaWriteRegressionTaskId,
-                                                    TaOpcode::TA_OPCODE_WRITE);
+                                                    UbTransactionOpcode::WRITE);
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_function->SubmitWqe(
                                   accepted,
                                   kUrmaWriteRegressionJettyNum).status),
@@ -18497,7 +18703,7 @@ class UbLifecyclePendingJettyDestroyTest : public TestCase
                                                     topo.receiver->GetId(),
                                                     64,
                                                     kUrmaWriteRegressionTaskId + 1,
-                                                    TaOpcode::TA_OPCODE_WRITE);
+                                                    UbTransactionOpcode::WRITE);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(m_function->SubmitWqe(rejected,
                                                        kUrmaWriteRegressionJettyNum).status),
@@ -18610,7 +18816,7 @@ class UbLifecycleForcedStopCancelsTrackedScheduleTest : public TestCase
                                                     topo.receiver->GetId(),
                                                     64,
                                                     kUrmaWriteRegressionTaskId,
-                                                    TaOpcode::TA_OPCODE_WRITE);
+                                                    UbTransactionOpcode::WRITE);
             if (function->SubmitWqe(oldWqe, kUrmaWriteRegressionJettyNum).status !=
                     UbWqeSubmissionStatus::ACCEPTED ||
                 function->DestroyJetty(kUrmaWriteRegressionJettyNum,
@@ -18635,7 +18841,7 @@ class UbLifecycleForcedStopCancelsTrackedScheduleTest : public TestCase
                                                     topo.receiver->GetId(),
                                                     64,
                                                     kUrmaWriteRegressionTaskId,
-                                                    TaOpcode::TA_OPCODE_WRITE);
+                                                    UbTransactionOpcode::WRITE);
             if (function->SubmitWqe(newWqe, kUrmaWriteRegressionJettyNum).status !=
                 UbWqeSubmissionStatus::ACCEPTED)
             {
@@ -18663,7 +18869,7 @@ class UbLifecycleForcedStopCancelsTrackedScheduleTest : public TestCase
                                                       topo.receiver->GetId(),
                                                       64,
                                                       kUrmaWriteRegressionTaskId,
-                                                      TaOpcode::TA_OPCODE_WRITE);
+                                                      UbTransactionOpcode::WRITE);
             if (function->SubmitWqe(finalWqe, kUrmaWriteRegressionJettyNum).status !=
                 UbWqeSubmissionStatus::ACCEPTED)
             {
@@ -18726,7 +18932,7 @@ class UbLifecycleForcedStopPendingFinishReleasesSchedulerTest : public TestCase
                                                     topo.receiver->GetId(),
                                                     64,
                                                     kUrmaWriteRegressionTaskId,
-                                                    TaOpcode::TA_OPCODE_WRITE);
+                                                    UbTransactionOpcode::WRITE);
             if (function->SubmitWqe(oldWqe, kUrmaWriteRegressionJettyNum).status !=
                 UbWqeSubmissionStatus::ACCEPTED)
             {
@@ -18756,7 +18962,7 @@ class UbLifecycleForcedStopPendingFinishReleasesSchedulerTest : public TestCase
                                                              topo.receiver->GetId(),
                                                              64,
                                                              kUrmaWriteRegressionTaskId,
-                                                             TaOpcode::TA_OPCODE_WRITE);
+                                                             UbTransactionOpcode::WRITE);
                 if (function->SubmitWqe(replacement, kUrmaWriteRegressionJettyNum).status !=
                     UbWqeSubmissionStatus::ACCEPTED)
                 {
@@ -18869,7 +19075,7 @@ class UbLifecycleReentrantForcedStopDefersRunningFinishTest : public TestCase
                                                  topo.receiver->GetId(),
                                                  64,
                                                  kUrmaWriteRegressionTaskId,
-                                                 TaOpcode::TA_OPCODE_WRITE);
+                                                 UbTransactionOpcode::WRITE);
             if (function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status !=
                 UbWqeSubmissionStatus::ACCEPTED)
             {
@@ -19093,12 +19299,12 @@ class UbLifecycleReentrantDirectForcedDrainRefreshesManagerStateTest : public Te
                                                    topo.receiver->GetId(),
                                                    64,
                                                    observer.firstWqeId,
-                                                   TaOpcode::TA_OPCODE_WRITE);
+                                                   UbTransactionOpcode::WRITE);
             Ptr<UbWqe> second = function->CreateWqe(topo.sender->GetId(),
                                                     topo.receiver->GetId(),
                                                     64,
                                                     observer.secondWqeId,
-                                                    TaOpcode::TA_OPCODE_WRITE);
+                                                    UbTransactionOpcode::WRITE);
             if (function->SubmitWqe(first, kUrmaWriteRegressionJettyNum).status !=
                     UbWqeSubmissionStatus::ACCEPTED ||
                 function->SubmitWqe(second, kUrmaWriteRegressionJettyNum).status !=
@@ -19215,12 +19421,12 @@ class UbLifecycleReentrantLegacyForcedFlushRefreshesJettyStateTest : public Test
                                                    topo.receiver->GetId(),
                                                    64,
                                                    observer.firstWqeId,
-                                                   TaOpcode::TA_OPCODE_WRITE);
+                                                   UbTransactionOpcode::WRITE);
             Ptr<UbWqe> second = function->CreateWqe(topo.sender->GetId(),
                                                     topo.receiver->GetId(),
                                                     64,
                                                     observer.secondWqeId,
-                                                    TaOpcode::TA_OPCODE_WRITE);
+                                                    UbTransactionOpcode::WRITE);
             if (first->IsLifecycleManaged() || second->IsLifecycleManaged())
             {
                 std::_Exit(2);
@@ -19296,7 +19502,7 @@ class UbLifecycleCancelBetweenTrackedSchedulePhasesTest : public TestCase
                                                  topo.receiver->GetId(),
                                                  64,
                                                  kUrmaWriteRegressionTaskId,
-                                                 TaOpcode::TA_OPCODE_WRITE);
+                                                 UbTransactionOpcode::WRITE);
             if (function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status !=
                 UbWqeSubmissionStatus::ACCEPTED)
             {
@@ -19377,12 +19583,12 @@ class UbLifecycleSameJettyWqeReuseRejectsStaleFinishTest : public TestCase
                                                     topo.receiver->GetId(),
                                                     64,
                                                     kUrmaWriteRegressionTaskId,
-                                                    TaOpcode::TA_OPCODE_WRITE);
+                                                    UbTransactionOpcode::WRITE);
             Ptr<UbWqe> replacement = function->CreateWqe(topo.sender->GetId(),
                                                          topo.receiver->GetId(),
                                                          2 * UB_WQE_TA_SEGMENT_BYTE,
                                                          kUrmaWriteRegressionTaskId,
-                                                         TaOpcode::TA_OPCODE_WRITE);
+                                                         UbTransactionOpcode::WRITE);
             if (function->SubmitWqe(oldWqe, kUrmaWriteRegressionJettyNum).status !=
                 UbWqeSubmissionStatus::ACCEPTED)
             {
@@ -19563,7 +19769,7 @@ class UbLifecycleResponseDrainsPendingDestroyTest : public TestCase
                                                topo.receiver->GetId(),
                                                64,
                                                kUrmaWriteRegressionTaskId,
-                                               TaOpcode::TA_OPCODE_WRITE);
+                                               UbTransactionOpcode::WRITE);
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_function->SubmitWqe(
                                   wqe,
                                   kUrmaWriteRegressionJettyNum).status),
@@ -19649,7 +19855,7 @@ class UbLifecycleDuplicateOutcomeFailFastTest : public TestCase
                                                  topo.receiver->GetId(),
                                                  64,
                                                  kUrmaWriteRegressionTaskId,
-                                                 TaOpcode::TA_OPCODE_WRITE);
+                                                 UbTransactionOpcode::WRITE);
             if (function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status !=
                 UbWqeSubmissionStatus::ACCEPTED)
             {
@@ -19695,7 +19901,7 @@ class UbLifecycleDuplicateOutcomeFailFastTest : public TestCase
                                                    topo.receiver->GetId(),
                                                    64,
                                                    kUrmaWriteRegressionTaskId,
-                                                   TaOpcode::TA_OPCODE_WRITE);
+                                                   UbTransactionOpcode::WRITE);
             const UbWqeSubmissionResult oldSubmission =
                 function->SubmitWqe(first, kUrmaWriteRegressionJettyNum);
             if (oldSubmission.status != UbWqeSubmissionStatus::ACCEPTED ||
@@ -19720,7 +19926,7 @@ class UbLifecycleDuplicateOutcomeFailFastTest : public TestCase
                                                     topo.receiver->GetId(),
                                                     64,
                                                     kUrmaWriteRegressionTaskId,
-                                                    TaOpcode::TA_OPCODE_WRITE);
+                                                    UbTransactionOpcode::WRITE);
             if (function->SubmitWqe(second, kUrmaWriteRegressionJettyNum).status !=
                 UbWqeSubmissionStatus::ACCEPTED)
             {
@@ -19776,7 +19982,7 @@ class UbLifecycleStaleWqeFinishFailFastTest : public TestCase
                                                     topo.receiver->GetId(),
                                                     64,
                                                     kUrmaWriteRegressionTaskId,
-                                                    TaOpcode::TA_OPCODE_WRITE);
+                                                    UbTransactionOpcode::WRITE);
             if (function->SubmitWqe(oldWqe, kUrmaWriteRegressionJettyNum).status !=
                     UbWqeSubmissionStatus::ACCEPTED ||
                 function->DestroyJetty(kUrmaWriteRegressionJettyNum,
@@ -19801,7 +20007,7 @@ class UbLifecycleStaleWqeFinishFailFastTest : public TestCase
                                                     topo.receiver->GetId(),
                                                     64,
                                                     kUrmaWriteRegressionTaskId,
-                                                    TaOpcode::TA_OPCODE_WRITE);
+                                                    UbTransactionOpcode::WRITE);
             if (function->SubmitWqe(newWqe, kUrmaWriteRegressionJettyNum).status !=
                 UbWqeSubmissionStatus::ACCEPTED)
             {
@@ -19844,7 +20050,7 @@ class UbLifecycleStaleWqeFinishFailFastTest : public TestCase
                                                  topo.receiver->GetId(),
                                                  64,
                                                  kUrmaWriteRegressionTaskId,
-                                                 TaOpcode::TA_OPCODE_WRITE);
+                                                 UbTransactionOpcode::WRITE);
             if (function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status !=
                     UbWqeSubmissionStatus::ACCEPTED ||
                 function->DestroyJetty(kUrmaWriteRegressionJettyNum,
@@ -19946,7 +20152,7 @@ BuildLifecycleTracerPacket(const LocalTpTopology& topo)
     segment->SetDest(topo.receiver->GetId());
     segment->SetSport(topo.senderPort->GetIfIndex());
     segment->SetDport(topo.receiverPort->GetIfIndex());
-    segment->SetType(TaOpcode::TA_OPCODE_WRITE);
+    segment->SetType(UbTransactionOpcode::WRITE);
     segment->SetSize(128);
     segment->SetPriority(kUrmaWriteRegressionPriority);
     segment->SetTaskId(kUrmaWriteRegressionTaskId);
@@ -19961,7 +20167,7 @@ BuildLifecycleTracerPacket(const LocalTpTopology& topo)
     segment->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
     segment->SetOriginJettyNum(kUrmaWriteRegressionJettyNum);
     segment->SetRequestTassn(0);
-    segment->SetRequestOpcode(TaOpcode::TA_OPCODE_WRITE);
+    segment->SetRequestOpcode(UbTransactionOpcode::WRITE);
     segment->SetResponseBytes(0);
     segment->SetNeedsTransactionResponse(true);
     segment->SetResLenBytes(128);
@@ -23416,10 +23622,32 @@ class UbTpQuiescenceAssessmentReportsTransactionReferencesTest : public TestCase
         Ptr<UbWqeSegment> request = CreateObject<UbWqeSegment>();
         request->SetSrc(topo.receiver->GetId());
         request->SetDest(topo.sender->GetId());
+        request->SetType(UbTransactionOpcode::WRITE);
+        request->SetRequestOpcode(UbTransactionOpcode::WRITE);
+        request->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
         request->SetOriginJettyNum(77);
         request->SetTaskId(88);
+        request->SetSize(64);
+        request->SetWqeSize(64);
+        request->SetLogicalBytes(64);
+        request->SetPayloadBytes(64);
+        request->SetTransactionFields(
+            UbTransactionFields{.memoryAccess = UbMemoryAccessFields{0, 0, 64}});
+        // A carrier always caches the normalized result before the common target entry consumes it.
+        UbTransactionRequestInput remoteInput;
+        remoteInput.opcode = UbTransactionOpcode::WRITE;
+        remoteInput.logicalBytes = 64;
+        remoteInput.payloadBytes = 64;
+        remoteInput.fields = request->GetTransactionFields();
+        remoteInput.maxPayloadBytes = UINT32_MAX;
+        remoteInput.origin = UbTransactionRequestOrigin::INBOUND_DECODE;
+        const auto remoteValidation = ValidateTransactionRequest(remoteInput);
+        NS_TEST_ASSERT_MSG_EQ(remoteValidation.IsValid(), true, remoteValidation.message);
+        request->SetTransactionResolved(remoteValidation.resolved);
         controller->GetUbTransaction()->HandleInboundTaUnit(kUrmaWriteRegressionSenderTpn,
                                                             request);
+        Simulator::Stop(TimeStep(1));
+        Simulator::Run();
         const UbTpQuiescenceAssessment assessment =
             manager->AssessTpQuiescence(kUrmaWriteRegressionSenderTpn);
         NS_TEST_ASSERT_MSG_EQ(
@@ -24161,7 +24389,7 @@ class UbExplicitConnectionDestroyDrainsAdmittedWriteTest : public TestCase
                                                     m_receiverNodeId,
                                                     4096,
                                                     kUrmaWriteRegressionTaskId + 1,
-                                                    TaOpcode::TA_OPCODE_WRITE);
+                                                    UbTransactionOpcode::WRITE);
         NS_TEST_ASSERT_MSG_NE(
             static_cast<uint32_t>(
                 m_function->SubmitWqe(rejected, kUrmaWriteRegressionJettyNum).status),
@@ -24250,7 +24478,7 @@ class UbExplicitConnectionDestroyDrainsAdmittedWriteTest : public TestCase
                                                m_receiverNodeId,
                                                UB_WQE_TA_SEGMENT_BYTE,
                                                kUrmaWriteRegressionTaskId,
-                                               TaOpcode::TA_OPCODE_WRITE);
+                                               UbTransactionOpcode::WRITE);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(m_function->SubmitWqe(wqe,
                                                         kUrmaWriteRegressionJettyNum)
@@ -27469,7 +27697,7 @@ class UbAllocatorNonEmptySummaryCountsTransitionsTest : public TestCase
         sentSegment->SetDest(topo.receiver->GetId());
         sentSegment->SetSport(topo.senderPort->GetIfIndex());
         sentSegment->SetDport(topo.receiverPort->GetIfIndex());
-        sentSegment->SetType(TaOpcode::TA_OPCODE_WRITE);
+        sentSegment->SetType(UbTransactionOpcode::WRITE);
         sentSegment->SetSize(64);
         sentSegment->SetPriority(kUrmaWriteRegressionPriority);
         sentSegment->SetTaskId(kUrmaWriteRegressionTaskId);
@@ -27480,7 +27708,7 @@ class UbAllocatorNonEmptySummaryCountsTransitionsTest : public TestCase
         sentSegment->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
         sentSegment->SetOriginJettyNum(kUrmaWriteRegressionJettyNum);
         sentSegment->SetRequestTassn(0);
-        sentSegment->SetRequestOpcode(TaOpcode::TA_OPCODE_WRITE);
+        sentSegment->SetRequestOpcode(UbTransactionOpcode::WRITE);
         sentSegment->SetNeedsTransactionResponse(true);
         sentSegment->SetResLenBytes(64);
         sentSegment->SetPayloadBytes(64);
@@ -28570,7 +28798,7 @@ class UbControllerRejectsUnpreparedUrmaWqeTest : public TestCase
                                              node->GetId() + 1,
                                              64,
                                              9,
-                                             TaOpcode::TA_OPCODE_WRITE);
+                                             UbTransactionOpcode::WRITE);
 
         NS_TEST_ASSERT_MSG_EQ(wqe->GetOriginJettyNum(),
                               UINT32_MAX,
@@ -28621,7 +28849,7 @@ class UbControllerSubmitsPreparedRtpUrmaWqeTest : public TestCase
                                              topo.receiver->GetId(),
                                              64,
                                              requestId,
-                                             TaOpcode::TA_OPCODE_WRITE);
+                                             UbTransactionOpcode::WRITE);
 
         NS_TEST_ASSERT_MSG_EQ(controller->SubmitUrmaWqe(jettyNum, wqe),
                               true,
@@ -29065,8 +29293,8 @@ class UbCtpBuildDataPacketHeaderTest : public TestCase
 
         UbCompactTransactionHeader compactTah;
         packet->RemoveHeader(compactTah);
-        NS_TEST_ASSERT_MSG_EQ(compactTah.GetTaOpcode(),
-                              static_cast<uint8_t>(TaOpcode::TA_OPCODE_WRITE),
+        NS_TEST_ASSERT_MSG_EQ(compactTah.GetUbTransactionOpcode(),
+                              static_cast<uint8_t>(UbTransactionOpcode::WRITE),
                               "compact TAH opcode should come from the WQE segment");
         NS_TEST_ASSERT_MSG_EQ(compactTah.GetIniTaSsn(), 0, "compact TAH should carry TA SSN");
 
@@ -29194,8 +29422,8 @@ class UbCtpReceiveRejectsEntityIngressViolationsTest : public TestCase
             else if (variant == 3)
             {
                 Ptr<UbWqeSegment> response = CreateCtpTaAckResponseSegment(0);
-                response->SetType(TaOpcode::TA_OPCODE_READ_RESPONSE);
-                response->SetRequestOpcode(TaOpcode::TA_OPCODE_READ);
+                response->SetType(UbTransactionOpcode::READ_RESPONSE);
+                response->SetRequestOpcode(UbTransactionOpcode::READ);
                 response->SetSize(64);
                 response->SetLogicalBytes(64);
                 response->SetPayloadBytes(64);
@@ -29296,8 +29524,8 @@ class UbCtpBuildResponsePacketTaAckTest : public TestCase
 
         UbCompactAckTransactionHeader compactAck;
         packet->RemoveHeader(compactAck);
-        NS_TEST_ASSERT_MSG_EQ(compactAck.GetTaOpcode(),
-                              static_cast<uint8_t>(TaOpcode::TA_OPCODE_TRANSACTION_ACK),
+        NS_TEST_ASSERT_MSG_EQ(compactAck.GetUbTransactionOpcode(),
+                              static_cast<uint8_t>(UbTransactionOpcode::TAACK),
                               "TAACK response should carry compact ACK TA opcode");
         NS_TEST_ASSERT_MSG_EQ(compactAck.GetIniTaSsn(),
                               3u,
@@ -29354,6 +29582,11 @@ class UbCtpLocalDataPacketGeneratesTaAckTest : public TestCase
                               .dstNodeId = topo.sender->GetId(),
                               .dstEntityId = 1,
                               .vl = 7};
+        // Target execution completes asynchronously and the receiver port must retain the response
+        // for inspection, so the scheduled executor event is run with egress held back.
+        topo.receiverPort->GetUbQueue()->SetAttribute("MaxEgressBytes", UintegerValue(0));
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
         NS_TEST_ASSERT_MSG_EQ(receiverService->GetQueuedPacketCountForTest(ackKey),
                               1u,
                               "local CTP data sink should enqueue a TAACK response");
@@ -29395,8 +29628,8 @@ class UbCtpLocalDataPacketGeneratesTaAckTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(eidHeader.GetDestinationEid(),
                               ackKey.dstEntityId,
                               "TAACK should encode the response destination entity");
-        NS_TEST_ASSERT_MSG_EQ(compactAck.GetTaOpcode(),
-                              static_cast<uint8_t>(TaOpcode::TA_OPCODE_TRANSACTION_ACK),
+        NS_TEST_ASSERT_MSG_EQ(compactAck.GetUbTransactionOpcode(),
+                              static_cast<uint8_t>(UbTransactionOpcode::TAACK),
                               "local CTP data sink should generate a TAACK opcode");
         NS_TEST_ASSERT_MSG_EQ(compactAck.GetIniTaSsn(),
                               0u,
@@ -29429,6 +29662,8 @@ class UbCtpLocalDataPacketGeneratesTaAckTest : public TestCase
                                       .dstNodeId = topo.sender->GetId(),
                                       .dstEntityId = 1,
                                       .vl = 7};
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
         NS_TEST_ASSERT_MSG_EQ(receiverService->GetQueuedPacketCountForTest(wildcardAckKey),
                               1u,
                               "wildcard CTP data should enqueue a wildcard TAACK");
@@ -29476,23 +29711,19 @@ class UbCtpDelayedRemoteProcessorPreservesEndpointPortsTest : public TestCase
             topo.sender->GetObject<UbController>()->GetCtpTransportService();
         Ptr<UbController> receiverController = topo.receiver->GetObject<UbController>();
         Ptr<UbCtpTransportService> receiverService = receiverController->GetCtpTransportService();
-        receiverController->SetAttribute("TargetProtocolProcessingDelay",
-                                         TimeValue(NanoSeconds(216)));
+        NS_TEST_ASSERT_MSG_EQ(
+            receiverController->GetUbTransaction()->SetTargetExecutionDelay(NanoSeconds(216)),
+            true,
+            "target execution delay before the first inbound request");
         topo.receiverPort->GetUbQueue()->SetAttribute("MaxEgressBytes", UintegerValue(0));
 
         UbCtpEntityKey requestKey{.srcEntityId = 1,
                                   .dstNodeId = topo.receiver->GetId(),
                                   .dstEntityId = 1,
                                   .vl = 7};
-        Time processorTime = NanoSeconds(0);
-        receiverController->GetUbTransaction()->SetRemoteUrmaRequestProcessor(
-            UbRemoteUrmaRequestProcessor(
-                [&processorTime](const UbRemoteUrmaRequestContext&,
-                                 UbRemoteUrmaResponseSender responseSender) {
-                    processorTime = Simulator::Now();
-                    Simulator::Schedule(NanoSeconds(1), responseSender);
-                    return true;
-                }));
+        bool responseTooEarly = false;
+        Simulator::Schedule(NanoSeconds(100), [&]() { responseTooEarly = receiverService->GetQueuedPacketCountForTest(requestKey) != 0; });
+
 
         Ptr<UbWqeSegment> request = CreateCtpWriteSegment(0);
         request->SetSrc(topo.sender->GetId());
@@ -29503,9 +29734,8 @@ class UbCtpDelayedRemoteProcessorPreservesEndpointPortsTest : public TestCase
         topo.receiver->GetObject<UbSwitch>()->SwitchHandlePacket(topo.receiverPort, requestPacket);
         Simulator::Stop(NanoSeconds(300));
         Simulator::Run();
-        NS_TEST_ASSERT_MSG_EQ(processorTime,
-                              NanoSeconds(216),
-                              "CTP remote processing should start after the target protocol delay");
+        NS_TEST_ASSERT_MSG_EQ(responseTooEarly, false,
+                              "CTP target execution must honor the configured delay");
 
         UbCtpEntityKey responseKey{.srcEntityId = requestKey.dstEntityId,
                                    .dstNodeId = topo.sender->GetId(),
@@ -29543,7 +29773,7 @@ class UbProtocolDelayedInboundDisposeCancelsCallbacksTest : public TestCase
 {
   public:
     UbProtocolDelayedInboundDisposeCancelsCallbacksTest()
-        : TestCase("UnifiedBus - protocol disposal cancels delayed inbound callbacks")
+        : TestCase("UnifiedBus - target execution disposal cancels delayed inbound callbacks")
     {
     }
 
@@ -29561,20 +29791,23 @@ class UbProtocolDelayedInboundDisposeCancelsCallbacksTest : public TestCase
         InitNode(node, UB_DEVICE, 0, false);
         Ptr<UbController> controller = node->GetObject<UbController>();
         Ptr<UbTransaction> transaction = controller->GetUbTransaction();
-        controller->SetAttribute("TargetProtocolProcessingDelay", TimeValue(NanoSeconds(216)));
-
-        uint32_t processorCalls = 0;
-        transaction->SetRemoteUrmaRequestProcessor(UbRemoteUrmaRequestProcessor(
-            [&processorCalls](const UbRemoteUrmaRequestContext&, UbRemoteUrmaResponseSender) {
-                ++processorCalls;
-                return true;
-            }));
+        NS_TEST_ASSERT_MSG_EQ(transaction->SetTargetExecutionDelay(NanoSeconds(216)),
+                              true,
+                              "target execution delay before the first request");
+        NS_TEST_ASSERT_MSG_EQ(
+            transaction->SetTargetExecutor(UbTargetExecutor(
+                [this](Ptr<const UbWqeSegment>, const UbTransactionRule&, UbTargetCompletion done) {
+                    ++m_processorCalls;
+                    done(UbWorkExecutionResult{});
+                })),
+            true,
+            "executor registration");
 
         Ptr<UbWqeSegment> request = CreateObject<UbWqeSegment>();
         request->SetSrc(1);
         request->SetDest(0);
-        request->SetType(TaOpcode::TA_OPCODE_WRITE);
-        request->SetRequestOpcode(TaOpcode::TA_OPCODE_WRITE);
+        request->SetType(UbTransactionOpcode::WRITE);
+        request->SetRequestOpcode(UbTransactionOpcode::WRITE);
         request->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
         request->SetTaskId(920001);
         request->SetOriginJettyNum(1);
@@ -29582,12 +29815,22 @@ class UbProtocolDelayedInboundDisposeCancelsCallbacksTest : public TestCase
         request->SetRequestTassn(0);
         request->SetSize(64);
         request->SetWqeSize(64);
+        UbTransactionRequestInput input;
+        input.opcode = UbTransactionOpcode::WRITE;
+        input.logicalBytes = 64;
+        input.payloadBytes = 64;
+        input.fields.memoryAccess = UbMemoryAccessFields{0, 0, 64};
+        input.maxPayloadBytes = UINT32_MAX;
+        input.origin = UbTransactionRequestOrigin::INBOUND_DECODE;
+        const auto validation = ValidateTransactionRequest(input);
+        NS_TEST_ASSERT_MSG_EQ(validation.IsValid(), true, validation.message);
+        request->SetTransactionResolved(validation.resolved);
         transaction->HandleInboundTaUnit(11, request);
         transaction->Dispose();
 
         Simulator::Stop(NanoSeconds(300));
         Simulator::Run();
-        NS_TEST_ASSERT_MSG_EQ(processorCalls,
+        NS_TEST_ASSERT_MSG_EQ(m_processorCalls,
                               0u,
                               "Disposed RTP transaction must cancel target processing callback");
         Simulator::Destroy();
@@ -29601,17 +29844,18 @@ class UbProtocolDelayedInboundDisposeCancelsCallbacksTest : public TestCase
             topo.sender->GetObject<UbController>()->GetCtpTransportService();
         Ptr<UbController> receiverController = topo.receiver->GetObject<UbController>();
         Ptr<UbCtpTransportService> receiverService = receiverController->GetCtpTransportService();
-        receiverController->SetAttribute("TargetProtocolProcessingDelay",
-                                         TimeValue(NanoSeconds(216)));
-
-        uint32_t processorCalls = 0;
-        receiverController->GetUbTransaction()->SetRemoteUrmaRequestProcessor(
-            UbRemoteUrmaRequestProcessor(
-                [&processorCalls](const UbRemoteUrmaRequestContext&,
-                                  UbRemoteUrmaResponseSender) {
-                    ++processorCalls;
-                    return true;
-                }));
+        Ptr<UbTransaction> receiverTransaction = receiverController->GetUbTransaction();
+        NS_TEST_ASSERT_MSG_EQ(receiverTransaction->SetTargetExecutionDelay(NanoSeconds(216)),
+                              true,
+                              "target execution delay before the first inbound request");
+        NS_TEST_ASSERT_MSG_EQ(
+            receiverTransaction->SetTargetExecutor(UbTargetExecutor(
+                [this](Ptr<const UbWqeSegment>, const UbTransactionRule&, UbTargetCompletion done) {
+                    ++m_processorCalls;
+                    done(UbWorkExecutionResult{});
+                })),
+            true,
+            "executor registration");
 
         UbCtpEntityKey requestKey{.srcEntityId = 1,
                                   .dstNodeId = topo.receiver->GetId(),
@@ -29624,15 +29868,18 @@ class UbProtocolDelayedInboundDisposeCancelsCallbacksTest : public TestCase
         request->SetDport(static_cast<uint8_t>(topo.receiverPort->GetIfIndex()));
         Ptr<Packet> requestPacket = senderService->BuildDataPacket(request, requestKey);
         topo.receiver->GetObject<UbSwitch>()->SwitchHandlePacket(topo.receiverPort, requestPacket);
-        receiverService->Dispose();
+        // The delayed event belongs to the transaction that owns the target execution delay.
+        receiverTransaction->Dispose();
 
         Simulator::Stop(NanoSeconds(300));
         Simulator::Run();
-        NS_TEST_ASSERT_MSG_EQ(processorCalls,
+        NS_TEST_ASSERT_MSG_EQ(m_processorCalls,
                               0u,
-                              "Disposed CTP service must cancel target processing callback");
+                              "Disposed CTP transaction must cancel target processing callback");
         Simulator::Destroy();
     }
+
+    uint32_t m_processorCalls{0};
 };
 
 class UbCtpReadResponseReversesEndpointPortsTest : public TestCase
@@ -29655,7 +29902,7 @@ class UbCtpReadResponseReversesEndpointPortsTest : public TestCase
         request->SetSrc(source);
         request->SetDest(destination);
         request->SetPriority(priority);
-        request->SetType(TaOpcode::TA_OPCODE_READ);
+        request->SetType(UbTransactionOpcode::READ);
         request->SetSize(64);
         request->SetLogicalBytes(64);
         request->SetPayloadBytes(0);
@@ -29720,6 +29967,8 @@ class UbCtpReadResponseReversesEndpointPortsTest : public TestCase
         senderService->ConfigureRoutingPolicy(explicitKey, RoutingType::PER_FLOW_SHORTEST_PATHS);
         Ptr<Packet> explicitPacket = senderService->BuildDataPacket(explicitRequest, explicitKey);
         topo.receiver->GetObject<UbSwitch>()->SwitchHandlePacket(topo.receiverPort, explicitPacket);
+        Simulator::Stop(TimeStep(1));
+        Simulator::Run();
         UbCtpEntityKey reverseExplicit{.srcEntityId = 1,
                                        .dstNodeId = topo.sender->GetId(),
                                        .dstEntityId = 1,
@@ -29746,6 +29995,8 @@ class UbCtpReadResponseReversesEndpointPortsTest : public TestCase
                                                RoutingType::PER_PACKET_SHORTEST_PATHS);
         Ptr<Packet> wildcardPacket = senderService->BuildDataPacket(wildcardRequest, wildcardKey);
         topo.receiver->GetObject<UbSwitch>()->SwitchHandlePacket(topo.receiverPort, wildcardPacket);
+        Simulator::Stop(TimeStep(1));
+        Simulator::Run();
         UbCtpEntityKey reverseWildcard{.srcEntityId = 1,
                                        .dstNodeId = topo.sender->GetId(),
                                        .dstEntityId = 1,
@@ -29774,6 +30025,8 @@ class UbCtpReadResponseReversesEndpointPortsTest : public TestCase
             senderService->BuildDataPacket(explicitPacketRequest, explicitPacketKey);
         topo.receiver->GetObject<UbSwitch>()->SwitchHandlePacket(topo.receiverPort,
                                                                  explicitPerPacketPacket);
+        Simulator::Stop(TimeStep(1));
+        Simulator::Run();
         UbCtpEntityKey reverseExplicitPacket{.srcEntityId = 1,
                                              .dstNodeId = topo.sender->GetId(),
                                              .dstEntityId = 1,
@@ -29829,9 +30082,11 @@ class UbCtpTaAckInheritsPacketSprayRoutingPolicyTest : public TestCase
                                           CreateCtpWriteSegment(taSsn),
                                           requestKey),
                                       0),
-                                  true,
-                                  "CTP data packet should generate a TAACK");
+                                      true,
+                                      "CTP data packet should generate a TAACK");
         }
+        Simulator::Stop(TimeStep(1));
+        Simulator::Run();
 
         UbCtpEntityKey ackKey{.srcEntityId = 1,
                               .dstNodeId = 0,
@@ -29910,7 +30165,7 @@ class UbCtpWireTaAckCompletesJettyTest : public TestCase
         jetty->SetClientCallback(MakeCallback(&UbCtpWireTaAckCompletesJettyTest::OnTaskCompleted,
                                               this));
         Ptr<UbWqe> wqe =
-            function->CreateWqe(0, 1, UB_MTU_BYTE, kTaskId, TaOpcode::TA_OPCODE_WRITE);
+            function->CreateWqe(0, 1, UB_MTU_BYTE, kTaskId, UbTransactionOpcode::WRITE);
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
         UbCtpEntityKey key{.srcEntityId = 1,
                            .dstNodeId = 1,
@@ -29994,7 +30249,7 @@ class UbCtpWireTaAckContinuesInflightLimitedWqeTest : public TestCase
                                              key.dstNodeId,
                                              2u * UbCtpTransportConstraints{}.maxSegmentBytes,
                                              kTaskId,
-                                             TaOpcode::TA_OPCODE_WRITE);
+                                             UbTransactionOpcode::WRITE);
         wqe->SetPriority(key.vl);
         wqe->SetSport(0);
         wqe->SetDport(CTP_WILDCARD_PORT);
@@ -30093,7 +30348,7 @@ class UbCtpOutOfOrderWireTaAckCompletesContiguousJettyRangeTest : public TestCas
                                 1,
                                 2u * UbCtpTransportConstraints{}.maxSegmentBytes,
                                 kTaskId,
-                                TaOpcode::TA_OPCODE_WRITE);
+                                UbTransactionOpcode::WRITE);
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
         UbCtpEntityKey key{.srcEntityId = 1,
                            .dstNodeId = 1,
@@ -30200,12 +30455,12 @@ class UbCtpTerminalRecoveryWithoutTaAckContinuesWaitingJettyWqeTest : public Tes
                                                key.dstNodeId,
                                                64,
                                                kFirstTaskId,
-                                               TaOpcode::TA_OPCODE_WRITE);
+                                               UbTransactionOpcode::WRITE);
         Ptr<UbWqe> second = function->CreateWqe(0,
                                                 key.dstNodeId,
                                                 64,
                                                 kSecondTaskId,
-                                                TaOpcode::TA_OPCODE_WRITE);
+                                                UbTransactionOpcode::WRITE);
         first->SetPriority(key.vl);
         second->SetPriority(key.vl);
         first->SetSport(0);
@@ -30309,7 +30564,7 @@ class UbCtpOutOfOrderWireTaAckTracesArrivalTest : public TestCase
                                 1,
                                 2u * UbCtpTransportConstraints{}.maxSegmentBytes,
                                 kTaskId,
-                                TaOpcode::TA_OPCODE_WRITE);
+                                UbTransactionOpcode::WRITE);
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
         service->TraceConnectWithoutContext(
             "LastPacketACKsNotify",
@@ -31409,7 +31664,7 @@ class UbSwitchLdstRoutingKeyKeepsLegacySourcePortTest : public TestCase
 
         Ptr<Packet> packet = Create<Packet>(64);
         UbDummyTransactionHeader dummyTah;
-        dummyTah.SetTaOpcode(TaOpcode::TA_OPCODE_WRITE);
+        dummyTah.SetUbTransactionOpcode(UbTransactionOpcode::WRITE);
         packet->AddHeader(dummyTah);
 
         UbCna16NetworkHeader cnaHeader;
@@ -32208,6 +32463,500 @@ class UbDcqcnMarkingTestSuite : public TestSuite
     UbDcqcnMarkingTestSuite();
 };
 
+/**
+ * Ticket 02: RTP serializes exactly the rule-driven header plan and consumes exactly that plan when
+ * decoding, so header order, payload integrity, and missing-header rejection are all observable.
+ */
+class UbRtpRuleDrivenHeaderLayoutTest : public TestCase
+{
+  public:
+    UbRtpRuleDrivenHeaderLayoutTest()
+        : TestCase("UnifiedBus - RTP transaction header layout follows the rule plan")
+    {
+    }
+
+  private:
+    using K = UbTransactionHeaderKind;
+
+    static UbTransactionFields RequestFields(UbTransactionOpcode opcode)
+    {
+        UbTransactionFields fields;
+        switch (opcode)
+        {
+        case UbTransactionOpcode::SEND:
+        case UbTransactionOpcode::SEND_WITH_IMMEDIATE:
+        case UbTransactionOpcode::WRITE_WITH_IMMEDIATE:
+            fields.messageTarget = UbMessageTargetFields{1, 0x12345, 2};
+            break;
+        case UbTransactionOpcode::WRITE_WITH_NOTIFY:
+            fields.notify = UbNotifyFields{0x1000, 0x42, 0x99, 0xAB};
+            break;
+        default:
+            break;
+        }
+        if (opcode == UbTransactionOpcode::SEND_WITH_IMMEDIATE ||
+            opcode == UbTransactionOpcode::WRITE_WITH_IMMEDIATE)
+        {
+            fields.immediate = UbImmediateFields{0x1112131415161718ull, 0x99, 32};
+        }
+        if (opcode == UbTransactionOpcode::MANAGEMENT)
+        {
+            fields.management = UbManagementFields{1, 0, false, 0, 32};
+        }
+        return fields;
+    }
+
+    static uint32_t ExtensionBytes(K kind)
+    {
+        const UbTransactionExtensionHeader header(kind);
+        return header.GetSerializedSize();
+    }
+
+    Ptr<UbWqeSegment> BuildRequestSegment(const LocalTpTopology& topo,
+                                          Ptr<UbTransportChannel> tp,
+                                          UbTransactionOpcode opcode,
+                                          uint32_t logicalBytes,
+                                          uint32_t payloadBytes,
+                                          const UbTransactionFields& fields)
+    {
+        Ptr<UbWqeSegment> segment = CreateObject<UbWqeSegment>();
+        segment->SetSrc(topo.sender->GetId());
+        segment->SetDest(topo.receiver->GetId());
+        segment->SetSport(topo.senderPort->GetIfIndex());
+        segment->SetDport(topo.receiverPort->GetIfIndex());
+        segment->SetType(opcode);
+        segment->SetSize(logicalBytes);
+        segment->SetPriority(kUrmaWriteRegressionPriority);
+        segment->SetTaskId(kUrmaWriteRegressionTaskId);
+        segment->SetWqeSize(logicalBytes);
+        segment->SetJettyNum(kUrmaWriteRegressionJettyNum);
+        segment->SetTaSsn(0);
+        segment->SetOrderType(OrderType::ORDER_NO);
+        segment->SetTpn(kUrmaWriteRegressionSenderTpn);
+        segment->SetTpMsn(tp->GetMsnCnt());
+        segment->SetPsnStart(tp->GetPsnCnt());
+        segment->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
+        segment->SetOriginJettyNum(kUrmaWriteRegressionJettyNum);
+        segment->SetRequestOpcode(opcode);
+        segment->SetNeedsTransactionResponse(true);
+        segment->SetLogicalBytes(logicalBytes);
+        segment->SetPayloadBytes(payloadBytes);
+        segment->SetCarrierBytes(opcode == UbTransactionOpcode::READ ? 1 : payloadBytes);
+        segment->SetRemoteAddress(0x1000);
+        segment->SetRemoteTokenId(0x42);
+        segment->SetTransactionFields(fields);
+        return segment;
+    }
+
+    /** Strip the network stack down to the transaction unit of one built packet. */
+    Ptr<Packet> StripRtpCarrier(Ptr<Packet> packet)
+    {
+        UbDatalinkPacketHeader dataLinkHeader;
+        UbIpBasedNetworkHeader networkHeader;
+        Ipv4Header ipv4Header;
+        UdpHeader udpHeader;
+        UbTransportHeader transportHeader;
+        NS_TEST_EXPECT_MSG_NE(packet->RemoveHeader(dataLinkHeader), 0u, "RTP datalink header");
+        NS_TEST_EXPECT_MSG_NE(packet->RemoveHeader(networkHeader), 0u, "RTP network header");
+        NS_TEST_EXPECT_MSG_NE(packet->RemoveHeader(ipv4Header), 0u, "RTP IPv4 header");
+        NS_TEST_EXPECT_MSG_NE(packet->RemoveHeader(udpHeader), 0u, "RTP UDP header");
+        NS_TEST_EXPECT_MSG_NE(packet->RemoveHeader(transportHeader), 0u, "RTP transport header");
+        return packet;
+    }
+
+    /**
+     * Remove one expected header sequence from a packet body and return the consumed bytes.
+     *
+     * This is the independent wire oracle: it knows only the rule layout, not the builder.
+     */
+    uint32_t ConsumeExpectedHeaders(Ptr<Packet> packet, const std::vector<K>& expected)
+    {
+        uint32_t bytes = 0;
+        for (const K kind : expected)
+        {
+            if (kind == K::MAETAH)
+            {
+                UbMAExtTah maHeader;
+                NS_TEST_EXPECT_MSG_NE(packet->RemoveHeader(maHeader), 0u, "MAETAH is present");
+                NS_TEST_EXPECT_MSG_EQ(maHeader.GetSerializedSize(), UB_TA_FULL_MAETAH_BYTES,
+                                      "full MAETAH size");
+                bytes += UB_TA_FULL_MAETAH_BYTES;
+                continue;
+            }
+            UbTransactionExtensionHeader header(kind);
+            NS_TEST_EXPECT_MSG_NE(packet->RemoveHeader(header), 0u,
+                                  "required extension header is present");
+            NS_TEST_EXPECT_MSG_EQ(header.GetSerializedSize(), ExtensionBytes(kind),
+                                  "extension header size follows the header kind");
+            bytes += header.GetSerializedSize();
+        }
+        return bytes;
+    }
+
+    void CheckRequestLayout(const LocalTpTopology& topo,
+                            Ptr<UbTransportChannel> senderTp,
+                            Ptr<UbTransportChannel> receiverTp,
+                            UbTransactionOpcode opcode,
+                            uint32_t logicalBytes,
+                            uint32_t payloadBytes,
+                            const std::vector<K>& expected,
+                            bool expectMtEn,
+                            bool expectTvEn,
+                            bool expectUdFlg)
+    {
+        Ptr<UbWqeSegment> segment =
+            BuildRequestSegment(topo,
+                                senderTp,
+                                opcode,
+                                logicalBytes,
+                                payloadBytes,
+                                RequestFields(opcode));
+        senderTp->UpdatePsnCnt(segment->GetPsnSize());
+        senderTp->UpDateMsnCnt(1);
+        senderTp->PushWqeSegment(segment);
+        const uint32_t estimatedSize = senderTp->GetNextPacketSize();
+        Ptr<Packet> packet = senderTp->GetNextPacketForTest();
+        NS_TEST_ASSERT_MSG_NE(packet, nullptr, "RTP packet is generated");
+        NS_TEST_ASSERT_MSG_EQ(estimatedSize,
+                              packet->GetSize(),
+                              "the packet size estimate equals the built packet size");
+        Ptr<Packet> decodeCopy = packet->Copy();
+
+        Ptr<Packet> body = StripRtpCarrier(packet);
+        UbTransactionHeader taHeader;
+        NS_TEST_ASSERT_MSG_NE(body->RemoveHeader(taHeader), 0u, "RTP basic header decodes");
+        NS_TEST_ASSERT_MSG_EQ(taHeader.GetUbTransactionOpcode(), static_cast<uint8_t>(opcode),
+                              "RTP basic header carries the segment opcode");
+        NS_TEST_ASSERT_MSG_EQ(taHeader.GetMtEn(), expectMtEn, "MT_EN matches the planned MTETAH");
+        NS_TEST_ASSERT_MSG_EQ(taHeader.GetTvEn(), expectTvEn, "TV_EN matches the planned TVETAH");
+        NS_TEST_ASSERT_MSG_EQ(taHeader.GetUdFlg(),
+                              expectUdFlg,
+                              "UD_FLG matches the planned UDETAH");
+        const uint32_t extensionBytes = ConsumeExpectedHeaders(body, expected);
+        NS_TEST_ASSERT_MSG_EQ(body->GetSize(), payloadBytes,
+                              "the declared headers never leak into the packet payload");
+        NS_TEST_ASSERT_MSG_GT(extensionBytes, 0u, "the plan declares its extension bytes");
+
+        UbTransportChannel::ReceivedDataPacketContext ctx;
+        NS_TEST_ASSERT_MSG_EQ(receiverTp->ParseReceivedDataPacketForTest(decodeCopy, ctx), true,
+                              "the production decoder accepts the planned layout");
+        NS_TEST_ASSERT_MSG_EQ(ctx.payloadBytes, payloadBytes,
+                              "the decoded payload equals the sent payload");
+        const UbTransactionFields& decoded = ctx.transactionFields;
+        const auto planned = [&expected](K kind) {
+            return std::find(expected.begin(), expected.end(), kind) != expected.end();
+        };
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(decoded.messageTarget.has_value()),
+                              static_cast<uint32_t>(planned(K::MTETAH)),
+                              "decoded MTETAH presence follows the plan");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(decoded.immediate.has_value()),
+                              static_cast<uint32_t>(planned(K::IMMETAH)),
+                              "decoded IMMETAH presence follows the plan");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(decoded.notify.has_value()),
+                              static_cast<uint32_t>(planned(K::NTFETAH)),
+                              "decoded NTFETAH presence follows the plan");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(decoded.management.has_value()),
+                              static_cast<uint32_t>(planned(K::MGMTETAH)),
+                              "decoded MGMTETAH presence follows the plan");
+        if (planned(K::MAETAH))
+        {
+            NS_TEST_ASSERT_MSG_EQ(ctx.maExtHeader.GetVirtualAddress(), 0x1000ull,
+                                  "decoded MAETAH address matches the sent value");
+            NS_TEST_ASSERT_MSG_EQ(ctx.maExtHeader.GetTokenId(), 0x42u,
+                                  "decoded MAETAH token matches the sent value");
+        }
+        if (decoded.messageTarget.has_value())
+        {
+            NS_TEST_ASSERT_MSG_EQ(decoded.messageTarget->targetContextId, 0x12345u,
+                                  "decoded MTETAH context id matches the sent value");
+        }
+        if (decoded.immediate.has_value())
+        {
+            NS_TEST_ASSERT_MSG_EQ(decoded.immediate->messageLength, 32u,
+                                  "decoded IMMETAH message length matches the sent value");
+            NS_TEST_ASSERT_MSG_EQ(decoded.immediate->data, 0x1112131415161718ull,
+                                  "decoded IMMETAH data matches the sent value");
+        }
+        if (decoded.management.has_value())
+        {
+            NS_TEST_ASSERT_MSG_EQ(decoded.management->pduLength, 32u,
+                                  "decoded MGMTETAH PDU length matches the sent value");
+        }
+        if (decoded.notify.has_value())
+        {
+            NS_TEST_ASSERT_MSG_EQ(decoded.notify->tokenValue, 0x99u,
+                                  "decoded NTFETAH token value matches the sent value");
+        }
+    }
+
+    void CheckClaimedHeaderWithoutBytesRejected(const LocalTpTopology& topo,
+                                                Ptr<UbTransportChannel> senderTp,
+                                                Ptr<UbTransportChannel> receiverTp)
+    {
+        // A field-less SEND declares no MTETAH, so only its two payload bytes remain.
+        Ptr<UbWqeSegment> segment =
+            BuildRequestSegment(topo,
+                                senderTp,
+                                UbTransactionOpcode::SEND,
+                                2,
+                                2,
+                                UbTransactionFields{});
+        senderTp->UpdatePsnCnt(segment->GetPsnSize());
+        senderTp->UpDateMsnCnt(1);
+        senderTp->PushWqeSegment(segment);
+        Ptr<Packet> packet = senderTp->GetNextPacketForTest();
+        NS_TEST_ASSERT_MSG_NE(packet, nullptr, "RTP packet is generated");
+
+        UbDatalinkPacketHeader dataLinkHeader;
+        UbIpBasedNetworkHeader networkHeader;
+        Ipv4Header ipv4Header;
+        UdpHeader udpHeader;
+        UbTransportHeader transportHeader;
+        packet->RemoveHeader(dataLinkHeader);
+        packet->RemoveHeader(networkHeader);
+        packet->RemoveHeader(ipv4Header);
+        packet->RemoveHeader(udpHeader);
+        packet->RemoveHeader(transportHeader);
+        UbTransactionHeader taHeader;
+        NS_TEST_ASSERT_MSG_NE(packet->RemoveHeader(taHeader), 0u, "RTP basic header decodes");
+        NS_TEST_ASSERT_MSG_EQ(taHeader.GetMtEn(), false, "field-less SEND declares no MTETAH");
+        NS_TEST_ASSERT_MSG_EQ(packet->GetSize(), 2u, "only the payload remains");
+
+        // Claim the required header without carrying its bytes.
+        taHeader.SetMtEn(true);
+        packet->AddHeader(taHeader);
+        packet->AddHeader(transportHeader);
+        packet->AddHeader(udpHeader);
+        packet->AddHeader(ipv4Header);
+        packet->AddHeader(networkHeader);
+        packet->AddHeader(dataLinkHeader);
+
+        UbTransportChannel::ReceivedDataPacketContext ctx;
+        NS_TEST_ASSERT_MSG_EQ(receiverTp->ParseReceivedDataPacketForTest(packet, ctx), false,
+                              "a claimed but absent required header is rejected");
+    }
+
+    /**
+     * GBN retransmission reuses the recorded descriptor, so the estimate must match the packet the
+     * retransmission path rebuilds rather than a fixed header constant.
+     */
+    void CheckGbnRetransmissionEstimate()
+    {
+        Config::Reset();
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(false));
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbTransportChannel> senderTp =
+            topo.sender->GetObject<UbController>()
+                ->GetTransportChannelManager()
+                ->GetTp(kUrmaWriteRegressionSenderTpn);
+        NS_TEST_ASSERT_MSG_NE(senderTp, nullptr, "Sender TP should exist");
+        senderTp->SetRetransmissionMode(UbRetransmissionMode::GBN);
+        senderTp->SetRetransEnable(true);
+
+        constexpr uint32_t segmentBytes = 2 * UB_MTU_BYTE;
+        Ptr<UbWqeSegment> segment = BuildRequestSegment(topo,
+                                                        senderTp,
+                                                        UbTransactionOpcode::WRITE,
+                                                        segmentBytes,
+                                                        segmentBytes,
+                                                        RequestFields(UbTransactionOpcode::WRITE));
+        senderTp->UpdatePsnCnt(segment->GetPsnSize());
+        senderTp->UpDateMsnCnt(1);
+        senderTp->PushWqeSegment(segment);
+
+        for (uint32_t packetIndex = 0; packetIndex < 2; ++packetIndex)
+        {
+            const uint32_t estimated = senderTp->GetNextPacketSize();
+            Ptr<Packet> packet = senderTp->GetNextPacketForTest();
+            NS_TEST_ASSERT_MSG_NE(packet, nullptr, "new data packet is built");
+            NS_TEST_ASSERT_MSG_EQ(estimated,
+                                  packet->GetSize(),
+                                  "the new data packet estimate equals the built packet size");
+        }
+
+        // A timeout prepares a GBN retransmission from the sender UNA and records its descriptor.
+        senderTp->ReTxTimeout();
+        NS_TEST_ASSERT_MSG_EQ(senderTp->HasPendingGbnRetransmissionForTest(), true,
+                              "the timeout prepares one GBN retransmission");
+        const uint32_t retransmissionEstimate = senderTp->GetNextPacketSize();
+        Ptr<Packet> retransmission = senderTp->GetNextPacketForTest();
+        NS_TEST_ASSERT_MSG_NE(retransmission, nullptr, "GBN retransmission packet is rebuilt");
+        if (retransmission != nullptr)
+        {
+            NS_TEST_ASSERT_MSG_EQ(retransmissionEstimate,
+                                  retransmission->GetSize(),
+                                  "the GBN retransmission estimate equals the rebuilt packet size");
+        }
+        Simulator::Destroy();
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(false));
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbTransportChannel> senderTp =
+            topo.sender->GetObject<UbController>()
+                ->GetTransportChannelManager()
+                ->GetTp(kUrmaWriteRegressionSenderTpn);
+        Ptr<UbTransportChannel> receiverTp =
+            topo.receiver->GetObject<UbController>()
+                ->GetTransportChannelManager()
+                ->GetTp(kUrmaWriteRegressionReceiverTpn);
+        NS_TEST_ASSERT_MSG_NE(senderTp, nullptr, "Sender TP should exist");
+        NS_TEST_ASSERT_MSG_NE(receiverTp, nullptr, "Receiver TP should exist");
+
+        CheckRequestLayout(topo, senderTp, receiverTp, UbTransactionOpcode::WRITE, 64, 64,
+                           {K::MAETAH}, false, false, false);
+        CheckRequestLayout(topo, senderTp, receiverTp, UbTransactionOpcode::READ, 64, 0,
+                           {K::MAETAH}, false, false, false);
+        CheckRequestLayout(topo, senderTp, receiverTp, UbTransactionOpcode::ATOMIC_SWAP, 8, 8,
+                           {K::MAETAH}, false, false, false);
+        CheckRequestLayout(topo, senderTp, receiverTp, UbTransactionOpcode::SEND, 32, 32,
+                           {K::MTETAH}, true, false, false);
+        CheckRequestLayout(topo, senderTp, receiverTp, UbTransactionOpcode::SEND_WITH_IMMEDIATE, 32,
+                           32, {K::MTETAH, K::IMMETAH}, true, false, false);
+        CheckRequestLayout(topo, senderTp, receiverTp, UbTransactionOpcode::WRITE_WITH_IMMEDIATE,
+                           32, 32, {K::MTETAH, K::MAETAH, K::IMMETAH}, true, false, false);
+        CheckRequestLayout(topo, senderTp, receiverTp, UbTransactionOpcode::WRITE_WITH_NOTIFY, 32,
+                           32, {K::MAETAH, K::NTFETAH}, false, false, false);
+        CheckRequestLayout(topo, senderTp, receiverTp, UbTransactionOpcode::MANAGEMENT, 32, 32,
+                           {K::MGMTETAH}, false, false, false);
+
+        CheckClaimedHeaderWithoutBytesRejected(topo, senderTp, receiverTp);
+
+        CheckGbnRetransmissionEstimate();
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+/**
+ * Ticket 02: the compact carrier decodes exactly the planned header layout, so a decoded request
+ * keeps its payload and a planned but absent required header is rejected.
+ */
+class UbCtpRuleDrivenDecodeTest : public TestCase
+{
+  public:
+    UbCtpRuleDrivenDecodeTest()
+        : TestCase("UnifiedBus - CTP decodes the planned layout and rejects a missing header")
+    {
+    }
+
+  private:
+    Ptr<UbWqeSegment> RequestSegment(const LocalTpTopology& topo,
+                                     UbTransactionOpcode opcode,
+                                     uint32_t taSsn,
+                                     uint32_t logicalBytes,
+                                     uint32_t payloadBytes,
+                                     const UbTransactionFields& fields)
+    {
+        Ptr<UbWqeSegment> segment = CreateObject<UbWqeSegment>();
+        segment->SetSrc(topo.sender->GetId());
+        segment->SetDest(topo.receiver->GetId());
+        segment->SetSport(static_cast<uint8_t>(topo.senderPort->GetIfIndex()));
+        segment->SetDport(static_cast<uint8_t>(topo.receiverPort->GetIfIndex()));
+        segment->SetPriority(7);
+        segment->SetType(opcode);
+        segment->SetSize(logicalBytes);
+        segment->SetTaSsn(taSsn);
+        segment->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
+        segment->SetRequestOpcode(opcode);
+        segment->SetLogicalBytes(logicalBytes);
+        segment->SetPayloadBytes(payloadBytes);
+        segment->SetCarrierBytes(opcode == UbTransactionOpcode::READ ? 1 : payloadBytes);
+        segment->SetResLenBytes(logicalBytes);
+        segment->SetRemoteAddress(0x1000);
+        segment->SetRemoteTokenId(0x42);
+        segment->SetTransactionFields(fields);
+        return segment;
+    }
+
+    Ptr<Packet> StripCompactCarrier(Ptr<Packet> packet)
+    {
+        UbDatalinkPacketHeader dataLinkHeader;
+        UbCna16NetworkHeader cnaHeader;
+        UbCtpHeader ctpHeader;
+        UbCompactUpiHeader upiHeader;
+        UbCompactEidHeader eidHeader;
+        NS_TEST_EXPECT_MSG_NE(packet->RemoveHeader(dataLinkHeader), 0u, "CTP datalink header");
+        NS_TEST_EXPECT_MSG_NE(packet->RemoveHeader(cnaHeader), 0u, "CTP CNA16 header");
+        NS_TEST_EXPECT_MSG_NE(packet->RemoveHeader(ctpHeader), 0u, "CTP header");
+        NS_TEST_EXPECT_MSG_NE(packet->RemoveHeader(upiHeader), 0u, "CTP UPI header");
+        NS_TEST_EXPECT_MSG_NE(packet->RemoveHeader(eidHeader), 0u, "CTP EID header");
+        return packet;
+    }
+
+    void DoRun() override
+    {
+        LocalTpTopology topo = BuildLocalTpTopology();
+        Ptr<UbCtpTransportService> senderService =
+            topo.sender->GetObject<UbController>()->GetCtpTransportService();
+        Ptr<UbCtpTransportService> receiverService =
+            topo.receiver->GetObject<UbController>()->GetCtpTransportService();
+        topo.receiverPort->GetUbQueue()->SetAttribute("MaxEgressBytes", UintegerValue(0));
+        const UbCtpEntityKey requestKey{.srcEntityId = 1,
+                                        .dstNodeId = topo.receiver->GetId(),
+                                        .dstEntityId = 1,
+                                        .vl = 7};
+        const UbCtpEntityKey responseKey{.srcEntityId = 1,
+                                         .dstNodeId = topo.sender->GetId(),
+                                         .dstEntityId = 1,
+                                         .vl = 7};
+
+        // A READ request carries its response length in the planned compact MAETAH. A decoder that
+        // left those bytes in the payload would reject the request as a payload-bearing READ.
+        Ptr<UbWqeSegment> readRequest =
+            RequestSegment(topo, UbTransactionOpcode::READ, 0, 64, 0, UbTransactionFields{});
+        readRequest->SetSport(0);
+        readRequest->SetDport(0);
+        Ptr<Packet> readPacket = senderService->BuildDataPacket(readRequest, requestKey);
+        NS_TEST_ASSERT_MSG_NE(readPacket, nullptr, "CTP READ request packet is built");
+        topo.receiver->GetObject<UbSwitch>()->SwitchHandlePacket(topo.receiverPort, readPacket);
+        Simulator::Stop(TimeStep(1));
+        Simulator::Run();
+        Ptr<UbCtpTxQueue> responseQueue = receiverService->GetOrCreateQueue(
+            responseKey, 0, responseKey.vl);
+        Ptr<Packet> responsePacket = responseQueue->GetNextPacket();
+        NS_TEST_ASSERT_MSG_NE(responsePacket, nullptr,
+                              "CTP READ request is decoded and answered with a READ_RESPONSE");
+        if (responsePacket != nullptr)
+        {
+            Ptr<Packet> body = StripCompactCarrier(responsePacket);
+            UbCompactTransactionHeader responseHeader;
+            NS_TEST_ASSERT_MSG_NE(body->RemoveHeader(responseHeader), 0u,
+                                  "READ_RESPONSE compact header decodes");
+            NS_TEST_ASSERT_MSG_EQ(responseHeader.GetUbTransactionOpcode(),
+                                  static_cast<uint8_t>(UbTransactionOpcode::READ_RESPONSE),
+                                  "READ request is answered with READ_RESPONSE");
+            NS_TEST_ASSERT_MSG_EQ(body->GetSize(), 64u,
+                                  "READ_RESPONSE carries the requested length");
+        }
+
+        // A SEND whose planned MTETAH has no bytes on the wire is rejected, not repaired.
+        Ptr<UbWqeSegment> sendRequest =
+            RequestSegment(topo, UbTransactionOpcode::SEND, 1, 2, 2, UbTransactionFields{});
+        sendRequest->SetSport(0);
+        sendRequest->SetDport(0);
+        Ptr<Packet> sendPacket = senderService->BuildDataPacket(sendRequest, requestKey);
+        NS_TEST_ASSERT_MSG_NE(sendPacket, nullptr, "CTP SEND request packet is built");
+        topo.receiver->GetObject<UbSwitch>()->SwitchHandlePacket(topo.receiverPort, sendPacket);
+        Simulator::Stop(TimeStep(1));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(
+            receiverService->GetOrCreateQueue(responseKey, 0, responseKey.vl)
+                ->GetQueuedPacketCountForTest(),
+            0u,
+            "a missing required header is rejected without a response");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
 class UbWireFormatTestSuite : public TestSuite
 {
   public:
@@ -32292,7 +33041,7 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbFunctionalityTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbControllerCtpLazyServiceTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbControllerProtocolDelayAttributesTest(), TestCase::Duration::QUICK);
-    AddTestCase(new UbTargetProtocolDelayPipelinesTaUnitsTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbTargetExecutionDelayPipelinesTaUnitsTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbInitiatorProtocolDispatchDelayRtpTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbInitiatorProtocolDispatchDelayCtpTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTrafficConfigEndpointPortFieldsTest(), TestCase::Duration::QUICK);
@@ -32514,6 +33263,9 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbJettyCompletesLogicalTassnAcrossWireWrapTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbReceiverKeepsInboundTpMsnLogicalKeyAcrossWireWrapTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbUrmaWriteCompletionNeedsTransactionResponseTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbUrmaSendCompletionNeedsTransactionResponseTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbUrmaPartialResponseDoesNotCompleteTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbUrmaReadCompletionNeedsReadResponseTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbUrmaRtpWriteMaetahSegmentLengthTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbUrmaReadMultiPacketResponseCountTest(), TestCase::Duration::QUICK);
@@ -33225,6 +33977,8 @@ static UbParallelLifecycleFocusedTestSuite g_ubParallelLifecycleFocusedTestSuite
 UbWireFormatTestSuite::UbWireFormatTestSuite()
     : TestSuite("unified-bus-wire-format", Type::UNIT)
 {
+    AddTestCase(new UbRtpRuleDrivenHeaderLayoutTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpRuleDrivenDecodeTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnCnpHeaderRoundTripTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbSelectiveAckExtTphRoundTripTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbSelectiveAckExtTphBitmapBoundaryTest(), TestCase::Duration::QUICK);
@@ -33337,6 +34091,9 @@ UbTransactionUrmaTestSuite::UbTransactionUrmaTestSuite()
     AddTestCase(new UbReceiverKeepsInboundTpMsnLogicalKeyAcrossWireWrapTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbUrmaWriteCompletionNeedsTransactionResponseTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbUrmaSendCompletionNeedsTransactionResponseTest(),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbUrmaPartialResponseDoesNotCompleteTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbUrmaReadCompletionNeedsReadResponseTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbUrmaRtpWriteMaetahSegmentLengthTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbUrmaReadMultiPacketResponseCountTest(), TestCase::Duration::QUICK);
@@ -36027,3 +36784,1101 @@ class UbQuickExampleCompatTestSuite : public TestSuite
 };
 
 static UbQuickExampleCompatTestSuite g_ubQuickExampleCompatTestSuite;
+
+class UbAtomicRulesTest : public TestCase
+{
+  public:
+    UbAtomicRulesTest()
+        : TestCase("Atomic - nine opcodes, local suboperations and independent payload")
+    {
+    }
+
+    /** Resolve one local Atomic submission through the single transaction request entry. */
+    static UbTransactionValidationResult ValidateAtomic(UbTransactionOpcode opcode,
+                                                        uint32_t width,
+                                                        const UbAtomicOptions& options,
+                                                        uint32_t maxPayloadBytes)
+    {
+        UbTransactionRequestInput request;
+        request.opcode = opcode;
+        request.logicalBytes = width;
+        request.payloadBytes = options.requestPayloadBytes.value_or(width);
+        request.fields.memoryAccess = UbMemoryAccessFields{0, 0, width};
+        request.atomicOptions = options;
+        request.maxPayloadBytes = maxPayloadBytes;
+        request.origin = UbTransactionRequestOrigin::LOCAL_SUBMISSION;
+        return ValidateTransactionRequest(request);
+    }
+
+    void DoRun() override
+    {
+        for (uint8_t code = 7; code <= 15; ++code)
+        {
+            const auto opcode = static_cast<UbTransactionOpcode>(code);
+            NS_TEST_ASSERT_MSG_EQ(IsAtomicTransaction(opcode),
+                                  true,
+                                  "Spec request code must be recognized");
+            for (uint32_t width : {1u, 2u, 4u, 8u, 16u, 32u, 64u})
+            {
+                UbAtomicOptions options;
+                if (code == 9 || code == 10)
+                {
+                    options.subOperation = UbAtomicSubOperation::ADD;
+                }
+                auto result = ValidateAtomic(opcode, width, options, 4096);
+                NS_TEST_ASSERT_MSG_EQ(result.IsValid(), true, result.message);
+                NS_TEST_ASSERT_MSG_EQ(result.resolved.requestPayloadBytes,
+                                      (code == 7 ? 2 * width : width),
+                                      "Only CAS defaults to two operand slots");
+                NS_TEST_ASSERT_MSG_EQ(result.resolved.responsePayloadBytes,
+                                      (code == 9 ? 0u : width),
+                                      "Store is the only zero-payload atomic response");
+                for (uint32_t payload : {1u, 16u, 4096u})
+                {
+                    options.requestPayloadBytes = payload;
+                    result = ValidateAtomic(opcode, width, options, 4096);
+                    NS_TEST_ASSERT_MSG_EQ(result.IsValid(), true, result.message);
+                    NS_TEST_ASSERT_MSG_EQ(result.resolved.requestPayloadBytes,
+                                          payload,
+                                          "Explicit P takes priority");
+                }
+            }
+        }
+        for (uint8_t sub = 0; sub < 8; ++sub)
+        {
+            for (auto opcode : {UbTransactionOpcode::ATOMIC_STORE, UbTransactionOpcode::ATOMIC_LOAD})
+            {
+                UbAtomicOptions options{.subOperation = static_cast<UbAtomicSubOperation>(sub)};
+                NS_TEST_ASSERT_MSG_EQ(ValidateAtomic(opcode, 8, options, 4096).IsValid(),
+                                      true,
+                                      "All eight local suboperations must be accepted");
+            }
+        }
+        for (uint32_t width : {0u, 3u, 7u, 65u, UINT32_MAX})
+        {
+            NS_TEST_ASSERT_MSG_EQ(ValidateAtomic(UbTransactionOpcode::ATOMIC_SWAP, width, {}, 4096)
+                                      .IsValid(),
+                                  false,
+                                  "Invalid width must be rejected");
+        }
+        NS_TEST_ASSERT_MSG_EQ(IsAtomicTransaction(UbTransactionOpcode::ATOMIC_RESPONSE),
+                              false,
+                              "Unified response is not a request");
+        NS_TEST_ASSERT_MSG_EQ(
+            ValidateAtomic(UbTransactionOpcode::ATOMIC_STORE, 8, {}, 4096).IsValid(),
+            false,
+            "Store needs a suboperation");
+        NS_TEST_ASSERT_MSG_EQ(
+            ValidateAtomic(UbTransactionOpcode::ATOMIC_LOAD, 8, {}, 4096).IsValid(),
+            false,
+            "Load needs a suboperation");
+    }
+};
+
+class UbAtomicAdmissionTest : public TestCase
+{
+  public:
+    UbAtomicAdmissionTest()
+        : TestCase("Atomic - invalid inputs rejected before RTP and CTP admission")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        auto topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        auto controller = topo.sender->GetObject<UbController>();
+        auto function = controller->GetUbFunction();
+        auto transaction = controller->GetUbTransaction();
+        const uint32_t jettyNum = 17;
+        function->CreateJetty(topo.sender->GetId(), topo.receiver->GetId(), jettyNum);
+        auto jetty = function->GetJetty(jettyNum);
+        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
+                                                       topo.receiver->GetId(),
+                                                       jettyNum,
+                                                       false,
+                                                       {kUrmaWriteRegressionSenderTpn}),
+                              true,
+                              "Use the existing direct TP fixture");
+        UbCtpEntityKey key{1, topo.receiver->GetId(), 1, 7};
+        for (bool ctp : {false, true})
+        {
+            for (uint32_t invalid = 0; invalid < 10; ++invalid)
+            {
+                auto wqe = function->CreateWqe(topo.sender->GetId(),
+                                               topo.receiver->GetId(),
+                                               invalid == 0 ? 3 : 8,
+                                               123,
+                                               invalid == 1 ? UbTransactionOpcode::ATOMIC_LOAD
+                                                            : UbTransactionOpcode::ATOMIC_FETCH_ADD);
+                UbAtomicOptions options;
+                if (invalid == 2)
+                {
+                    options.requestPayloadBytes = 0;
+                }
+                if (invalid == 3)
+                {
+                    options.requestPayloadBytes = 4097;
+                }
+                if (invalid == 4)
+                {
+                    options.subOperation = UbAtomicSubOperation::ADD;
+                }
+                if (invalid == 5)
+                {
+                    wqe->SetType(UbTransactionOpcode::ATOMIC_STORE);
+                    options.subOperation = static_cast<UbAtomicSubOperation>(8);
+                }
+                if (invalid == 6)
+                {
+                    wqe->SetType(UbTransactionOpcode::READ);
+                }
+                if (invalid >= 7)
+                {
+                    transaction->SetTransactionServiceMode(
+                        jettyNum,
+                        static_cast<TransactionServiceMode>(invalid - 6));
+                }
+                wqe->SetAtomicOptions(options);
+                auto result = ctp ? function->SubmitCtpWqe(wqe, jettyNum, key)
+                                  : function->SubmitWqe(wqe, jettyNum);
+                NS_TEST_ASSERT_MSG_EQ(
+                    static_cast<uint8_t>(result.status),
+                    10u,
+                    "Invalid atomic request status is appended without renumbering");
+                NS_TEST_ASSERT_MSG_EQ(jetty->GetActiveWqeCount(), 0u, "Rejection cannot enqueue");
+                NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
+                                      0u,
+                                      "Rejection cannot admit operation");
+                NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndNxtForTest(),
+                                      0u,
+                                      "Rejection cannot allocate TASSN");
+                NS_TEST_ASSERT_MSG_EQ(wqe->IsLifecycleManaged(),
+                                      false,
+                                      "Rejection cannot open WQE lifecycle");
+                transaction->SetTransactionServiceMode(jettyNum, TransactionServiceMode::ROI);
+            }
+        }
+        auto valid = function->CreateWqe(topo.sender->GetId(),
+                                         topo.receiver->GetId(),
+                                         8,
+                                         123,
+                                         UbTransactionOpcode::ATOMIC_FETCH_ADD);
+        valid->SetAtomicOptions({.requestPayloadBytes = 16});
+        auto result = function->SubmitWqe(valid, jettyNum);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint8_t>(result.status), 0u, "Valid request admitted");
+        NS_TEST_ASSERT_MSG_EQ(result.wqeIdentity.generation,
+                              1u,
+                              "Rejected requests consumed no WQE generation");
+        NS_TEST_ASSERT_MSG_EQ(valid->GetTaSsnSize(), 1u, "One atomic WQE reserves one transaction");
+        auto segment = jetty->GetNextWqeSegment();
+        NS_TEST_ASSERT_MSG_NE(segment, nullptr, "Accepted atomic has one segment");
+        if (segment != nullptr)
+        {
+            NS_TEST_ASSERT_MSG_EQ(segment->GetSize(), 8u, "Local logical progress is N");
+            NS_TEST_ASSERT_MSG_EQ(segment->GetLogicalBytes(), 8u, "Wire operand width is N");
+            NS_TEST_ASSERT_MSG_EQ(segment->GetPayloadBytes(), 16u, "Payload retains explicit P");
+            NS_TEST_ASSERT_MSG_EQ(segment->GetCarrierBytes(), 16u, "Transport progresses P");
+            NS_TEST_ASSERT_MSG_EQ(segment->GetResponseBytes(), 8u, "Response expects N");
+            NS_TEST_ASSERT_MSG_EQ(segment->NeedsTransactionResponse(),
+                                  true,
+                                  "TP ACK cannot complete");
+            NS_TEST_ASSERT_MSG_EQ(valid->GetBytesLeft(),
+                                  0u,
+                                  "Atomic commits all local progress once");
+        }
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+// Reuses the local TP topology and the existing production header deserializers.
+class UbAtomicRtpRoundTripTest : public TestCase
+{
+  public:
+    UbAtomicRtpRoundTripTest(uint32_t faultMode = 0)
+        : TestCase("Atomic - RTP round trip, widths and response matching, fault=" +
+                   std::to_string(faultMode)),
+          m_faultMode(faultMode)
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(false));
+        GlobalValue::Bind("UB_RECORD_PKT_TRACE", BooleanValue(true));
+        Config::SetDefault("ns3::UbTransportChannel::EnableRetrans", BooleanValue(true));
+        Config::SetDefault("ns3::UbTransportChannel::RetransmissionMode",
+                           EnumValue(UbRetransmissionMode::GBN));
+        auto topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        m_source = topo.sender->GetId();
+        auto controller = topo.sender->GetObject<UbController>();
+        auto function = controller->GetUbFunction();
+        auto transaction = controller->GetUbTransaction();
+        m_transaction = transaction;
+        function->CreateJetty(m_source, topo.receiver->GetId(), kUrmaWriteRegressionJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(m_source,
+                                                       topo.receiver->GetId(),
+                                                       kUrmaWriteRegressionJettyNum,
+                                                       false,
+                                                       {kUrmaWriteRegressionSenderTpn}),
+                              true,
+                              "Reuse static TP pair");
+        function->GetJetty(kUrmaWriteRegressionJettyNum)
+            ->SetClientCallback(MakeCallback(&UbAtomicRtpRoundTripTest::OnComplete, this));
+        auto senderTp =
+            controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
+        m_senderTp = senderTp;
+        senderTp->TraceConnectWithoutContext(
+            "TpRecvNotify",
+            MakeCallback(&UbAtomicRtpRoundTripTest::OnReceive, this));
+        senderTp->TraceConnectWithoutContext("LastPacketACKsNotify",
+                                             MakeCallback(&UbAtomicRtpRoundTripTest::OnAck, this));
+        topo.receiver->GetObject<UbController>()
+            ->GetTransportChannelManager()
+            ->GetTp(kUrmaWriteRegressionReceiverTpn)
+            ->TraceConnectWithoutContext("WqeSegmentCompletesNotify",
+                                         MakeCallback(&UbAtomicRtpRoundTripTest::OnRequest, this));
+        NS_TEST_ASSERT_MSG_EQ(static_cast<bool>(topo.receiver->GetObject<UbController>()
+                                                   ->GetUbTransaction() != nullptr),
+                              true,
+                              "Target execution uses common seam");
+        topo.senderPort->SetFaultCallBack(MakeCallback(&UbAtomicRtpRoundTripTest::OnWire, this));
+        topo.receiverPort->SetFaultCallBack(MakeCallback(&UbAtomicRtpRoundTripTest::OnWire, this));
+        auto fault = CreateObject<UbFault>();
+        if (m_faultMode != 0)
+        {
+            // Reuse the production deterministic loss injector at switch egress.
+            for (uint32_t task :
+                 (m_faultMode == 1 ? std::vector<uint32_t>{0} : std::vector<uint32_t>{0, 4}))
+            {
+                RetransFaultRule rule;
+                rule.enabled = true;
+                rule.taskId = task;
+                rule.nodeId = m_faultMode == 1 ? topo.switch0->GetId() : topo.switch1->GetId();
+                rule.anyPort = true;
+                rule.anyPsn = true;
+                rule.packetType = RetransFaultPacketType::DATA;
+                rule.dropCount = 1;
+                fault->retransFaultRules.push_back(rule);
+            }
+            topo.switch0CorePort->SetFaultCallBack(MakeCallback(&UbFault::FaultCallback, fault));
+            topo.switch1CorePort->SetFaultCallBack(MakeCallback(&UbFault::FaultCallback, fault));
+        }
+        for (uint8_t opcode = 7; opcode <= 15; ++opcode)
+        {
+            for (uint32_t width : (m_faultMode == 0 ? std::vector<uint32_t>{1, 2, 4, 8, 16, 32, 64}
+                                                    : std::vector<uint32_t>{8}))
+            {
+                for (bool overridePayload : {false, true})
+                {
+                    uint32_t task = m_expected.size();
+                    uint32_t payload = overridePayload ? 16 : (opcode == 7 ? 2 * width : width);
+                    m_expected.push_back({opcode, width, payload, opcode == 9 ? 0u : width});
+                    auto wqe = function->CreateWqe(m_source,
+                                                   topo.receiver->GetId(),
+                                                   width,
+                                                   task,
+                                                   static_cast<UbTransactionOpcode>(opcode));
+                    UbAtomicOptions options;
+                    if (opcode == 9 || opcode == 10)
+                    {
+                        options.subOperation = UbAtomicSubOperation::ADD;
+                    }
+                    if (overridePayload)
+                    {
+                        options.requestPayloadBytes = payload;
+                    }
+                    wqe->SetAtomicOptions(options);
+                    if (overridePayload)
+                    {
+                        wqe->SetExplicitPayload(Create<Packet>(payload));
+                    }
+                    NS_TEST_ASSERT_MSG_EQ(
+                        static_cast<uint8_t>(
+                            function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status),
+                        0u,
+                        "Submit atomic through API");
+                }
+            }
+        }
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
+        for (uint32_t task = 0; task < m_expected.size(); ++task)
+        {
+            NS_TEST_EXPECT_MSG_EQ(m_requests[task], 1u, "One target transaction task=" << task);
+            if (m_faultMode == 0)
+            {
+                NS_TEST_EXPECT_MSG_EQ(m_requestPackets[task],
+                                      1u,
+                                      "One request packet task=" << task);
+                NS_TEST_EXPECT_MSG_EQ(m_responsePackets[task],
+                                      1u,
+                                      "One response packet task=" << task);
+            }
+            NS_TEST_EXPECT_MSG_GT(m_received[task], 0u, "Response received task=" << task);
+            if (m_faultMode == 0)
+            {
+                NS_TEST_EXPECT_MSG_EQ(m_received[task],
+                                      1u,
+                                      "One response without loss task=" << task);
+            }
+            NS_TEST_EXPECT_MSG_EQ(m_completions[task], 1u, "One WQE completion task=" << task);
+            NS_TEST_EXPECT_MSG_EQ(m_acks[task], 1u, "Request TP ACK observed task=" << task);
+        }
+        for (const auto& rule : fault->retransFaultRules)
+        {
+            NS_TEST_EXPECT_MSG_EQ(rule.droppedCount, 1u, "Configured packet was actually dropped");
+            NS_TEST_EXPECT_MSG_GT(
+                (m_faultMode == 1 ? m_requestPackets[rule.taskId] : m_responsePackets[rule.taskId]),
+                1u,
+                "Real RTP retransmission preserves N/P/S");
+        }
+        for (auto response : m_lateResponses)
+        {
+            NS_TEST_EXPECT_MSG_EQ(transaction->ProcessInboundTaResponse(response),
+                                  false,
+                                  "Late or duplicate atomic response cannot complete again");
+        }
+        NS_TEST_EXPECT_MSG_EQ(transaction->GetActiveOperationCount(), 0u, "Operations retire");
+        NS_TEST_EXPECT_MSG_EQ(senderTp->GetGbnDescriptorCountForTest(), 0u, "Descriptors retire");
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    struct Expected
+    {
+        uint8_t opcode;
+        uint32_t width;
+        uint32_t payload;
+        uint32_t response;
+    };
+
+    void OnComplete(uint32_t task, uint32_t)
+    {
+        NS_TEST_EXPECT_MSG_GT(m_received[task], 0u, "Completion requires received atomic response");
+        ++m_completions[task];
+    }
+
+    void OnRequest(uint32_t, uint32_t task, uint32_t)
+    {
+        ++m_requests[task];
+    }
+
+    void OnAck(uint32_t, uint32_t task, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t)
+    {
+        ++m_acks[task];
+        if (m_received[task] == 0)
+        {
+            NS_TEST_EXPECT_MSG_EQ(m_completions[task], 0u, "TP ACK cannot complete atomic");
+        }
+    }
+
+    void OnReceive(uint32_t,
+                   uint32_t,
+                   uint32_t,
+                   uint32_t,
+                   uint32_t,
+                   uint32_t,
+                   PacketType type,
+                   uint32_t payload,
+                   uint32_t task,
+                   std::string,
+                   UbPacketTraceTag)
+    {
+        if (type != PacketType::PACKET || task >= m_expected.size())
+        {
+            return;
+        }
+        NS_TEST_EXPECT_MSG_EQ(payload, m_expected[task].response, "Production parser sees S");
+        ++m_received[task];
+    }
+
+    int OnWire(Ptr<Packet> packet, uint32_t node, uint32_t portId, Ptr<UbPort> port)
+    {
+        RetransFaultPacketInfo info;
+        if (CreateObject<UbFault>()->TryGetRetransFaultPacketInfo(packet, node, portId, 0, info) &&
+            info.packetType == RetransFaultPacketType::DATA)
+        {
+            InspectWire(packet->Copy(), node);
+        }
+        port->TransmitPacket(packet, Time(0));
+        return 0;
+    }
+
+    void InspectWire(Ptr<Packet> packet, uint32_t node)
+    {
+        UbFlowTag flow;
+        packet->PeekPacketTag(flow);
+        const uint32_t task = flow.GetFlowId();
+        NS_TEST_ASSERT_MSG_LT(task, m_expected.size(), "Known task on wire");
+        const auto expected = m_expected[task];
+        const uint32_t wireBytes = packet->GetSize();
+        UbDatalinkPacketHeader dl;
+        UbIpBasedNetworkHeader network;
+        Ipv4Header ip;
+        UdpHeader udp;
+        UbTransportHeader tp;
+        UbTransactionHeader ta;
+        UbMAExtTah ma;
+        UbAckTransactionHeader ata;
+        packet->RemoveHeader(dl);
+        packet->RemoveHeader(network);
+        packet->RemoveHeader(ip);
+        packet->RemoveHeader(udp);
+        packet->RemoveHeader(tp);
+        const bool request = node == m_source;
+        uint32_t transactionHeaderBytes = 0;
+        if (request)
+        {
+            packet->RemoveHeader(ta);
+            packet->RemoveHeader(ma);
+            transactionHeaderBytes = ta.GetSerializedSize() + ma.GetSerializedSize();
+            NS_TEST_EXPECT_MSG_EQ(ta.GetUbTransactionOpcode(), expected.opcode, "Wire opcode");
+            NS_TEST_EXPECT_MSG_EQ(ma.GetLength(), expected.width, "Wire N");
+        }
+        else
+        {
+            packet->RemoveHeader(ata);
+            transactionHeaderBytes = ata.GetSerializedSize();
+            NS_TEST_EXPECT_MSG_EQ(ata.GetUbTransactionOpcode(),
+                                  static_cast<uint8_t>(UbTransactionOpcode::ATOMIC_RESPONSE),
+                                  "Wire response opcode");
+        }
+        const uint32_t wireJetty = request ? ta.GetIniRcId() : ata.GetIniRcId();
+        const uint32_t wireTaSsn = request ? ta.GetIniTaSsn() : ata.GetIniTaSsn();
+        NS_TEST_EXPECT_MSG_EQ(packet->GetSize(),
+                              (request ? expected.payload : expected.response),
+                              "Wire P or S");
+        NS_TEST_EXPECT_MSG_EQ(wireBytes,
+                              packet->GetSize() + dl.GetSerializedSize() +
+                                  network.GetSerializedSize() + ip.GetSerializedSize() +
+                                  udp.GetSerializedSize() + tp.GetSerializedSize() +
+                                  transactionHeaderBytes,
+                              "BTAH/ATAH and payload layout");
+        NS_TEST_EXPECT_MSG_EQ(tp.GetLastPacket(), true, "One packet transaction");
+        if (request)
+        {
+            ++m_requestPackets[task];
+        }
+        else
+        {
+            ++m_responsePackets[task];
+        }
+        if (!request && m_faultMode == 0)
+        {
+            UbTransactionCorrelationTag correlation;
+            NS_TEST_ASSERT_MSG_EQ(packet->PeekPacketTag(correlation),
+                                  true,
+                                  "Existing correlation tag");
+            for (uint32_t invalid = 0; invalid < 12; ++invalid)
+            {
+                auto response = CreateObject<UbWqeSegment>();
+                response->SetType(UbTransactionOpcode::ATOMIC_RESPONSE);
+                response->SetSegmentKind(UbTransactionSegmentKind::RESPONSE);
+                response->SetSrc(node);
+                response->SetDest(m_source);
+                response->SetOriginJettyNum(wireJetty);
+                response->SetRequestTassn(wireTaSsn);
+                response->SetTaSsn(wireTaSsn);
+                response->SetTaskId(task);
+                response->SetPayloadBytes(packet->GetSize());
+                response->SetResolvedTpIdentity(m_senderTp->GetLifecycleOwner());
+                if (invalid != 9 && invalid != 10)
+                {
+                    response->SetTransactionCorrelation(correlation.GetIdentity());
+                }
+                switch (invalid)
+                {
+                case 0:
+                    response->SetPayloadBytes(packet->GetSize() == 0 ? 2 : packet->GetSize() + 1);
+                    break;
+                case 1:
+                    response->SetType(UbTransactionOpcode::TAACK);
+                    response->SetRequestOpcode(UbTransactionOpcode::WRITE);
+                    break;
+                case 2:
+                    response->SetType(UbTransactionOpcode::READ_RESPONSE);
+                    response->SetRequestOpcode(UbTransactionOpcode::READ);
+                    break;
+                case 3:
+                    response->SetTaskId(task + 10000);
+                    break;
+                case 4:
+                    response->SetRequestTassn(wireTaSsn + 500);
+                    break;
+                case 5:
+                    response->SetOriginJettyNum(wireJetty + 500);
+                    break;
+                case 6:
+                    response->SetSrc(node + 100);
+                    break;
+                case 7:
+                    response->SetDest(m_source + 100);
+                    break;
+                case 8:
+                    response->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
+                    break;
+                case 9:
+                    break; // Missing correlation.
+                case 10:
+                    response->SetType(UbTransactionOpcode::TAACK);
+                    response->SetRequestOpcode(UbTransactionOpcode::WRITE);
+                    response->SetTaskId(task + 10000);
+                    break;
+                case 11:
+                    m_lateResponses.push_back(response);
+                    continue;
+                }
+                NS_TEST_EXPECT_MSG_EQ(
+                    m_transaction->ProcessInboundTaResponse(response),
+                    false,
+                    "Reject invalid response before completion: variant=" << invalid);
+                NS_TEST_EXPECT_MSG_EQ(m_completions[task], 0u, "Invalid response cannot complete");
+            }
+        }
+    }
+
+    uint32_t m_faultMode{0};
+    Ptr<UbTransaction> m_transaction;
+    Ptr<UbTransportChannel> m_senderTp;
+    std::vector<Ptr<UbWqeSegment>> m_lateResponses;
+    uint32_t m_source{0};
+    std::vector<Expected> m_expected;
+    std::map<uint32_t, uint32_t> m_requests, m_requestPackets, m_responsePackets, m_received,
+        m_completions, m_acks;
+};
+
+class UbAtomicCtpRoundTripTest : public TestCase
+{
+  public:
+    explicit UbAtomicCtpRoundTripTest(bool trace)
+        : TestCase("Atomic - CTP exact widths and guarded completion, trace=" +
+                   std::to_string(trace)),
+          m_trace(trace)
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(false));
+        GlobalValue::Bind("UB_TRACE_ENABLE", BooleanValue(m_trace));
+        GlobalValue::Bind("UB_PACKET_TRACE_ENABLE", BooleanValue(m_trace));
+        GlobalValue::Bind("UB_RECORD_PKT_TRACE", BooleanValue(m_trace));
+        auto topo = BuildLocalTpTopology();
+        m_source = topo.sender->GetId();
+        m_destination = topo.receiver->GetId();
+        auto controller = topo.sender->GetObject<UbController>();
+        auto function = controller->GetUbFunction();
+        m_senderService = controller->GetCtpTransportService();
+        m_receiverService = topo.receiver->GetObject<UbController>()->GetCtpTransportService();
+        m_key = {1, m_destination, 1, 7};
+        function->CreateJetty(m_source, m_destination, 23);
+        auto jetty = function->GetJetty(23);
+        jetty->SetClientCallback(MakeCallback(&UbAtomicCtpRoundTripTest::OnComplete, this));
+        NS_TEST_ASSERT_MSG_EQ(static_cast<bool>(topo.receiver->GetObject<UbController>()
+                                                   ->GetUbTransaction() != nullptr),
+                              true,
+                              "Target execution uses common seam");
+        topo.senderPort->SetFaultCallBack(MakeCallback(&UbAtomicCtpRoundTripTest::OnWire, this));
+        topo.receiverPort->SetFaultCallBack(MakeCallback(&UbAtomicCtpRoundTripTest::OnWire, this));
+        for (uint8_t code = 7; code <= 15; ++code)
+        {
+            for (uint32_t width : {1u, 2u, 4u, 8u, 16u, 32u, 64u})
+            {
+                for (bool explicitP : {false, true})
+                {
+                    const uint32_t task = m_expected.size();
+                    const uint32_t payload = explicitP ? 16u : (code == 7 ? 2 * width : width);
+                    m_expected.push_back({code, width, payload, code == 9 ? 0u : width});
+                    auto wqe = function->CreateWqe(m_source,
+                                                   m_destination,
+                                                   width,
+                                                   task,
+                                                   static_cast<UbTransactionOpcode>(code));
+                    UbAtomicOptions options;
+                    if (code == 9 || code == 10)
+                    {
+                        options.subOperation = UbAtomicSubOperation::UMIN;
+                    }
+                    if (explicitP)
+                    {
+                        options.requestPayloadBytes = payload;
+                    }
+                    wqe->SetAtomicOptions(options);
+                    if (explicitP)
+                    {
+                        wqe->SetExplicitPayload(Create<Packet>(payload));
+                    }
+                    wqe->SetSport(0);
+                    wqe->SetDport(CTP_WILDCARD_PORT);
+                    wqe->SetPriority(m_key.vl);
+                    NS_TEST_ASSERT_MSG_EQ(
+                        static_cast<uint8_t>(function->SubmitCtpWqe(wqe, 23, m_key).status),
+                        0u,
+                        "CTP API admission");
+                }
+            }
+        }
+        m_senderService->StartJetty(jetty, m_key);
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
+        for (auto packet : m_latePackets)
+        {
+            m_senderService->HandleReceivedPacket(packet, 0);
+        }
+        for (uint32_t task = 0; task < m_expected.size(); ++task)
+        {
+            NS_TEST_EXPECT_MSG_EQ(m_requests[task], 1u, "One request task=" << task);
+            NS_TEST_EXPECT_MSG_EQ(m_responses[task], 1u, "One real response task=" << task);
+            NS_TEST_EXPECT_MSG_EQ(m_completed[task], 1u, "Exactly one completion task=" << task);
+        }
+        NS_TEST_EXPECT_MSG_EQ(controller->GetUbTransaction()->GetActiveOperationCount(),
+                              0u,
+                              "No retained atomic operation");
+        NS_TEST_EXPECT_MSG_EQ(
+            m_senderService->GetOrCreateTransactionContext(m_key)->GetOutstandingCount(),
+            0u,
+            "CTP window drains");
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    struct Expected
+    {
+        uint8_t code;
+        uint32_t width;
+        uint32_t payload;
+        uint32_t response;
+    };
+
+    void OnComplete(uint32_t task, uint32_t)
+    {
+        NS_TEST_EXPECT_MSG_EQ(m_responses[task], 1u, "Completion requires response on wire");
+        ++m_completed[task];
+    }
+
+    int OnWire(Ptr<Packet> packet, uint32_t node, uint32_t, Ptr<UbPort> port)
+    {
+        auto copy = packet->Copy();
+        UbDatalinkPacketHeader dl;
+        copy->PeekHeader(dl);
+        if (dl.GetConfig() == static_cast<uint8_t>(UbDatalinkHeaderConfig::PACKET_CNA16))
+        {
+            Inspect(packet, node);
+        }
+        port->TransmitPacket(packet, Time(0));
+        return 0;
+    }
+
+    void Inspect(Ptr<Packet> original, uint32_t node)
+    {
+        auto packet = original->Copy();
+        UbFlowTag flow;
+        NS_TEST_ASSERT_MSG_EQ(packet->PeekPacketTag(flow),
+                              true,
+                              "FlowTag exists independently of trace");
+        const uint32_t task = flow.GetFlowId();
+        NS_TEST_ASSERT_MSG_LT(task, m_expected.size(), "Known task");
+        const auto expected = m_expected[task];
+        NS_TEST_EXPECT_MSG_EQ(flow.GetFlowSize(), expected.width, "FlowTag retains exact N");
+        UbDatalinkPacketHeader dl;
+        UbCna16NetworkHeader cna;
+        UbCtpHeader ctp;
+        UbCompactUpiHeader upi;
+        UbCompactEidHeader eid;
+        packet->RemoveHeader(dl);
+        packet->RemoveHeader(cna);
+        packet->RemoveHeader(ctp);
+        packet->RemoveHeader(upi);
+        packet->RemoveHeader(eid);
+        uint32_t headerBytes = dl.GetSerializedSize() + cna.GetSerializedSize() +
+                               ctp.GetSerializedSize() + upi.GetSerializedSize() +
+                               eid.GetSerializedSize();
+        if (node == m_source)
+        {
+            UbCompactTransactionHeader ta;
+            UbCompactMAExtTah ma;
+            packet->RemoveHeader(ta);
+            packet->RemoveHeader(ma);
+            headerBytes += ta.GetSerializedSize() + ma.GetSerializedSize();
+            NS_TEST_EXPECT_MSG_EQ(ta.GetUbTransactionOpcode(), expected.code, "Request opcode");
+            NS_TEST_EXPECT_MSG_EQ(packet->GetSize(), expected.payload, "Actual request P");
+            ++m_requests[task];
+            if (task == 0)
+            {
+                for (uint32_t width : {0u, 3u, 65u})
+                {
+                    auto invalid = original->Copy();
+                    UbFlowTag removed;
+                    invalid->RemovePacketTag(removed);
+                    invalid->AddPacketTag(UbFlowTag(task, width));
+                    NS_TEST_EXPECT_MSG_EQ(m_receiverService->HandleReceivedPacket(invalid, 0),
+                                          false,
+                                          "Illegal FlowTag width explicitly rejected");
+                }
+                auto missing = original->Copy();
+                missing->RemovePacketTag(flow);
+                NS_TEST_EXPECT_MSG_EQ(m_receiverService->HandleReceivedPacket(missing, 0),
+                                      false,
+                                      "Missing FlowTag explicitly rejected");
+            }
+        }
+        else
+        {
+            UbCompactAckTransactionHeader ack;
+            packet->RemoveHeader(ack);
+            headerBytes += ack.GetSerializedSize();
+            NS_TEST_EXPECT_MSG_EQ(ack.GetUbTransactionOpcode(), 0x13u, "Unified atomic response");
+            NS_TEST_EXPECT_MSG_EQ(packet->GetSize(),
+                                  expected.response,
+                                  "Actual S excludes compact ACK header");
+            ++m_responses[task];
+            m_latePackets.push_back(original->Copy());
+            for (uint32_t variant = 0; variant < 7; ++variant)
+            {
+                auto invalid = packet->Copy();
+                auto invalidAck = ack;
+                auto invalidCna = cna;
+                auto invalidEid = eid;
+                switch (variant)
+                {
+                case 0:
+                    invalid->AddPaddingAtEnd(1);
+                    break;
+                case 1:
+                    invalidAck.SetUbTransactionOpcode(UbTransactionOpcode::TAACK);
+                    break;
+                case 2:
+                    invalidAck.SetIniTaSsn(ack.GetIniTaSsn() + 500);
+                    break;
+                case 3: {
+                    UbFlowTag removed;
+                    invalid->RemovePacketTag(removed);
+                    invalid->AddPacketTag(UbFlowTag(task + 10000, expected.width));
+                    break;
+                }
+                case 4:
+                    invalidCna.SetScna(NodeIdToCna16(m_destination + 10));
+                    break;
+                case 5:
+                    invalidEid.SetSourceEid(2);
+                    break;
+                case 6: {
+                    UbFlowTag removed;
+                    invalid->RemovePacketTag(removed);
+                    break;
+                }
+                }
+                invalid->AddHeader(invalidAck);
+                invalid->AddHeader(invalidEid);
+                invalid->AddHeader(upi);
+                invalid->AddHeader(ctp);
+                invalid->AddHeader(invalidCna);
+                invalid->AddHeader(dl);
+                auto context = m_senderService->GetOrCreateTransactionContext(m_key);
+                const auto outstanding = context->GetOutstandingCount();
+                const auto una = context->GetCompleteUna();
+                m_senderService->HandleReceivedPacket(invalid, 0);
+                NS_TEST_EXPECT_MSG_EQ(context->GetCompleteUna(),
+                                      una,
+                                      "Invalid ACK cannot advance window variant=" << variant);
+                NS_TEST_EXPECT_MSG_EQ(context->GetOutstandingCount(),
+                                      outstanding,
+                                      "Invalid ACK cannot retire request variant=" << variant);
+                NS_TEST_EXPECT_MSG_EQ(m_completed[task], 0u,
+                                      "Invalid ACK cannot complete task variant=" << variant);
+            }
+        }
+        NS_TEST_EXPECT_MSG_EQ(original->GetSize(),
+                              headerBytes + packet->GetSize(),
+                              "Existing CTP headers only");
+    }
+
+    bool m_trace;
+    uint32_t m_source{0}, m_destination{0};
+    UbCtpEntityKey m_key;
+    Ptr<UbCtpTransportService> m_senderService, m_receiverService;
+    std::vector<Expected> m_expected;
+    std::vector<Ptr<Packet>> m_latePackets;
+    std::map<uint32_t, uint32_t> m_requests, m_responses, m_completed;
+};
+
+class UbAtomicCsvInputTest : public TestCase
+{
+  public:
+    UbAtomicCsvInputTest()
+        : TestCase("Atomic - four CSV headers and streaming option reset")
+    {
+    }
+
+    void DoRun() override
+    {
+        namespace fs = std::filesystem;
+        const auto path =
+            fs::temp_directory_path() /
+            ("ub-atomic-csv-" +
+             std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        const std::string base = "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,"
+                                 "phaseId,dependOnPhases";
+        for (bool ports : {false, true})
+        {
+            for (bool atomic : {false, true})
+            {
+                std::ofstream file(path);
+                file << base << (ports ? ",srcPortId,dstPortId" : "")
+                     << (atomic ? ",atomicSubOperation,requestPayloadBytes" : "") << '\n';
+                file << "0,0,1,8," << (atomic ? "URMA_ATOMIC_STORE" : "URMA_WRITE") << ",7,0ns,0,"
+                     << (ports ? ",0," : "") << (atomic ? ",SET,16" : "") << '\n';
+                file << "1,0,1,8," << (atomic ? "URMA_ATOMIC_FETCH_ADD" : "URMA_READ")
+                     << ",7,0ns,1,0" << (ports ? ",," : "") << (atomic ? ",," : "") << '\n';
+                file.close();
+                auto rows = UbUtils::Get()->LoadTrafficConfig(path.string());
+                NS_TEST_ASSERT_MSG_EQ(rows.size(), 2u, "Ordinary reader accepts header");
+                for (const auto& row : rows)
+                {
+                    CheckRow(row, ports, atomic);
+                }
+                uint32_t seen = 0;
+                UbUtils::Get()->ForEachTrafficRecordView(path.string(),
+                                                         [&](const TrafficRecordView& row) {
+                                                             CheckRow(row, ports, atomic);
+                                                             ++seen;
+                                                         });
+                NS_TEST_EXPECT_MSG_EQ(seen, 2u, "View reader accepts same rows");
+            }
+        }
+        fs::remove(path);
+        const std::array<std::string, 9> names = {"COMPARE_SWAP",
+                                                  "SWAP",
+                                                  "STORE",
+                                                  "LOAD",
+                                                  "FETCH_ADD",
+                                                  "FETCH_SUB",
+                                                  "FETCH_AND",
+                                                  "FETCH_OR",
+                                                  "FETCH_XOR"};
+        for (uint32_t i = 0; i < names.size(); ++i)
+        {
+            UbTrafficGen::RuntimeTask task;
+            task.dataSize = 8;
+            UbTrafficGen::ParseTaskOperation(task,
+                                             "URMA_ATOMIC_" + names[i],
+                                             i == 2 || i == 3 ? "ADD" : "",
+                                             "");
+            NS_TEST_EXPECT_MSG_EQ(static_cast<uint8_t>(UbTrafficGen::GetUrmaTaskOpcode(task.op)),
+                                  i + 7,
+                                  "CSV maps to exact existing opcode");
+            NS_TEST_EXPECT_MSG_EQ(task.atomicOptions.has_value(), true, "Typed local options");
+        }
+        for (const auto& name : {"ADD", "CLR", "EOR", "SET", "SMAX", "SMIN", "UMAX", "UMIN"})
+        {
+            UbTrafficGen::RuntimeTask task;
+            task.dataSize = 8;
+            UbTrafficGen::ParseTaskOperation(task, "URMA_ATOMIC_LOAD", name, "16");
+            NS_TEST_EXPECT_MSG_EQ(task.atomicOptions->subOperation.has_value(),
+                                  true,
+                                  "Local suboperation retained");
+        }
+    }
+
+  private:
+    template <typename Row>
+    void CheckRow(const Row& row, bool ports, bool atomic)
+    {
+        const bool first = row.taskId == 0;
+        NS_TEST_EXPECT_MSG_EQ(row.hasSrcPortId, ports && first, "Port presence preserved/reset");
+        NS_TEST_EXPECT_MSG_EQ(std::string(row.atomicSubOperation),
+                              (atomic && first ? "SET" : ""),
+                              "No stale suboperation");
+        NS_TEST_EXPECT_MSG_EQ(std::string(row.requestPayloadBytes),
+                              (atomic && first ? "16" : ""),
+                              "No stale P override");
+        UbTrafficGen::RuntimeTask task;
+        task.taskId = row.taskId;
+        task.dataSize = row.dataSize;
+        UbTrafficGen::ParseTaskOperation(task,
+                                         row.opType,
+                                         row.atomicSubOperation,
+                                         row.requestPayloadBytes);
+        NS_TEST_EXPECT_MSG_EQ(task.atomicOptions.has_value(),
+                              atomic,
+                              "Empty ordinary options remain absent");
+        if (atomic)
+        {
+            NS_TEST_EXPECT_MSG_EQ(task.atomicOptions->requestPayloadBytes.has_value(),
+                                  first,
+                                  "Default and override distinct");
+            UbTransactionRequestInput request;
+            request.opcode = UbTrafficGen::GetUrmaTaskOpcode(task.op);
+            request.logicalBytes = 8;
+            request.payloadBytes = task.atomicOptions->requestPayloadBytes.value_or(8);
+            request.fields.memoryAccess = UbMemoryAccessFields{0, 0, 8};
+            request.atomicOptions = task.atomicOptions;
+            request.maxPayloadBytes = UB_MTU_BYTE;
+            request.origin = UbTransactionRequestOrigin::LOCAL_SUBMISSION;
+            const auto resolution = ValidateTransactionRequest(request);
+            NS_TEST_EXPECT_MSG_EQ(resolution.resolved.requestPayloadBytes,
+                                  (first ? 16u : 8u),
+                                  "Same API rules");
+        }
+    }
+};
+
+#ifndef _WIN32
+class UbAtomicCsvRejectionTest : public TestCase
+{
+  public:
+    UbAtomicCsvRejectionTest()
+        : TestCase("Atomic - CSV rejects malformed options before task submission")
+    {
+    }
+
+    void DoRun() override
+    {
+        namespace fs = std::filesystem;
+        const auto path =
+            fs::temp_directory_path() /
+            ("ub-atomic-invalid-header-" +
+             std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        const std::string base = "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,"
+                                 "phaseId,dependOnPhases";
+        for (const std::string suffix :
+             {",requestPayloadBytes,atomicSubOperation",
+              ",atomicSubOperation,requestPayloadByte",
+              ",atomicSubOperation,requestPayloadBytes,srcPortId,dstPortId",
+              ",srcPortId,dstPortId,requestPayloadBytes,atomicSubOperation"})
+        {
+            std::ofstream file(path);
+            file << base << suffix << '\n';
+            file.close();
+            for (bool view : {false, true})
+            {
+                const int status = RunInChildProcess([&]() {
+                    if (view)
+                    {
+                        UbUtils::Get()->ForEachTrafficRecordView(path.string(),
+                                                                 [](const TrafficRecordView&) {});
+                    }
+                    else
+                    {
+                        UbUtils::Get()->LoadTrafficConfig(path.string());
+                    }
+                });
+                NS_TEST_EXPECT_MSG_EQ(WIFSIGNALED(status), 1, "Malformed atomic header rejected");
+                if (WIFSIGNALED(status))
+                {
+                    NS_TEST_EXPECT_MSG_EQ(WTERMSIG(status), SIGABRT, "Explicit input rejection");
+                }
+            }
+        }
+        const auto errorPath = path.string() + ".log";
+        for (const std::string width : {"-1", "abc", "", "4294967296"})
+        {
+            std::ofstream file(path);
+            file << base << '\n' << "42,0,1," << width << ",URMA_ATOMIC_FETCH_ADD,7,0ns,0,\n";
+            file.close();
+            for (bool view : {false, true})
+            {
+                const int status = RunInChildProcess([&]() {
+                    if (std::freopen(errorPath.c_str(), "w", stderr) == nullptr)
+                    {
+                        std::_Exit(2);
+                    }
+                    if (view)
+                    {
+                        UbUtils::Get()->ForEachTrafficRecordView(path.string(),
+                                                                 [](const TrafficRecordView&) {});
+                    }
+                    else
+                    {
+                        UbUtils::Get()->LoadTrafficConfig(path.string());
+                    }
+                });
+                NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1, "Invalid N is rejected");
+                NS_TEST_EXPECT_MSG_EQ(WTERMSIG(status), SIGABRT, "Explicit input rejection");
+                std::ifstream errorFile(errorPath);
+                const std::string error((std::istreambuf_iterator<char>(errorFile)),
+                                        std::istreambuf_iterator<char>());
+                NS_TEST_EXPECT_MSG_NE(error.find("taskId=42"),
+                                      std::string::npos,
+                                      "Error identifies the task");
+                NS_TEST_EXPECT_MSG_NE(error.find("dataSize(Byte)"),
+                                      std::string::npos,
+                                      "Error identifies operand-width field");
+                const std::string reason =
+                    width.empty() ? "Missing" : (width == "4294967296" ? "overflow" : "Invalid");
+                NS_TEST_EXPECT_MSG_NE(error.find(reason),
+                                      std::string::npos,
+                                      "Error explains invalid decimal or missing/overflow value");
+            }
+        }
+        fs::remove(errorPath);
+        fs::remove(path);
+
+        struct Input
+        {
+            const char* op;
+            const char* sub;
+            const char* payload;
+            uint32_t width;
+        };
+
+        for (const auto& input : std::vector<Input>{{"URMA_ATOMIC_LOAD", "", "", 8},
+                                                    {"URMA_ATOMIC_STORE", "BAD", "", 8},
+                                                    {"URMA_ATOMIC_SWAP", "ADD", "", 8},
+                                                    {"URMA_ATOMIC_SWAP", "", "0", 8},
+                                                    {"URMA_ATOMIC_SWAP", "", "4097", 8},
+                                                    {"URMA_ATOMIC_SWAP", "", "-1", 8},
+                                                    {"URMA_ATOMIC_SWAP", "", "16bad", 8},
+                                                    {"URMA_ATOMIC_SWAP", "", "4294967296", 8},
+                                                    {"URMA_ATOMIC_SWAP", "", "", 3},
+                                                    {"URMA_ATOMIC_BAD", "", "", 8},
+                                                    {"URMA_WRITE", "ADD", "", 8},
+                                                    {"URMA_READ", "", "16", 8}})
+        {
+            const int status = RunInChildProcess([input]() {
+                UbTrafficGen::RuntimeTask task;
+                task.taskId = 42;
+                task.dataSize = input.width;
+                UbTrafficGen::ParseTaskOperation(task, input.op, input.sub, input.payload);
+            });
+            NS_TEST_EXPECT_MSG_EQ(WIFSIGNALED(status),
+                                  1,
+                                  "Invalid CSV parameters abort before network admission");
+            if (WIFSIGNALED(status))
+            {
+                NS_TEST_EXPECT_MSG_EQ(WTERMSIG(status), SIGABRT, "Explicit input rejection");
+            }
+        }
+    }
+};
+#endif
+
+class UbAtomicTestSuite : public TestSuite
+{
+  public:
+    UbAtomicTestSuite()
+        : TestSuite("unified-bus-atomic", Type::UNIT)
+    {
+        AddTestCase(new UbAtomicRulesTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbAtomicAdmissionTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbAtomicRtpRoundTripTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbAtomicRtpRoundTripTest(1), TestCase::Duration::QUICK);
+        AddTestCase(new UbAtomicRtpRoundTripTest(2), TestCase::Duration::QUICK);
+        AddTestCase(new UbAtomicCtpRoundTripTest(false), TestCase::Duration::QUICK);
+        AddTestCase(new UbAtomicCtpRoundTripTest(true), TestCase::Duration::QUICK);
+        AddTestCase(new UbAtomicCsvInputTest(), TestCase::Duration::QUICK);
+#ifndef _WIN32
+        AddTestCase(new UbAtomicCsvRejectionTest(), TestCase::Duration::QUICK);
+#endif
+    }
+};
+
+static UbAtomicTestSuite g_ubAtomicTestSuite;

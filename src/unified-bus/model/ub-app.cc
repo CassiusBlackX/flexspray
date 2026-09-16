@@ -179,34 +179,10 @@ UbApp::SendTraffic(TrafficRecord record)
     task.dstPortId = record.dstPortId;
     task.hasSrcPortId = record.hasSrcPortId;
     task.hasDstPortId = record.hasDstPortId;
-    if (record.opType == "URMA_WRITE")
-    {
-        task.op = UbTrafficGen::RuntimeTaskOp::URMA_WRITE;
-    }
-    else if (record.opType == "URMA_READ")
-    {
-        task.op = UbTrafficGen::RuntimeTaskOp::URMA_READ;
-    }
-    else if (record.opType == "MEM_STORE")
-    {
-        task.op = UbTrafficGen::RuntimeTaskOp::MEM_STORE;
-    }
-    else if (record.opType == "MEM_LOAD")
-    {
-        task.op = UbTrafficGen::RuntimeTaskOp::MEM_LOAD;
-    }
-    else if (record.opType == "COMPUTE")
-    {
-        task.op = UbTrafficGen::RuntimeTaskOp::COMPUTE;
-    }
-    else if (record.opType == "LOCAL_READY")
-    {
-        task.op = UbTrafficGen::RuntimeTaskOp::LOCAL_READY;
-    }
-    else
-    {
-        NS_ASSERT_MSG(0, "TaOpcode Not Exist");
-    }
+    UbTrafficGen::ParseTaskOperation(task,
+                                     record.opType,
+                                     record.atomicSubOperation,
+                                     record.requestPayloadBytes);
     SendTraffic(task);
 }
 
@@ -227,18 +203,10 @@ UbApp::SendCtpUrmaTraffic(TrafficRecord record)
     task.dstPortId = record.dstPortId;
     task.hasSrcPortId = record.hasSrcPortId;
     task.hasDstPortId = record.hasDstPortId;
-    if (record.opType == "URMA_WRITE")
-    {
-        task.op = UbTrafficGen::RuntimeTaskOp::URMA_WRITE;
-    }
-    else if (record.opType == "URMA_READ")
-    {
-        task.op = UbTrafficGen::RuntimeTaskOp::URMA_READ;
-    }
-    else
-    {
-        NS_ASSERT_MSG(0, "CTP URMA traffic requires URMA read/write op");
-    }
+    UbTrafficGen::ParseTaskOperation(task,
+                                     record.opType,
+                                     record.atomicSubOperation,
+                                     record.requestPayloadBytes);
     SendCtpUrmaTraffic(task);
 }
 
@@ -246,8 +214,9 @@ void
 UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
 {
     NS_ABORT_MSG_IF(task.op != UbTrafficGen::RuntimeTaskOp::URMA_WRITE &&
-                        task.op != UbTrafficGen::RuntimeTaskOp::URMA_READ,
-                    "CTP URMA traffic requires URMA read/write op");
+                        task.op != UbTrafficGen::RuntimeTaskOp::URMA_READ &&
+                        !UbTrafficGen::IsAtomicTask(task.op),
+                    "CTP traffic requires an URMA Read/Write/atomic operation");
 
     Ptr<UbController> controller = GetNode()->GetObject<UbController>();
     NS_ABORT_MSG_IF(controller == nullptr, "CTP transport mode requires UbController");
@@ -315,10 +284,13 @@ UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
     NS_LOG_INFO("CTP WQE Starts, jettyNum: " << jettyNum << " taskId: " << task.taskId);
     WqeTaskStartsNotify(GetNode()->GetId(), jettyNum, task.taskId);
 
-    TaOpcode type = task.op == UbTrafficGen::RuntimeTaskOp::URMA_READ ? TaOpcode::TA_OPCODE_READ
-                                                                      : TaOpcode::TA_OPCODE_WRITE;
+    UbTransactionOpcode type = UbTrafficGen::GetUrmaTaskOpcode(task.op);
     Ptr<UbWqe> wqe =
         ubFunc->CreateWqe(task.sourceNode, task.destNode, task.dataSize, task.taskId, type);
+    if (task.atomicOptions)
+    {
+        wqe->SetAtomicOptions(*task.atomicOptions);
+    }
     wqe->SetSrcEntityId(srcEntityId);
     wqe->SetDstEntityId(dstEntityId);
     wqe->SetSport(task.hasSrcPortId ? static_cast<uint8_t>(task.srcPortId)
@@ -465,7 +437,8 @@ UbApp::SendTraffic(UbTrafficGen::RuntimeTask task)
                                      task.hasDstPortId);
     }
     else if (task.op == UbTrafficGen::RuntimeTaskOp::URMA_WRITE ||
-             task.op == UbTrafficGen::RuntimeTaskOp::URMA_READ)
+             task.op == UbTrafficGen::RuntimeTaskOp::URMA_READ ||
+             UbTrafficGen::IsAtomicTask(task.op))
     {
         if (m_transportMode == TransportMode::CTP)
         {
@@ -510,18 +483,20 @@ UbApp::SendTraffic(UbTrafficGen::RuntimeTask task)
             WqeTaskStartsNotify(GetNode()->GetId(), m_jettyNum, task.taskId);
             NS_LOG_INFO("[APPLICATION INFO] taskId: " << task.taskId << ",start time:"
                                                       << Simulator::Now().GetNanoSeconds() << "ns");
-            TaOpcode type = task.op == UbTrafficGen::RuntimeTaskOp::URMA_READ
-                                ? TaOpcode::TA_OPCODE_READ
-                                : TaOpcode::TA_OPCODE_WRITE;
+            UbTransactionOpcode type = UbTrafficGen::GetUrmaTaskOpcode(task.op);
             Ptr<UbWqe> wqe =
                 ubFunc->CreateWqe(task.sourceNode, task.destNode, task.dataSize, task.taskId, type);
+            if (task.atomicOptions)
+            {
+                wqe->SetAtomicOptions(*task.atomicOptions);
+            }
             ubFunc->PushWqeToJetty(wqe, m_jettyNum);
         }
         m_jettyNum++; // m_jettyNum 在client里是唯一的，不重复的
     }
     else
     {
-        NS_ASSERT_MSG(0, "TaOpcode Not Exist");
+        NS_ASSERT_MSG(0, "UbTransactionOpcode Not Exist");
     }
 }
 

@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-only
-#include "ns3/log.h"
-#include "ns3/simulator.h"
+#include "ub-function.h"
 
-#include "ns3/ub-datatype.h"
-#include "ns3/ub-controller.h"
+#include "ub-transaction-rules.h"
 #include "ub-ctp.h"
 #include "ub-transaction.h"
-#include "ub-function.h"
+
+#include "ns3/log.h"
+#include "ns3/simulator.h"
+#include "ns3/ub-controller.h"
+#include "ns3/ub-datatype.h"
 
 namespace ns3 {
 
@@ -112,7 +114,7 @@ Ptr<UbWqe> UbFunction::CreateWqe(uint32_t src,
                                  uint32_t dest,
                                  uint32_t size,
                                  uint32_t wqeId,
-                                 TaOpcode type)
+                                 UbTransactionOpcode type)
 {
     NS_LOG_DEBUG(this);
     // 创建新的 WQE
@@ -127,19 +129,19 @@ Ptr<UbWqe> UbFunction::CreateWqe(uint32_t src,
     ubWqe->SetOriginJettyNum(UINT32_MAX);
     ubWqe->SetRequestTassn(UINT32_MAX);
     ubWqe->SetRequestOpcode(type);
-    ubWqe->SetResponseBytes(type == TaOpcode::TA_OPCODE_READ ? size : 0);
+    ubWqe->SetResponseBytes(type == UbTransactionOpcode::READ ? size : 0);
     ubWqe->SetRemoteAddress(0);
-    ubWqe->SetNeedsTransactionResponse(type == TaOpcode::TA_OPCODE_WRITE ||
-                                       type == TaOpcode::TA_OPCODE_READ);
+    const auto* rule = FindTransactionRule(type);
+    ubWqe->SetNeedsTransactionResponse(rule != nullptr && rule->requiresResponse);
     ubWqe->SetResLenBytes(size);
-    ubWqe->SetPayloadBytes(type == TaOpcode::TA_OPCODE_READ ? 0 : size);
-    ubWqe->SetCarrierBytes(type == TaOpcode::TA_OPCODE_READ ? ubWqe->GetTaSsnSize() : size);
+    ubWqe->SetPayloadBytes(type == UbTransactionOpcode::READ ? 0 : size);
+    ubWqe->SetCarrierBytes(type == UbTransactionOpcode::READ ? ubWqe->GetTaSsnSize() : size);
     return ubWqe;
 }
 
 Ptr<UbWqe> UbFunction::CreateWqe(uint32_t src, uint32_t dest, uint32_t size, uint32_t wqeId)
 {
-    return CreateWqe(src, dest, size, wqeId, TaOpcode::TA_OPCODE_WRITE);
+    return CreateWqe(src, dest, size, wqeId, UbTransactionOpcode::WRITE);
 }
 
 void UbFunction::PushWqeToJetty(Ptr<UbWqe> wqe, uint32_t jettyNum)
@@ -162,6 +164,38 @@ UbWqeSubmissionResult UbFunction::SubmitWqe(Ptr<UbWqe> wqe, uint32_t jettyNum)
     }
     if (!ubJetty->CanAcceptWqe(wqe)) {
         return {UbWqeSubmissionStatus::JETTY_BINDING_MISMATCH, {}};
+    }
+    UbTransactionFields fields = wqe->GetTransactionFields();
+    if (!fields.memoryAccess && wqe->GetType() != UbTransactionOpcode::SEND &&
+        wqe->GetType() != UbTransactionOpcode::SEND_WITH_IMMEDIATE &&
+        wqe->GetType() != UbTransactionOpcode::MANAGEMENT)
+    {
+        fields.memoryAccess = UbMemoryAccessFields{wqe->GetRemoteAddress(), wqe->GetRemoteTokenId(), wqe->GetSize()};
+    }
+    const uint32_t validationPayload =
+        (wqe->GetPayloadBytes() == 0 && wqe->GetType() != UbTransactionOpcode::READ)
+            ? wqe->GetSize() : wqe->GetPayloadBytes();
+    UbTransactionRequestInput request;
+    request.opcode = wqe->GetType();
+    request.logicalBytes = wqe->GetSize();
+    request.payloadBytes = validationPayload;
+    request.fields = fields;
+    request.atomicOptions = wqe->GetAtomicOptions();
+    request.maxPayloadBytes =
+        IsAtomicTransaction(wqe->GetType()) ? UB_MTU_BYTE : UINT32_MAX;
+    request.origin = UbTransactionRequestOrigin::LOCAL_SUBMISSION;
+    const auto ruleResult = ValidateTransactionRequest(request);
+    if (!ruleResult.IsValid())
+    {
+        NS_LOG_WARN("WQE transaction validation failed: " << ruleResult.message);
+        return {(IsAtomicTransaction(wqe->GetType()) || wqe->GetAtomicOptions().has_value()) ? UbWqeSubmissionStatus::INVALID_ATOMIC_REQUEST
+                                     : UbWqeSubmissionStatus::INVALID_TRANSACTION_REQUEST, {}, ruleResult};
+    }
+    wqe->SetTransactionFields(ruleResult.fields);
+    wqe->SetTransactionResolved(ruleResult.resolved);
+    if (!ValidateAtomicWqe(wqe, jettyNum, ruleResult.resolved))
+    {
+        return {UbWqeSubmissionStatus::INVALID_ATOMIC_REQUEST, {}};
     }
     const UbRtpTransportReference* transportReference =
         GetTransaction()->FindRtpTransportReference(jettyNum);
@@ -223,6 +257,39 @@ UbFunction::SubmitCtpWqe(Ptr<UbWqe> wqe,
     {
         return {UbWqeSubmissionStatus::JETTY_BINDING_MISMATCH, {}};
     }
+    UbTransactionFields fields = wqe->GetTransactionFields();
+    if (!fields.memoryAccess && wqe->GetType() != UbTransactionOpcode::SEND &&
+        wqe->GetType() != UbTransactionOpcode::SEND_WITH_IMMEDIATE &&
+        wqe->GetType() != UbTransactionOpcode::MANAGEMENT)
+    {
+        fields.memoryAccess = UbMemoryAccessFields{wqe->GetRemoteAddress(), wqe->GetRemoteTokenId(), wqe->GetSize()};
+    }
+    const uint32_t validationPayload =
+        (wqe->GetPayloadBytes() == 0 && wqe->GetType() != UbTransactionOpcode::READ)
+            ? wqe->GetSize() : wqe->GetPayloadBytes();
+    UbTransactionRequestInput request;
+    request.opcode = wqe->GetType();
+    request.logicalBytes = wqe->GetSize();
+    request.payloadBytes = validationPayload;
+    request.fields = fields;
+    request.atomicOptions = wqe->GetAtomicOptions();
+    request.maxPayloadBytes =
+        IsAtomicTransaction(wqe->GetType()) ? UbCtpTransportConstraints{}.maxSegmentBytes
+                                            : UINT32_MAX;
+    request.origin = UbTransactionRequestOrigin::LOCAL_SUBMISSION;
+    const auto ruleResult = ValidateTransactionRequest(request);
+    if (!ruleResult.IsValid())
+    {
+        NS_LOG_WARN("WQE transaction validation failed: " << ruleResult.message);
+        return {(IsAtomicTransaction(wqe->GetType()) || wqe->GetAtomicOptions().has_value()) ? UbWqeSubmissionStatus::INVALID_ATOMIC_REQUEST
+                                     : UbWqeSubmissionStatus::INVALID_TRANSACTION_REQUEST, {}, ruleResult};
+    }
+    wqe->SetTransactionFields(ruleResult.fields);
+    wqe->SetTransactionResolved(ruleResult.resolved);
+    if (!ValidateAtomicWqe(wqe, jettyNum, ruleResult.resolved))
+    {
+        return {UbWqeSubmissionStatus::INVALID_ATOMIC_REQUEST, {}};
+    }
     if (GetTransaction()->HasWqeOperation(jettyNum, wqe->GetWqeId()))
     {
         return {UbWqeSubmissionStatus::DUPLICATE_OPERATION, {}};
@@ -246,6 +313,37 @@ UbFunction::SubmitCtpWqe(Ptr<UbWqe> wqe,
     GetTransaction()->AddWqe(jettyNum, wqe);
     GetTransaction()->TriggerScheduleCtpWqe(jettyNum, wqe->GetWqeId());
     return {UbWqeSubmissionStatus::ACCEPTED, wqeIdentity};
+}
+
+bool
+UbFunction::ValidateAtomicWqe(Ptr<UbWqe> wqe,
+                              uint32_t jettyNum,
+                              const UbTransactionResolved& resolved)
+{
+    if (!IsAtomicTransaction(wqe->GetType()))
+    {
+        return true;
+    }
+    if (GetTransaction()->GetTransactionServiceMode(jettyNum) != TransactionServiceMode::ROI)
+    {
+        std::cerr << "Invalid atomic WQE taskId=" << wqe->GetWqeId()
+                  << ": atomic serviceMode must be ROI" << '\n';
+        return false;
+    }
+    if (wqe->HasExplicitPayload() &&
+        wqe->GetExplicitPayload()->GetSize() != resolved.requestPayloadBytes)
+    {
+        std::cerr << "Invalid atomic WQE taskId=" << wqe->GetWqeId()
+                  << ": explicit payload size must equal requestPayloadBytes" << '\n';
+        return false;
+    }
+    wqe->SetLogicalBytes(wqe->GetSize());
+    wqe->SetPayloadBytes(resolved.requestPayloadBytes);
+    wqe->SetResponseBytes(resolved.responsePayloadBytes);
+    wqe->SetNeedsTransactionResponse(resolved.requiresResponse);
+    // WQE admission advances N once; its transport segment advances P.
+    wqe->SetCarrierBytes(wqe->GetSize());
+    return true;
 }
 
 void
@@ -1071,7 +1169,8 @@ Ptr<UbWqeSegment> UbJetty::PrepareNextWqeSegment(Ptr<UbWqe> expectedWqe,
 
     uint64_t segmentSize = currentWqe->GetBytesLeft();
     const uint32_t segmentLimit = std::min(m_taSegmentBytes, maxSegmentBytes);
-    if (segmentSize > segmentLimit) {
+    if (segmentSize > segmentLimit && !IsAtomicTransaction(currentWqe->GetType()))
+    {
         segmentSize = segmentLimit;
     }
 
@@ -1217,17 +1316,43 @@ Ptr<UbWqeSegment> UbJetty::GenWqeSegment(Ptr<UbWqe> wqe, uint32_t segmentSize)
     segment->SetRemoteAddress(wqe->GetRemoteAddress());
     segment->SetRemoteTokenId(wqe->GetRemoteTokenId());
     segment->SetNeedsTransactionResponse(wqe->NeedsTransactionResponse());
+    segment->SetTransactionFields(wqe->GetTransactionFields());
     segment->SetResLenBytes(segmentSize);
-    segment->SetPayloadBytes(wqe->GetType() == TaOpcode::TA_OPCODE_READ ? 0 : segmentSize);
-    segment->SetCarrierBytes(wqe->GetType() == TaOpcode::TA_OPCODE_READ ? 1 : segmentSize);
+    segment->SetPayloadBytes(wqe->GetType() == UbTransactionOpcode::READ ? 0 : segmentSize);
+    segment->SetCarrierBytes(wqe->GetType() == UbTransactionOpcode::READ ? 1 : segmentSize);
+    const bool atomic = IsAtomicTransaction(wqe->GetType());
+    if (atomic)
+    {
+        segment->SetPayloadBytes(wqe->GetPayloadBytes());
+        segment->SetCarrierBytes(wqe->GetPayloadBytes());
+    }
+    if (wqe->HasTransactionResolved())
+    {
+        auto resolved = wqe->GetTransactionResolved();
+        if (!atomic)
+        {
+            resolved.logicalBytes = segmentSize;
+            resolved.requestPayloadBytes = segment->GetPayloadBytes();
+            resolved.responsePayloadBytes = std::min(resolved.responsePayloadBytes, segmentSize);
+        }
+        segment->SetTransactionResolved(resolved);
+        segment->SetResponseBytes(resolved.responsePayloadBytes);
+    }
     if (wqe->HasExplicitPayload())
     {
         Ptr<const Packet> payload = wqe->GetExplicitPayload();
         const uint32_t segmentOffset =
             static_cast<uint32_t>(wqe->GetSize() - wqe->GetBytesLeft());
-        NS_ABORT_MSG_IF(payload->GetSize() != wqe->GetSize(),
+        NS_ABORT_MSG_IF(payload->GetSize() != (atomic ? wqe->GetPayloadBytes() : wqe->GetSize()),
                         "Explicit WQE payload must match the WQE transfer size");
-        segment->SetExplicitPayload(payload->CreateFragment(segmentOffset, segmentSize));
+        if (atomic)
+        {
+            segment->SetExplicitPayload(payload);
+        }
+        else
+        {
+            segment->SetExplicitPayload(payload->CreateFragment(segmentOffset, segmentSize));
+        }
     }
 
     // TP layer information will be set during subsequent TP layer scheduling
@@ -1256,20 +1381,25 @@ void UbJetty::PushWqe(Ptr<UbWqe> ubWqe, uint32_t maxSegmentBytes)
     ubWqe->SetTaMsn(m_taMsnCnt);
     ubWqe->SetTaSsnStart(m_taSsnCnt);
     const uint32_t segmentLimit = std::min(m_taSegmentBytes, maxSegmentBytes);
-    uint64_t ssnSize = (ubWqe->GetSize() + segmentLimit - 1) / segmentLimit;
+    const bool atomic = IsAtomicTransaction(ubWqe->GetType());
+    uint64_t ssnSize = atomic ? 1 : (ubWqe->GetSize() + segmentLimit - 1) / segmentLimit;
     ubWqe->SetTaSsnSize(ssnSize);
     // Assign request identity only after Jetty binding is known.
     ubWqe->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
     ubWqe->SetOriginJettyNum(m_jettyNum);
     ubWqe->SetRequestTassn(ubWqe->GetTaSsnStart());
     ubWqe->SetRequestOpcode(ubWqe->GetType());
-    ubWqe->SetResponseBytes(ubWqe->GetType() == TaOpcode::TA_OPCODE_READ ? ubWqe->GetSize() : 0);
-    ubWqe->SetNeedsTransactionResponse(ubWqe->GetType() == TaOpcode::TA_OPCODE_WRITE ||
-                                       ubWqe->GetType() == TaOpcode::TA_OPCODE_READ);
-    ubWqe->SetResLenBytes(ubWqe->GetSize());
-    ubWqe->SetPayloadBytes(ubWqe->GetType() == TaOpcode::TA_OPCODE_READ ? 0 : ubWqe->GetSize());
-    ubWqe->SetCarrierBytes(ubWqe->GetType() == TaOpcode::TA_OPCODE_READ ? ssnSize
-                                                                         : ubWqe->GetSize());
+    if (!atomic)
+    {
+        ubWqe->SetResponseBytes(ubWqe->GetType() == UbTransactionOpcode::READ ? ubWqe->GetSize()
+                                                                             : 0);
+        // The response requirement comes from the static rule and its cached normalized result; it
+        // is never rewritten from the opcode here and never cleared when a response arrives.
+        ubWqe->SetResLenBytes(ubWqe->GetSize());
+        ubWqe->SetPayloadBytes(ubWqe->GetType() == UbTransactionOpcode::READ ? 0 : ubWqe->GetSize());
+        ubWqe->SetCarrierBytes(ubWqe->GetType() == UbTransactionOpcode::READ ? ssnSize
+                                                                            : ubWqe->GetSize());
+    }
 
     // 更新 Jetty 的 MSN 和 SSN 计数器
     m_taMsnCnt++;

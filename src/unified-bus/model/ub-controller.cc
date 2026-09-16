@@ -29,11 +29,6 @@ TypeId UbController::GetTypeId()
                 TimeValue(NanoSeconds(0)),
                 MakeTimeAccessor(&UbController::m_initiatorProtocolDispatchDelay),
                 MakeTimeChecker(TimeStep(0)))
-            .AddAttribute("TargetProtocolProcessingDelay",
-                          "Delay between complete inbound request receipt and target processing.",
-                          TimeValue(NanoSeconds(0)),
-                          MakeTimeAccessor(&UbController::m_targetProtocolProcessingDelay),
-                          MakeTimeChecker(TimeStep(0)))
             .AddAttribute(
                 "InitiatorProtocolCompletionVisibilityDelay",
                 "Delay between protocol completion and initiator application visibility.",

@@ -822,17 +822,73 @@ private:
  * \brief UB Transaction Header (TAH)
  *
  * 报文头格式：总计8字节 (64位)
- *      字节0: [TaOpcode:8]
+ *      字节0: [UbTransactionOpcode:8]
  *      字节1: [TaVer(fixed 0x00):2][EE:2][TV_EN:1][POISON:1][reserved:1][UD_FLG:1]
  *      字节2-3: [Initiator TaSsn:16]
  *      字节4: [noTAACK:1][Order:3][MT_EN en:1][FCE:1][Retry:1][Alloc:1]
  *      字节5: [Reserved:1][Exclusive:1][Initiator RC Type:2][Initiator RC ID高4位:4]
  *      字节6-7: [Initiator RC ID低16位:16]
  *
- *      TaOpcode[0:255]: 操作码定义见枚举TaOpcode
+ *      UbTransactionOpcode[0:255]: 操作码定义见枚举UbTransactionOpcode
  *      Order[0:3]: 保序要求定义见枚举OrderType
  *      Initiator RC Type[0:2]: 源Jetty类型定义见枚举IniRcType
  */
+
+/** Wire codecs for transaction extension headers. The aliases below retain one
+ * immutable field-value/codec implementation while exposing protocol names. */
+class UbTransactionExtensionHeader : public Header
+{
+  public:
+    UbTransactionExtensionHeader(UbTransactionHeaderKind kind = UbTransactionHeaderKind::INVALID) : m_kind(kind) {}
+    static TypeId GetTypeId();
+    TypeId GetInstanceTypeId() const override { return GetTypeId(); }
+    uint32_t GetSerializedSize() const override;
+    void Serialize(Buffer::Iterator start) const override;
+    uint32_t Deserialize(Buffer::Iterator start) override;
+    void Print(std::ostream& os) const override;
+    void SetKind(UbTransactionHeaderKind kind) { m_kind = kind; }
+    UbTransactionHeaderKind GetKind() const { return m_kind; }
+    void SetRaw(const std::vector<uint8_t>& bytes) { m_raw = bytes; }
+    const std::vector<uint8_t>& GetRaw() const { return m_raw; }
+    bool IsValidLength() const;
+    void SetTokenValue(uint32_t value);
+    uint32_t GetTokenValue() const;
+    void SetTaskId(uint16_t value);
+    uint16_t GetTaskId() const;
+    void SetOffset(uint32_t value);
+    uint32_t GetOffset() const;
+    void SetTargetContext(uint8_t type, uint32_t id, uint8_t hint = 0);
+    uint8_t GetTargetContextType() const;
+    uint32_t GetTargetContextId() const;
+    uint8_t GetHint() const;
+    void SetImmediate(uint64_t data, uint32_t tokenValue = 0, uint32_t messageLength = 0);
+    uint64_t GetImmediateData() const;
+    uint32_t GetImmediateTokenValue() const;
+    uint32_t GetMessageLength() const;
+    void SetNotify(uint64_t address, uint32_t tokenId, uint32_t tokenValue, uint64_t data);
+    uint64_t GetNotifyAddress() const;
+    uint32_t GetNotifyTokenId() const;
+    uint32_t GetNotifyTokenValue() const;
+    uint64_t GetNotifyData() const;
+    void SetManagement(uint8_t code, uint8_t subCode, bool response, uint8_t status, uint16_t pduLength);
+    UbManagementFields GetManagement() const;
+  private:
+    UbTransactionHeaderKind m_kind;
+    std::vector<uint8_t> m_raw;
+};
+#define UB_DECLARE_EXTENSION_HEADER(Name, Kind) \
+class Name : public UbTransactionExtensionHeader \
+{ public: Name() : UbTransactionExtensionHeader(UbTransactionHeaderKind::Kind) {} };
+UB_DECLARE_EXTENSION_HEADER(UbMtetahHeader, MTETAH)
+UB_DECLARE_EXTENSION_HEADER(UbTvetahHeader, TVETAH)
+UB_DECLARE_EXTENSION_HEADER(UbTaidetahHeader, TAIDETAH)
+UB_DECLARE_EXTENSION_HEADER(UbOfstetahHeader, OFSTETAH)
+UB_DECLARE_EXTENSION_HEADER(UbImmetahHeader, IMMETAH)
+UB_DECLARE_EXTENSION_HEADER(UbNtfetahHeader, NTFETAH)
+UB_DECLARE_EXTENSION_HEADER(UbBeetahHeader, BEETAH)
+UB_DECLARE_EXTENSION_HEADER(UbMgmtetahHeader, MGMTETAH)
+#undef UB_DECLARE_EXTENSION_HEADER
+
 class UbTransactionHeader : public Header {
 public:
     UbTransactionHeader();
@@ -846,8 +902,11 @@ public:
     uint32_t GetSerializedSize(void) const override;
 
     // Setters (只包含非ignore和非固定字段)
-    void SetTaOpcode(TaOpcode opcode);
-    void SetTaOpcode(uint8_t opcode);
+    void SetUbTransactionOpcode(UbTransactionOpcode opcode);
+    void SetTvEn(bool value) { m_tvEn = value; }
+    void SetMtEn(bool value) { m_mtEn = value; }
+    void SetUdFlg(bool value) { m_udFlg = value; }
+    void SetUbTransactionOpcode(uint8_t opcode);
     void SetIniTaSsn(uint16_t ssn);
     void SetOrder(OrderType order);
     void SetOrder(uint8_t order);
@@ -858,7 +917,10 @@ public:
     void SetIniRcId(uint32_t jettyNum);
 
     // Getters (只包含非ignore和非固定字段)
-    uint8_t GetTaOpcode() const;
+    uint8_t GetUbTransactionOpcode() const;
+    bool GetTvEn() const { return m_tvEn; }
+    bool GetMtEn() const { return m_mtEn; }
+    bool GetUdFlg() const { return m_udFlg; }
     uint16_t GetIniTaSsn() const;
     uint8_t GetOrder() const;
     bool GetExclusive() const;
@@ -868,8 +930,8 @@ public:
 private:
     // 报文头字段 - 总共8字节 (64位)
     
-    // 字节0: [TaOpcode:8]
-    uint8_t m_taOpcode = static_cast<uint8_t>(TaOpcode::TA_OPCODE_WRITE);  // 8 bits: Transaction opcode
+    // 字节0: [UbTransactionOpcode:8]
+    uint8_t m_taOpcode = static_cast<uint8_t>(UbTransactionOpcode::WRITE);  // 8 bits: Transaction opcode
 
     // 字节1: [TaVer(fixed 0x00):2][EE:2][TV_EN:1][POISON:1][reserved:1][UD_FLG:1]
     uint8_t m_taVer = 0x00;      // 2 bits: Ta协议版本号
@@ -1036,8 +1098,8 @@ public:
     uint32_t GetSerializedSize(void) const override;
 
     // Setters
-    void SetTaOpcode(TaOpcode opcode);
-    void SetTaOpcode(uint8_t opcode);
+    void SetUbTransactionOpcode(UbTransactionOpcode opcode);
+    void SetUbTransactionOpcode(uint8_t opcode);
     void SetTaVersion(uint8_t version);
     void SetSV(uint8_t sv);
     void SetPoison(bool poison);
@@ -1048,7 +1110,7 @@ public:
     void SetIniRcId(uint32_t id);
 
     // Getters
-    uint8_t GetTaOpcode() const;
+    uint8_t GetUbTransactionOpcode() const;
     uint8_t GetTaVersion() const;
     uint8_t GetSV() const;
     bool GetPoison() const;
@@ -1067,7 +1129,7 @@ private:
     // 报文头字段 - 总共8字节 (64位)
     
     // 字节0: [TA OpCode:8]
-    uint8_t m_taOpcode = static_cast<uint8_t>(TaOpcode::TA_OPCODE_TRANSACTION_ACK);   // 8 bits: TaOpCode 0x11~0x13
+    uint8_t m_taOpcode = static_cast<uint8_t>(UbTransactionOpcode::TAACK);   // 8 bits: TaOpCode 0x11~0x13
     // 字节1: [TA Version:2][Reserved:2][SV:2][Poison:1][Reserved:1]
     uint8_t m_taVersion = 0;                          // 2 bits: TA版本
     uint8_t m_reserved1 = 0;                          // 2 bits: 保留字段1
@@ -1085,7 +1147,7 @@ private:
     // 字节5-7: [Reserved:2][INI RC TYPE:2][INI RC ID:12]
     uint8_t m_reserved3 = 0;                          // 2 bits: 保留字段3
     uint8_t m_iniRcType = 0;                          // 2 bits: INI RC类型
-    uint16_t m_iniRcId = 0;                           // 12 bits: INI RC ID
+    uint32_t m_iniRcId = 0;                           // 20 bits: INI RC ID
     
     // 常量定义
     static const uint32_t totalHeaderSize = 8;        // 总头部大小 (8字节)
@@ -1115,14 +1177,14 @@ public:
     uint32_t GetSerializedSize(void) const override;
 
     // Setters
-    void SetTaOpcode(TaOpcode opcode);       // 设置TA操作码 (8位)
-    void SetTaOpcode(uint8_t opcode);        // 设置TA操作码 (8位)
+    void SetUbTransactionOpcode(UbTransactionOpcode opcode);       // 设置TA操作码 (8位)
+    void SetUbTransactionOpcode(uint8_t opcode);        // 设置TA操作码 (8位)
     void SetTaVersion(uint8_t version);      // 设置TA版本 (2位)
     void SetPoison(bool poison);             // 设置Poison位 (1位)
     void SetIniTaSsn(uint16_t tassn);  // 设置发起者TASSN (16位)
 
     // Getters
-    uint8_t GetTaOpcode() const;         // 获取TA操作码
+    uint8_t GetUbTransactionOpcode() const;         // 获取TA操作码
     uint8_t GetTaVersion() const;        // 获取TA版本
     bool GetPoison() const;              // 获取Poison位
     uint16_t GetIniTaSsn() const;  // 获取发起者TASSN
@@ -1134,7 +1196,7 @@ private:
     // 报文头字段 - 总共4字节 (32位)
     
     // 字节0: [TA OpCode:8]
-    uint8_t m_taOpcode = static_cast<uint8_t>(TaOpcode::TA_OPCODE_TRANSACTION_ACK);   // 8 bits: TaOpCode 0x11~0x13
+    uint8_t m_taOpcode = static_cast<uint8_t>(UbTransactionOpcode::TAACK);   // 8 bits: TaOpCode 0x11~0x13
     
     // 字节1: [TA Version:2][Status:2][reserved:1][Poison:1][Reserved:2]
     uint8_t m_taVersion = 0;                            // 2 bits: TA版本
@@ -1155,7 +1217,7 @@ private:
  * \brief UB Compact Basic TA Header
  *
  * 报文头格式：总计4字节 (32bit)
- *      字节0: [TaOpcode:8]
+ *      字节0: [UbTransactionOpcode:8]
  *      字节1: [TaVer(fixed 0x00):2][EE:2][TV_EN:1][POISON:1][reserved:1][UD_FLG:1]
  *      字节2-3: [INI TaSsn:16]
  *
@@ -1173,12 +1235,12 @@ public:
     uint32_t GetSerializedSize(void) const override;
 
     // Setters
-    void SetTaOpcode(TaOpcode opcode);       // 设置TA操作码 (8位)
-    void SetTaOpcode(uint8_t opcode);        // 设置TA操作码 (8位)
+    void SetUbTransactionOpcode(UbTransactionOpcode opcode);       // 设置TA操作码 (8位)
+    void SetUbTransactionOpcode(uint8_t opcode);        // 设置TA操作码 (8位)
     void SetIniTaSsn(uint16_t taSsn);  // 设置发起者TaSsn (16位)
 
     // Getters
-    uint8_t GetTaOpcode() const;         // 获取TA操作码
+    uint8_t GetUbTransactionOpcode() const;         // 获取TA操作码
     uint16_t GetIniTaSsn() const;  // 获取发起者TaSsn
 
     // 验证方法
@@ -1187,8 +1249,8 @@ public:
 private:
     // 报文头字段 - 总共4字节 (32位)
     
-    // 字节0: [TaOpcode:8]
-    uint8_t m_taOpcode = static_cast<uint8_t>(TaOpcode::TA_OPCODE_WRITE);             // 8 bits: Transaction opcode
+    // 字节0: [UbTransactionOpcode:8]
+    uint8_t m_taOpcode = static_cast<uint8_t>(UbTransactionOpcode::WRITE);             // 8 bits: Transaction opcode
     
     // 字节1: [TaVer(fixed 0x00):2][EE:2][TK_VLD:1][POISON:1][reserved:1][UDF_FLG:1]
     uint8_t m_taVer = 0x00;                           // 2 bits: Ta协议版本号 (固定0x00)
@@ -1226,17 +1288,17 @@ public:
     uint32_t GetSerializedSize(void) const override;
 
     // Setters
-    void SetTaOpcode(TaOpcode opcode);  // 设置TA操作码 (8位)
-    void SetTaOpcode(uint8_t opcode);   // 设置TA操作码 (8位)
+    void SetUbTransactionOpcode(UbTransactionOpcode opcode);  // 设置TA操作码 (8位)
+    void SetUbTransactionOpcode(uint8_t opcode);   // 设置TA操作码 (8位)
 
     // Getters
-    uint8_t GetTaOpcode() const;  // 获取TA操作码
+    uint8_t GetUbTransactionOpcode() const;  // 获取TA操作码
 
 private:
     // 报文头字段 - 总共4字节 (32位)
     
     // 字节0: [TA OpCode:8]
-    uint8_t m_taOpcode = static_cast<uint8_t>(TaOpcode::TA_OPCODE_MAX);
+    uint8_t m_taOpcode = static_cast<uint8_t>(UbTransactionOpcode::MAX_OPCODE);
     // 常量定义
     static const uint32_t totalHeaderSize = 1;     // 总头部大小 (1字节)
 };

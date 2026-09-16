@@ -265,12 +265,12 @@ UbLdstApi::GenDataPacket(Ptr<UbLdstTaskSegment> taskSegment)
     // add cTAH (Compact Transaction Header)
     if (taskSegment->GetType() == UbMemOperationType::STORE)
     {
-        cTaHeader.SetTaOpcode(TaOpcode::TA_OPCODE_WRITE);
+        cTaHeader.SetUbTransactionOpcode(UbTransactionOpcode::WRITE);
         payloadSize = dataSize;
     }
     else if (taskSegment->GetType() == UbMemOperationType::LOAD)
     {
-        cTaHeader.SetTaOpcode(TaOpcode::TA_OPCODE_READ);
+        cTaHeader.SetUbTransactionOpcode(UbTransactionOpcode::READ);
         payloadSize = taskSegment->GetPacketSize();
     }
 
@@ -332,9 +332,9 @@ UbLdstApi::BuildRemoteRequestContext(Ptr<Packet> packet,
     UbCompactMAExtTah cMAETah;
     packet->RemoveHeader(cMAETah);
 
-    const uint8_t opcode = cTaHeader.GetTaOpcode();
-    if (opcode != static_cast<uint8_t>(TaOpcode::TA_OPCODE_WRITE) &&
-        opcode != static_cast<uint8_t>(TaOpcode::TA_OPCODE_READ))
+    const uint8_t opcode = cTaHeader.GetUbTransactionOpcode();
+    if (opcode != static_cast<uint8_t>(UbTransactionOpcode::WRITE) &&
+        opcode != static_cast<uint8_t>(UbTransactionOpcode::READ))
     {
         NS_ASSERT_MSG(0, "packet Ta Op code is wrong!");
     }
@@ -350,7 +350,7 @@ UbLdstApi::BuildRemoteRequestContext(Ptr<Packet> packet,
     context.hasDstPortId = network.destination.hasPort;
     context.srcPortId = network.source.portId;
     context.dstPortId = network.destination.portId;
-    context.type = opcode == static_cast<uint8_t>(TaOpcode::TA_OPCODE_READ)
+    context.type = opcode == static_cast<uint8_t>(UbTransactionOpcode::READ)
                        ? UbMemOperationType::LOAD
                        : UbMemOperationType::STORE;
     context.requestBytes = packet->GetSize();
@@ -381,7 +381,7 @@ UbLdstApi::BuildRemoteRequestContext(Ptr<Packet> packet,
 
 void
 UbLdstApi::SendRemoteResponse(const UbLdstRemoteRequestContext& context,
-                              TaOpcode responseOpcode,
+                              UbTransactionOpcode responseOpcode,
                               uint32_t payloadBytes,
                               Ptr<Packet> payload)
 {
@@ -389,7 +389,7 @@ UbLdstApi::SendRemoteResponse(const UbLdstRemoteRequestContext& context,
     NS_ABORT_MSG_IF(ackp->GetSize() != payloadBytes, "LDST response payload size mismatch");
 
     UbCompactAckTransactionHeader caTaHeader;
-    caTaHeader.SetTaOpcode(responseOpcode);
+    caTaHeader.SetUbTransactionOpcode(responseOpcode);
     caTaHeader.SetIniTaSsn(context.requestId);
 
     ackp->AddHeader(caTaHeader);
@@ -451,7 +451,7 @@ UbLdstApi::SendRemoteResponse(const UbLdstRemoteRequestContext& context,
 void
 UbLdstApi::SendBoundRemoteResponse(Ptr<UbLdstApi> api,
                                    std::shared_ptr<const UbLdstRemoteRequestContext> context,
-                                   TaOpcode responseOpcode,
+                                   UbTransactionOpcode responseOpcode,
                                    uint32_t payloadBytes,
                                    Ptr<Packet> payload)
 {
@@ -505,9 +505,9 @@ UbLdstApi::RecvDataPacket(Ptr<Packet> packet, uint32_t ingressPort)
         return;
     }
 
-    const TaOpcode responseOpcode = context.type == UbMemOperationType::LOAD
-                                        ? TaOpcode::TA_OPCODE_READ_RESPONSE
-                                        : TaOpcode::TA_OPCODE_TRANSACTION_ACK;
+    const UbTransactionOpcode responseOpcode = context.type == UbMemOperationType::LOAD
+                                        ? UbTransactionOpcode::READ_RESPONSE
+                                        : UbTransactionOpcode::TAACK;
     SendRemoteResponse(context, responseOpcode, context.responseBytes, nullptr);
 }
 
@@ -542,7 +542,7 @@ UbLdstApi::RecvResponse(Ptr<Packet> packet)
                        traceTag);
     }
     uint16_t requestId = caTaHeader.GetIniTaSsn();
-    TaOpcode responseOpcode = static_cast<TaOpcode>(caTaHeader.GetTaOpcode());
+    UbTransactionOpcode responseOpcode = static_cast<UbTransactionOpcode>(caTaHeader.GetUbTransactionOpcode());
     const UbLdstEndpoint::ResponseContext responseContext{
         network.source.nodeId,
         network.destination.nodeId};

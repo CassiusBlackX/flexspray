@@ -49,7 +49,7 @@ struct UbLdstRemoteRequestContext
     UbPacketTraceTag traceTag;
 };
 
-using UbLdstResponseSender = Callback<void, TaOpcode, uint32_t, Ptr<Packet>>;
+using UbLdstResponseSender = Callback<void, UbTransactionOpcode, uint32_t, Ptr<Packet>>;
 using UbLdstRemoteRequestProcessor =
     Callback<bool, const UbLdstRemoteRequestContext&, UbLdstResponseSender>;
 
@@ -86,12 +86,12 @@ class UbLdstApi : public Object
                                    UbCompactTransactionHeader& cTaHeader,
                                    UbLdstRemoteRequestContext& context);
     void SendRemoteResponse(const UbLdstRemoteRequestContext& context,
-                            TaOpcode responseOpcode,
+                            UbTransactionOpcode responseOpcode,
                             uint32_t payloadBytes,
                             Ptr<Packet> payload);
     static void SendBoundRemoteResponse(Ptr<UbLdstApi> api,
                                         std::shared_ptr<const UbLdstRemoteRequestContext> context,
-                                        TaOpcode responseOpcode,
+                                        UbTransactionOpcode responseOpcode,
                                         uint32_t payloadBytes,
                                         Ptr<Packet> payload);
     UbDatalinkHeaderConfig m_headerConfig{UbDatalinkHeaderConfig::PACKET_UB_MEM};

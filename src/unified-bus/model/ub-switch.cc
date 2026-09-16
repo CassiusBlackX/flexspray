@@ -883,12 +883,12 @@ bool UbSwitch::SinkLdstDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Pa
     auto ldstApi = GetObject<Node>()->GetObject<UbController>()->GetUbFunction()->GetUbLdstApi();
     NS_ASSERT_MSG(ldstApi != nullptr, "UbLdstApi can not be nullptr!");
 
-    uint8_t type = headers.dummyTransactionHeader.GetTaOpcode();
+    uint8_t type = headers.dummyTransactionHeader.GetUbTransactionOpcode();
     // 数据包
-    if (type == (uint8_t)TaOpcode::TA_OPCODE_WRITE || type == (uint8_t)TaOpcode::TA_OPCODE_READ) {
+    if (type == (uint8_t)UbTransactionOpcode::WRITE || type == (uint8_t)UbTransactionOpcode::READ) {
         ldstApi->RecvDataPacket(packet, port->GetIfIndex());
-    } else if (type == (uint8_t)TaOpcode::TA_OPCODE_TRANSACTION_ACK ||
-               type == (uint8_t)TaOpcode::TA_OPCODE_READ_RESPONSE) {
+    } else if (type == (uint8_t)UbTransactionOpcode::TAACK ||
+               type == (uint8_t)UbTransactionOpcode::READ_RESPONSE) {
         ldstApi->RecvResponse(packet);
         NS_LOG_DEBUG("ldst packet is ack!");
     } else {

@@ -126,6 +126,16 @@ UbGbnRetransStrategy::GetNextRetransmissionPayloadBytes() const
     return m_descriptors.at(*m_retransmitCursor).payloadBytes;
 }
 
+const UbGbnPacketDescriptor*
+UbGbnRetransStrategy::GetNextRetransmissionDescriptor() const
+{
+    if (!HasPendingRetransmission())
+    {
+        return nullptr;
+    }
+    return &m_descriptors.at(*m_retransmitCursor);
+}
+
 uint32_t
 UbGbnRetransStrategy::GetRetransmissionPayloadBytesFrom(uint64_t psn) const
 {
@@ -1395,6 +1405,12 @@ uint32_t
 UbRetransController::GetNextGbnRetransmissionPayloadBytes() const
 {
     return HasPendingGbnRetransmission() ? m_gbn->GetNextRetransmissionPayloadBytes() : 0;
+}
+
+const UbGbnPacketDescriptor*
+UbRetransController::GetNextGbnRetransmissionDescriptor() const
+{
+    return HasPendingGbnRetransmission() ? m_gbn->GetNextRetransmissionDescriptor() : nullptr;
 }
 
 void

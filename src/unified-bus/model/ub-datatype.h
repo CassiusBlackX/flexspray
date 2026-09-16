@@ -11,8 +11,12 @@
 
 #include <bitset>
 #include <cstdint>
+#include <optional>
+#include <string>
+#include <vector>
 
 namespace ns3 {
+
 
 extern GlobalValue g_ub_priority_num;
 extern GlobalValue g_ub_vl_num;
@@ -49,6 +53,126 @@ enum class UbTransactionSegmentKind : uint8_t {
     RESPONSE = 1
 };
 
+enum class UbTransactionType : uint8_t
+{
+    MEMORY = 0,
+    MESSAGE = 1,
+    MAINTENANCE = 2,
+    MANAGEMENT = 3,
+};
+
+enum class UbTransactionHeaderKind : uint8_t
+{
+    BTAH = 0,
+    ATAH,
+    MAETAH,
+    UDETAH,
+    MTETAH,
+    TVETAH,
+    TAIDETAH,
+    OFSTETAH,
+    IMMETAH,
+    NTFETAH,
+    BEETAH,
+    MGMTETAH,
+    INVALID = 0xff,
+};
+
+struct UbMemoryAccessFields
+{
+    /** Target virtual address of the described memory segment, in bytes. */
+    uint64_t address{0};
+    /** UB memory descriptor token that authorizes the access. */
+    uint32_t tokenId{0};
+    /** Transaction length described by the header, in bytes. */
+    uint32_t length{0};
+};
+/** Target hint and context carried by MTETAH for message operations. */
+struct UbMessageTargetFields
+{
+    /** Target context type selector. */
+    uint8_t targetContextType{0};
+    /** Target context identifier. */
+    uint32_t targetContextId{0};
+    /** Optional target hint value. */
+    uint8_t hint{0};
+};
+/** Immediate data carried by IMMETAH for immediate message operations. */
+struct UbImmediateFields
+{
+    /** Immediate value, up to eight bytes. */
+    uint64_t data{0};
+    /** Token that authorizes the immediate operation. */
+    uint32_t tokenValue{0};
+    /** Message length this immediate value belongs to, in bytes. */
+    uint32_t messageLength{0};
+};
+/** Notify address, token, and payload carried by NTFETAH for notify writes. */
+struct UbNotifyFields
+{
+    /** Notification address the target writes to, in bytes. */
+    uint64_t address{0};
+    /** Token that authorizes the notification. */
+    uint32_t tokenId{0};
+    /** Notification token value. */
+    uint32_t tokenValue{0};
+    /** Notification payload. */
+    uint64_t data{0};
+};
+/** Byte-enable bitmap carried by BEETAH; this phase has no supported request using it. */
+struct UbByteEnableFields
+{
+    /** Raw byte-enable bitmap as it appears on the wire. */
+    std::vector<uint8_t> bytes;
+};
+/** Management command fields carried by MGMTETAH. */
+struct UbManagementFields
+{
+    /** Management command code. */
+    uint8_t code{0};
+    /** Management command sub-code. */
+    uint8_t subCode{0};
+    /** Whether this unit is a management response. */
+    bool response{false};
+    /** Management status code. */
+    uint8_t status{0};
+    /**
+     * Management PDU length in bytes.
+     *
+     * A locally submitted request defaults this to its transaction payload length and both sides
+     * validate that the two agree.
+     */
+    uint16_t pduLength{0};
+};
+/**
+ * Normalized transaction field values of one request or response.
+ *
+ * Each member is present only when the wire unit carries the corresponding extension header. Local
+ * submissions receive the rule defaults of their required headers in the single request
+ * validation entry; decoded requests carry exactly the fields their headers provided.
+ */
+struct UbTransactionFields
+{
+    /** MAETAH: memory address and token. */
+    std::optional<UbMemoryAccessFields> memoryAccess;
+    /** TVETAH / UDETAH token value when the header is present. */
+    std::optional<uint32_t> tokenValue;
+    /** MTETAH: message target context. */
+    std::optional<UbMessageTargetFields> messageTarget;
+    /** Optional wire task identifier. */
+    std::optional<uint16_t> taskId;
+    /** Optional byte offset. */
+    std::optional<uint32_t> offset;
+    /** IMMETAH: immediate value, token, and message length. */
+    std::optional<UbImmediateFields> immediate;
+    /** NTFETAH: notify address, token, and payload. */
+    std::optional<UbNotifyFields> notify;
+    /** BEETAH: byte-enable bitmap; unsupported in this phase. */
+    std::optional<UbByteEnableFields> byteEnable;
+    /** MGMTETAH: management command fields. */
+    std::optional<UbManagementFields> management;
+};
+
 // 内存语义操作类型枚举
 enum class UbMemOperationType : uint8_t {
     STORE = 0,
@@ -71,35 +195,102 @@ struct TpgTag;
 // ============================================================================
 // UB Header相关字段定义
 // ============================================================================
-// 定义TaOpcode枚举，便于使用
-enum class TaOpcode : uint8_t {
-    TA_OPCODE_SEND = 0x00,             // send
-    TA_OPCODE_SEND_IMMEDIATE = 0x01,   // send with immediate (8B)
-    TA_OPCODE_SEND_INVALIDATE = 0x02,  // send with invalidate
-    TA_OPCODE_WRITE = 0x03,            // write （最常用）
-    TA_OPCODE_WRITE_IMMEDIATE = 0x04,  // write with immediate (8B)
-    TA_OPCODE_WRITE_NOTIFY = 0x05,     // write with notify (8B)
-    TA_OPCODE_READ = 0x06,             // read （最常用）
-    TA_OPCODE_ATOMIC_CMP_SWAP = 0x07,  // atomic compare swap
-    TA_OPCODE_ATOMIC_SWAP = 0x08,      // atomic swap
-    TA_OPCODE_ATOMIC_STORE = 0x09,     // atomic store
-    TA_OPCODE_ATOMIC_LOAD = 0x0A,      // atomic load
-    TA_OPCODE_ATOMIC_FETCH_ADD = 0x0B, // atomic fetch add
-    TA_OPCODE_ATOMIC_FETCH_SUB = 0x0C, // atomic fetch sub
-    TA_OPCODE_ATOMIC_FETCH_AND = 0x0D, // atomic fetch and
-    TA_OPCODE_ATOMIC_FETCH_OR = 0x0E,  // atomic fetch or
-    TA_OPCODE_ATOMIC_FETCH_XOR = 0x0F, // atomic fetch xor
-    TA_OPCODE_MESSAGE = 0x10,          // message
-    TA_OPCODE_TRANSACTION_ACK = 0x11,  // transaction ACK
-    TA_OPCODE_READ_RESPONSE = 0x12,    // read response
-    TA_OPCODE_ATOMIC_RESPONSE = 0x13,  // atomic response
-    TA_OPCODE_WRITE_BE = 0x14,         // write with BE
-    TA_OPCODE_PREFETCH_TGT = 0x15,     // PrefetchTgt
-    TA_OPCODE_DISCONNECT_SCID = 0x16,  // Disconnect SCID
-    TA_OPCODE_WRITEBACK_FULL = 0x17,   // WriteBackFull
-    TA_OPCODE_WRITEBACK_PTL = 0x18,    // WriteBackPtl
-    TA_OPCODE_MAX = 0x19               // 无效的TA OPCODE
+// 定义UbTransactionOpcode枚举，便于使用
+enum class UbTransactionOpcode : uint8_t {
+    SEND = 0x00,             // send
+    SEND_WITH_IMMEDIATE = 0x01,   // send with immediate (8B)
+    RESERVED_02 = 0x02,  // send with invalidate
+    WRITE = 0x03,            // write （最常用）
+    WRITE_WITH_IMMEDIATE = 0x04,  // write with immediate (8B)
+    WRITE_WITH_NOTIFY = 0x05,     // write with notify (8B)
+    READ = 0x06,             // read （最常用）
+    ATOMIC_COMPARE_SWAP = 0x07,  // atomic compare swap
+    ATOMIC_SWAP = 0x08,      // atomic swap
+    ATOMIC_STORE = 0x09,     // atomic store
+    ATOMIC_LOAD = 0x0A,      // atomic load
+    ATOMIC_FETCH_ADD = 0x0B, // atomic fetch add
+    ATOMIC_FETCH_SUB = 0x0C, // atomic fetch sub
+    ATOMIC_FETCH_AND = 0x0D, // atomic fetch and
+    ATOMIC_FETCH_OR = 0x0E,  // atomic fetch or
+    ATOMIC_FETCH_XOR = 0x0F, // atomic fetch xor
+    MANAGEMENT = 0x10,      // management
+    TAACK = 0x11,  // transaction ACK
+    READ_RESPONSE = 0x12,    // read response
+    ATOMIC_RESPONSE = 0x13,  // atomic response
+    WRITE_WITH_BE = 0x14,         // write with BE
+    PREFETCH_TGT = 0x15,     // PrefetchTgt
+    RESERVED_16 = 0x16,  // Disconnect SCID
+    WRITEBACK = 0x17,   // WriteBackFull
+    WRITEBACK_WITH_BE = 0x18,    // WriteBackPtl
+    MAX_OPCODE = 0x19               // 无效的TA OPCODE
 };
+
+/**
+ * Atomic sub-operation selected by a local Atomic_load or Atomic_store submission.
+ *
+ * The sub-operation is local-only input: it is not encoded in a transaction header, so a decoded
+ * request never carries one.
+ */
+enum class UbAtomicSubOperation : uint8_t
+{
+    ADD = 0,
+    CLR = 1,
+    EOR = 2,
+    SET = 3,
+    SMAX = 4,
+    SMIN = 5,
+    UMAX = 6,
+    UMIN = 7,
+};
+
+struct UbAtomicOptions
+{
+    /** Local Atomic_load/Atomic_store sub-operation; required only for those two opcodes. */
+    std::optional<UbAtomicSubOperation> subOperation;
+    /** Explicit request payload override in bytes; the rule default applies when absent. */
+    std::optional<uint32_t> requestPayloadBytes;
+};
+
+/**
+ * Normalized transaction admission result cached on a WQE and on its segments.
+ *
+ * It is produced exactly once for a request: by the local submission path or by the inbound decode
+ * path. Every later stage (segmentation, transport, response matching, response construction)
+ * consumes this cached value instead of recomputing payload metadata, and `error` is empty only for
+ * the cached, admissible result.
+ */
+struct UbTransactionResolved
+{
+    /** Transaction type of the operation, taken from its static rule. */
+    UbTransactionType type{UbTransactionType::MEMORY};
+    /** Request opcode this result was produced for. */
+    UbTransactionOpcode requestOpcode{UbTransactionOpcode::MAX_OPCODE};
+    /** Opcode of the protocol response the target answers with. */
+    UbTransactionOpcode responseOpcode{UbTransactionOpcode::TAACK};
+    /**
+     * Logical transaction length in bytes.
+     *
+     * For Atomic requests this is the operand width; for Read requests it is the requested length
+     * that the response must carry.
+     */
+    uint32_t logicalBytes{0};
+    /** Request payload bytes the initiator must send for this request. */
+    uint32_t requestPayloadBytes{0};
+    /** Response payload bytes the target must return; zero when the response carries none. */
+    uint32_t responsePayloadBytes{0};
+    /**
+     * Whether successful completion of this request requires its transaction response.
+     *
+     * This is the static protocol requirement of the operation. It stays true after the response
+     * has been accepted and is never used as the dynamic completion progress of a WQE; TP ACKs
+     * advance transport confirmation while the matching response advances segment completion.
+     */
+    bool requiresResponse{false};
+    /** Rejection reason when this value was not produced by a successful validation; empty when
+     * the result is admissible. */
+    std::string error;
+};
+
 
 enum class UbDatalinkHeaderConfig : uint8_t {
     CONTROL = 0x00,         // Config value for control credit header
@@ -558,7 +749,7 @@ public:
           m_dest(0),
           m_sport(0),
           m_dport(0),
-          m_type(TaOpcode::TA_OPCODE_WRITE),
+          m_type(UbTransactionOpcode::WRITE),
           m_size(0),
           m_priority(UB_PRIORITY_DEFAULT),
           m_taMsn(0),
@@ -574,7 +765,7 @@ public:
           uint8_t dport,
           uint32_t win,
           uint32_t baseRtt,
-          TaOpcode type,
+          UbTransactionOpcode type,
           uint32_t size,
           UbPriority priority)
         : m_src(src),
@@ -603,6 +794,22 @@ public:
     {
         m_wqeId = wqeId;
     }
+
+    void SetAtomicOptions(const UbAtomicOptions& options)
+    {
+        m_atomicOptions = options;
+    }
+
+    const std::optional<UbAtomicOptions>& GetAtomicOptions() const
+    {
+        return m_atomicOptions;
+    }
+
+    void SetTransactionFields(const UbTransactionFields& fields) { m_transactionFields = fields; }
+    const UbTransactionFields& GetTransactionFields() const { return m_transactionFields; }
+    void SetTransactionResolved(const UbTransactionResolved& resolved) { m_transactionResolved = resolved; }
+    bool HasTransactionResolved() const { return m_transactionResolved.has_value(); }
+    const UbTransactionResolved& GetTransactionResolved() const { return *m_transactionResolved; }
 
     bool IsLifecycleManaged() const
     {
@@ -655,7 +862,7 @@ public:
         return m_dport;
     }
 
-    TaOpcode GetType() const
+    UbTransactionOpcode GetType() const
     {
         return m_type;
     }
@@ -702,7 +909,7 @@ public:
         m_dport = dport;
     }
 
-    void SetType(TaOpcode type)
+    void SetType(UbTransactionOpcode type)
     {
         m_type = type;
     }
@@ -906,12 +1113,12 @@ public:
         return m_requestTassn;
     }
 
-    void SetRequestOpcode(TaOpcode requestOpcode)
+    void SetRequestOpcode(UbTransactionOpcode requestOpcode)
     {
         m_requestOpcode = requestOpcode;
     }
 
-    TaOpcode GetRequestOpcode() const
+    UbTransactionOpcode GetRequestOpcode() const
     {
         return m_requestOpcode;
     }
@@ -1009,7 +1216,7 @@ private:
     uint32_t m_dstEntityId{0};
     uint8_t m_sport;    // 源端口号
     uint8_t m_dport;    //< 目的端口号
-    TaOpcode m_type = TaOpcode::TA_OPCODE_WRITE;           // 操作类型 (READ/WRITE)
+    UbTransactionOpcode m_type = UbTransactionOpcode::WRITE;           // 操作类型 (READ/WRITE)
     uint32_t m_size = 0;                         // WQE数据大小 (字节)
     UbPriority m_priority = UB_PRIORITY_DEFAULT; // WQE优先级 (0-15, 0最高)
 
@@ -1027,7 +1234,7 @@ private:
     UbTransactionSegmentKind m_segmentKind = UbTransactionSegmentKind::REQUEST;
     uint32_t m_originJettyNum = UINT32_MAX;
     uint32_t m_requestTassn = UINT32_MAX;
-    TaOpcode m_requestOpcode = TaOpcode::TA_OPCODE_WRITE;
+    UbTransactionOpcode m_requestOpcode = UbTransactionOpcode::WRITE;
     uint32_t m_responseBytes = 0;
     uint64_t m_remoteAddress = 0;
     uint32_t m_remoteTokenId = 0;
@@ -1037,6 +1244,9 @@ private:
     uint32_t m_carrierBytes = 0;
     bool m_lifecycleManaged = false;
     Ptr<const Packet> m_explicitPayload;
+    std::optional<UbAtomicOptions> m_atomicOptions;
+    UbTransactionFields m_transactionFields;
+    std::optional<UbTransactionResolved> m_transactionResolved;
 
     // ========== TA层动态信息 (追踪WQE segment的完成) ==========
     uint32_t m_bytesLeft = 0; // 剩余的字节数
@@ -1064,7 +1274,7 @@ public:
                  uint8_t sport,
                  uint8_t dport,
                  uint32_t jettyNum,
-                 TaOpcode type,
+                 UbTransactionOpcode type,
                  uint32_t size,
                  UbPriority priority,
                  uint32_t taskId)
@@ -1124,7 +1334,13 @@ public:
         return m_dport;
     }
 
-    TaOpcode GetType() const
+    void SetTransactionFields(const UbTransactionFields& fields) { m_transactionFields = fields; }
+    const UbTransactionFields& GetTransactionFields() const { return m_transactionFields; }
+    void SetTransactionResolved(const UbTransactionResolved& resolved) { m_transactionResolved = resolved; }
+    bool HasTransactionResolved() const { return m_transactionResolved.has_value(); }
+    const UbTransactionResolved& GetTransactionResolved() const { return *m_transactionResolved; }
+
+    UbTransactionOpcode GetType() const
     {
         return m_type;
     }
@@ -1181,7 +1397,7 @@ public:
         m_dport = dport;
     }
 
-    void SetType(TaOpcode type)
+    void SetType(UbTransactionOpcode type)
     {
         m_type = type;
     }
@@ -1486,12 +1702,12 @@ public:
         return m_requestTassn;
     }
 
-    void SetRequestOpcode(TaOpcode requestOpcode)
+    void SetRequestOpcode(UbTransactionOpcode requestOpcode)
     {
         m_requestOpcode = requestOpcode;
     }
 
-    TaOpcode GetRequestOpcode() const
+    UbTransactionOpcode GetRequestOpcode() const
     {
         return m_requestOpcode;
     }
@@ -1589,7 +1805,7 @@ private:
     uint32_t m_dstEntityId{0};
     uint8_t m_sport{0};                             // 源端口号
     uint8_t m_dport{0};                             // 目的端口号
-    TaOpcode m_type{TaOpcode::TA_OPCODE_WRITE};     // 操作类型 (READ/WRITE)
+    UbTransactionOpcode m_type{UbTransactionOpcode::WRITE};     // 操作类型 (READ/WRITE)
     uint32_t m_size{0};                             // 分段数据大小 (字节)
     bool m_hasStartedSending{false};
     UbPriority m_priority{UB_PRIORITY_DEFAULT};     // 分段优先级
@@ -1614,7 +1830,7 @@ private:
     UbTransactionSegmentKind m_segmentKind{UbTransactionSegmentKind::REQUEST};
     uint32_t m_originJettyNum{UINT32_MAX};
     uint32_t m_requestTassn{UINT32_MAX};
-    TaOpcode m_requestOpcode{TaOpcode::TA_OPCODE_WRITE};
+    UbTransactionOpcode m_requestOpcode{UbTransactionOpcode::WRITE};
     uint32_t m_responseBytes{0};
     uint64_t m_remoteAddress{0};
     uint32_t m_remoteTokenId{0};
@@ -1630,6 +1846,9 @@ private:
     uint32_t m_psnSize{0};  // TP层包数量
 
     // ========== TP层动态信息 (发送时实时更新) ==========
+    UbTransactionFields m_transactionFields;
+    std::optional<UbTransactionResolved> m_transactionResolved;
+
     uint32_t m_bytesLeft{0}; // 剩余字节数
 };
 

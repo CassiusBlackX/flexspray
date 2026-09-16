@@ -213,8 +213,8 @@ UbLdstEndpoint::BuildAndSendRequestPacket(const UbLdstRequest& request, uint8_t 
     packet->AddHeader(maHeader);
 
     UbCompactTransactionHeader taHeader;
-    taHeader.SetTaOpcode(request.type == UbMemOperationType::STORE ? TaOpcode::TA_OPCODE_WRITE
-                                                                   : TaOpcode::TA_OPCODE_READ);
+    taHeader.SetUbTransactionOpcode(request.type == UbMemOperationType::STORE ? UbTransactionOpcode::WRITE
+                                                                   : UbTransactionOpcode::READ);
     taHeader.SetIniTaSsn(request.requestId);
     packet->AddHeader(taHeader);
 
@@ -238,7 +238,7 @@ UbLdstEndpoint::BuildAndSendRequestPacket(const UbLdstRequest& request, uint8_t 
 bool
 UbLdstEndpoint::CompleteRequest(uint16_t requestId,
                                 const ResponseContext& responseContext,
-                                TaOpcode responseOpcode,
+                                UbTransactionOpcode responseOpcode,
                                 Ptr<Packet> payload)
 {
     auto it = m_inflight.find(requestId);
@@ -259,11 +259,11 @@ UbLdstEndpoint::CompleteRequest(uint16_t requestId,
     uint32_t payloadBytes = payload == nullptr ? 0 : payload->GetSize();
     if (inflight.type == UbMemOperationType::STORE)
     {
-        success = responseOpcode == TaOpcode::TA_OPCODE_TRANSACTION_ACK && payloadBytes == 0;
+        success = responseOpcode == UbTransactionOpcode::TAACK && payloadBytes == 0;
     }
     else if (inflight.type == UbMemOperationType::LOAD)
     {
-        success = responseOpcode == TaOpcode::TA_OPCODE_READ_RESPONSE && payload != nullptr &&
+        success = responseOpcode == UbTransactionOpcode::READ_RESPONSE && payload != nullptr &&
                   payloadBytes == inflight.expectedResponseBytes;
     }
 
