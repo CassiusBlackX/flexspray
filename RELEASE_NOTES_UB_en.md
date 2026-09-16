@@ -2,6 +2,111 @@
 
 **Language**: [English](RELEASE_NOTES_UB_en.md) | [中文](RELEASE_NOTES_UB.md)
 
+## Release 2.1.0
+
+**Release Date**: September 2026
+
+### Supported Features by Protocol Layer
+
+| Marker | Meaning |
+| :---: | --- |
+| \* | Introduced by UB Base Specification 2.1 and newly supported in this release |
+| † | Defined in earlier revisions of the specification and newly supported in this release |
+
+#### Function Layer
+
+- Programming interfaces: Load/Store interface, URMA interface
+- Jetty: Jetty, many-to-many and one-to-one communication models
+- Memory semantics: Load/Store based memory semantic behavior
+- Message semantics: URMA based message semantic behavior
+
+#### Transaction Layer
+
+- Service modes: ROI, ROL, UNO
+- Transaction ordering: NO / RO / SO
+- Transaction types:
+
+| Semantics | Opcode |
+| --- | --- |
+| Memory Write | `WRITE` (0x03) |
+| Memory Read | `READ` (0x06) |
+| † Atomic Compare And Swap | `ATOMIC_COMPARE_SWAP` (0x07) |
+| † Atomic Swap | `ATOMIC_SWAP` (0x08) |
+| † Atomic Store | `ATOMIC_STORE` (0x09) |
+| † Atomic Load | `ATOMIC_LOAD` (0x0A) |
+| † Atomic Fetch Add | `ATOMIC_FETCH_ADD` (0x0B) |
+| † Atomic Fetch Sub | `ATOMIC_FETCH_SUB` (0x0C) |
+| † Atomic Fetch And | `ATOMIC_FETCH_AND` (0x0D) |
+| † Atomic Fetch Or | `ATOMIC_FETCH_OR` (0x0E) |
+| † Atomic Fetch Xor | `ATOMIC_FETCH_XOR` (0x0F) |
+| † Writeback | `WRITEBACK` (0x17) |
+| \* Atomic Store With Return Status | `ATOMIC_STORE_WITH_RETURN_STATUS` (0x1C) |
+| \* Atomic Sync | `ATOMIC_SYNC` (0x1D) |
+
+- † Atomic operand widths: 1, 2, 4, 8, 16, 32, and 64 bytes
+- Transaction extension semantics, carried by `MTETAH`, `TVETAH`, `MAETAH`, `IMMETAH`, `NTFETAH`, and `MGMTETAH`:
+
+| Semantics | Opcode |
+| --- | --- |
+| † Send | `SEND` (0x00) |
+| † Send With Immediate | `SEND_WITH_IMMEDIATE` (0x01) |
+| † Write With Immediate | `WRITE_WITH_IMMEDIATE` (0x04) |
+| † Write With Notify | `WRITE_WITH_NOTIFY` (0x05) |
+| † Management | `MANAGEMENT` (0x10) |
+| † Prefetch Target | `PREFETCH_TGT` (0x15) |
+
+- Response semantics:
+
+| Semantics | Opcode |
+| --- | --- |
+| Transaction ACK | `TAACK` (0x11) |
+| Read Response | `READ_RESPONSE` (0x12) |
+| † Atomic Response | `ATOMIC_RESPONSE` (0x13) |
+
+- Transaction header formats: full BTAH, compact BTAH
+- \* **Compact transaction packet format in CFG7**
+
+#### Transport Layer
+
+- Service modes: RTP, † CTP
+- Reliability: PSN, timeout retransmission, Go-Back-N, selective retransmission, fast selective retransmission
+- Congestion control: RTP congestion control mechanism, CAQM, DCQCN
+- Load balancing: TPG mechanism, per-TP and per-packet load balancing, out-of-order reception
+
+#### Network Layer
+
+- Packet formats: IPv4 address format based headers, 16-bit CNA address format based headers, 24-bit CNA address format based headers
+- Address management: CNA to IP address translation, Primary / Port CNA
+- Routing: destination address and header RT field based routing, path-Cost based routing, hash-based ECMP, per-flow and per-packet hash based on load balancing factors, load-aware adaptive routing
+- Quality of service: SL-VL mapping
+- Congestion notification: CAQM marking mode based on the header CC field, DCQCN FECN marking mode
+- \* **TP bypass packet format based on the 24-bit CNA address (CFG7, `NTH.NLP = 3'b100`)**
+- \* **Reliable rerouting**: on a link failure, packet transmission continues reliably over an alternate path, resuming from the retry buffer start position
+
+#### Data Link Layer
+
+- Datalink header configurations: CFG9 (16-bit CNA addressing), \* **CFG7 (24-bit CNA addressing)**
+- Packet transmission: packet-level modeling
+- Virtual channels: up to 16 VLs on a point-to-point link, SP / DWRR based inter-VL scheduling
+- Credit flow control: CBFC (exclusive / shared-credit), PFC (fixed / dynamic thresholds)
+
+### Specification Alignment
+
+The network behaviors of the transaction semantics listed above are consistent with the UB Base Specification version 2.1.
+
+The Basic Transaction Header (BTAH) is included in all transaction request packets. The compact BTAH format applies when (CFG=7&NTH.NLP=4) or when (CFG=9). TAver is set to 0 for the current protocol.
+
+### Supported Memory Load/Store Addressing Formats
+
+| Format | Datalink CFG | Network header | Addressing range | Extension |
+| --- | --- | --- | --- | --- |
+| CNA16 | 9 | `UbCna16NetworkHeader` | node 12 bit, port 4 bit | — |
+| CNA24 | 7 | `UbCna24NetworkHeader` | node 16 bit, port 8 bit | `NLP4` TP bypass |
+
+CFG9 is the default of the `HeaderConfig` attribute on `UbLdstApi` and `UbLdstEndpoint`; the attribute accepts 7 and 9.
+
+---
+
 ## Release 1.3.0
 
 **Release Date**: July 2026
@@ -118,7 +223,7 @@ The following data was collected with trace and parse disabled, using medians fr
 
 ### Features and Behavior Changes
 
-- Completed the unified hook architecture for congestion control and flow control. Congestion-control algorithms plug into sender, switch, and receiver events through hooks such as `OnSender*`, `OnSwitch*`, `OnReceiver*`, and `OnTpAttached`; flow-control algorithms plug into ingress, egress, control-frame, and data-credit events through hooks such as `OnIngress*`, `OnEgress*`, `OnControlFrameReceived`, and `OnDataPacketReceived`. Users can add custom algorithms while reusing the existing topology, queue, trace, and case configuration paths, keeping most algorithm logic inside the corresponding algorithm classes and required enum/config entries instead of making invasive changes to switch, transport, or case-template code. The current implementation supports DCQCN and C-AQM congestion control, plus CBFC and PFC flow control.
+- Completed the unified hook architecture for congestion control and flow control. Congestion-control algorithms plug into sender, switch, and receiver events through hooks such as `OnSender*`, `OnSwitch*`, `OnReceiver*`, and `OnTpAttached`; flow-control algorithms plug into ingress, egress, control-frame, and data-credit events through hooks such as `OnIngress*`, `OnEgress*`, `OnControlFrameReceived`, and `OnDataPacketReceived`. Users can add custom algorithms while reusing the existing topology, queue, trace, and case configuration paths, keeping most algorithm logic inside the corresponding algorithm classes and required enum/config entries instead of making invasive changes to switch, transport, or case-template code. The current implementation supports DCQCN and CAQM congestion control, plus CBFC and PFC flow control.
 - Added RTP-side DCQCN support, plus `PFC_DYNAMIC_PAPER` as the paper-style dynamic PFC threshold reproduction mode for the DCQCN paper **"Congestion Control for Large-Scale RDMA Deployments"** (SIGCOMM 2015).
 - `ub-quick-example` now stops early when `EnableRetrans=false` and a packet is dropped, with guidance to check routing, buffer, and flow-control settings instead of continuing a run that has no recovery path.
 

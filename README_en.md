@@ -90,13 +90,13 @@
     </tr>
     <tr>
       <td>Transaction Types</td>
-      <td>Write, Read, Send; <a href="src/unified-bus/doc/atomic-support.md">Atomic (URMA ROI, RTP/CTP timing model)</a></td>
-      <td>Write_with_notify, etc.</td>
+      <td>Write, Read, Send, Writeback; <a href="src/unified-bus/doc/atomic-support.md">Atomic (network behavior model)</a>; Queue transactions</td>
+      <td>Write_with_BE, Write_with_remote_sync, etc.</td>
     </tr>
     <tr>
       <td align="center" rowspan="4">Transport Layer</td>
       <td>Service Modes</td>
-      <td>RTP, CTP (URMA ROI, existing compact format)</td>
+      <td>RTP, CTP</td>
       <td>UTP</td>
     </tr>
     <tr>
@@ -117,7 +117,7 @@
     <tr>
       <td align="center" rowspan="5">Network Layer</td>
       <td>Packet Format</td>
-      <td>Support for IPv4 address format-based headers, 16-bit CNA address format-based headers</td>
+      <td>IPv4 / 16-bit CNA / 24-bit CNA address format-based headers, TP bypass (CFG7)</td>
       <td>Other header formats</td>
     </tr>
     <tr>
@@ -127,7 +127,7 @@
     </tr>
     <tr>
       <td>Routing</td>
-      <td>Basic routing strategy based on destination address + header RT field, routing strategy based on path Cost, Hash-based ECMP, per-flow / per-packet Hash based on load balancing factors, load-aware adaptive routing</td>
+      <td>Basic routing strategy based on destination address + header RT field, routing strategy based on path Cost, Hash-based ECMP, per-flow / per-packet Hash based on load balancing factors, load-aware adaptive routing, reliable rerouting</td>
       <td>User-customizable routing strategies</td>
     </tr>
     <tr>
@@ -141,7 +141,12 @@
       <td>FECN_RTT marking mode</td>
     </tr>
     <tr>
-      <td align="center" rowspan="3">Data Link Layer</td>
+      <td align="center" rowspan="4">Data Link Layer</td>
+      <td>Datalink Header Configuration</td>
+      <td>CFG9 (16-bit CNA addressing), CFG7 (24-bit CNA addressing)</td>
+      <td>—</td>
+    </tr>
+    <tr>
       <td>Packet Transmission</td>
       <td>Packet-level modeling</td>
       <td>Cell / Flit level modeling</td>
@@ -214,7 +219,7 @@ The UB module is a simulation component implemented based on the UB Base Specifi
 - **Queue Manager** (`ub-queue-manager.*`) - Buffer management module, affecting load balancing, flow control, queuing, packet dropping, and other behaviors
 - **Routing Process** (`ub-routing-process.*`) - Routing module, implementing routing table management and query functionality
 - **Congestion Control** (`ub-congestion-control.*`) - Framework module for congestion control algorithms
-- **Congestion Control Algorithms** (`ub-caqm.*`, `ub-dcqcn.*`) - C-AQM and DCQCN congestion control algorithm implementations
+- **Congestion Control Algorithms** (`ub-caqm.*`, `ub-dcqcn.*`) - CAQM and DCQCN congestion control algorithm implementations
 - **Flow Control** (`ub-flow-control.*`) - Flow control framework module
 - **Fault Injection Module** (`ub-fault.*`) - Applies fault-related parameters (e.g., packet loss rate, high latency, congestion levels, packet errors, transient disconnections, lane reduction) to specific traffic flows
 
@@ -242,7 +247,7 @@ The UB module is a simulation component implemented based on the UB Base Specifi
 #### Protocol Algorithm Support
 
 - **Flow Control**: Implements credit-based flow control (CBFC exclusive / shared-credit) and priority-based flow control (PFC fixed / dynamic thresholds)
-- **Congestion Control**: Implements the framework of the well-known congestion control loop, including network-side marking, receiver response, sender response, and congestion control algorithms; supports C-AQM and DCQCN
+- **Congestion Control**: Implements the framework of the well-known congestion control loop, including network-side marking, receiver response, sender response, and congestion control algorithms; supports CAQM and DCQCN
 - **Routing Policies**: Supports shortest-path routing and bypass strategies; supports packet spraying, ECMP, and other load balancing mechanisms
 - **QoS Support**: Provides end-to-end QoS support, currently supporting SP and DWRR scheduling policies
 - **Switch Arbitration**: Modular implementation of the UB Switch arbitration mechanism, currently supporting SP and DWRR scheduling
