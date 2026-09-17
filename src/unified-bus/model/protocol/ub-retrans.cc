@@ -91,7 +91,10 @@ UbGbnRetransStrategy::OnTimeout()
         return result;
     }
 
-    PrepareRetransmissionFromPsn(m_controller.GetTransport().GetPsnSndUna());
+    auto& transport = m_controller.GetTransport();
+    const uint64_t sndUna = transport.GetPsnSndUna();
+    result.retransmitBytes = transport.GetGbnRetransmissionProgressBytesFromPsn(sndUna);
+    PrepareRetransmissionFromPsn(sndUna);
     result.triggerTransmit = true;
     return result;
 }
