@@ -40,7 +40,7 @@
 
 `ns-3-UB` is an ns-3 simulation module based on the [UnifiedBus (UB) Base Specification 2.1](https://www.unifiedbus.com/zh). It implements the protocol stack including the function, transaction, transport, network, and data link layers defined in the specification, and can be used for protocol research, network architecture exploration, and simulation of congestion control, flow control, load balancing, and routing algorithms.
 
-> **Note**: The English version of the UB specification is currently in "Coming Soon" status. Every effort has been made to align with the UB Base Specification, but differences may still exist. Please refer to the UB Base Specification as the authoritative guide.
+> **Note**: The English version of the UB specification is currently in "Coming Soon" status. This project is implemented with reference to the UB Base Specification; differences from the specification may still exist. Please refer to the UB Base Specification as the authoritative guide.
 
 `ns-3-UB` can be used to study:
 
