@@ -857,6 +857,10 @@ class UbTransactionExtensionHeader : public Header
     uint16_t GetTaskId() const;
     void SetOffset(uint32_t value);
     uint32_t GetOffset() const;
+    void SetUserData(uint8_t type, uint8_t opcode, uint8_t offset, uint8_t reserved = 0);
+    uint8_t GetUserDataType() const;
+    uint8_t GetUserDataOpcode() const;
+    uint8_t GetUserDataOffset() const;
     void SetTargetContext(uint8_t type, uint32_t id, uint8_t hint = 0);
     uint8_t GetTargetContextType() const;
     uint32_t GetTargetContextId() const;
@@ -1238,10 +1242,14 @@ public:
     void SetUbTransactionOpcode(UbTransactionOpcode opcode);       // 设置TA操作码 (8位)
     void SetUbTransactionOpcode(uint8_t opcode);        // 设置TA操作码 (8位)
     void SetIniTaSsn(uint16_t taSsn);  // 设置发起者TaSsn (16位)
+    void SetTvEn(bool value) { m_tvEn = value; }
+    void SetUdFlg(bool value) { m_udFlg = value; }
 
     // Getters
     uint8_t GetUbTransactionOpcode() const;         // 获取TA操作码
     uint16_t GetIniTaSsn() const;  // 获取发起者TaSsn
+    bool GetTvEn() const { return m_tvEn; }
+    bool GetUdFlg() const { return m_udFlg; }
 
     // 验证方法
     bool IsValidOpcode() const;  // 验证操作码是否有效

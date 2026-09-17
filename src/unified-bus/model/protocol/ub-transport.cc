@@ -54,10 +54,12 @@ GetProgressBytesThisPacket(const Ptr<UbWqeSegment>& segment)
 uint32_t
 GetPayloadBytesThisPacket(const Ptr<UbWqeSegment>& segment, uint32_t progressBytes)
 {
-    if (segment->GetType() == UbTransactionOpcode::ATOMIC_RESPONSE)
+    if (segment->GetSegmentKind() == UbTransactionSegmentKind::RESPONSE &&
+        segment->GetPayloadBytes() == 0)
     {
-        // A zero-payload Store response still has one byte of scheduling progress.
-        return segment->GetPayloadBytes();
+        // Zero-payload TA responses retain one byte of carrier progress for scheduling, but the
+        // response packet must not acquire a fake payload byte on the wire.
+        return 0;
     }
     return IsZeroPayloadReadRequest(segment) ? 0 : progressBytes;
 }
@@ -705,6 +707,12 @@ UbTransportChannel::BuildGbnPacketDescriptor(const NewDataSendContext& ctx,
     descriptor.payloadBytes = ctx.payloadBytes;
     descriptor.wireLengthBytes = ctx.wireLengthBytes;
     descriptor.remoteAddress = ctx.segment->GetRemoteAddress();
+    if (ctx.segment->GetType() == UbTransactionOpcode::WRITE_WITH_REMOTE_SYNC ||
+        ctx.segment->GetType() == UbTransactionOpcode::WRITE_WITH_ATOMIC_STORE_ADD ||
+        ctx.segment->GetType() == UbTransactionOpcode::WRITE_WITH_REMOTE_SYNC_WITH_BE)
+    {
+        descriptor.remoteAddress += descriptor.packetOffsetBytes;
+    }
     descriptor.remoteTokenId = ctx.segment->GetRemoteTokenId();
     descriptor.transactionFields = ctx.segment->GetTransactionFields();
     if (ctx.segment->HasExplicitPayload())
@@ -967,7 +975,7 @@ UbTransportChannel::GetDataPacketHeaderBytes(UbTransactionOpcode opcode,
             segmentKind == UbTransactionSegmentKind::RESPONSE
                 ? UbTaHeaderPlan::ForResponse(*rule)
                 : UbTaHeaderPlan::ForRequest(*rule, DeclareRequestHeaderPresence(*rule, fields));
-        transactionBytes += plan.GetExtensionBytes(UB_TA_FULL_MAETAH_BYTES);
+        transactionBytes += plan.GetExtensionBytes(UB_TA_FULL_MAETAH_BYTES, fields);
     }
     return stackBytes + transactionBytes;
 }
@@ -1948,8 +1956,34 @@ UbTransportChannel::ParseReceivedDataPacket(Ptr<Packet> packet,
         return false;
     }
     // Consume exactly the header plan a sender of this rule and these wire flags must have written.
-    const auto* transactionRule =
-        FindTransactionRule(static_cast<UbTransactionOpcode>(ctx.transactionHeader.GetUbTransactionOpcode()));
+    const auto transactionOpcode = static_cast<UbTransactionOpcode>(
+        ctx.transactionHeader.GetUbTransactionOpcode());
+    const auto* transactionRule = FindTransactionRule(transactionOpcode);
+    if (isResponse && transactionOpcode == UbTransactionOpcode::ATOMIC_RESPONSE)
+    {
+        // A response's extension layout belongs to its request rule. The shared ATOMIC_RESPONSE
+        // rule has no extension header, while Atomic_sync adds a TAIDETAH echo on top of it, so
+        // resolve the outstanding request exactly as the transaction layer later correlates it.
+        UbFlowTag responseFlowTag;
+        Ptr<UbController> controller =
+            NodeList::GetNode(m_nodeId) == nullptr
+                ? nullptr
+                : NodeList::GetNode(m_nodeId)->GetObject<UbController>();
+        Ptr<UbTransaction> transaction =
+            controller == nullptr ? nullptr : controller->GetUbTransaction();
+        if (transaction != nullptr && packet->PeekPacketTag(responseFlowTag))
+        {
+            const auto requestOpcode = transaction->FindOutstandingRequestOpcode(
+                ctx.transactionHeader.GetIniRcId(), responseFlowTag.GetFlowId());
+            if (requestOpcode.has_value())
+            {
+                if (const auto* requestRule = FindTransactionRule(*requestOpcode))
+                {
+                    transactionRule = requestRule;
+                }
+            }
+        }
+    }
     UbTaHeaderPlan plan;
     if (transactionRule != nullptr)
     {
@@ -1969,6 +2003,18 @@ UbTransportChannel::ParseReceivedDataPacket(Ptr<Packet> packet,
             continue;
         }
         UbTransactionExtensionHeader extension(kind);
+        // BEETAH is variable-sized: its bitmap width is P/8, where P is the MAETAH length.
+        // Seed the header before Deserialize so packets with more than eight bitmap bytes do not
+        // leave part of BEETAH in the payload.
+        if (kind == UbTransactionHeaderKind::BEETAH)
+        {
+            const uint32_t byteEnableBytes = ctx.maExtHeader.GetLength() / 8;
+            if (byteEnableBytes == 8 || byteEnableBytes == 16 || byteEnableBytes == 32 ||
+                byteEnableBytes == 64 || byteEnableBytes == 128)
+            {
+                extension.SetRaw(std::vector<uint8_t>(byteEnableBytes, 0));
+            }
+        }
         if (packet->GetSize() < extension.GetSerializedSize() ||
             packet->RemoveHeader(extension) == 0)
         {

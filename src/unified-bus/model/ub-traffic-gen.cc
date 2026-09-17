@@ -394,6 +394,13 @@ UbTrafficGen::IsAtomicTask(RuntimeTaskOp op)
            op <= RuntimeTaskOp::URMA_ATOMIC_FETCH_XOR;
 }
 
+bool
+UbTrafficGen::IsUrmaTask(RuntimeTaskOp op)
+{
+    return op == RuntimeTaskOp::URMA_WRITE || op == RuntimeTaskOp::URMA_READ ||
+           IsAtomicTask(op) || op >= RuntimeTaskOp::URMA_SEND;
+}
+
 UbTransactionOpcode
 UbTrafficGen::GetUrmaTaskOpcode(RuntimeTaskOp op)
 {
@@ -403,9 +410,28 @@ UbTrafficGen::GetUrmaTaskOpcode(RuntimeTaskOp op)
                                      static_cast<uint8_t>(op) -
                                      static_cast<uint8_t>(RuntimeTaskOp::URMA_ATOMIC_COMPARE_SWAP));
     }
-    NS_ABORT_MSG_IF(op != RuntimeTaskOp::URMA_WRITE && op != RuntimeTaskOp::URMA_READ,
-                    "Runtime task is not an URMA operation");
-    return op == RuntimeTaskOp::URMA_READ ? UbTransactionOpcode::READ : UbTransactionOpcode::WRITE;
+    switch (op)
+    {
+    case RuntimeTaskOp::URMA_WRITE: return UbTransactionOpcode::WRITE;
+    case RuntimeTaskOp::URMA_READ: return UbTransactionOpcode::READ;
+    case RuntimeTaskOp::URMA_SEND: return UbTransactionOpcode::SEND;
+    case RuntimeTaskOp::URMA_SEND_WITH_IMMEDIATE: return UbTransactionOpcode::SEND_WITH_IMMEDIATE;
+    case RuntimeTaskOp::URMA_WRITE_WITH_IMMEDIATE: return UbTransactionOpcode::WRITE_WITH_IMMEDIATE;
+    case RuntimeTaskOp::URMA_WRITE_WITH_NOTIFY: return UbTransactionOpcode::WRITE_WITH_NOTIFY;
+    case RuntimeTaskOp::URMA_PREFETCH_TGT: return UbTransactionOpcode::PREFETCH_TGT;
+    case RuntimeTaskOp::URMA_WRITEBACK: return UbTransactionOpcode::WRITEBACK;
+    case RuntimeTaskOp::URMA_MANAGEMENT: return UbTransactionOpcode::MANAGEMENT;
+    case RuntimeTaskOp::URMA_WRITE_WITH_ATOMIC_STORE_ADD: return UbTransactionOpcode::WRITE_WITH_ATOMIC_STORE_ADD;
+    case RuntimeTaskOp::URMA_WRITE_WITH_REMOTE_SYNC: return UbTransactionOpcode::WRITE_WITH_REMOTE_SYNC;
+    case RuntimeTaskOp::URMA_WRITE_WITH_REMOTE_SYNC_WITH_BE: return UbTransactionOpcode::WRITE_WITH_REMOTE_SYNC_WITH_BE;
+    case RuntimeTaskOp::URMA_ATOMIC_STORE_WITH_RETURN_STATUS: return UbTransactionOpcode::ATOMIC_STORE_WITH_RETURN_STATUS;
+    case RuntimeTaskOp::URMA_ATOMIC_SYNC: return UbTransactionOpcode::ATOMIC_SYNC;
+    case RuntimeTaskOp::URMA_WRITE_WITH_BE: return UbTransactionOpcode::WRITE_WITH_BE;
+    case RuntimeTaskOp::URMA_WRITEBACK_WITH_BE: return UbTransactionOpcode::WRITEBACK_WITH_BE;
+    default: break;
+    }
+    NS_ABORT_MSG("Runtime task is not an URMA operation");
+    return UbTransactionOpcode::MAX_OPCODE;
 }
 
 void
@@ -480,6 +506,15 @@ UbTrafficGen::ParseOpLocked(std::string_view opType)
     if (opType == "URMA_WRITE") {
         return RuntimeTaskOp::URMA_WRITE;
     }
+    static constexpr std::pair<std::string_view, RuntimeTaskOp> extra[] = {
+        {"URMA_SEND", RuntimeTaskOp::URMA_SEND}, {"URMA_SEND_WITH_IMMEDIATE", RuntimeTaskOp::URMA_SEND_WITH_IMMEDIATE},
+        {"URMA_WRITE_WITH_IMMEDIATE", RuntimeTaskOp::URMA_WRITE_WITH_IMMEDIATE}, {"URMA_WRITE_WITH_NOTIFY", RuntimeTaskOp::URMA_WRITE_WITH_NOTIFY},
+        {"URMA_PREFETCH_TGT", RuntimeTaskOp::URMA_PREFETCH_TGT}, {"URMA_WRITEBACK", RuntimeTaskOp::URMA_WRITEBACK},
+        {"URMA_MANAGEMENT", RuntimeTaskOp::URMA_MANAGEMENT}, {"URMA_WRITE_WITH_ATOMIC_STORE_ADD", RuntimeTaskOp::URMA_WRITE_WITH_ATOMIC_STORE_ADD},
+        {"URMA_WRITE_WITH_REMOTE_SYNC", RuntimeTaskOp::URMA_WRITE_WITH_REMOTE_SYNC}, {"URMA_WRITE_WITH_REMOTE_SYNC_WITH_BE", RuntimeTaskOp::URMA_WRITE_WITH_REMOTE_SYNC_WITH_BE},
+        {"URMA_ATOMIC_STORE_WITH_RETURN_STATUS", RuntimeTaskOp::URMA_ATOMIC_STORE_WITH_RETURN_STATUS}, {"URMA_ATOMIC_SYNC", RuntimeTaskOp::URMA_ATOMIC_SYNC},
+        {"URMA_WRITE_WITH_BE", RuntimeTaskOp::URMA_WRITE_WITH_BE}, {"URMA_WRITEBACK_WITH_BE", RuntimeTaskOp::URMA_WRITEBACK_WITH_BE}};
+    for (const auto& [name, value] : extra) if (opType == name) return value;
     if (opType == "URMA_READ") {
         return RuntimeTaskOp::URMA_READ;
     }

@@ -1990,6 +1990,20 @@ UbTransaction::BuildTransactionResponse(uint32_t localTpn,
     uint32_t payload = request->HasTransactionResolved()
                            ? request->GetTransactionResolved().responsePayloadBytes
                            : 0;
+    UbTransactionResolved resolved;
+    if (request->HasTransactionResolved())
+    {
+        resolved = request->GetTransactionResolved();
+        if (result.responsePayloadBytes)
+        {
+            if (request->GetType() != UbTransactionOpcode::ATOMIC_SYNC ||
+                (*result.responsePayloadBytes != 0 &&
+                 *result.responsePayloadBytes != request->GetLogicalBytes()))
+                return nullptr;
+            payload = *result.responsePayloadBytes;
+            resolved.responsePayloadBytes = payload;
+        }
+    }
     if (!request->HasTransactionResolved() && request->GetType() == UbTransactionOpcode::READ)
     { responseOpcode = UbTransactionOpcode::READ_RESPONSE; payload = request->GetResponseBytes() == 0 ? request->GetSize() : request->GetResponseBytes(); }
     else if (!request->HasTransactionResolved() && IsAtomicTransaction(request->GetType()))
@@ -2002,7 +2016,7 @@ UbTransaction::BuildTransactionResponse(uint32_t localTpn,
     response->SetSrc(m_nodeId); response->SetDest(request->GetSrc()); response->SetSport(request->GetDport()); response->SetDport(request->GetSport());
     response->SetType(responseOpcode); response->SetSize(std::max(payload, 1u)); response->SetLogicalBytes(payload); response->SetPayloadBytes(payload); response->SetCarrierBytes(std::max(payload, 1u)); response->SetPriority(request->GetPriority());
     response->SetTaskId(request->GetTaskId()); response->SetWqeSize(request->GetWqeSize()); response->SetOrderType(request->GetOrderType()); response->SetJettyNum(request->GetOriginJettyNum()); response->SetTaMsn(0); response->SetTaSsn(request->GetRequestTassn()); response->SetSegmentKind(UbTransactionSegmentKind::RESPONSE); response->SetOriginJettyNum(request->GetOriginJettyNum()); response->SetRequestTassn(request->GetRequestTassn()); response->SetRequestOpcode(request->GetType()); response->SetResponseBytes(payload); response->SetRemoteAddress(request->GetRemoteAddress()); response->SetRemoteTokenId(request->GetRemoteTokenId()); response->SetNeedsTransactionResponse(false); response->SetTpn(localTpn); response->SetTransactionFields(request->GetTransactionFields());
-    if (request->HasTransactionResolved()) response->SetTransactionResolved(request->GetTransactionResolved());
+    if (request->HasTransactionResolved()) response->SetTransactionResolved(resolved);
     if (request->HasTransactionCorrelation()) response->SetTransactionCorrelation(request->GetTransactionCorrelation());
     if (request->HasResolvedTpIdentity()) response->SetResolvedTpIdentity(request->GetResolvedTpIdentity());
     return response;
@@ -2059,11 +2073,20 @@ bool UbTransaction::ProcessInboundTaResponse(Ptr<UbWqeSegment> response)
     {
         return false;
     }
+    if (request->GetType() == UbTransactionOpcode::ATOMIC_SYNC)
+    {
+        if (!request->GetTransactionFields().taskId || !response->GetTransactionFields().taskId ||
+            request->GetTransactionFields().taskId != response->GetTransactionFields().taskId)
+        {
+            return false;
+        }
+    }
     const uint32_t expectedPayload = request->HasTransactionResolved()
                                          ? request->GetTransactionResolved().responsePayloadBytes
                                          : request->GetResponseBytes();
-    if (response->GetPayloadBytes() != expectedPayload &&
-        !(expectedPayload == 0 && response->GetPayloadBytes() == 1))
+    if (!IsAcceptedResponsePayloadBytes(request->GetType(),
+                                        expectedPayload,
+                                        response->GetPayloadBytes()))
     {
         return false;
     }
@@ -2074,6 +2097,17 @@ bool UbTransaction::ProcessInboundTaResponse(Ptr<UbWqeSegment> response)
     }
     response->SetRequestOpcode(request->GetType());
     return ProcessWqeSegmentComplete(response);
+}
+
+std::optional<UbTransactionOpcode>
+UbTransaction::FindOutstandingRequestOpcode(uint32_t originJettyNum, uint32_t taskId) const
+{
+    const auto operation = m_operations.find({originJettyNum, taskId});
+    if (operation == m_operations.end() || operation->second.wqe == nullptr)
+    {
+        return std::nullopt;
+    }
+    return operation->second.wqe->GetType();
 }
 
 uint64_t UbTransaction::DeriveRemoteAddress(const Ptr<UbWqeSegment>& request) const

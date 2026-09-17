@@ -166,6 +166,8 @@ UbWqeSubmissionResult UbFunction::SubmitWqe(Ptr<UbWqe> wqe, uint32_t jettyNum)
         return {UbWqeSubmissionStatus::JETTY_BINDING_MISMATCH, {}};
     }
     UbTransactionFields fields = wqe->GetTransactionFields();
+    if (wqe->GetType() == UbTransactionOpcode::ATOMIC_SYNC && !fields.taskId)
+        fields.taskId = static_cast<uint16_t>(wqe->GetWqeId() & 0xffffu);
     if (!fields.memoryAccess && wqe->GetType() != UbTransactionOpcode::SEND &&
         wqe->GetType() != UbTransactionOpcode::SEND_WITH_IMMEDIATE &&
         wqe->GetType() != UbTransactionOpcode::MANAGEMENT)
@@ -258,6 +260,8 @@ UbFunction::SubmitCtpWqe(Ptr<UbWqe> wqe,
         return {UbWqeSubmissionStatus::JETTY_BINDING_MISMATCH, {}};
     }
     UbTransactionFields fields = wqe->GetTransactionFields();
+    if (wqe->GetType() == UbTransactionOpcode::ATOMIC_SYNC && !fields.taskId)
+        fields.taskId = static_cast<uint16_t>(wqe->GetWqeId() & 0xffffu);
     if (!fields.memoryAccess && wqe->GetType() != UbTransactionOpcode::SEND &&
         wqe->GetType() != UbTransactionOpcode::SEND_WITH_IMMEDIATE &&
         wqe->GetType() != UbTransactionOpcode::MANAGEMENT)
@@ -1314,6 +1318,13 @@ Ptr<UbWqeSegment> UbJetty::GenWqeSegment(Ptr<UbWqe> wqe, uint32_t segmentSize)
     segment->SetRequestOpcode(wqe->GetRequestOpcode());
     segment->SetResponseBytes(wqe->GetResponseBytes());
     segment->SetRemoteAddress(wqe->GetRemoteAddress());
+    if (wqe->GetType() == UbTransactionOpcode::WRITE_WITH_REMOTE_SYNC ||
+        wqe->GetType() == UbTransactionOpcode::WRITE_WITH_ATOMIC_STORE_ADD ||
+        wqe->GetType() == UbTransactionOpcode::WRITE_WITH_REMOTE_SYNC_WITH_BE)
+    {
+        const uint32_t offset = static_cast<uint32_t>(wqe->GetSize() - wqe->GetBytesLeft());
+        segment->SetRemoteAddress(wqe->GetRemoteAddress() + offset);
+    }
     segment->SetRemoteTokenId(wqe->GetRemoteTokenId());
     segment->SetNeedsTransactionResponse(wqe->NeedsTransactionResponse());
     segment->SetTransactionFields(wqe->GetTransactionFields());

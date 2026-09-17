@@ -92,6 +92,22 @@ UbTaHeaderPlan::GetExtensionBytes(uint32_t maetahBytes) const
     return bytes;
 }
 
+uint32_t
+UbTaHeaderPlan::GetExtensionBytes(uint32_t maetahBytes, const UbTransactionFields& fields) const
+{
+    uint32_t bytes = 0;
+    for (uint8_t index = 0; index < m_count; ++index)
+    {
+        const auto kind = m_kinds[index];
+        if (kind == K::MAETAH) { bytes += maetahBytes; continue; }
+        UbTransactionExtensionHeader header(kind);
+        if (kind == K::BEETAH && fields.byteEnable)
+            header.SetRaw(fields.byteEnable->bytes);
+        bytes += header.GetSerializedSize();
+    }
+    return bytes;
+}
+
 UbTaHeaderPresence
 DeclareRequestHeaderPresence(const UbTransactionRule& rule, const UbTransactionFields& fields)
 {
@@ -105,6 +121,8 @@ DeclareRequestHeaderPresence(const UbTransactionRule& rule, const UbTransactionF
                              LayoutContains(kinds, count, K::MTETAH);
     // The phase-one field model has no user-data value, so UD_FLG stays off.
     presence.userData = false;
+    if (fields.userData && LayoutContains(kinds, count, K::UDETAH))
+        presence.userData = true;
     return presence;
 }
 
@@ -163,6 +181,15 @@ WriteTransactionExtension(const UbTransactionFields& fields, UbTransactionExtens
         }
         header.SetRaw(fields.byteEnable->bytes);
         return true;
+    case K::UDETAH:
+        if (!fields.userData) return false;
+        header.SetUserData(fields.userData->type, fields.userData->opcode,
+                           fields.userData->offset, fields.userData->reserved);
+        return true;
+    case K::TAIDETAH:
+        if (!fields.taskId) return false;
+        header.SetTaskId(*fields.taskId);
+        return true;
     case K::MGMTETAH:
         if (!fields.management)
         {
@@ -206,6 +233,13 @@ ReadTransactionExtension(const UbTransactionExtensionHeader& header, UbTransacti
         break;
     case K::BEETAH:
         fields.byteEnable = UbByteEnableFields{header.GetRaw()};
+        break;
+    case K::UDETAH:
+        fields.userData = UbUserDataFields{header.GetUserDataType(), header.GetUserDataOpcode(),
+                                           header.GetUserDataOffset(), 0};
+        break;
+    case K::TAIDETAH:
+        fields.taskId = header.GetTaskId();
         break;
     case K::MGMTETAH:
         fields.management = header.GetManagement();

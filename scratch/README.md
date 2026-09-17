@@ -204,3 +204,23 @@ URMA/Jetty 的九种 ROI atomic 支持 RTP/CTP；参数、四种 CSV 表头与�
 python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_atomic_rtp'
 python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_atomic_ctp'
 ```
+
+## Transaction 扩展参考用例
+
+`scratch/2nodes_transaction_extensions/` 提供六个可独立加载的两节点 case，覆盖 25 种 URMA
+CSV 请求名称、本轮七种新操作和九种旧 atomic。`*-queue` 覆盖 0x1C/0x1D 与 N=1..64；
+`*-writes` 覆盖 0x19/0x1A、三种 BE 写与五档长度；`*-existing` 覆盖七种旧请求与九种 atomic。
+每例都有独立输入、`experiment-spec.md` 和运行时参数全量快照，串行执行：
+
+```bash
+python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_transaction_extensions/rtp-queue'
+python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_transaction_extensions/ctp-queue'
+python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_transaction_extensions/rtp-writes'
+python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_transaction_extensions/ctp-writes'
+python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_transaction_extensions/rtp-existing'
+python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_transaction_extensions/ctp-existing'
+```
+
+各例的 CSV 操作集合和模型边界见
+[transaction-extensions README](./2nodes_transaction_extensions/README.md) 与
+[Atomic 使用说明](../src/unified-bus/doc/atomic-support.md)。

@@ -125,6 +125,14 @@ struct UbByteEnableFields
     /** Raw byte-enable bitmap as it appears on the wire. */
     std::vector<uint8_t> bytes;
 };
+/** UDETAH fields used by the 2.1 remote-sync operations. */
+struct UbUserDataFields
+{
+    uint8_t type{0};
+    uint8_t opcode{0};
+    uint8_t offset{0};
+    uint8_t reserved{0};
+};
 /** Management command fields carried by MGMTETAH. */
 struct UbManagementFields
 {
@@ -169,6 +177,8 @@ struct UbTransactionFields
     std::optional<UbNotifyFields> notify;
     /** BEETAH: byte-enable bitmap; unsupported in this phase. */
     std::optional<UbByteEnableFields> byteEnable;
+    /** UDETAH type/opcode/offset fields. */
+    std::optional<UbUserDataFields> userData;
     /** MGMTETAH: management command fields. */
     std::optional<UbManagementFields> management;
 };
@@ -222,7 +232,12 @@ enum class UbTransactionOpcode : uint8_t {
     RESERVED_16 = 0x16,  // Disconnect SCID
     WRITEBACK = 0x17,   // WriteBackFull
     WRITEBACK_WITH_BE = 0x18,    // WriteBackPtl
-    MAX_OPCODE = 0x19               // 无效的TA OPCODE
+    WRITE_WITH_ATOMIC_STORE_ADD = 0x19,
+    WRITE_WITH_REMOTE_SYNC = 0x1A,
+    WRITE_WITH_REMOTE_SYNC_WITH_BE = 0x1B,
+    ATOMIC_STORE_WITH_RETURN_STATUS = 0x1C,
+    ATOMIC_SYNC = 0x1D,
+    MAX_OPCODE = 0x1E               // 无效的TA OPCODE
 };
 
 /**

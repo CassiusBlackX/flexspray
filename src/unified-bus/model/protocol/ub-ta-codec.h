@@ -68,6 +68,7 @@ class UbTaHeaderPlan
      * @param maetahBytes MAETAH size of the carrier format that will write this plan.
      */
     uint32_t GetExtensionBytes(uint32_t maetahBytes) const;
+    uint32_t GetExtensionBytes(uint32_t maetahBytes, const UbTransactionFields& fields) const;
 
   private:
     static UbTaHeaderPlan Build(const UbTransactionHeaderKind* kinds,
@@ -98,11 +99,10 @@ UbTaHeaderPresence DeclareRequestHeaderPresence(const UbTransactionRule& rule,
                                                 const UbTransactionFields& fields);
 
 /**
- * The header presence a compact (CTP) basic transaction header can express.
+ * The rule-owned header presence a compact (CTP) basic transaction header cannot flag.
  *
- * The compact basic header has no MT_EN bit, so MTETAH is carried whenever the rule lists it. Its
- * TK_VLD and UD_FLG bits are not settable or readable in this phase, so those headers are never
- * planned for the compact carrier.
+ * The compact basic header has no MT_EN bit, so MTETAH is carried whenever the rule lists it.
+ * UDETAH stays absent here; the compact UD flag supplies that presence at the carrier call site.
  */
 UbTaHeaderPresence CompactHeaderPresence(const UbTransactionRule& rule);
 

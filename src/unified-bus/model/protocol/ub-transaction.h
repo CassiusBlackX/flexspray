@@ -134,6 +134,8 @@ namespace ns3 {
         UbWorkOutcome outcome{UbWorkOutcome::COMPLETED};
         /** Protocol status of a completed execution. */
         UbTransactionProtocolStatus protocolStatus{UbTransactionProtocolStatus::SUCCESS};
+        /** Optional target-selected response payload length (currently Atomic_sync: 0 or N). */
+        std::optional<uint32_t> responsePayloadBytes;
     };
     /**
      * Completion callback handed to a registered target executor.
@@ -294,6 +296,17 @@ namespace ns3 {
         /** Current target execution delay. */
         Time GetTargetExecutionDelay() const { return m_targetExecutionDelay; }
         bool ProcessInboundTaResponse(Ptr<UbWqeSegment> response);
+        /**
+         * Return the request opcode of an outstanding operation.
+         *
+         * A transaction response's extension-header layout belongs to its request rule, not to the
+         * shared response opcode. The RTP carrier asks this before decoding a response whose opcode
+         * cannot distinguish the request layout (currently Atomic_sync's TAIDETAH echo). The
+         * initiator jetty and WQE/task id identify the operation; every segment of one WQE carries
+         * the same request opcode, so the segment TASSN is not needed here.
+         */
+        std::optional<UbTransactionOpcode> FindOutstandingRequestOpcode(uint32_t originJettyNum,
+                                                                        uint32_t taskId) const;
         uint64_t DeriveRemoteAddressForTest(const Ptr<UbWqeSegment>& request) const
         {
             return DeriveRemoteAddress(request);

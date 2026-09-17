@@ -10,6 +10,11 @@ constexpr K WB[]={K::BTAH,K::UDETAH,K::MAETAH,K::BEETAH};
 constexpr K N[]={K::BTAH,K::UDETAH,K::MAETAH,K::NTFETAH};
 constexpr K R[]={K::BTAH,K::UDETAH,K::MAETAH};
 constexpr K A[]={K::BTAH,K::UDETAH,K::MAETAH};
+constexpr K QUEUE[]={K::BTAH,K::MAETAH};
+constexpr K RS[]={K::BTAH,K::UDETAH,K::MAETAH};
+constexpr K RSB[]={K::BTAH,K::UDETAH,K::MAETAH,K::BEETAH};
+constexpr K AS[]={K::BTAH,K::UDETAH,K::MAETAH,K::TAIDETAH};
+constexpr K ASR[]={K::ATAH,K::TAIDETAH};
 constexpr K SND[]={K::BTAH,K::UDETAH,K::MTETAH};
 constexpr K SIM[]={K::BTAH,K::UDETAH,K::MTETAH,K::IMMETAH};
 constexpr K WI[]={K::BTAH,K::UDETAH,K::MTETAH,K::MAETAH,K::IMMETAH};
@@ -22,11 +27,13 @@ constexpr bool AtomicOpcode(O o)
 }
 constexpr UbTransactionOpcode ResponseFor(O o)
 {
-    return o == O::READ ? O::READ_RESPONSE : (AtomicOpcode(o) ? O::ATOMIC_RESPONSE : O::TAACK);
+    return o == O::READ ? O::READ_RESPONSE
+                        : (AtomicOpcode(o) || o == O::ATOMIC_SYNC ? O::ATOMIC_RESPONSE
+                                                                    : O::TAACK);
 }
 constexpr const K* ResponseHeadersFor(O o)
 {
-    return o == O::READ ? RR : (AtomicOpcode(o) ? AR : ACK);
+    return o == O::ATOMIC_SYNC ? ASR : (o == O::READ ? RR : (AtomicOpcode(o) ? AR : ACK));
 }
 constexpr UbTransactionRule Q(O o,
                               T t,
@@ -57,7 +64,7 @@ constexpr UbTransactionRule Resp(O o, T t, uint32_t min, uint32_t max)
 {
     return {o, t, S::RESPONSE, ACK, 1, min, max, min != 0, false, o, nullptr, 0, 0, 0, false};
 }
-constexpr std::array<UbTransactionRule,21> RULES={{
+constexpr std::array<UbTransactionRule,28> RULES={{
  Q(O::SEND,T::MESSAGE,SND,std::size(SND),true),Q(O::SEND_WITH_IMMEDIATE,T::MESSAGE,SIM,std::size(SIM),true),
  Q(O::WRITE,T::MEMORY,W,std::size(W),true),Q(O::WRITE_WITH_IMMEDIATE,T::MESSAGE,WI,std::size(WI),true),
  Q(O::WRITE_WITH_NOTIFY,T::MEMORY,N,std::size(N),true),Q(O::READ,T::MEMORY,R,std::size(R)),
@@ -69,7 +76,14 @@ constexpr std::array<UbTransactionRule,21> RULES={{
  {O::READ_RESPONSE,T::MEMORY,S::RESPONSE,RR,std::size(RR),1,UINT32_MAX,true,false},{O::ATOMIC_RESPONSE,T::MEMORY,S::RESPONSE,AR,std::size(AR),1,UB_MTU_BYTE,true,false},
  Q(O::PREFETCH_TGT,T::MAINTENANCE,P,std::size(P)),
  Q(O::WRITEBACK,T::MEMORY,W,std::size(W),true),
- Q(O::MANAGEMENT,T::MANAGEMENT,M,std::size(M),false,false,1024)}};
+ Q(O::MANAGEMENT,T::MANAGEMENT,M,std::size(M),false,false,1024),
+ Q(O::WRITE_WITH_BE,T::MEMORY,WB,std::size(WB),true,true,1024),
+ Q(O::WRITEBACK_WITH_BE,T::MEMORY,WB,std::size(WB),true,true,1024),
+ Q(O::WRITE_WITH_ATOMIC_STORE_ADD,T::MEMORY,N,std::size(N),true),
+ Q(O::WRITE_WITH_REMOTE_SYNC,T::MEMORY,RS,std::size(RS),true),
+ Q(O::WRITE_WITH_REMOTE_SYNC_WITH_BE,T::MEMORY,RSB,std::size(RSB),true,true,1024),
+ Q(O::ATOMIC_STORE_WITH_RETURN_STATUS,T::MEMORY,QUEUE,std::size(QUEUE),true,true,UB_MTU_BYTE),
+ {O::ATOMIC_SYNC,T::MEMORY,S::REQUEST,AS,std::size(AS),1,UB_MTU_BYTE,true,true,O::ATOMIC_RESPONSE,ASR,std::size(ASR),0,UB_MTU_BYTE,true}}};
 const UbTransactionRule* Lookup(O o){for(const auto&r:RULES)if(r.opcode==o)return &r;return nullptr;}
 
 /**
@@ -99,6 +113,23 @@ void ApplyRequiredFieldDefaults(O opcode, UbTransactionFields& fields, uint32_t 
     case O::WRITE_WITH_NOTIFY:
         if (!fields.notify)
             fields.notify = UbNotifyFields{};
+        break;
+    case O::WRITE_WITH_ATOMIC_STORE_ADD:
+        if (!fields.notify) fields.notify = UbNotifyFields{};
+        break;
+    case O::WRITE_WITH_REMOTE_SYNC:
+    case O::WRITE_WITH_REMOTE_SYNC_WITH_BE:
+        if (!fields.userData) fields.userData = UbUserDataFields{2, 0, 0, 0};
+        if (opcode == O::WRITE_WITH_REMOTE_SYNC_WITH_BE && !fields.byteEnable)
+            fields.byteEnable = UbByteEnableFields{std::vector<uint8_t>(payloadBytes / 8, 0xff)};
+        break;
+    case O::WRITE_WITH_BE:
+    case O::WRITEBACK_WITH_BE:
+        if (!fields.byteEnable)
+            fields.byteEnable = UbByteEnableFields{std::vector<uint8_t>(payloadBytes / 8, 0xff)};
+        break;
+    case O::ATOMIC_SYNC:
+        if (!fields.taskId) fields.taskId = 0;
         break;
     case O::MANAGEMENT:
         if (!fields.management)
@@ -131,6 +162,29 @@ bool CheckRuleLengths(const UbTransactionRule& rule, uint32_t logicalBytes, uint
         result.message = "logical transaction length must be positive";
         return false;
     }
+    const auto op = rule.opcode;
+    if (op == O::ATOMIC_STORE_WITH_RETURN_STATUS || op == O::ATOMIC_SYNC)
+    {
+        if (logicalBytes == 0 || logicalBytes > 64 || (logicalBytes & (logicalBytes - 1)) != 0 ||
+            payloadBytes != logicalBytes)
+        {
+            result.code = UbTransactionErrorCode::INVALID_LENGTH;
+            result.message = "queue transaction width must be a power of two from 1 through 64 and P=N";
+            return false;
+        }
+    }
+    if (op == O::WRITE_WITH_BE || op == O::WRITEBACK_WITH_BE ||
+        op == O::WRITE_WITH_REMOTE_SYNC_WITH_BE)
+    {
+        if (payloadBytes != logicalBytes ||
+            !(logicalBytes == 64 || logicalBytes == 128 || logicalBytes == 256 ||
+              logicalBytes == 512 || logicalBytes == 1024))
+        {
+            result.code = UbTransactionErrorCode::INVALID_LENGTH;
+            result.message = "byte-enable writes require 64/128/256/512/1024 bytes in one packet";
+            return false;
+        }
+    }
     return true;
 }
 
@@ -161,8 +215,30 @@ bool CheckRequiredFields(UbTransactionOpcode opcode, const UbTransactionFields& 
         if (missing.empty() && !fields.notify)
             missing = "notify";
         break;
+    case O::WRITE_WITH_ATOMIC_STORE_ADD:
+        requireMemoryAccess();
+        if (missing.empty() && !fields.notify) missing = "notify";
+        break;
+    case O::WRITE_WITH_REMOTE_SYNC:
+        requireMemoryAccess();
+        if (missing.empty() && !fields.userData) missing = "userData";
+        break;
+    case O::WRITE_WITH_REMOTE_SYNC_WITH_BE:
+        requireMemoryAccess();
+        if (missing.empty() && !fields.userData) missing = "userData";
+        if (missing.empty() && !fields.byteEnable) missing = "byteEnable";
+        break;
+    case O::ATOMIC_STORE_WITH_RETURN_STATUS:
+        requireMemoryAccess();
+        break;
+    case O::ATOMIC_SYNC:
+        requireMemoryAccess();
+        if (missing.empty() && !fields.taskId) missing = "taskId";
+        break;
     case O::WRITE_WITH_BE:
     case O::WRITEBACK_WITH_BE:
+        requireMemoryAccess();
+        if (missing.empty() && !fields.byteEnable) missing = "byteEnable";
         break;
     case O::MANAGEMENT:
         if (!fields.management)
@@ -304,6 +380,36 @@ UbTransactionValidationResult ValidateTransactionRequest(const UbTransactionRequ
     {
         return result;
     }
+    if (result.fields.memoryAccess &&
+        (request.opcode == O::ATOMIC_STORE_WITH_RETURN_STATUS || request.opcode == O::ATOMIC_SYNC) &&
+        (result.fields.memoryAccess->address % request.logicalBytes != 0))
+    {
+        result.code = UbTransactionErrorCode::INVALID_LENGTH;
+        result.field = "memoryAccess.address";
+        result.message = "queue transaction address must be aligned to N";
+        return result;
+    }
+    if ((request.opcode == O::WRITE_WITH_BE || request.opcode == O::WRITEBACK_WITH_BE ||
+         request.opcode == O::WRITE_WITH_REMOTE_SYNC_WITH_BE) && result.fields.byteEnable &&
+        result.fields.byteEnable->bytes.size() != request.payloadBytes / 8)
+    {
+        result.code = UbTransactionErrorCode::INVALID_LENGTH;
+        result.field = "byteEnable";
+        result.message = "byte-enable bitmap length must equal payloadBytes/8";
+        return result;
+    }
+    if (request.opcode == O::WRITE_WITH_REMOTE_SYNC ||
+        request.opcode == O::WRITE_WITH_REMOTE_SYNC_WITH_BE)
+    {
+        const auto& ud = *result.fields.userData;
+        if (ud.type != 2 || ud.opcode != 0 || ud.offset > 7)
+        {
+            result.code = UbTransactionErrorCode::INVALID_LENGTH;
+            result.field = "userData";
+            result.message = "remote-sync UDETAH requires Type=2, UD_Opcode=0 and Offset 0..7";
+            return result;
+        }
+    }
     uint32_t requestPayloadBytes = request.payloadBytes;
     uint32_t responsePayloadBytes = request.opcode == O::READ ? request.logicalBytes : 0;
     if (AtomicOpcode(request.opcode))
@@ -314,7 +420,14 @@ UbTransactionValidationResult ValidateTransactionRequest(const UbTransactionRequ
         {
             return result;
         }
-        responsePayloadBytes = request.opcode == O::ATOMIC_STORE ? 0 : request.logicalBytes;
+        responsePayloadBytes = (request.opcode == O::ATOMIC_STORE ||
+                                request.opcode == O::ATOMIC_STORE_WITH_RETURN_STATUS)
+                                   ? 0
+                                   : request.logicalBytes;
+    }
+    else if (request.opcode == O::ATOMIC_SYNC)
+    {
+        responsePayloadBytes = request.logicalBytes;
     }
     result.resolved.type = rule->type;
     result.resolved.requestOpcode = request.opcode;
@@ -330,5 +443,17 @@ bool IsAtomicTransaction(UbTransactionOpcode opcode)
 {
     return opcode >= O::ATOMIC_COMPARE_SWAP && opcode <= O::ATOMIC_FETCH_XOR;
 }
+
+bool IsAcceptedResponsePayloadBytes(UbTransactionOpcode requestOpcode,
+                                    uint32_t expectedPayloadBytes,
+                                    uint32_t actualPayloadBytes)
+{
+    if (requestOpcode == UbTransactionOpcode::ATOMIC_SYNC)
+    {
+        return actualPayloadBytes == 0 || actualPayloadBytes == expectedPayloadBytes;
+    }
+    return actualPayloadBytes == expectedPayloadBytes;
+}
+
 const char* ToString(UbTransactionType t){switch(t){case T::MEMORY:return "Memory";case T::MESSAGE:return "Message";case T::MAINTENANCE:return "Maintenance";case T::MANAGEMENT:return "Management";}return "Unknown";}
 }

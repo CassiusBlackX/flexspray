@@ -77,7 +77,21 @@ public:
         URMA_ATOMIC_FETCH_SUB,
         URMA_ATOMIC_FETCH_AND,
         URMA_ATOMIC_FETCH_OR,
-        URMA_ATOMIC_FETCH_XOR
+        URMA_ATOMIC_FETCH_XOR,
+        URMA_SEND,
+        URMA_SEND_WITH_IMMEDIATE,
+        URMA_WRITE_WITH_IMMEDIATE,
+        URMA_WRITE_WITH_NOTIFY,
+        URMA_PREFETCH_TGT,
+        URMA_WRITEBACK,
+        URMA_MANAGEMENT,
+        URMA_WRITE_WITH_ATOMIC_STORE_ADD,
+        URMA_WRITE_WITH_REMOTE_SYNC,
+        URMA_WRITE_WITH_REMOTE_SYNC_WITH_BE,
+        URMA_ATOMIC_STORE_WITH_RETURN_STATUS,
+        URMA_ATOMIC_SYNC,
+        URMA_WRITE_WITH_BE,
+        URMA_WRITEBACK_WITH_BE
     };
 
     struct RuntimeTask
@@ -104,6 +118,7 @@ public:
                                    std::string_view subOperation,
                                    std::string_view requestPayloadBytes);
     static bool IsAtomicTask(RuntimeTaskOp op);
+    static bool IsUrmaTask(RuntimeTaskOp op);
     static UbTransactionOpcode GetUrmaTaskOpcode(RuntimeTaskOp op);
 
     struct TaskCleanupInfo

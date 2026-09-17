@@ -523,7 +523,9 @@ Recommendation: Generate `traffic.csv` (e.g., all-to-all, RDMA-like patterns, co
 - `taskId` — integer ID (unique per file).
 - `sourceNode` / `destNode` — end-host node IDs.
 - `dataSize(Byte)` — transfer size; for atomic it is operand width N, not request Payload P.
-- `opType` — e.g., `URMA_WRITE`, `URMA_READ`, `MEM_STORE`, … (supported by `UbApp`/API LDST layer).
+- `opType` — e.g., `URMA_WRITE`, `URMA_READ`, `MEM_STORE`, …; the URMA CSV surface accepts the
+  nine `URMA_ATOMIC_*` names plus 16 other URMA request names (see
+  [transaction-extension references](./2nodes_transaction_extensions/README.md)).
 - `priority` — 0..(UB_PRIORITY_NUM-1).
 - `delay` — schedule offset relative to simulation start (Time).
 - `phaseId` — integer phase tag; tasks with the same phase can run concurrently.
@@ -537,6 +539,22 @@ and forbidden for other operations. `requestPayloadBytes` is optional P in 1..40
 CAS=2N, other atomic=N. N is 1/2/4/8/16/32/64; Store responds with zero Payload, others with N.
 Both cells must be empty for non-atomic rows. Suboperations stay local; no actual values or address
 contention are modeled. CTP requires existing FlowTag metadata and preserves its compact format.
+
+`scratch/2nodes_transaction_extensions/` provides six two-node references that split the coverage
+by transport and operation family: `*-queue` covers the 0x1C/0x1D queue operations over
+N=1/2/4/8/16/32/64, `*-writes` covers 0x19/0x1A plus the three BE writes at
+64/128/256/512/1024 bytes, and `*-existing` covers the seven older request names plus the nine
+atomics. Each directory has its own inputs, `experiment-spec.md`, and full runtime parameter
+snapshot. Run them serially from the repository root:
+
+```bash
+python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_transaction_extensions/rtp-queue'
+python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_transaction_extensions/ctp-queue'
+python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_transaction_extensions/rtp-writes'
+python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_transaction_extensions/ctp-writes'
+python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_transaction_extensions/rtp-existing'
+python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_transaction_extensions/ctp-existing'
+```
 
 Numeric field rules:
 - `taskId`, `sourceNode`, `destNode`, `dataSize(Byte)`, `priority`, `phaseId`, and each `dependOnPhases` token are parsed as unsigned decimal integers.

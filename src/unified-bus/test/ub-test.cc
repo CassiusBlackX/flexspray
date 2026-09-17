@@ -37817,6 +37817,128 @@ class UbAtomicCsvInputTest : public TestCase
     }
 };
 
+class UbUrmaCsvOperationMappingTest : public TestCase
+{
+  public:
+    UbUrmaCsvOperationMappingTest()
+        : TestCase("URMA - all CSV operation names map through value and view readers")
+    {
+    }
+
+    void DoRun() override
+    {
+        namespace fs = std::filesystem;
+        const auto path =
+            fs::temp_directory_path() /
+            ("ub-urma-operation-map-" +
+             std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        struct Expected
+        {
+            const char* name;
+            UbTransactionOpcode opcode;
+            uint32_t dataSize;
+            const char* subOperation;
+        };
+        const std::array<Expected, 25> expected = {{
+            {"URMA_WRITE", UbTransactionOpcode::WRITE, 64, ""},
+            {"URMA_READ", UbTransactionOpcode::READ, 64, ""},
+            {"URMA_ATOMIC_COMPARE_SWAP", UbTransactionOpcode::ATOMIC_COMPARE_SWAP, 8, ""},
+            {"URMA_ATOMIC_SWAP", UbTransactionOpcode::ATOMIC_SWAP, 8, ""},
+            {"URMA_ATOMIC_STORE", UbTransactionOpcode::ATOMIC_STORE, 8, "ADD"},
+            {"URMA_ATOMIC_LOAD", UbTransactionOpcode::ATOMIC_LOAD, 8, "ADD"},
+            {"URMA_ATOMIC_FETCH_ADD", UbTransactionOpcode::ATOMIC_FETCH_ADD, 8, ""},
+            {"URMA_ATOMIC_FETCH_SUB", UbTransactionOpcode::ATOMIC_FETCH_SUB, 8, ""},
+            {"URMA_ATOMIC_FETCH_AND", UbTransactionOpcode::ATOMIC_FETCH_AND, 8, ""},
+            {"URMA_ATOMIC_FETCH_OR", UbTransactionOpcode::ATOMIC_FETCH_OR, 8, ""},
+            {"URMA_ATOMIC_FETCH_XOR", UbTransactionOpcode::ATOMIC_FETCH_XOR, 8, ""},
+            {"URMA_SEND", UbTransactionOpcode::SEND, 64, ""},
+            {"URMA_SEND_WITH_IMMEDIATE", UbTransactionOpcode::SEND_WITH_IMMEDIATE, 64, ""},
+            {"URMA_WRITE_WITH_IMMEDIATE", UbTransactionOpcode::WRITE_WITH_IMMEDIATE, 64, ""},
+            {"URMA_WRITE_WITH_NOTIFY", UbTransactionOpcode::WRITE_WITH_NOTIFY, 64, ""},
+            {"URMA_PREFETCH_TGT", UbTransactionOpcode::PREFETCH_TGT, 64, ""},
+            {"URMA_WRITEBACK", UbTransactionOpcode::WRITEBACK, 64, ""},
+            {"URMA_MANAGEMENT", UbTransactionOpcode::MANAGEMENT, 64, ""},
+            {"URMA_WRITE_WITH_ATOMIC_STORE_ADD",
+             UbTransactionOpcode::WRITE_WITH_ATOMIC_STORE_ADD,
+             64,
+             ""},
+            {"URMA_WRITE_WITH_REMOTE_SYNC", UbTransactionOpcode::WRITE_WITH_REMOTE_SYNC, 64, ""},
+            {"URMA_WRITE_WITH_REMOTE_SYNC_WITH_BE",
+             UbTransactionOpcode::WRITE_WITH_REMOTE_SYNC_WITH_BE,
+             64,
+             ""},
+            {"URMA_ATOMIC_STORE_WITH_RETURN_STATUS",
+             UbTransactionOpcode::ATOMIC_STORE_WITH_RETURN_STATUS,
+             8,
+             ""},
+            {"URMA_ATOMIC_SYNC", UbTransactionOpcode::ATOMIC_SYNC, 8, ""},
+            {"URMA_WRITE_WITH_BE", UbTransactionOpcode::WRITE_WITH_BE, 64, ""},
+            {"URMA_WRITEBACK_WITH_BE", UbTransactionOpcode::WRITEBACK_WITH_BE, 64, ""},
+        }};
+
+        {
+            std::ofstream file(path);
+            file << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
+                    "dependOnPhases,atomicSubOperation,requestPayloadBytes\n";
+            for (uint32_t index = 0; index < expected.size(); ++index)
+            {
+                const auto& item = expected[index];
+                file << index << ",0,1," << item.dataSize << "," << item.name
+                     << ",7,0ns,0,," << item.subOperation << ",\n";
+            }
+        }
+
+        const auto check = [&](uint32_t index,
+                               std::string_view opType,
+                               std::string_view subOperation,
+                               std::string_view requestPayloadBytes) {
+            const auto& item = expected.at(index);
+            UbTrafficGen::RuntimeTask task;
+            task.taskId = index;
+            task.dataSize = item.dataSize;
+            UbTrafficGen::ParseTaskOperation(task, opType, subOperation, requestPayloadBytes);
+            NS_TEST_ASSERT_MSG_EQ(static_cast<uint8_t>(UbTrafficGen::GetUrmaTaskOpcode(task.op)),
+                                  static_cast<uint8_t>(item.opcode),
+                                  "CSV opType maps to the exact request opcode");
+            NS_TEST_ASSERT_MSG_EQ(UbTrafficGen::IsUrmaTask(task.op),
+                                  true,
+                                  "every accepted CSV URMA name reaches the URMA dispatch");
+            NS_TEST_ASSERT_MSG_EQ(std::string(opType), std::string(item.name),
+                                  "reader preserves the operation name");
+        };
+
+        const auto rows = UbUtils::Get()->LoadTrafficConfig(path.string());
+        NS_TEST_ASSERT_MSG_EQ(rows.size(), expected.size(),
+                              "value reader loads every URMA operation row");
+        for (uint32_t index = 0; index < rows.size(); ++index)
+        {
+            const auto& row = rows[index];
+            check(index, row.opType, row.atomicSubOperation, row.requestPayloadBytes);
+        }
+
+        uint32_t seen = 0;
+        UbUtils::Get()->ForEachTrafficRecordView(
+            path.string(),
+            [&](const TrafficRecordView& row) {
+                check(seen, row.opType, row.atomicSubOperation, row.requestPayloadBytes);
+                ++seen;
+            });
+        NS_TEST_ASSERT_MSG_EQ(seen, expected.size(),
+                              "view reader loads every URMA operation row");
+        for (const auto op : {UbTrafficGen::RuntimeTaskOp::UNKNOWN,
+                              UbTrafficGen::RuntimeTaskOp::MEM_STORE,
+                              UbTrafficGen::RuntimeTaskOp::MEM_LOAD,
+                              UbTrafficGen::RuntimeTaskOp::COMPUTE,
+                              UbTrafficGen::RuntimeTaskOp::LOCAL_READY})
+        {
+            NS_TEST_ASSERT_MSG_EQ(UbTrafficGen::IsUrmaTask(op),
+                                  false,
+                                  "non-URMA workload stages stay out of the URMA dispatch");
+        }
+        fs::remove(path);
+    }
+};
+
 #ifndef _WIN32
 class UbAtomicCsvRejectionTest : public TestCase
 {
@@ -37968,3 +38090,321 @@ class UbAtomicTestSuite : public TestSuite
 };
 
 static UbAtomicTestSuite g_ubAtomicTestSuite;
+
+/** Feature acceptance reuses the existing real RTP/CTP topology and public submission seam. */
+class UbTransactionExtensionsRoundTripTest : public TestCase
+{
+  public:
+    explicit UbTransactionExtensionsRoundTripTest(bool ctp)
+        : TestCase(std::string("transaction extensions complete through ") + (ctp ? "CTP" : "RTP")),
+          m_ctp(ctp)
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Config::Reset();
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(false));
+        auto topo = BuildLocalTpTopology();
+        m_source = topo.sender->GetId();
+        auto controller = topo.sender->GetObject<UbController>();
+        auto function = controller->GetUbFunction();
+        auto transaction = controller->GetUbTransaction();
+        function->CreateJetty(m_source, topo.receiver->GetId(), kUrmaWriteRegressionJettyNum);
+        auto jetty = function->GetJetty(kUrmaWriteRegressionJettyNum);
+        jetty->SetClientCallback(MakeCallback(&UbTransactionExtensionsRoundTripTest::OnComplete, this));
+        if (!m_ctp)
+        {
+            InstallStaticTpPair(topo);
+            NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(m_source, topo.receiver->GetId(),
+                                                          kUrmaWriteRegressionJettyNum, false,
+                                                          {kUrmaWriteRegressionSenderTpn}),
+                                  true, "reuse the existing RTP pair");
+        }
+        auto target = topo.receiver->GetObject<UbController>()->GetUbTransaction();
+        target->SetTargetExecutor(UbTargetExecutor(
+            [this](Ptr<const UbWqeSegment> request, const UbTransactionRule&, UbTargetCompletion done) {
+                const auto task = request->GetTaskId();
+                ++m_executions[task];
+                NS_TEST_EXPECT_MSG_EQ(request->GetLogicalBytes(), m_sizes.at(task), "target logical N");
+                NS_TEST_EXPECT_MSG_EQ(request->GetPayloadBytes(), m_sizes.at(task), "target request P=N");
+                if (request->GetType() == UbTransactionOpcode::WRITE_WITH_BE ||
+                    request->GetType() == UbTransactionOpcode::WRITEBACK_WITH_BE ||
+                    request->GetType() == UbTransactionOpcode::WRITE_WITH_REMOTE_SYNC_WITH_BE)
+                {
+                    const auto& fields = request->GetTransactionFields();
+                    NS_TEST_EXPECT_MSG_EQ(fields.byteEnable.has_value(), true,
+                                          "target receives BEETAH");
+                    NS_TEST_EXPECT_MSG_EQ(fields.byteEnable->bytes.size(), m_sizes.at(task) / 8,
+                                          "target receives BEETAH at P/8");
+                    NS_TEST_EXPECT_MSG_EQ(fields.byteEnable->bytes.front(), 1u,
+                                          "target receives the first non-default BE byte");
+                    NS_TEST_EXPECT_MSG_EQ(fields.byteEnable->bytes.back(),
+                                          static_cast<uint8_t>(((m_sizes.at(task) / 8) - 1) * 3 + 1),
+                                          "target receives the last non-default BE byte");
+                    if (request->GetType() == UbTransactionOpcode::WRITE_WITH_REMOTE_SYNC_WITH_BE)
+                    {
+                        NS_TEST_EXPECT_MSG_EQ(fields.userData.has_value(), true,
+                                              "target receives remote-sync UDETAH");
+                        NS_TEST_EXPECT_MSG_EQ(fields.userData->type, 2u,
+                                              "remote-sync UDETAH retains Type=2");
+                    }
+                }
+                Simulator::Schedule(NanoSeconds(200), [done]() { done(UbWorkExecutionResult{}); });
+            }));
+        topo.senderPort->SetFaultCallBack(MakeCallback(&UbTransactionExtensionsRoundTripTest::OnWire, this));
+        topo.receiverPort->SetFaultCallBack(MakeCallback(&UbTransactionExtensionsRoundTripTest::OnWire, this));
+        const UbCtpEntityKey key{1, topo.receiver->GetId(), 1, 7};
+        for (uint32_t n : {1u, 2u, 4u, 8u, 16u, 32u, 64u})
+        {
+            const uint32_t task = m_sizes.size();
+            m_sizes.push_back(n);
+            auto wqe = function->CreateWqe(m_source, topo.receiver->GetId(), n, task,
+                                           UbTransactionOpcode::ATOMIC_STORE_WITH_RETURN_STATUS);
+            wqe->SetSport(0);
+            wqe->SetDport(CTP_WILDCARD_PORT);
+            wqe->SetPriority(7);
+            const auto result = m_ctp ? function->SubmitCtpWqe(wqe, kUrmaWriteRegressionJettyNum, key)
+                                     : function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum);
+            NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(result.status), 0u, "public API admission");
+        }
+        for (const auto opcode : {UbTransactionOpcode::WRITE_WITH_BE,
+                                  UbTransactionOpcode::WRITEBACK_WITH_BE,
+                                  UbTransactionOpcode::WRITE_WITH_REMOTE_SYNC_WITH_BE})
+        {
+            for (const uint32_t bytes : {64u, 128u, 256u, 512u, 1024u})
+            {
+                const uint32_t task = m_sizes.size();
+                m_sizes.push_back(bytes);
+                UbTransactionFields fields;
+                fields.byteEnable = UbByteEnableFields{std::vector<uint8_t>(bytes / 8, 0)};
+                for (uint32_t index = 0; index < bytes / 8; ++index)
+                {
+                    fields.byteEnable->bytes[index] = static_cast<uint8_t>(index * 3 + 1);
+                }
+                if (opcode == UbTransactionOpcode::WRITE_WITH_REMOTE_SYNC_WITH_BE)
+                {
+                    fields.userData = UbUserDataFields{2, 0, 0, 0};
+                }
+                auto wqe = function->CreateWqe(m_source, topo.receiver->GetId(), bytes, task, opcode);
+                wqe->SetTransactionFields(fields);
+                wqe->SetSport(0);
+                wqe->SetDport(CTP_WILDCARD_PORT);
+                wqe->SetPriority(7);
+                const auto result = m_ctp ? function->SubmitCtpWqe(wqe, kUrmaWriteRegressionJettyNum, key)
+                                          : function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum);
+                NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(result.status), 0u,
+                                      "byte-enable API admission");
+            }
+        }
+        if (m_ctp)
+        {
+            controller->GetCtpTransportService()->StartJetty(jetty, key);
+        }
+        Simulator::Stop(MicroSeconds(100));
+        Simulator::Run();
+        for (uint32_t task = 0; task < m_sizes.size(); ++task)
+        {
+            NS_TEST_EXPECT_MSG_EQ(m_executions[task], 1u, "one execution task=" << task);
+            NS_TEST_EXPECT_MSG_EQ(m_responses[task], 1u, "one real response task=" << task);
+            NS_TEST_EXPECT_MSG_EQ(m_completions[task], 1u, "one task completion task=" << task);
+        }
+        NS_TEST_EXPECT_MSG_EQ(transaction->GetActiveOperationCount(), 0u, "operations retire");
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+    void OnComplete(uint32_t task, uint32_t)
+    {
+        NS_TEST_EXPECT_MSG_EQ(m_responses[task], 1u, "only a real TA response completes a task");
+        ++m_completions[task];
+    }
+
+    int OnWire(Ptr<Packet> packet, uint32_t node, uint32_t portId, Ptr<UbPort> port)
+    {
+        if (node != m_source)
+        {
+            auto copy = packet->Copy();
+            bool data = true;
+            if (!m_ctp)
+            {
+                RetransFaultPacketInfo info;
+                data = CreateObject<UbFault>()->TryGetRetransFaultPacketInfo(packet, node, portId, 0, info) &&
+                       info.packetType == RetransFaultPacketType::DATA;
+            }
+            UbDatalinkPacketHeader dl;
+            copy->RemoveHeader(dl);
+            if (data && m_ctp && dl.GetConfig() == static_cast<uint8_t>(UbDatalinkHeaderConfig::PACKET_CNA16))
+            {
+                UbCna16NetworkHeader network;
+                UbCtpHeader ctp;
+                UbCompactUpiHeader upi;
+                UbCompactEidHeader eid;
+                UbCompactAckTransactionHeader ack;
+                copy->RemoveHeader(network);
+                copy->RemoveHeader(ctp);
+                copy->RemoveHeader(upi);
+                copy->RemoveHeader(eid);
+                copy->RemoveHeader(ack);
+                NS_TEST_EXPECT_MSG_EQ(ack.GetUbTransactionOpcode(), 0x11u, "Store status uses TAACK");
+            }
+            else if (data && !m_ctp)
+            {
+                UbIpBasedNetworkHeader network;
+                Ipv4Header ip;
+                UdpHeader udp;
+                UbTransportHeader tp;
+                UbAckTransactionHeader ack;
+                copy->RemoveHeader(network);
+                copy->RemoveHeader(ip);
+                copy->RemoveHeader(udp);
+                copy->RemoveHeader(tp);
+                copy->RemoveHeader(ack);
+                NS_TEST_EXPECT_MSG_EQ(ack.GetUbTransactionOpcode(), 0x11u, "Store status uses TAACK");
+            }
+            else
+            {
+                data = false;
+            }
+            if (data)
+            {
+                UbFlowTag flow;
+                copy->PeekPacketTag(flow);
+                NS_TEST_EXPECT_MSG_EQ(copy->GetSize(), 0u, "TAACK has no placeholder payload byte");
+                ++m_responses[flow.GetFlowId()];
+            }
+        }
+        port->TransmitPacket(packet, Time(0));
+        return 0;
+    }
+
+    bool m_ctp;
+    uint32_t m_source{0};
+    std::vector<uint32_t> m_sizes;
+    std::map<uint32_t, uint32_t> m_executions, m_responses, m_completions;
+};
+
+/**
+ * Atomic_sync is the one request whose response adds a TAIDETAH echo on top of the shared
+ * ATOMIC_RESPONSE opcode. Exercise both the default N response and the explicit zero response
+ * through the real carrier and completion path.
+ */
+class UbAtomicSyncRoundTripTest : public TestCase
+{
+  public:
+    explicit UbAtomicSyncRoundTripTest(bool ctp)
+        : TestCase(std::string("Atomic sync default-N and zero response through ") +
+                   (ctp ? "CTP" : "RTP")),
+          m_ctp(ctp)
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Config::Reset();
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(false));
+        auto topo = BuildLocalTpTopology();
+        const uint32_t source = topo.sender->GetId();
+        auto controller = topo.sender->GetObject<UbController>();
+        auto function = controller->GetUbFunction();
+        auto transaction = controller->GetUbTransaction();
+        function->CreateJetty(source, topo.receiver->GetId(), kUrmaWriteRegressionJettyNum);
+        auto jetty = function->GetJetty(kUrmaWriteRegressionJettyNum);
+        jetty->SetClientCallback(MakeCallback(&UbAtomicSyncRoundTripTest::OnComplete, this));
+        if (!m_ctp)
+        {
+            InstallStaticTpPair(topo);
+            NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(source, topo.receiver->GetId(),
+                                                          kUrmaWriteRegressionJettyNum, false,
+                                                          {kUrmaWriteRegressionSenderTpn}),
+                                  true, "reuse the existing RTP pair");
+        }
+        auto target = topo.receiver->GetObject<UbController>()->GetUbTransaction();
+        target->SetTargetExecutor(UbTargetExecutor(
+            [this](Ptr<const UbWqeSegment> request,
+                   const UbTransactionRule&,
+                   UbTargetCompletion done) {
+                const uint32_t task = request->GetTaskId();
+                ++m_executions[task];
+                NS_TEST_EXPECT_MSG_EQ(static_cast<uint8_t>(request->GetType()),
+                                      static_cast<uint8_t>(UbTransactionOpcode::ATOMIC_SYNC),
+                                      "target receives Atomic_sync");
+                NS_TEST_EXPECT_MSG_EQ(request->GetLogicalBytes(), m_sizes.at(task), "target N");
+                NS_TEST_EXPECT_MSG_EQ(request->GetPayloadBytes(), m_sizes.at(task), "target P=N");
+                NS_TEST_EXPECT_MSG_EQ(request->GetTransactionFields().taskId.value_or(0),
+                                      static_cast<uint16_t>(task),
+                                      "request TAIDETAH carries the WQE task id");
+                UbWorkExecutionResult result;
+                if (task == m_zeroResponseTask)
+                {
+                    result.responsePayloadBytes = 0u;
+                }
+                Simulator::Schedule(NanoSeconds(200), [done, result]() { done(result); });
+            }));
+        const UbCtpEntityKey key{1, topo.receiver->GetId(), 1, 7};
+        for (uint32_t index = 0; index < 7; ++index)
+        {
+            const uint32_t n = 1u << index;
+            const uint32_t task = index + 1;
+            m_sizes[task] = n;
+            if (index == 0)
+            {
+                m_zeroResponseTask = task;
+            }
+            auto wqe = function->CreateWqe(source,
+                                           topo.receiver->GetId(),
+                                           n,
+                                           task,
+                                           UbTransactionOpcode::ATOMIC_SYNC);
+            wqe->SetSport(0);
+            wqe->SetDport(CTP_WILDCARD_PORT);
+            wqe->SetPriority(7);
+            const auto result =
+                m_ctp ? function->SubmitCtpWqe(wqe, kUrmaWriteRegressionJettyNum, key)
+                      : function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum);
+            NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(result.status), 0u,
+                                  "Atomic_sync admission");
+        }
+        if (m_ctp)
+        {
+            controller->GetCtpTransportService()->StartJetty(jetty, key);
+        }
+        Simulator::Stop(MicroSeconds(100));
+        Simulator::Run();
+        for (uint32_t index = 0; index < 7; ++index)
+        {
+            const uint32_t task = index + 1;
+            NS_TEST_EXPECT_MSG_EQ(m_executions[task], 1u, "one execution task=" << task);
+            NS_TEST_EXPECT_MSG_EQ(m_completions[task], 1u, "one completion task=" << task);
+        }
+        NS_TEST_EXPECT_MSG_EQ(transaction->GetActiveOperationCount(), 0u, "operations retire");
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+    void OnComplete(uint32_t task, uint32_t)
+    {
+        ++m_completions[task];
+    }
+
+    bool m_ctp;
+    uint32_t m_zeroResponseTask{0};
+    std::map<uint32_t, uint32_t> m_sizes;
+    std::map<uint32_t, uint32_t> m_executions;
+    std::map<uint32_t, uint32_t> m_completions;
+};
+
+class UbTransactionExtensionsSuite : public TestSuite
+{
+  public:
+    UbTransactionExtensionsSuite() : TestSuite("unified-bus-transaction-extensions", Type::UNIT)
+    {
+        AddTestCase(new UbUrmaCsvOperationMappingTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbAtomicSyncRoundTripTest(false), TestCase::Duration::QUICK);
+        AddTestCase(new UbAtomicSyncRoundTripTest(true), TestCase::Duration::QUICK);
+        AddTestCase(new UbTransactionExtensionsRoundTripTest(false), TestCase::Duration::QUICK);
+        AddTestCase(new UbTransactionExtensionsRoundTripTest(true), TestCase::Duration::QUICK);
+    }
+} g_ubTransactionExtensionsSuite;

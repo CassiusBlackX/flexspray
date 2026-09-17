@@ -54,11 +54,11 @@ class UbTransactionRulesTest : public TestCase
 
     void DoRun() override
     {
-        for (uint8_t opcode = 0; opcode <= 0x18; ++opcode)
+        for (uint8_t opcode = 0; opcode <= 0x1d; ++opcode)
         {
             const auto* rule = FindTransactionRule(static_cast<UbTransactionOpcode>(opcode));
             const bool supported =
-                opcode != 0x02 && opcode != 0x16 && opcode != 0x14 && opcode != 0x18;
+                opcode != 0x02 && opcode != 0x16;
             NS_TEST_ASSERT_MSG_EQ(static_cast<bool>(rule != nullptr), supported,
                                   "Table 7-2 opcode coverage");
             if (rule)
@@ -101,10 +101,8 @@ class UbTransactionRulesTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint8_t>(result.IsValid()), true,
                               "ROI Write remains valid");
         result = ValidateTransactionRequest(
-            InboundRequest(UbTransactionOpcode::WRITE_WITH_BE, 8, 8, fields));
-        NS_TEST_ASSERT_MSG_EQ(
-            static_cast<uint8_t>(result.code == UbTransactionErrorCode::UNSUPPORTED_OPCODE), true,
-            "BE is unsupported in phase one");
+            LocalRequest(UbTransactionOpcode::WRITE_WITH_BE, 64, 64, fields));
+        NS_TEST_ASSERT_MSG_EQ(result.IsValid(), true, "BE writes are supported");
         fields.taskId = 4;
         result =
             ValidateTransactionRequest(InboundRequest(UbTransactionOpcode::WRITE, 8, 8, fields));
@@ -141,6 +139,87 @@ class UbTransactionRulesTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(result.IsValid(), true, "Management request remains valid");
         NS_TEST_ASSERT_MSG_EQ(result.resolved.requiresResponse, true,
                               "Management waits for its response");
+
+        for (uint32_t n : {1u, 2u, 4u, 8u, 16u, 32u, 64u})
+        {
+            auto queue = ValidateTransactionRequest(
+                LocalRequest(UbTransactionOpcode::ATOMIC_STORE_WITH_RETURN_STATUS,
+                             n,
+                             n,
+                             MemoryFields(n)));
+            NS_TEST_ASSERT_MSG_EQ(queue.IsValid(), true, "Store-with-status width is accepted");
+            NS_TEST_ASSERT_MSG_EQ(static_cast<uint8_t>(queue.resolved.responseOpcode), 0x11,
+                                  "Store-with-status uses TAACK");
+            NS_TEST_ASSERT_MSG_EQ(queue.resolved.responsePayloadBytes, 0u,
+                                  "Store-with-status has no response payload");
+        }
+        auto badQueue = ValidateTransactionRequest(
+            LocalRequest(UbTransactionOpcode::ATOMIC_STORE_WITH_RETURN_STATUS, 3, 3,
+                         MemoryFields(3)));
+        NS_TEST_ASSERT_MSG_EQ(badQueue.IsValid(), false, "invalid queue width is rejected");
+        auto sync = ValidateTransactionRequest(
+            LocalRequest(UbTransactionOpcode::ATOMIC_SYNC, 8, 8, MemoryFields(8)));
+        NS_TEST_ASSERT_MSG_EQ(sync.IsValid(), true, "Atomic_sync is accepted");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint8_t>(sync.resolved.responseOpcode), 0x13,
+                              "Atomic_sync uses atomic response");
+        NS_TEST_ASSERT_MSG_EQ(sync.resolved.responsePayloadBytes, 8u,
+                              "Atomic_sync defaults to N response bytes");
+        NS_TEST_ASSERT_MSG_EQ(
+            IsAcceptedResponsePayloadBytes(UbTransactionOpcode::ATOMIC_SYNC, 8, 0),
+            true,
+            "Atomic_sync accepts the explicit zero response");
+        NS_TEST_ASSERT_MSG_EQ(
+            IsAcceptedResponsePayloadBytes(UbTransactionOpcode::ATOMIC_SYNC, 8, 8),
+            true,
+            "Atomic_sync accepts the default N response");
+        for (uint32_t bytes : {1u, 4u, 9u})
+        {
+            NS_TEST_ASSERT_MSG_EQ(
+                IsAcceptedResponsePayloadBytes(UbTransactionOpcode::ATOMIC_SYNC, 8, bytes),
+                false,
+                "Atomic_sync rejects a response length outside 0/N");
+        }
+        NS_TEST_ASSERT_MSG_EQ(
+            IsAcceptedResponsePayloadBytes(UbTransactionOpcode::ATOMIC_FETCH_ADD, 8, 0),
+            false,
+            "A fixed-length atomic does not accept the Atomic_sync zero option");
+        auto remote = ValidateTransactionRequest(
+            LocalRequest(UbTransactionOpcode::WRITE_WITH_REMOTE_SYNC, 4096, 4096,
+                         MemoryFields(4096)));
+        NS_TEST_ASSERT_MSG_EQ(remote.IsValid(), true, "remote-sync write is accepted");
+        NS_TEST_ASSERT_MSG_EQ(remote.fields.userData->type, 2u, "remote-sync UDETAH Type=2");
+
+        for (const uint32_t bytes : {1u, 64u, 4096u})
+        {
+            auto storeAdd = ValidateTransactionRequest(LocalRequest(
+                UbTransactionOpcode::WRITE_WITH_ATOMIC_STORE_ADD,
+                bytes,
+                bytes,
+                MemoryFields(bytes)));
+            NS_TEST_ASSERT_MSG_EQ(storeAdd.IsValid(), true,
+                                  "store-add writes remain multi-packet memory operations");
+            NS_TEST_ASSERT_MSG_EQ(storeAdd.fields.notify.has_value(), true,
+                                  "store-add always carries its required notify header");
+            NS_TEST_ASSERT_MSG_EQ(storeAdd.fields.userData.has_value(), false,
+                                  "store-add leaves optional UDETAH disabled by default");
+        }
+        UbTransactionFields explicitNotify = MemoryFields(4096);
+        explicitNotify.notify = UbNotifyFields{0x12340000, 7, 8, 9};
+        explicitNotify.userData = UbUserDataFields{2, 0, 3, 0};
+        const auto explicitStoreAdd = ValidateTransactionRequest(LocalRequest(
+            UbTransactionOpcode::WRITE_WITH_ATOMIC_STORE_ADD, 4096, 4096, explicitNotify));
+        NS_TEST_ASSERT_MSG_EQ(explicitStoreAdd.IsValid(), true,
+                              "store-add accepts an explicitly supplied optional UDETAH");
+        NS_TEST_ASSERT_MSG_EQ(explicitStoreAdd.fields.notify->address, 0x12340000u,
+                              "store-add preserves notify address");
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint8_t>(ValidateTransactionRequest(InboundRequest(
+                                         UbTransactionOpcode::WRITE_WITH_ATOMIC_STORE_ADD,
+                                         4096,
+                                         4096,
+                                         MemoryFields(4096)))
+                                         .code == UbTransactionErrorCode::MISSING_FIELD),
+                              true,
+                              "inbound store-add without NTFETAH is rejected");
     }
 };
 

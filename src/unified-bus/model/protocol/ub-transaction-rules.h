@@ -139,6 +139,17 @@ struct UbTransactionRequestInput
 /** Whether the opcode is one of the nine Atomic request opcodes. */
 bool IsAtomicTransaction(UbTransactionOpcode opcode);
 
+/**
+ * Whether an actual response payload length is acceptable for one request.
+ *
+ * Every request has one fixed response length, except Atomic_sync whose target executor may
+ * choose either zero or the normalized N-byte default. The caller passes the normalized
+ * `expectedPayloadBytes` from the request's resolved result, so both carriers share this rule.
+ */
+bool IsAcceptedResponsePayloadBytes(UbTransactionOpcode requestOpcode,
+                                    uint32_t expectedPayloadBytes,
+                                    uint32_t actualPayloadBytes);
+
 /** Look up the static rule of one opcode, or `nullptr` when the opcode is unsupported. */
 const UbTransactionRule* FindTransactionRule(UbTransactionOpcode opcode);
 

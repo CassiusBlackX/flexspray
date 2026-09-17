@@ -213,9 +213,7 @@ UbApp::SendCtpUrmaTraffic(TrafficRecord record)
 void
 UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
 {
-    NS_ABORT_MSG_IF(task.op != UbTrafficGen::RuntimeTaskOp::URMA_WRITE &&
-                        task.op != UbTrafficGen::RuntimeTaskOp::URMA_READ &&
-                        !UbTrafficGen::IsAtomicTask(task.op),
+    NS_ABORT_MSG_IF(!UbTrafficGen::IsUrmaTask(task.op),
                     "CTP traffic requires an URMA Read/Write/atomic operation");
 
     Ptr<UbController> controller = GetNode()->GetObject<UbController>();
@@ -436,9 +434,7 @@ UbApp::SendTraffic(UbTrafficGen::RuntimeTask task)
                                      task.dstPortId,
                                      task.hasDstPortId);
     }
-    else if (task.op == UbTrafficGen::RuntimeTaskOp::URMA_WRITE ||
-             task.op == UbTrafficGen::RuntimeTaskOp::URMA_READ ||
-             UbTrafficGen::IsAtomicTask(task.op))
+    else if (UbTrafficGen::IsUrmaTask(task.op))
     {
         if (m_transportMode == TransportMode::CTP)
         {

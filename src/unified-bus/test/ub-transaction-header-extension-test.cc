@@ -21,6 +21,8 @@ class UbTransactionExtensionCodecTest : public TestCase
    UbTransactionExtensionHeader mt(UbTransactionHeaderKind::MTETAH); mt.SetTargetContext(2, 0xABCDE, 0x42); NS_TEST_ASSERT_MSG_EQ(mt.GetSerializedSize(), 4u, "MTETAH size"); Packet q; q.AddHeader(mt); UbTransactionExtensionHeader mt2(UbTransactionHeaderKind::MTETAH); q.RemoveHeader(mt2); NS_TEST_ASSERT_MSG_EQ(mt2.GetTargetContextType(), 2u, "MT type"); NS_TEST_ASSERT_MSG_EQ(mt2.GetTargetContextId(), 0xABCDEu, "MT id"); NS_TEST_ASSERT_MSG_EQ(mt2.GetHint(), 0x42u, "MT hint");
    UbTransactionExtensionHeader im(UbTransactionHeaderKind::IMMETAH); im.SetImmediate(0x1122334455667788ULL, 0xAABBCCDD, 0x01020304); Packet r; r.AddHeader(im); UbTransactionExtensionHeader im2(UbTransactionHeaderKind::IMMETAH); r.RemoveHeader(im2); NS_TEST_ASSERT_MSG_EQ(im2.GetImmediateData(), 0x1122334455667788ULL, "immediate data"); NS_TEST_ASSERT_MSG_EQ(im2.GetImmediateTokenValue(), 0xAABBCCDDu, "immediate token"); NS_TEST_ASSERT_MSG_EQ(im2.GetMessageLength(), 0x01020304u, "message length");
    UbAckTransactionHeader ack; ack.SetIniRcId(0xABCDE); Packet a; a.AddHeader(ack); UbAckTransactionHeader ack2; a.RemoveHeader(ack2); NS_TEST_ASSERT_MSG_EQ(ack2.GetIniRcId(), 0xABCDEu, "full ATAH keeps 20 bit INI_RC_ID");
+   UbTransactionExtensionHeader ud(UbTransactionHeaderKind::UDETAH); ud.SetUserData(2, 0, 0, 0); Packet u; u.AddHeader(ud); UbTransactionExtensionHeader ud2(UbTransactionHeaderKind::UDETAH); u.RemoveHeader(ud2); NS_TEST_ASSERT_MSG_EQ(ud2.GetUserDataType(), 2u, "UDETAH type");
+   UbTransactionExtensionHeader taid(UbTransactionHeaderKind::TAIDETAH); taid.SetTaskId(0x1234); Packet t; t.AddHeader(taid); UbTransactionExtensionHeader taid2(UbTransactionHeaderKind::TAIDETAH); t.RemoveHeader(taid2); NS_TEST_ASSERT_MSG_EQ(taid2.GetTaskId(), 0x1234u, "TAIDETAH echo");
   }
 };
 
@@ -86,14 +88,17 @@ class UbTaHeaderPlanTest : public TestCase
         return text;
     }
 
-    UbTaHeaderPlan PlanFor(UbTransactionOpcode opcode, bool messageTarget = false)
+    UbTaHeaderPlan PlanFor(UbTransactionOpcode opcode,
+                           bool messageTarget = false,
+                           bool userData = false)
     {
         const auto* rule = FindTransactionRule(opcode);
         if (rule == nullptr)
         {
             return UbTaHeaderPlan();
         }
-        return UbTaHeaderPlan::ForRequest(*rule, UbTaHeaderPresence{false, messageTarget, false});
+        return UbTaHeaderPlan::ForRequest(*rule,
+                                          UbTaHeaderPresence{false, messageTarget, userData});
     }
 
     void DoRun() override
@@ -108,6 +113,13 @@ class UbTaHeaderPlanTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(Kinds(PlanFor(UbTransactionOpcode::WRITE_WITH_NOTIFY)),
                               std::string("MAETAH,NTFETAH"),
                               "notify header follows memory access");
+        NS_TEST_ASSERT_MSG_EQ(Kinds(PlanFor(UbTransactionOpcode::WRITE_WITH_ATOMIC_STORE_ADD)),
+                              std::string("MAETAH,NTFETAH"),
+                              "store-add omits optional UDETAH by default");
+        NS_TEST_ASSERT_MSG_EQ(
+            Kinds(PlanFor(UbTransactionOpcode::WRITE_WITH_ATOMIC_STORE_ADD, false, true)),
+            std::string("UDETAH,MAETAH,NTFETAH"),
+            "store-add carries optional UDETAH when enabled");
         NS_TEST_ASSERT_MSG_EQ(Kinds(PlanFor(UbTransactionOpcode::MANAGEMENT)),
                               std::string("MGMTETAH"), "management plans MGMTETAH only");
         NS_TEST_ASSERT_MSG_EQ(Kinds(PlanFor(UbTransactionOpcode::WRITE_WITH_IMMEDIATE, true)),
@@ -125,6 +137,12 @@ class UbTaHeaderPlanTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(Kinds(PlanFor(UbTransactionOpcode::WRITE_WITH_IMMEDIATE, false)),
                               std::string("MAETAH,IMMETAH"),
                               "WRITE_WITH_IMMEDIATE keeps its operation-required headers");
+        NS_TEST_ASSERT_MSG_EQ(Kinds(PlanFor(UbTransactionOpcode::WRITE_WITH_BE)),
+                              std::string("MAETAH,BEETAH"),
+                              "WRITE_WITH_BE keeps the variable BE header in rule order");
+        NS_TEST_ASSERT_MSG_EQ(Kinds(PlanFor(UbTransactionOpcode::WRITE_WITH_BE, false, true)),
+                              std::string("UDETAH,MAETAH,BEETAH"),
+                              "WRITE_WITH_BE carries optional UDETAH when enabled");
         NS_TEST_ASSERT_MSG_EQ(PlanFor(UbTransactionOpcode::SEND).Contains(K::MAETAH), false,
                               "SEND never plans MAETAH");
         NS_TEST_ASSERT_MSG_EQ(PlanFor(UbTransactionOpcode::SEND, true).Contains(K::MAETAH), false,
@@ -169,6 +187,16 @@ class UbTaHeaderPlanTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(
             DeclareRequestHeaderPresence(*writeRule, UbTransactionFields{}).messageTarget,
             false, "WRITE never declares MTETAH");
+        // The compact basic header cannot flag MTETAH, so its parser must consume the
+        // rule-owned header rather than relying on an absent MT_EN bit.
+        NS_TEST_ASSERT_MSG_EQ(CompactHeaderPresence(*sendRule).messageTarget, true,
+                              "compact SEND always plans MTETAH");
+        NS_TEST_ASSERT_MSG_EQ(CompactHeaderPresence(*sendRule).userData, false,
+                              "compact UDETAH presence stays with the UD flag");
+        NS_TEST_ASSERT_MSG_EQ(Kinds(UbTaHeaderPlan::ForRequest(
+                                  *sendRule, CompactHeaderPresence(*sendRule))),
+                              std::string("MTETAH"),
+                              "compact SEND parser consumes the rule-owned MTETAH");
 
         // The shared field codec round-trips every active extension header.
         UbTransactionFields written;
@@ -234,6 +262,20 @@ class UbTaHeaderPlanTest : public TestCase
                                       "TVETAH token round trip");
             }
         }
+        written.byteEnable = UbByteEnableFields{std::vector<uint8_t>(32, 0xff)};
+        UbTransactionExtensionHeader beetah(K::BEETAH);
+        NS_TEST_ASSERT_MSG_EQ(WriteTransactionExtension(written, beetah), true,
+                              "BEETAH carries the normalized bitmap");
+        NS_TEST_ASSERT_MSG_EQ(beetah.GetSerializedSize(), 32u,
+                              "BEETAH size follows payload/8");
+        Packet bePacket;
+        bePacket.AddHeader(beetah);
+        UbTransactionExtensionHeader decodedBe(K::BEETAH);
+        decodedBe.SetRaw(std::vector<uint8_t>(32, 0));
+        NS_TEST_ASSERT_MSG_NE(bePacket.RemoveHeader(decodedBe), 0u,
+                              "variable-size BEETAH decodes with its planned width");
+        NS_TEST_ASSERT_MSG_EQ(decodedBe.GetRaw().size(), 32u,
+                              "BEETAH preserves the complete bitmap");
         // A field-less planned header is left out instead of being defaulted.
         UbTransactionExtensionHeader noField(K::IMMETAH);
         NS_TEST_ASSERT_MSG_EQ(WriteTransactionExtension(UbTransactionFields{}, noField), false,
