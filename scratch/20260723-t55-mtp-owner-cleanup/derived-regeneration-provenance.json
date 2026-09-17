@@ -1,0 +1,23 @@
+{
+  "command": "python3.12 scripts/analyze_t55.py --regenerate-derived",
+  "generated_at": "2026-07-23T10:00:21.477410+00:00",
+  "generated_derived_sha256": {
+    "analysis.md": "157d8fac85726cb04591be66a903c03fb01ce2988571e2cd990708be2ea08765",
+    "comparison-summary.json": "af467fbc3c19d6e0f2ca1265e731472fc64120811e24996278a4d96f572d4ef4"
+  },
+  "observed_raw_evidence_aggregate_method": "sha256(sorted relative path + NUL + bytes)",
+  "observed_raw_evidence_aggregate_sha256": "9eccc2f72a05c567e9aa3ac347deaeaa9638777692bfc7d5483256c285f5bf22",
+  "operation": "regenerate-derived",
+  "previous_derived_sha256": {
+    "analysis.md": "59425ef00175cc744ab573e4a5a1cc4b131ea8870861c8ae7047b0f4c5bab954",
+    "comparison-summary.json": "b2257d18e2526be622396aa9f26cd93fb43cec2bb42ce041d6859469daab423a"
+  },
+  "previously_recorded_raw_evidence_aggregate_sha256": "e2c4b75ba3754174d8719b3d7fd8cd61340e0a78b0a35ac69de23ef2bbfb798f",
+  "raw_aggregate_comparison": "not comparable because the earlier method was not recorded",
+  "raw_evidence_write_policy": "read_only",
+  "schema_version": 1,
+  "superseded_derived_sha256": {
+    "analysis.md": "fd87108723b8faf6901882db8cf7bf8d0f9c8ca9825072713184b20dd3ce2fc4",
+    "comparison-summary.json": "d0fd2453935c46932c18b8292a10e0eb42eee40823c4aa4fec1855324ec1b8de"
+  }
+}

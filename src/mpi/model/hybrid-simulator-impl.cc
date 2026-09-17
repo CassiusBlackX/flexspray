@@ -114,6 +114,12 @@ HybridSimulatorImpl::BoundLookAhead(Time lookAhead)
     }
 }
 
+Time
+HybridSimulatorImpl::GetLookAhead() const
+{
+    return m_minLookahead;
+}
+
 void
 HybridSimulatorImpl::Destroy()
 {
@@ -529,32 +535,26 @@ HybridSimulatorImpl::Partition()
         eventsToBeTransferred->Insert(next);
     }
 
-    // transfer events to new LPs
+    // Transfer local node-context events through the worker mailbox localization path. Events
+    // without a local owner stay on this rank's public LP with their original UID domain.
     while (!eventsToBeTransferred->IsEmpty())
     {
         Scheduler::Event ev = eventsToBeTransferred->RemoveNext();
-        uint32_t targetLpId = 0;
+        std::optional<uint32_t> targetLpId;
         if (ev.key.m_context != Simulator::NO_CONTEXT)
         {
-            const auto localLpId = MtpInterface::FindNodeLocalLpId(ev.key.m_context);
+            targetLpId = MtpInterface::FindNodeLocalLpId(ev.key.m_context);
             NS_ABORT_MSG_IF(
-                !localLpId && NodeList::GetNode(ev.key.m_context)->GetSystemId() == m_myId,
+                !targetLpId && NodeList::GetNode(ev.key.m_context)->GetSystemId() == m_myId,
                 "MTP worker partition ownership is missing for local node " << ev.key.m_context);
-            // Every MPI rank builds the full topology. Pre-run events for nodes owned by another
-            // rank stay serialized on the public LP without implying ownership.
-            targetLpId = localLpId.value_or(0);
         }
-        // invoke initialization events (at time 0) by their insertion order
-        // since changing the execution order of these events may cause error,
-        // they have to be invoked now rather than parallelly executed
-        if (ev.key.m_ts == 0)
+        if (targetLpId)
         {
-            MtpInterface::GetSystem(targetLpId)->InvokeNow(ev);
+            MtpInterface::GetSystem(*targetLpId)->EnqueueBootstrapEvent(ev);
         }
         else
         {
-            MtpInterface::GetSystem(targetLpId)
-                ->ScheduleAt(ev.key.m_context, TimeStep(ev.key.m_ts), ev.impl);
+            oldEvents->Insert(ev);
         }
     }
 }

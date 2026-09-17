@@ -1,0 +1,80 @@
+{
+  "cases": {
+    "ctp-win1": {
+      "case": "ctp-win1",
+      "comparison": {
+        "byte_identical": true,
+        "changed_shared_files": [],
+        "control_only_files": [],
+        "task_rows_identical": true,
+        "treatment_only_files": []
+      },
+      "input_hashes_identical": true,
+      "pass": true,
+      "schema_version": 1
+    },
+    "ctp-win128": {
+      "case": "ctp-win128",
+      "comparison": {
+        "byte_identical": true,
+        "changed_shared_files": [],
+        "control_only_files": [],
+        "task_rows_identical": true,
+        "treatment_only_files": []
+      },
+      "input_hashes_identical": true,
+      "pass": true,
+      "schema_version": 1
+    },
+    "ctp-win4": {
+      "case": "ctp-win4",
+      "comparison": {
+        "byte_identical": true,
+        "changed_shared_files": [],
+        "control_only_files": [],
+        "task_rows_identical": true,
+        "treatment_only_files": []
+      },
+      "input_hashes_identical": true,
+      "pass": true,
+      "schema_version": 1
+    }
+  },
+  "roles": {
+    "fastpath": {
+      "binary": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+      "binary_sha256": "7756e587027029b4d551f70d490659bcea4af0f31cc5fbd47ddc47a46bb45a78",
+      "production_diff_sha256": "67d317cbfa18048a9e240177d8362c6fe44ca12ab7337e0310a6bbb55a4d94bc",
+      "production_source_sha256": {
+        "src/unified-bus/model/protocol/ub-ctp.cc": "24a4bc7ad01a2032ea4c539801eaf3e6acba5a364ebf50a497364748672c81f3",
+        "src/unified-bus/model/protocol/ub-ctp.h": "664553e1c62dd1a65e62eb123b9ef2076465a8c2492bb0cead185e773d49f535",
+        "src/unified-bus/model/protocol/ub-transaction.cc": "405af95a4cdc937e9af1d4c215e1e932e0489c4d44005eec0470b629e95751a1",
+        "src/unified-bus/model/ub-lifecycle.cc": "16f6b7e06339d0b76f5bd23f2ea4123c267daddfa319497e947a19c674d40f28",
+        "src/unified-bus/model/ub-lifecycle.h": "8f118137c62fa7fd8399b7349f040a619a46deffba0e63a46e3f9a6ec13a44e7"
+      },
+      "revision": "d8f344f6cb041e6681f463bba6f5c7cf720150ed",
+      "source_root": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode",
+      "unified_bus_library": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/build/lib/libns3.44-unified-bus.dylib",
+      "unified_bus_library_sha256": "c975a74c925d48ae0709c1768dfbfac790565550b09f1a519ea58ee96e3c4403",
+      "working_tree_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "working_tree_dirty": false
+    },
+    "lazy": {
+      "binary": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/.worktrees/t36-lazy-baseline/build/scratch/ns3.44-ub-quick-example",
+      "binary_sha256": "e1142d6dd400dee5fb9148462b66083f6cf190634f8787591f3be38ad9f7c568",
+      "revision": "a95f8bcdbf2eb32e171edde7aae970cfedf85c76",
+      "source_root": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/.worktrees/t36-lazy-baseline",
+      "unified_bus_library": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/.worktrees/t36-lazy-baseline/build/lib/libns3.44-unified-bus.dylib",
+      "unified_bus_library_sha256": "db92b362c57364868578303678a21baff4c808f24ca7843d2e28b1ffe6c72a40"
+    },
+    "next": {
+      "binary": "/Users/ytxing/workspace/ns-3-ub-routing-modes/build/scratch/ns3.44-ub-quick-example",
+      "binary_sha256": "51129796c550755d9099746fd61aece09978970cf4f25e94faab83d59e82c387",
+      "revision": "cf8ee683e00e5b6210661013e93cec7217d662e5",
+      "source_root": "/Users/ytxing/workspace/ns-3-ub-routing-modes",
+      "unified_bus_library": "/Users/ytxing/workspace/ns-3-ub-routing-modes/build/lib/libns3.44-unified-bus.dylib",
+      "unified_bus_library_sha256": "5d090eef16ff7b77791d65a32feaf3d80f59c2e3035d4d3ecd396d847d14cc92"
+    }
+  },
+  "schema_version": 1
+}

@@ -1,0 +1,29 @@
+{
+  "roles": {
+    "next": {
+      "artifact_hashes": {
+        "output/task_statistics.csv": "44ed3e677430fd8a911d20de1e106dc0edb6f586fbb0f8f2eb49727d0fe63262",
+        "output/throughput.csv": "116ef74653a371e431d36a1709981240be4c3ead97f08cf07c9f4c4fc45c73e0",
+        "runlog/PacketTrace_node_0.tr": "669572120c79fe12436ef9fef48baa2007c8de2e2d73605e42523f1078590314",
+        "runlog/TaskTrace_node_0.tr": "beb48ac1454375e7babece69b5661ae8b040fc2f63d04c92e58876bae42687aa"
+      },
+      "binary_sha256": "51129796c550755d9099746fd61aece09978970cf4f25e94faab83d59e82c387",
+      "revision": "next@cf8ee683",
+      "unified_bus_library_sha256": "5d090eef16ff7b77791d65a32feaf3d80f59c2e3035d4d3ecd396d847d14cc92"
+    },
+    "typed": {
+      "artifact_hashes": {
+        "output/task_statistics.csv": "44ed3e677430fd8a911d20de1e106dc0edb6f586fbb0f8f2eb49727d0fe63262",
+        "output/throughput.csv": "116ef74653a371e431d36a1709981240be4c3ead97f08cf07c9f4c4fc45c73e0",
+        "runlog/PacketTrace_node_0.tr": "669572120c79fe12436ef9fef48baa2007c8de2e2d73605e42523f1078590314",
+        "runlog/TaskTrace_node_0.tr": "beb48ac1454375e7babece69b5661ae8b040fc2f63d04c92e58876bae42687aa"
+      },
+      "binary_sha256": "7756e587027029b4d551f70d490659bcea4af0f31cc5fbd47ddc47a46bb45a78",
+      "revision": "T42 working tree",
+      "unified_bus_library_sha256": "4a23325cf3ef396c344901b156ae461b9483db86398e21e64a49aa4dbb88da66"
+    }
+  },
+  "schema_version": 1,
+  "scope": "final binary byte check only; not a performance sample",
+  "semantic_exact": true
+}

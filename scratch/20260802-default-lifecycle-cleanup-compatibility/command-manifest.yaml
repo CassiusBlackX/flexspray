@@ -1,0 +1,40 @@
+version: 2
+status: completed
+execution_approved: true
+
+guard:
+  manual_approval_gate: true
+  process_policy: serial
+  refuse_dirty_execution: true
+  stop_on:
+    - runtime-default-mismatch
+    - fixture-hash-mismatch
+    - pair-input-mismatch
+    - run-failure
+
+commands:
+  - id: preflight
+    enabled: true
+    simulation: false
+    cwd: .
+    command: ".venv/bin/python scratch/20260802-default-lifecycle-cleanup-compatibility/scripts/run_experiment.py preflight --allow-dirty"
+  - id: materialize
+    enabled: true
+    simulation: false
+    cwd: .
+    command: ".venv/bin/python scratch/20260802-default-lifecycle-cleanup-compatibility/scripts/run_experiment.py materialize --allow-dirty"
+  - id: dry-run
+    enabled: true
+    simulation: false
+    cwd: .
+    command: ".venv/bin/python scratch/20260802-default-lifecycle-cleanup-compatibility/scripts/run_experiment.py dry-run --allow-dirty"
+  - id: run
+    enabled: true
+    simulation: true
+    cwd: .
+    command: ".venv/bin/python scratch/20260802-default-lifecycle-cleanup-compatibility/scripts/run_experiment.py run"
+
+artifact_contract:
+  preflight: [evidence/preflight.json]
+  materialized_case: [case/node.csv, case/topology.csv, case/routing_table.csv, case/traffic.csv, case/network_attribute.txt, resolved-config.json, input-hashes.json, case-inspection.json]
+  every_run: [record.json, stdout.txt, stderr.txt, canonical.rank*.txt, runtime-storage-snapshot.csv]

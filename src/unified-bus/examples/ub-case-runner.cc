@@ -6,6 +6,7 @@
 #include "ns3/node-list.h"
 #include "ns3/ub-app.h"
 #include "ns3/ub-link.h"
+#include "ns3/ub-next-hop-index.h"
 #include "ns3/ub-port.h"
 #include "ns3/ub-traffic-gen.h"
 #include "ns3/ub-transport.h"
@@ -20,8 +21,10 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <sstream>
 #include <string>
+#include <tuple>
 
 #ifdef NS3_MPI
 #include "ns3/mpi-interface.h"
@@ -47,11 +50,15 @@ struct QuickExampleOptions
     uint32_t stopMs = 0;
     uint32_t rngRun = 10;
     std::string configPath;
+    std::string structuredTopologyFile;
+    std::string compressedRoutingFile;
+    std::string routeRuntimeMode = "auto";
     std::string dependencyVisibilityDelay;
     std::string initialTaskStartOffsetWindow = "0ps";
     std::string linkDelayOffsetWindow = "0ps";
     uint32_t timingOffsetSeed = 1;
     std::string canonicalOutputPath;
+    std::string runtimeStorageSnapshotPath;
 };
 
 struct DropAbortState
@@ -398,13 +405,14 @@ ParseOffsetWindow(const std::string& value, const char* optionName)
     return window;
 }
 
-void ValidateCasePathOrExit(const std::string& configPath)
+void
+ValidateCasePathOrExit(const std::string& configPath, const std::string& structuredTopologyFile)
 {
-    static const std::array<const char*, 5> kRequiredCaseFiles = {"network_attribute.txt",
-                                                                   "node.csv",
-                                                                   "topology.csv",
-                                                                   "routing_table.csv",
-                                                                   "traffic.csv"};
+    static const std::array<const char*, 2> kSharedCaseFiles = {"network_attribute.txt",
+                                                                "traffic.csv"};
+    static const std::array<const char*, 3> kCsvTopologyFiles = {"node.csv",
+                                                                 "topology.csv",
+                                                                 "routing_table.csv"};
 
     const std::filesystem::path caseDir(configPath);
     if (!std::filesystem::exists(caseDir))
@@ -418,14 +426,46 @@ void ValidateCasePathOrExit(const std::string& configPath)
         std::exit(1);
     }
 
-    for (const char* filename : kRequiredCaseFiles)
-    {
-        const std::filesystem::path requiredFile = caseDir / filename;
-        if (!std::filesystem::exists(requiredFile))
+    auto requireFiles = [&](const auto& filenames) {
+        for (const char* filename : filenames)
         {
-            std::cerr << "missing required case file: " << requiredFile.string() << std::endl;
+            const std::filesystem::path requiredFile = caseDir / filename;
+            if (!std::filesystem::exists(requiredFile))
+            {
+                std::cerr << "missing required case file: " << requiredFile.string() << std::endl;
+                std::exit(1);
+            }
+        }
+    };
+    requireFiles(kSharedCaseFiles);
+    if (!structuredTopologyFile.empty())
+    {
+        const std::filesystem::path topologyFile(structuredTopologyFile);
+        if (!std::filesystem::is_regular_file(topologyFile))
+        {
+            std::cerr << "structured topology file does not exist: " << topologyFile.string()
+                      << std::endl;
             std::exit(1);
         }
+        return;
+    }
+    requireFiles(kCsvTopologyFiles);
+
+    const bool hasPortGroups = std::filesystem::exists(caseDir / "routing_port_groups.csv");
+    const bool hasRules = std::filesystem::exists(caseDir / "routing_rules.csv");
+    const bool hasRangeRules = std::filesystem::exists(caseDir / "routing_rule_ranges.csv");
+    if (hasPortGroups != hasRules)
+    {
+        std::cerr << "routing_port_groups.csv and routing_rules.csv must be provided together"
+                  << std::endl;
+        std::exit(1);
+    }
+    if (hasRangeRules && !hasPortGroups)
+    {
+        std::cerr
+            << "routing_rule_ranges.csv requires routing_port_groups.csv and routing_rules.csv"
+            << std::endl;
+        std::exit(1);
     }
 }
 
@@ -437,11 +477,112 @@ BuildScenarioFromConfig(const QuickExampleOptions& options, const RuntimeSelecti
         ParseOffsetWindow(options.linkDelayOffsetWindow, "--link-delay-offset-window");
     UbUtils::Get()->SetComponentsAttribute(configPath + "/network_attribute.txt");
     UbUtils::Get()->CreateTraceDir();
-    UbUtils::Get()->CreateNode(configPath + "/node.csv");
-    const auto offsetStats = UbUtils::Get()->CreateTopo(configPath + "/topology.csv",
-                                                        linkOffsetWindow,
-                                                        options.timingOffsetSeed);
-    UbUtils::Get()->AddRoutingTable(configPath + "/routing_table.csv");
+    UbUtils::LinkDelayOffsetStats offsetStats;
+    if (!options.structuredTopologyFile.empty())
+    {
+        std::ifstream structuredInput(options.structuredTopologyFile);
+        NS_ABORT_MSG_IF(!structuredInput.is_open(),
+                        "cannot open structured topology file: " << options.structuredTopologyFile);
+        auto structuredConfig = UbUtils::ReadStructuredTopologyConfig(structuredInput);
+        const bool usesPortableRoutingArtifacts = !structuredConfig.routingFingerprint.empty();
+        const bool hasStructuredRules = !structuredConfig.portGroups.empty() ||
+                                        !structuredConfig.routingRules.empty() ||
+                                        !structuredConfig.routingRangeRules.empty() ||
+                                        !structuredConfig.topologyRules.empty();
+        std::string routeRuntimeMode = options.routeRuntimeMode;
+        if (routeRuntimeMode == "auto")
+        {
+            if (usesPortableRoutingArtifacts)
+            {
+                routeRuntimeMode = !options.compressedRoutingFile.empty()
+                                       ? "compressed-table-lookup"
+                                       : "structured-rule-compute";
+                NS_ABORT_MSG_IF(routeRuntimeMode == "structured-rule-compute" &&
+                                    !hasStructuredRules,
+                                "route runtime auto mode found neither compressed routing nor "
+                                "executable rules");
+            }
+            else
+            {
+                routeRuntimeMode = hasStructuredRules ? "structured-rule-compute"
+                                                       : "compressed-table-lookup";
+            }
+        }
+        if (!usesPortableRoutingArtifacts)
+        {
+            NS_ABORT_MSG_IF(!options.compressedRoutingFile.empty(),
+                            "compressed routing artifacts require a version 4 prepared topology");
+            NS_ABORT_MSG_IF(routeRuntimeMode != "compressed-table-lookup" &&
+                                routeRuntimeMode != "structured-rule-compute",
+                            "unknown route runtime mode: " << routeRuntimeMode);
+        }
+        else if (routeRuntimeMode == "compressed-table-lookup")
+        {
+            NS_ABORT_MSG_IF(options.compressedRoutingFile.empty(),
+                            "compressed-table-lookup requires --compressed-routing-file");
+            std::ifstream compressedInput(options.compressedRoutingFile, std::ios::binary);
+            NS_ABORT_MSG_IF(
+                !compressedInput.is_open(),
+                "cannot open compressed routing file: " << options.compressedRoutingFile);
+            std::vector<std::vector<bool>> connectedPorts(structuredConfig.nodes.size());
+            for (const auto& node : structuredConfig.nodes)
+            {
+                NS_ABORT_MSG_IF(node.nodeId >= connectedPorts.size(),
+                                "prepared topology node ID is outside the node count");
+                connectedPorts[node.nodeId].resize(node.portCount);
+            }
+            for (const auto& link : structuredConfig.links)
+            {
+                NS_ABORT_MSG_IF(link.node1 >= connectedPorts.size() ||
+                                    link.port1 >= connectedPorts[link.node1].size() ||
+                                    link.node2 >= connectedPorts.size() ||
+                                    link.port2 >= connectedPorts[link.node2].size(),
+                                "prepared topology link references an invalid node or port");
+                connectedPorts[link.node1][link.port1] = true;
+                connectedPorts[link.node2][link.port2] = true;
+            }
+            structuredConfig.tableNextHopIndex =
+                UbNextHopIndex::Read(compressedInput,
+                                     connectedPorts,
+                                     structuredConfig.routingFingerprint);
+            structuredConfig.portGroups.clear();
+            structuredConfig.routingRules.clear();
+            structuredConfig.routingRangeRules.clear();
+            structuredConfig.topologyRules.clear();
+        }
+        else if (routeRuntimeMode == "structured-rule-compute")
+        {
+            NS_ABORT_MSG_IF(!hasStructuredRules,
+                            "structured-rule-compute is unavailable for this prepared case");
+        }
+        else
+        {
+            NS_ABORT_MSG("unknown route runtime mode: " << routeRuntimeMode);
+        }
+        offsetStats = UbUtils::Get()->InstallStructuredTopology(structuredConfig,
+                                                                linkOffsetWindow,
+                                                                options.timingOffsetSeed);
+    }
+    else
+    {
+        UbUtils::Get()->CreateNode(configPath + "/node.csv");
+        offsetStats = UbUtils::Get()->CreateTopo(configPath + "/topology.csv",
+                                                 linkOffsetWindow,
+                                                 options.timingOffsetSeed);
+        UbUtils::Get()->AddRoutingTable(configPath + "/routing_table.csv");
+        const std::filesystem::path portGroups =
+            std::filesystem::path(configPath) / "routing_port_groups.csv";
+        const std::filesystem::path rules = std::filesystem::path(configPath) / "routing_rules.csv";
+        const std::filesystem::path rangeRules =
+            std::filesystem::path(configPath) / "routing_rule_ranges.csv";
+        if (std::filesystem::exists(portGroups))
+        {
+            UbUtils::Get()->AddRuleRoutingTable(
+                portGroups.string(),
+                rules.string(),
+                std::filesystem::exists(rangeRules) ? rangeRules.string() : "");
+        }
+    }
     UbUtils::Get()->CreateTp(configPath + "/transport_channel.csv");
     UbUtils::Get()->TopoTraceConnect();
 
@@ -465,44 +606,20 @@ BuildScenarioFromConfig(const QuickExampleOptions& options, const RuntimeSelecti
     }
 }
 
-void ConfigureTrafficDependencyVisibility(const QuickExampleOptions& options,
-                                          const RuntimeSelection& runtime)
+void ConfigureTrafficDependencyVisibility(const QuickExampleOptions& options)
 {
     if (!options.dependencyVisibilityDelay.empty())
     {
         UbTrafficGen::Get()->SetDependencyVisibilityDelay(Time(options.dependencyVisibilityDelay));
     }
-
-    const bool usePositiveLocalLinkDelays = ModeUsesMtp(runtime.mode);
-    for (uint32_t nodeIndex = 0; nodeIndex < NodeList::GetNNodes(); ++nodeIndex)
-    {
-        Ptr<Node> node = NodeList::GetNode(nodeIndex);
-        for (uint32_t deviceIndex = 0; deviceIndex < node->GetNDevices(); ++deviceIndex)
-        {
-            Ptr<UbPort> port = DynamicCast<UbPort>(node->GetDevice(deviceIndex));
-            if (port == nullptr)
-            {
-                continue;
-            }
-
-            Ptr<UbLink> link = DynamicCast<UbLink>(port->GetChannel());
-            if (link == nullptr)
-            {
-                continue;
-            }
-
-            const Time delay = link->GetDelay();
-            if (link->IsRemote() ||
-                (usePositiveLocalLinkDelays && delay.IsStrictlyPositive()))
-            {
-                UbTrafficGen::Get()->ConsiderAutomaticDependencyVisibilityDelay(delay);
-            }
-        }
-    }
 }
 
 void ApplyDependencyVisibilityLookaheadBound(const RuntimeSelection& runtime)
 {
+    if (UbTrafficGen::Get()->GetDependencyReferenceCount() == 0)
+    {
+        return;
+    }
     const Time delay = UbTrafficGen::Get()->GetDependencyVisibilityDelay();
     if (!delay.IsStrictlyPositive())
     {
@@ -534,6 +651,21 @@ void ConfigureCanonicalOutput(const QuickExampleOptions& options, const RuntimeS
     {
         UbTrafficGen::Get()->EnableCanonicalOutput(options.canonicalOutputPath, runtime.mpiRank);
     }
+}
+
+std::string
+ResolveRuntimeStorageSnapshotPath(const QuickExampleOptions& options,
+                                  const RuntimeSelection& runtime)
+{
+    if (options.runtimeStorageSnapshotPath.empty() || !runtime.enableMpi)
+    {
+        return options.runtimeStorageSnapshotPath;
+    }
+    const std::filesystem::path path(options.runtimeStorageSnapshotPath);
+    const std::string extension = path.extension().string();
+    return (path.parent_path() /
+            (path.stem().string() + ".rank" + std::to_string(runtime.mpiRank) + extension))
+        .string();
 }
 
 void
@@ -583,59 +715,169 @@ uint32_t ActivateTrafficFromConfig(const std::string& configPath,
 
     uint32_t localTaskCount = 0;
     std::vector<Ptr<UbApp>> sourceApps;
+    using PlannedConnectionKey =
+        std::tuple<uint32_t, uint32_t, bool, uint32_t, bool, uint32_t, uint8_t>;
+    std::map<PlannedConnectionKey, std::vector<UbLifecycleResourceIdentity>> driverOwnedConnections;
+    const auto findDriverOwnedConnections = [&](const TrafficRecordView& record) {
+        std::vector<UbLifecycleResourceIdentity> identities;
+        const auto matchesTraffic = [&](const Connection& connection) {
+            if (connection.priority != record.priority ||
+                !((connection.node1 == record.sourceNode && connection.node2 == record.destNode) ||
+                  (connection.node1 == record.destNode && connection.node2 == record.sourceNode)))
+            {
+                return false;
+            }
+
+            const bool sourceIsNode1 = connection.node1 == record.sourceNode;
+            const uint32_t sourcePort = sourceIsNode1 ? connection.port1 : connection.port2;
+            const uint32_t destinationPort = sourceIsNode1 ? connection.port2 : connection.port1;
+            return (!record.hasSrcPortId || sourcePort == record.srcPortId) &&
+                   (!record.hasDstPortId || destinationPort == record.dstPortId);
+        };
+
+        for (const auto& [unusedKey, reserved] : driverOwnedConnections)
+        {
+            (void)unusedKey;
+            for (const auto& identity : reserved)
+            {
+                Ptr<Node> ownerNode = NodeList::GetNode(identity.ownerNodeId);
+                Ptr<UbController> ownerController = ownerNode->GetObject<UbController>();
+                if (ownerController == nullptr)
+                {
+                    continue;
+                }
+                Connection connection;
+                if (!ownerController->GetTpConnManager()->TryGetLocalConnection(
+                        identity.ownerNodeId,
+                        identity.localId,
+                        connection) ||
+                    !matchesTraffic(connection))
+                {
+                    continue;
+                }
+                if (std::find(identities.begin(), identities.end(), identity) == identities.end())
+                {
+                    identities.push_back(identity);
+                }
+            }
+        }
+        return identities;
+    };
     Ptr<UbApp> appDefaults = CreateObject<UbApp>();
-    const bool reserveRtpConnections = appDefaults->GetTransportMode() == TransportMode::RTP;
-    const bool useShortestPaths = appDefaults->GetUseShortestPaths();
     UbUtils::Get()->PrintTimestamp("[traffic] Activate clients and enqueue tasks.");
     UbUtils::Get()->ForEachTrafficRecordView(trafficPath, [&](const TrafficRecordView& record) {
         Ptr<Node> sourceNode = NodeList::GetNode(record.sourceNode);
-        if (reserveRtpConnections &&
+        const bool localOwned = !activateLocalOwnedTasksOnly ||
+                                UbUtils::ExtractMpiRank(sourceNode->GetSystemId()) == mpiRank;
+
+        if (static_cast<size_t>(record.sourceNode) >= sourceApps.size())
+        {
+            sourceApps.resize(static_cast<size_t>(record.sourceNode) + 1);
+        }
+
+        Ptr<UbApp>& configuredApp = sourceApps[record.sourceNode];
+        if (configuredApp == nullptr)
+        {
+            if (localOwned && sourceNode->GetNApplications() > 0)
+            {
+                configuredApp = DynamicCast<UbApp>(sourceNode->GetApplication(0));
+                NS_ABORT_MSG_IF(configuredApp == nullptr,
+                                "Source node " << record.sourceNode
+                                               << " application 0 is not an ns3::UbApp");
+            }
+            else if (localOwned)
+            {
+                configuredApp = CreateObject<UbApp>();
+                sourceNode->AddApplication(configuredApp);
+                UbUtils::Get()->ClientTraceConnect(record.sourceNode);
+            }
+            else
+            {
+                configuredApp = appDefaults;
+                for (uint32_t i = 0; i < sourceNode->GetNApplications(); ++i)
+                {
+                    Ptr<UbApp> candidate = DynamicCast<UbApp>(sourceNode->GetApplication(i));
+                    if (candidate != nullptr)
+                    {
+                        configuredApp = candidate;
+                        break;
+                    }
+                }
+            }
+
+            if (localOwned)
+            {
+                UbTrafficGen::Get()->RegisterSourceAppDuringInitialLoad(record.sourceNode,
+                                                                        configuredApp);
+            }
+        }
+
+        const bool reserveRtpConnections = configuredApp->GetTransportMode() == TransportMode::RTP;
+        const bool useShortestPaths = RoutingTypeUsesShortestPaths(configuredApp->GetRoutingType());
+        const bool managePlannedConnections = configuredApp->IsPlannedTpConnectionDestroyEnabled();
+        if (!managePlannedConnections && reserveRtpConnections &&
             (record.opType == "URMA_WRITE" || record.opType == "URMA_READ"))
         {
             sourceNode->GetObject<UbController>()->GetTpConnManager()->ReserveTpnsForTraffic(
                 useShortestPaths,
                 record.sourceNode,
                 record.destNode,
-                record.priority);
+                record.priority,
+                record.hasSrcPortId ? record.srcPortId : UINT32_MAX,
+                record.hasDstPortId ? record.dstPortId : UINT32_MAX);
         }
-
-        const bool localOwned =
-            !activateLocalOwnedTasksOnly ||
-            UbUtils::ExtractMpiRank(sourceNode->GetSystemId()) == mpiRank;
 
         if (localOwned)
         {
-            if (static_cast<size_t>(record.sourceNode) >= sourceApps.size())
-            {
-                sourceApps.resize(static_cast<size_t>(record.sourceNode) + 1);
-            }
-
-            Ptr<UbApp>& client = sourceApps[record.sourceNode];
-            if (client == nullptr)
-            {
-                if (sourceNode->GetNApplications() == 0)
-                {
-                    client = CreateObject<UbApp>();
-                    sourceNode->AddApplication(client);
-                    UbUtils::Get()->ClientTraceConnect(record.sourceNode);
-                }
-                else
-                {
-                    client = DynamicCast<UbApp>(sourceNode->GetApplication(0));
-                }
-                UbTrafficGen::Get()->RegisterSourceAppDuringInitialLoad(record.sourceNode, client);
-            }
             ++localTaskCount;
         }
 
-        UbTrafficGen::Get()->AddTaskDuringInitialLoad(record);
+        const bool accepted = UbTrafficGen::Get()->AddTaskDuringInitialLoad(record);
+        if (accepted && managePlannedConnections && reserveRtpConnections &&
+            (record.opType == "URMA_WRITE" || record.opType == "URMA_READ"))
+        {
+            // A TP connection is bidirectional. Keep one ownership record for both traffic
+            // directions so a reverse task cannot outlive an uncounted planned use.
+            const bool isCanonicalDirection = record.sourceNode <= record.destNode;
+            const PlannedConnectionKey routeKey = isCanonicalDirection
+                                                      ? PlannedConnectionKey{record.sourceNode,
+                                                                             record.destNode,
+                                                                             record.hasSrcPortId,
+                                                                             record.srcPortId,
+                                                                             record.hasDstPortId,
+                                                                             record.dstPortId,
+                                                                             record.priority}
+                                                      : PlannedConnectionKey{record.destNode,
+                                                                             record.sourceNode,
+                                                                             record.hasDstPortId,
+                                                                             record.dstPortId,
+                                                                             record.hasSrcPortId,
+                                                                             record.srcPortId,
+                                                                             record.priority};
+            auto planned = driverOwnedConnections.find(routeKey);
+            if (planned == driverOwnedConnections.end())
+            {
+                Ptr<TpConnectionManager> manager =
+                    sourceNode->GetObject<UbController>()->GetTpConnManager();
+                auto identities = findDriverOwnedConnections(record);
+                if (identities.empty())
+                {
+                    identities = manager->ReservePlannedTpnsForTraffic(
+                        useShortestPaths,
+                        record.sourceNode,
+                        record.destNode,
+                        record.priority,
+                        record.hasSrcPortId ? record.srcPortId : UINT32_MAX,
+                        record.hasDstPortId ? record.dstPortId : UINT32_MAX);
+                }
+                planned = driverOwnedConnections.emplace(routeKey, identities).first;
+            }
+            UbTrafficGen::Get()->RegisterPlannedTpConnections(record.taskId, planned->second);
+        }
     });
 
     UbTrafficGen::Get()->ValidateDependencyVisibilityDelay(
         requirePositiveDependencyVisibilityDelay);
-    UbTrafficGen::Get()->ScheduleNextTasks();
-    UbUtils::Get()->PrintTimestamp("[traffic] Scheduled local tasks: " +
-                                   std::to_string(localTaskCount));
     CheckExampleProcess();
     return localTaskCount;
 }
@@ -687,6 +929,15 @@ QuickExampleOptions ParseOptions(int argc, char* argv[])
               "  node.csv:    allocationDelay maps to AllocationTime; forwardDelay maps to "
               "InPortProcessingDelay; legacy 4-column forwardDelay maps to AllocationTime.\n");
     cmd.AddValue("test", "Enable regression-test style output", options.test);
+    cmd.AddValue("structured-topology-file",
+                 "Read prepared topology and compiled routing from this file",
+                 options.structuredTopologyFile);
+    cmd.AddValue("compressed-routing-file",
+                 "Read a prepared compressed next-hop index from this file",
+                 options.compressedRoutingFile);
+    cmd.AddValue("route-runtime-mode",
+                 "Runtime route lookup: auto, compressed-table-lookup, or structured-rule-compute",
+                 options.routeRuntimeMode);
     cmd.AddValue("mtp-threads",
                  "Number of MTP threads (0-1 to disable, >=2 to enable)",
                  options.mtpThreads);
@@ -696,7 +947,7 @@ QuickExampleOptions ParseOptions(int argc, char* argv[])
     cmd.AddValue("stop-ms", "Optional simulation stop time in milliseconds", options.stopMs);
     cmd.AddValue("rng-run", "Random seed value passed to RngSeedManager::SetSeed", options.rngRun);
     cmd.AddValue("dependency-visibility-delay",
-                 "Advanced override for the dependency visibility delay inferred from UB links",
+                 "Application-level task dependency notification latency (default: 100ns)",
                  options.dependencyVisibilityDelay);
     cmd.AddValue("initial-task-start-offset-window",
                  "Add one deterministic per-source start offset to tasks with no phase "
@@ -714,6 +965,9 @@ QuickExampleOptions ParseOptions(int argc, char* argv[])
     cmd.AddValue("canonical-output",
                  "Write deterministic UbTrafficGen canonical events to this output basename",
                  options.canonicalOutputPath);
+    cmd.AddValue("runtime-storage-snapshot",
+                 "Write a versioned case-end runtime storage attribution CSV to this path",
+                 options.runtimeStorageSnapshotPath);
     cmd.AddNonOption("casePath",
                      "Required unified-bus case directory when --case-path is omitted",
                      positionalCasePath);
@@ -732,7 +986,7 @@ QuickExampleOptions ParseOptions(int argc, char* argv[])
         std::exit(1);
     }
     options.configPath = NormalizeCasePath(options.configPath);
-    ValidateCasePathOrExit(options.configPath);
+    ValidateCasePathOrExit(options.configPath, options.structuredTopologyFile);
 
     return options;
 }
@@ -830,30 +1084,51 @@ PhaseTiming RunScenario(const QuickExampleOptions& options,
     EnableExampleLogging();
 
     UbUtils::Get()->PrintTimestamp("[case] Run case: " + options.configPath);
-    UbUtils::Get()->PrintTimestamp(
-        "[case] node.csv delay fields: allocationDelay -> AllocationTime; "
-        "forwardDelay -> InPortProcessingDelay; legacy 4-column forwardDelay -> AllocationTime.");
+    if (!options.structuredTopologyFile.empty())
+    {
+        UbUtils::Get()->PrintTimestamp(
+            "[case] Structured topology input: allocationDelay -> AllocationTime; "
+            "forwardDelay -> InPortProcessingDelay.");
+    }
+    else
+    {
+        UbUtils::Get()->PrintTimestamp(
+            "[case] node.csv delay fields: allocationDelay -> AllocationTime; "
+            "forwardDelay -> InPortProcessingDelay; legacy 4-column forwardDelay -> "
+            "AllocationTime.");
+    }
     RngSeedManager::SetSeed(options.rngRun);
 
     timing.simulationStart = std::chrono::high_resolution_clock::now();
     UbUtils::ResetRuntimeDropDiagnostics();
     BuildScenarioFromConfig(options, runtime);
-    ConfigureTrafficDependencyVisibility(options, runtime);
-    ApplyDependencyVisibilityLookaheadBound(runtime);
+    ConfigureTrafficDependencyVisibility(options);
     ConfigureCanonicalOutput(options, runtime);
     ConfigureInitialTaskStartOffset(options, runtime);
     ResetDropAbortState();
     GetDropAbortState().retransEnabled = IsRetransEnabledForRun();
-    ActivateTrafficFromConfig(options.configPath,
-                              runtime.enableMpi,
-                              runtime.mpiRank,
-                              runtime.enableMpi || ModeUsesMtp(runtime.mode));
+    const uint32_t localTaskCount =
+        ActivateTrafficFromConfig(options.configPath,
+                                  runtime.enableMpi,
+                                  runtime.mpiRank,
+                                  runtime.enableMpi || ModeUsesMtp(runtime.mode));
+    ApplyDependencyVisibilityLookaheadBound(runtime);
+    UbTrafficGen::Get()->ScheduleNextTasks();
+    UbUtils::Get()->PrintTimestamp("[traffic] Scheduled local tasks: " +
+                                   std::to_string(localTaskCount));
     if (options.stopMs > 0)
     {
         Simulator::Stop(MilliSeconds(options.stopMs));
     }
     Simulator::Run();
     timing.simulationEnd = std::chrono::high_resolution_clock::now();
+
+    const std::string runtimeStorageSnapshotPath =
+        ResolveRuntimeStorageSnapshotPath(options, runtime);
+    if (!runtimeStorageSnapshotPath.empty())
+    {
+        UbUtils::WriteRuntimeStorageSnapshot(runtimeStorageSnapshotPath);
+    }
 
     UbUtils::Get()->Destroy();
     UbTrafficGen::Get()->WriteCanonicalOutput();

@@ -1,0 +1,93 @@
+{
+  "mode": "topology-rule",
+  "nodeCount": 2336,
+  "exhaustiveCorpusQueries": 9427968,
+  "workloadCorpusQueries": 65536,
+  "iterationsPerMeasurement": 10000000,
+  "warmupIterationsPerMeasurement": 100000,
+  "randomSeed": 7869390573,
+  "latencyStatistic": "per-query mean within timed batches",
+  "parseSeconds": 0.014350,
+  "installSeconds": 0.669528,
+  "corpusLoadAndSortSeconds": 1.104815,
+  "measurements": [
+    {
+      "distribution": "exhaustive-sequential",
+      "lookupPath": "candidate-lookup",
+      "queryCount": 10000000,
+      "batchSize": 4096,
+      "batchCount": 2442,
+      "meanNs": 545.000767,
+      "p50BatchMeanNs": 515.614746,
+      "p99BatchMeanNs": 959.991455,
+      "queriesPerSecond": 1834859.804061,
+      "checksum": 57460449939204748,
+      "missing": 0
+    },
+    {
+      "distribution": "exhaustive-sequential",
+      "lookupPath": "get-out-port",
+      "queryCount": 10000000,
+      "batchSize": 4096,
+      "batchCount": 2442,
+      "meanNs": 677.881650,
+      "p50BatchMeanNs": 625.508545,
+      "p99BatchMeanNs": 1207.366943,
+      "queriesPerSecond": 1475183.758109,
+      "checksum": 50000119756846,
+      "missing": 0
+    },
+    {
+      "distribution": "exhaustive-random",
+      "lookupPath": "candidate-lookup",
+      "queryCount": 10000000,
+      "batchSize": 4096,
+      "batchCount": 2442,
+      "meanNs": 996.427312,
+      "p50BatchMeanNs": 959.340332,
+      "p99BatchMeanNs": 1384.135010,
+      "queriesPerSecond": 1003585.497362,
+      "checksum": 58329948889079795,
+      "missing": 0
+    },
+    {
+      "distribution": "exhaustive-random",
+      "lookupPath": "get-out-port",
+      "queryCount": 10000000,
+      "batchSize": 4096,
+      "batchCount": 2442,
+      "meanNs": 1033.890200,
+      "p50BatchMeanNs": 982.259033,
+      "p99BatchMeanNs": 1478.810547,
+      "queriesPerSecond": 967220.697130,
+      "checksum": 50000121296480,
+      "missing": 0
+    },
+    {
+      "distribution": "existing-workload-endpoints",
+      "lookupPath": "candidate-lookup",
+      "queryCount": 10000000,
+      "batchSize": 4096,
+      "batchCount": 2442,
+      "meanNs": 7020.045892,
+      "p50BatchMeanNs": 6808.329346,
+      "p99BatchMeanNs": 9833.547119,
+      "queriesPerSecond": 142449.211220,
+      "checksum": 343647383685000000,
+      "missing": 0
+    },
+    {
+      "distribution": "existing-workload-endpoints",
+      "lookupPath": "get-out-port",
+      "queryCount": 10000000,
+      "batchSize": 4096,
+      "batchCount": 2442,
+      "meanNs": 7158.308725,
+      "p50BatchMeanNs": 7008.209229,
+      "p99BatchMeanNs": 9146.281006,
+      "queriesPerSecond": 139697.802710,
+      "checksum": 50000095390570,
+      "missing": 0
+    }
+  ]
+}

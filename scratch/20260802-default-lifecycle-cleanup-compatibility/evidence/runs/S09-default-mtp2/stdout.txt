@@ -1,0 +1,24 @@
+[INFO] MTP enabled with 2 threads. (local mode).
+[INFO] Parallel runs preserve causal ordering and deterministic task completion ordering, but events with the same simulation time may be processed in a different order than single-thread runs. Compare task or workload metrics using predefined acceptance criteria.
+[16:26:53] [case] Run case: /Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S09-default-mtp2/case
+[16:26:53] [case] node.csv delay fields: allocationDelay -> AllocationTime; forwardDelay -> InPortProcessingDelay; legacy 4-column forwardDelay -> AllocationTime.
+[16:26:53] [setup] Load network_attribute.txt
+[16:26:53] [setup] Prepare runlog directory: /Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S09-default-mtp2/case/runlog
+[16:26:53] [setup] Load node.csv
+[16:26:53] [setup] Load topology.csv
+[16:26:53] [setup] Load routing_table.csv
+[16:26:53] [setup] Skip transport_channel.csv (not found; traffic will reserve TP connections before endpoints materialize on demand).
+[INFO] Link delay offset is off (default). Enable the deterministic positive-link workaround with --link-delay-offset-window=<Time> and record --timing-offset-seed.
+[INFO] Initial task start offset is off (default). Enable it with --initial-task-start-offset-window=<Time> and record --timing-offset-seed.
+[16:26:53] [traffic] Index phase dependencies from traffic.csv
+[16:26:53] [traffic] Activate clients and enqueue tasks.
+[16:26:53] [traffic] Load traffic.csv
+[16:26:53] Simulation time progress: 0 us[16:26:53] [traffic] Scheduled local tasks: 30
+[16:26:54] Simulation time progress: 100 us[16:26:54] Simulation time progress: 200 us
+[16:26:54] [run] Simulation finished.
+[16:26:54] [summary] Program finished.
+[16:26:54] [summary] Wall-clock:
+[16:26:54] [summary]   config : 244 us
+[16:26:54] [summary]   run    : 206.400 ms
+[16:26:54] [summary]   trace  : 0 us
+[16:26:54] [summary]   total  : 221.705 ms

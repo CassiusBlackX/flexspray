@@ -86,11 +86,11 @@ public:
     void OnSenderCongestionNotification(TpOpcode opcode,
                                         uint32_t psn,
                                         UbCongestionExtTph header,
-                                         uint32_t retransmitBytes) override;
+                                        uint32_t retransmitBytes) override;
     void OnSenderRetransmissionRollback(uint32_t retransmitBytes) override;
     void OnSenderRetransmissionPacketSent(uint32_t psn, uint32_t size) override;
 
-private:
+  private:
     void StateReset();
     void UpdateRttEstimate(Time sample);
     void ApplySenderCetphFeedback(uint32_t psn, const UbCongestionExtTph& header);

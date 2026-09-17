@@ -1,0 +1,36 @@
+{
+  "execution": "one warm-up per role and five counterbalanced pairs, strictly serial",
+  "observability": "explicit lifecycle OFF; packet, port, and per-hop trace OFF",
+  "orders": [
+    [
+      "main",
+      "current"
+    ],
+    [
+      "current",
+      "main"
+    ],
+    [
+      "main",
+      "current"
+    ],
+    [
+      "current",
+      "main"
+    ],
+    [
+      "main",
+      "current"
+    ]
+  ],
+  "pre_t29_binary_sha256": "7756e587027029b4d551f70d490659bcea4af0f31cc5fbd47ddc47a46bb45a78",
+  "pre_t29_library_sha256": "0968fced00fb34f13331e73e603c91382601d99a1f588a37517a79aa93a32878",
+  "pre_t29_revision": "db335a0068b27b46c4cddd6b04365ac21d3edc0b",
+  "schema_version": 1,
+  "sizes": [
+    16384009,
+    16384000
+  ],
+  "t29_binary_sha256": "7756e587027029b4d551f70d490659bcea4af0f31cc5fbd47ddc47a46bb45a78",
+  "t29_library_sha256": "0e9432b5d9bf03a606e77dc7fc676aa3b7d7e6b3a8f30c0e6cd6745c0ec9d237"
+}

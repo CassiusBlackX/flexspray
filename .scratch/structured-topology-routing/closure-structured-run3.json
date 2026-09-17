@@ -1,0 +1,23 @@
+{
+  "mode": "structured-rule-compute",
+  "queryCount": 9427968,
+  "iterations": 5000000,
+  "parseSeconds": 0.006797,
+  "installSeconds": 0.308704,
+  "rssBeforeBytes": 8634368,
+  "rssAfterInstallBytes": 231440384,
+  "heapInUseAfterInstallBytes": 215147408,
+  "allocatorReleasedBytes": 0,
+  "rssAfterAllocatorReliefBytes": 231473152,
+  "heapInUseAfterAllocatorReliefBytes": 215147408,
+  "peakRssBytes": 231473152,
+  "measurements": [
+    {"name": "candidate-set", "meanNs": 390.403608, "p50BatchMeanNs": 390.676025, "p99BatchMeanNs": 426.778076, "checksum": 15609832159678945247, "missing": 0},
+    {"name": "HASH64", "meanNs": 358.860242, "p50BatchMeanNs": 358.256104, "p99BatchMeanNs": 399.027344, "checksum": 17596006285552879576, "missing": 0},
+    {"name": "CRC32", "meanNs": 402.307233, "p50BatchMeanNs": 402.191162, "p99BatchMeanNs": 424.052002, "checksum": 5334873313241362200, "missing": 0},
+    {"name": "TOEPLITZ", "meanNs": 799.822667, "p50BatchMeanNs": 799.967529, "p99BatchMeanNs": 832.672119, "checksum": 11346107290130456727, "missing": 0},
+    {"name": "ROUND_ROBIN", "meanNs": 401.840092, "p50BatchMeanNs": 401.987793, "p99BatchMeanNs": 419.911621, "checksum": 9069433590625901631, "missing": 0},
+    {"name": "ADAPTIVE", "meanNs": 509.481383, "p50BatchMeanNs": 505.543945, "p99BatchMeanNs": 654.805420, "checksum": 16982587848491224938, "missing": 0},
+    {"name": "INGRESS_PORT_STRIPE", "meanNs": 350.588550, "p50BatchMeanNs": 350.820068, "p99BatchMeanNs": 368.835449, "checksum": 6270412698303457832, "missing": 0}
+  ]
+}

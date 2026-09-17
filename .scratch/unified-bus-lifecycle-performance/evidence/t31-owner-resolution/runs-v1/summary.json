@@ -1,0 +1,110 @@
+{
+  "non_regressing_pairs": 0,
+  "paired_rss_delta_bytes": 0,
+  "paired_rss_delta_percent": 0.0,
+  "paired_user_delta_percent": 1.5384615384615399,
+  "paired_user_delta_seconds": 0.010000000000000009,
+  "paired_wall_delta_percent": 0.4990486614375067,
+  "paired_wall_delta_seconds": 0.003349749982589856,
+  "pairs": [
+    {
+      "pair": 1,
+      "rss_delta_bytes": 0,
+      "rss_delta_percent": 0.0,
+      "user_delta_seconds": 0.010000000000000009,
+      "wall_delta_percent": 3.1831169094023393,
+      "wall_delta_seconds": 0.02157341703423299
+    },
+    {
+      "pair": 2,
+      "rss_delta_bytes": 180224,
+      "rss_delta_percent": 0.9166666666666767,
+      "user_delta_seconds": 0.020000000000000018,
+      "wall_delta_percent": 1.543710553805755,
+      "wall_delta_seconds": 0.010426332999486476
+    },
+    {
+      "pair": 3,
+      "rss_delta_bytes": -16384,
+      "rss_delta_percent": -0.08278145695364003,
+      "user_delta_seconds": 0.010000000000000009,
+      "wall_delta_percent": 0.4516453135809284,
+      "wall_delta_seconds": 0.003044459008378908
+    },
+    {
+      "pair": 4,
+      "rss_delta_bytes": -32768,
+      "rss_delta_percent": -0.16625103906899863,
+      "user_delta_seconds": 0.0,
+      "wall_delta_percent": 0.4990486614375067,
+      "wall_delta_seconds": 0.003349749982589856
+    },
+    {
+      "pair": 5,
+      "rss_delta_bytes": 147456,
+      "rss_delta_percent": 0.7512520868113493,
+      "user_delta_seconds": 0.0,
+      "wall_delta_percent": 0.059676501687877526,
+      "wall_delta_seconds": 0.00040575003367848694
+    }
+  ],
+  "pre_t31": {
+    "median_block_input_operations": 0,
+    "median_block_output_operations": 0,
+    "median_page_faults": 45,
+    "median_peak_rss_bytes": 19709952,
+    "median_system_seconds": 0.01,
+    "median_time_l_wall_seconds": 0.67,
+    "median_trace_bytes": 506,
+    "median_trace_lines": 12,
+    "median_user_seconds": 0.65,
+    "median_wall_seconds": 0.6754072500043549
+  },
+  "retain": false,
+  "schema_version": 1,
+  "semantic": [
+    {
+      "changed": [],
+      "current_only": [],
+      "main_only": [],
+      "pair": 1
+    },
+    {
+      "changed": [],
+      "current_only": [],
+      "main_only": [],
+      "pair": 2
+    },
+    {
+      "changed": [],
+      "current_only": [],
+      "main_only": [],
+      "pair": 3
+    },
+    {
+      "changed": [],
+      "current_only": [],
+      "main_only": [],
+      "pair": 4
+    },
+    {
+      "changed": [],
+      "current_only": [],
+      "main_only": [],
+      "pair": 5
+    }
+  ],
+  "semantic_exact": true,
+  "t31": {
+    "median_block_input_operations": 0,
+    "median_block_output_operations": 0,
+    "median_page_faults": 45,
+    "median_peak_rss_bytes": 19775488,
+    "median_system_seconds": 0.0,
+    "median_time_l_wall_seconds": 0.67,
+    "median_trace_bytes": 506,
+    "median_trace_lines": 12,
+    "median_user_seconds": 0.66,
+    "median_wall_seconds": 0.6803216670232359
+  }
+}

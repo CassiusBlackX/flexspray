@@ -29,11 +29,15 @@ Only offer the three most relevant template choices.
 
 All workload paths — built-in generator, reference file, or custom skeleton — must produce a CSV conforming to this schema.
 
-### Header
+### Headers
 
 ```
 taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases
+taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,srcPortId,dstPortId
 ```
+
+The nine-column header omits endpoint constraints. The eleven-column header adds the optional
+`srcPortId` and `dstPortId` fields; the two cells remain independently optional.
 
 ### Column definitions
 
@@ -48,6 +52,13 @@ taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOn
 | `delay` | string | Task start delay with time unit | e.g. `10ns`, `0ns`; valid units: `ns`, `us`, `ms`, `s` |
 | `phaseId` | int | Phase identifier | Tasks in the same phase can execute in parallel |
 | `dependOnPhases` | string | Space-separated phaseId list | Empty string for first phase; tasks wait for all listed phases to complete |
+| `srcPortId` | int | Optional source endpoint port ID | Trailing field; empty means any source endpoint port |
+| `dstPortId` | int | Optional destination endpoint port ID | Trailing field; empty means any destination endpoint port |
+
+An explicit `0` selects endpoint port 0; an empty cell is a wildcard. The four endpoint fields
+`sourceNode,destNode,srcPortId,dstPortId` identify the requested endpoint pair when either port is
+specified. The simulator derives protocol-specific internal state from that pair; traffic files do
+not contain Entity IDs.
 
 ### Valid `opType` values
 
@@ -94,11 +105,6 @@ Snapshot (verify against code before relying on this list):
 
 - Pairwise all-to-all.
 - Good for direct all-to-all traffic pressure and pattern comparisons.
-
-### `a2a_scatter`
-
-- Scatter-style all-to-all.
-- Good when the user wants a bounded all-to-all variant with `scatter_k`.
 
 ### reference `traffic.csv`
 
@@ -195,11 +201,49 @@ taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOn
 
 Phase 1 depends on phase 0 completing first.
 
+#### Unified v2 collective CLI
+
+For new cases use `python3 scratch/ns-3-ub-tools/ub_tools.py traffic <collective>`. The command
+uses `--algorithm <name>` and defines `--data-size` as the complete logical collective object, not
+one transfer or accumulated wire bytes. Supported collectives are AllReduce, ReduceScatter,
+AllGather, AllToAll, and AllToAllV. AllToAllV supports `matrix`, `uniform`, and deterministic
+`random` distributions (`--seed` is required for random); matrix input is a square byte CSV and
+does not use `--data-size`. `--data-size` is otherwise the complete logical input per rank, and
+the generator validates the collective contract before it writes `traffic.csv`.
+`--include-local` only controls CSV self-task lowering; it does not change the AllToAllV matrix,
+remote transfers, or validation contract.
+
+AllToAll has one algorithm name, `pairwise`. `--peers-per-phase K` (`1 <= K < group-size`) groups
+consecutive atomic pairwise phases without changing chunk ownership, remote peers, transfers, or
+wire bytes. Do not use the removed `a2a_scatter` / `scatter_k` vocabulary for new cases.
+
+```bash
+python3 scratch/ns-3-ub-tools/ub_tools.py traffic allreduce \
+  --host-count 8 --data-size 1GB --algorithm ring --output-dir {case_dir}
+python3 scratch/ns-3-ub-tools/ub_tools.py traffic alltoallv \
+  --host-count 8 --data-size 1MB --algorithm pairwise --distribution uniform \
+  --output-dir {case_dir}
+```
+
+The old `traffic_maker/build_traffic.py` remains a separate v1 script for timestamped output, short
+options, and legacy algorithm names. v2 does not accept or proxy those options.
+
+Existing SimAI flow JSONL is imported through the same traffic command group:
+
+```bash
+python3 scratch/ns-3-ub-tools/ub_tools.py traffic convert-simai flows.jsonl \
+  --output {case_dir}/traffic.csv --host-count 8
+```
+
+This imports the existing flow DAG; it does not choose a collective algorithm. The command preserves
+an existing output unless `--overwrite` is explicitly supplied.
+
 #### Multi-collective composition
 
 To compose multiple collectives (e.g. AllReduce followed by All-to-All):
 
-1. Generate each collective's traffic.csv separately using `build_traffic.py` (or hand-write).
+1. Generate each collective's traffic.csv separately using `ub_tools.py traffic ...` (or the v1
+   script when old behavior is explicitly required).
 2. Merge into a single file:
    - **taskId**: renumber sequentially across the combined file (second collective continues from where first left off).
    - **phaseId**: renumber the second collective's phaseIds to not collide with the first (e.g. if first uses phases 0–5, second starts at 6).
@@ -208,7 +252,7 @@ To compose multiple collectives (e.g. AllReduce followed by All-to-All):
 
 ### `all2allv_maker.py` (experimental)
 
-`scratch/ns-3-ub-tools/traffic_maker/all2allv_maker.py` is a separate experimental tool for MoE-style non-uniform all-to-all traffic. It is **not integrated with `build_traffic.py`** and has different CLI arguments.
+`scratch/ns-3-ub-tools/traffic_maker/all2allv_maker.py` is a separate experimental tool for MoE-style non-uniform all-to-all traffic. It is **not integrated with the v1 or v2 collective CLI** and has different CLI arguments.
 
 - Algorithms: `all2allv` (all hosts send to all), `all2allv_random` (token-routing to random experts)
 - Intended for MoE dispatch patterns with shared/route experts
@@ -219,13 +263,16 @@ To compose multiple collectives (e.g. AllReduce followed by All-to-All):
 
 ## Mapping rule
 
-- Prefer the repo-native `scratch/ns-3-ub-tools/traffic_maker/build_traffic.py` path for supported collectives.
+- Prefer `scratch/ns-3-ub-tools/ub_tools.py traffic ...` for supported collectives in new cases.
 - If the user asks for `incast`, `hotspot`, or another custom pattern, do not invent a generator. Map it clearly to a supported workload if the mapping is defensible, or use `custom-traffic-skeleton` to hand-write a bounded CSV.
 - If the user has bounded but non-template workload facts, use `custom-traffic-skeleton` rather than forcing a misleading algorithm name.
 - If the user provides pseudocode or an algorithm description, follow the `custom-traffic-skeleton` decomposition steps to translate it into a concrete `traffic.csv`.
 - If the user wants to combine multiple collectives, follow the multi-collective composition rules above.
 
 ## CLI Interface
+
+The following section documents the retained v1 script. Use it only when its old names or timestamped
+directory behavior are required.
 
 Tool: `python3 scratch/ns-3-ub-tools/traffic_maker/build_traffic.py`
 
@@ -242,7 +289,6 @@ Tool: `python3 scratch/ns-3-ub-tools/traffic_maker/build_traffic.py`
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
-| `--scatter-k` | int | 1 | For `a2a_scatter`: merge every k phases |
 | `-d, --phase-delay` | int | 0 | Inter-phase delay in ns |
 | `-o, --output-dir` | str | `./output` | Output root directory |
 | `--rank-mapping` | str | `linear` | Rank assignment: `linear` or `round-robin` |
@@ -250,7 +296,6 @@ Tool: `python3 scratch/ns-3-ub-tools/traffic_maker/build_traffic.py`
 ### Hard constraints
 
 - `host_count % comm_domain_size == 0` (raises ValueError)
-- `1 <= scatter_k < comm_domain_size`
 - `data_size` must parse as number + unit (B/KB/MB/GB, case-insensitive)
 - `rank_mapping` must be `linear` or `round-robin`
 

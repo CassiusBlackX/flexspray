@@ -1,0 +1,35 @@
+<Test>
+  <Name>unified-bus-examples-smoke</Name>
+  <Result>PASS</Result>
+  <Time real="0.564" user="0.000" system="0.000"/>
+  <Test>
+    <Name>UnifiedBus - ub-quick-example local mtp-threads=1 runs as single-thread</Name>
+    <Result>PASS</Result>
+    <Time real="0.145" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - ub-quick-example succeeds without transport_channel.csv</Name>
+    <Result>PASS</Result>
+    <Time real="0.112" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - ub-quick-example accepts GBN retransmission config</Name>
+    <Result>PASS</Result>
+    <Time real="0.084" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - ub-quick-example accepts selective retransmission config</Name>
+    <Result>PASS</Result>
+    <Time real="0.079" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - ub-quick-example local single URMA_WRITE runs in single-thread</Name>
+    <Result>PASS</Result>
+    <Time real="0.071" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - ub-quick-example local single URMA_READ runs in single-thread</Name>
+    <Result>PASS</Result>
+    <Time real="0.071" user="0.000" system="0.000"/>
+  </Test>
+</Test>

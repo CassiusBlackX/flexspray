@@ -1,0 +1,51 @@
+aborted. cond="magic != "NS3_UB_STRUCTURED"", msg="invalid structured topology protocol header: NOT_STRUCTURED", file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/ub-utils.cc, line=2943
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. cond="link.port1 >= n1->GetNDevices() || link.port2 >= n2->GetNDevices()", msg="structured topology link references a port outside the node port count", +0.000000000000s -1 file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/ub-utils.cc, line=3239
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. cond="config.nodes[index].nodeId != index", msg="structured topology node IDs must be unique and contiguous from zero", file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/ub-utils.cc, line=2972
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. cond="CalculateCrc32(payload) != expectedCrc", msg="compressed routing payload checksum mismatch", file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/protocol/ub-next-hop-index.cc, line=368
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. cond="shortestCount > largestNodePortCount || nonShortestCount > largestNodePortCount", msg="compressed routing candidate count exceeds every node port count", file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/protocol/ub-next-hop-index.cc, line=446
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. cond="port >= ports.size() || !ports[port]", msg="compressed routing candidate port is not connected on the source node", file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/protocol/ub-next-hop-index.cc, line=506
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. cond="fileEnd == std::streampos(-1) || fileEnd < payloadStart || static_cast<uint64_t>(fileEnd - payloadStart) != payloadSize", msg="compressed routing payload length differs from the file", file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/protocol/ub-next-hop-index.cc, line=341
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. cond="port >= ports.size() || !ports[port]", msg="compressed routing candidate port is not connected on the source node", file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/protocol/ub-next-hop-index.cc, line=506
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. cond="!std::is_sorted(candidates.shortestPorts.begin(), candidates.shortestPorts.end()) || std::adjacent_find(candidates.shortestPorts.begin(), candidates.shortestPorts.end()) != candidates.shortestPorts.end() || !std::is_sorted(candidates.nonShortestPorts.begin(), candidates.nonShortestPorts.end()) || std::adjacent_find(candidates.nonShortestPorts.begin(), candidates.nonShortestPorts.end()) != candidates.nonShortestPorts.end()", msg="compressed routing candidate ports must be sorted and unique", file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/protocol/ub-next-hop-index.cc, line=478
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. cond="!std::is_sorted(candidates.shortestPorts.begin(), candidates.shortestPorts.end()) || std::adjacent_find(candidates.shortestPorts.begin(), candidates.shortestPorts.end()) != candidates.shortestPorts.end() || !std::is_sorted(candidates.nonShortestPorts.begin(), candidates.nonShortestPorts.end()) || std::adjacent_find(candidates.nonShortestPorts.begin(), candidates.nonShortestPorts.end()) != candidates.nonShortestPorts.end()", msg="compressed routing candidate ports must be sorted and unique", file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/protocol/ub-next-hop-index.cc, line=478
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. cond="!overlap.empty()", msg="compressed routing shortest and non-shortest candidates overlap", file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/protocol/ub-next-hop-index.cc, line=486
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. cond="!overlap.empty()", msg="next-hop shortest and non-shortest candidates overlap", file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/protocol/ub-next-hop-index.cc, line=549
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. cond="mappedDestinations[value]", msg="compressed routing maps multiple nodes to one destination", file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/protocol/ub-next-hop-index.cc, line=407
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. cond="std::find(mappedDestinations.begin(), mappedDestinations.end(), false) != mappedDestinations.end()", msg="compressed routing contains an unmapped destination", file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/protocol/ub-next-hop-index.cc, line=413
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. cond="mappedEndpoints[value]", msg="compressed routing maps multiple addresses to one endpoint", file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/protocol/ub-next-hop-index.cc, line=425
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. cond="std::find(mappedEndpoints.begin(), mappedEndpoints.end(), false) != mappedEndpoints.end()", msg="compressed routing contains an unmapped endpoint", file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/protocol/ub-next-hop-index.cc, line=431
+NS_FATAL, terminating
+libc++abi: terminating
+aborted. cond="config.routingFingerprint.size() != 64 || !std::all_of(config.routingFingerprint.begin(), config.routingFingerprint.end(), [](unsigned char character) { return std::isxdigit(character); })", msg="structured topology routing fingerprint must be a 64-character hexadecimal digest", file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/ub-utils.cc, line=3000
+NS_FATAL, terminating
+libc++abi: terminating

@@ -1,0 +1,106 @@
+{
+  "baseline": {
+    "median_block_input_operations": 0,
+    "median_block_output_operations": 0,
+    "median_page_faults": 136,
+    "median_peak_rss_bytes": 18694144,
+    "median_system_seconds": 0.01,
+    "median_time_l_wall_seconds": 0.56,
+    "median_trace_bytes": 506,
+    "median_trace_lines": 12,
+    "median_user_seconds": 0.54,
+    "median_wall_seconds": 0.571236333984416
+  },
+  "current": {
+    "median_block_input_operations": 0,
+    "median_block_output_operations": 0,
+    "median_page_faults": 136,
+    "median_peak_rss_bytes": 19660800,
+    "median_system_seconds": 0.01,
+    "median_time_l_wall_seconds": 0.73,
+    "median_trace_bytes": 506,
+    "median_trace_lines": 12,
+    "median_user_seconds": 0.71,
+    "median_wall_seconds": 0.7418255419761408
+  },
+  "paired_rss_delta_percent": 5.25854513584576,
+  "paired_user_delta_percent": 31.481481481481467,
+  "paired_wall_delta_percent": 29.269506791320076,
+  "paired_wall_delta_seconds": 0.1689645829901565,
+  "pairs": [
+    {
+      "pair": 1,
+      "rss_delta_bytes": 901120,
+      "rss_delta_percent": 4.820333041191938,
+      "user_delta_seconds": 0.16999999999999993,
+      "wall_delta_percent": 29.863157828538746,
+      "wall_delta_seconds": 0.17058920799172483
+    },
+    {
+      "pair": 2,
+      "rss_delta_bytes": 1015808,
+      "rss_delta_percent": 5.457746478873249,
+      "user_delta_seconds": 0.17999999999999994,
+      "wall_delta_percent": 32.84125665166249,
+      "wall_delta_seconds": 0.183447209012229
+    },
+    {
+      "pair": 3,
+      "rss_delta_bytes": 983040,
+      "rss_delta_percent": 5.25854513584576,
+      "user_delta_seconds": 0.15999999999999992,
+      "wall_delta_percent": 29.269506791320076,
+      "wall_delta_seconds": 0.1659288340015337
+    },
+    {
+      "pair": 4,
+      "rss_delta_bytes": 884736,
+      "rss_delta_percent": 4.712041884816753,
+      "user_delta_seconds": 0.15999999999999992,
+      "wall_delta_percent": 28.042714118247368,
+      "wall_delta_seconds": 0.16136233397992328
+    },
+    {
+      "pair": 5,
+      "rss_delta_bytes": 999424,
+      "rss_delta_percent": 5.346187554776516,
+      "user_delta_seconds": 0.16999999999999993,
+      "wall_delta_percent": 28.784708365735877,
+      "wall_delta_seconds": 0.1689645829901565
+    }
+  ],
+  "schema_version": 1,
+  "semantic": [
+    {
+      "changed": [],
+      "current_only": [],
+      "main_only": [],
+      "pair": 1
+    },
+    {
+      "changed": [],
+      "current_only": [],
+      "main_only": [],
+      "pair": 2
+    },
+    {
+      "changed": [],
+      "current_only": [],
+      "main_only": [],
+      "pair": 3
+    },
+    {
+      "changed": [],
+      "current_only": [],
+      "main_only": [],
+      "pair": 4
+    },
+    {
+      "changed": [],
+      "current_only": [],
+      "main_only": [],
+      "pair": 5
+    }
+  ],
+  "semantic_exact": true
+}

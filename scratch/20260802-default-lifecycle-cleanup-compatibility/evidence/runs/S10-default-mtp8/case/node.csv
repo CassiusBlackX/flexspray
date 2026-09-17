@@ -1,0 +1,4 @@
+nodeId,nodeType,portNum,allocationDelay,forwardDelay,systemId
+0..63,DEVICE,1,5ns,0ns,0
+64..71,SWITCH,16,5ns,0ns,0
+72..79,SWITCH,8,5ns,0ns,0

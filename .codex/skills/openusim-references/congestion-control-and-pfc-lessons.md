@@ -34,6 +34,12 @@
 
 ## First-Principles Model
 
+DCQCN/CAQM read `GetOutPortQueueBacklogBytes()`: VOQ + egress queued bytes.
+Fixed `forwardDelay` processing bytes belong to Buffer Occupancy and ingress admission,
+but not this congestion queue signal. `GetOutPortBufferOccupancyBytes()` includes
+processing + VOQ + egress. Legacy QueueTrace occupancy can therefore exceed the
+queue value used by congestion control, even without contention.
+
 DCQCN 不是“交换机一 mark，发送端立刻降速”。
 
 中间至少有这条链：

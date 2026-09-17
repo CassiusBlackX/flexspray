@@ -1,0 +1,14 @@
+{
+  "binary": "/Users/ytxing/workspace/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+  "binary_sha256": "c97bd8cbf4649d9b991281bd330059281031fe1b97f63bbc352fd729bd17e283",
+  "catalog": "/Users/ytxing/workspace/ns-3-ub-gitcode/.openusim/project/parameter-catalog.json",
+  "dirty": false,
+  "dirty_paths": [],
+  "matrix_rows": 18,
+  "runtime_defaults": {
+    "ns3::UbApp::EnablePlannedTpConnectionDestroy": "true",
+    "ns3::UbApp::EnableTaskScopedJettyDestroy": "true"
+  },
+  "source_revision": "44acf477750a6a7d269045858b57202b2b281653",
+  "timestamp": "2026-08-02T08:35:12.315713+00:00"
+}

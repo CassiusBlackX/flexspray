@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "control": "next@cf8ee683e00e5b6210661013e93cec7217d662e5",
+  "current": "HEAD@51c60c5e10ed3d5fd0c69771fae1755e717ddf72",
+  "observability": "legacy and lifecycle trace output disabled",
+  "execution": "strictly serial, one warm-up per role, counterbalanced pairs",
+  "module_timing": {
+    "rtp_normal": {
+      "total_payload_bytes": 268435456,
+      "pairs": 3,
+      "paired_wall_delta_percent": 1.647345253352217
+    },
+    "ctp_normal": {
+      "total_payload_bytes": 536870912,
+      "pairs": 3,
+      "paired_wall_delta_percent": 14.726464413297835
+    },
+    "rtp_gbn_rto": {
+      "total_payload_bytes": 536870912,
+      "pairs": 3,
+      "paired_wall_delta_percent": 2.50741555718772
+    },
+    "dcqcn": {
+      "total_payload_bytes": 536870912,
+      "pairs": 3,
+      "paired_wall_delta_percent": 0.599907706264724
+    }
+  },
+  "ctp_scaling": [
+    {
+      "total_payload_bytes": 536870912,
+      "pairs": 3,
+      "next_median_wall_seconds": 1.5609632920240983,
+      "current_median_wall_seconds": 1.7860746660153382,
+      "paired_wall_delta_percent": 14.726464413297835,
+      "next_median_peak_rss_bytes": 15466496,
+      "current_median_peak_rss_bytes": 25919488
+    },
+    {
+      "total_payload_bytes": 2147483648,
+      "pairs": 3,
+      "next_median_wall_seconds": 6.149190999974962,
+      "current_median_wall_seconds": 7.074047333968338,
+      "paired_wall_delta_percent": 15.040292844979785,
+      "next_median_peak_rss_bytes": 15433728,
+      "current_median_peak_rss_bytes": 57655296
+    },
+    {
+      "total_payload_bytes": 4294967296,
+      "pairs": 2,
+      "next_median_wall_seconds": 12.270243020990165,
+      "current_median_wall_seconds": 14.174191333499039,
+      "paired_wall_delta_percent": 15.523617570107273,
+      "next_median_peak_rss_bytes": 15425536,
+      "current_median_peak_rss_bytes": 99926016
+    }
+  ],
+  "primary_hotspot": {
+    "module": "CTP",
+    "path": "HandleReceivedPacket -> TrackInboundTaPacket -> GetOrCreateCtpTransactionState -> UbCtpTransactionContext",
+    "mechanism": "receiver-only request assembly repeatedly creates and retires a send-side ACK-window context",
+    "recommended_change": "lazily create UbCtpTransactionContext only for send and TAACK-window paths"
+  },
+  "lower_priority": [
+    "packet birth and terminal bookkeeping",
+    "workload-specific tracked-event containers",
+    "LDST typed scheduling after the LDST redesign direction stabilizes"
+  ]
+}

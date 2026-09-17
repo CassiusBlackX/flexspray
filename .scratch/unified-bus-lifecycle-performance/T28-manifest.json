@@ -1,0 +1,292 @@
+{
+  "archived_complex_tree_digests": {
+    "ctp-win1/lifecycle": "3576fb58e86947c7a6dd116623246704048092158b63e7049c7717971a420a01",
+    "ctp-win1/next": "eeea7957a678ea056a2429ff76e2b2bf5f622b8585a56f0d094535d1d2be25d6",
+    "ctp-win128/lifecycle": "a86f1375659c9f239b907da837b8fb448d61b1f8d3c2c24513396726a148729c",
+    "ctp-win128/next": "327e10816df84a57c96fa3c30597a650a99db7ccd13182a42d52c58b2086b5d4",
+    "ctp-win4/lifecycle": "9cb8c95e3e96c09f83dd8ad7f4def33a703eac0a9e49342340455a4ff52d19a6",
+    "ctp-win4/next": "cf6088fc28644074a7cdb19e627ef07e67b1a6328bdbb08d1abd73686e7ee718",
+    "rtp-gbn-double-drop/lifecycle": "a09e0d501b47ff3820217892c014fb6867fb6ad12be2f7b2b47f59ee165ef9ce",
+    "rtp-gbn-double-drop/next": "795904287a652c18bad918d32248577171b34bb604e246546180d0f0267f61b0",
+    "rtp-shared-win1/lifecycle": "33f514087113a7cf606e76d45ae861300323ffb9d43b7ebe93ca077efea8162a",
+    "rtp-shared-win1/next": "184e3a95b13f1c4412c60df42c4b7d5d551d63d49682872ad19b1e55d18b2db8",
+    "rtp-tpg-gbn/lifecycle": "6a04a596b1b971ba4b8e833a750e0406a23d12447ec60a25ed26eae9dc3616be",
+    "rtp-tpg-gbn/next": "4edd2dd3899ee1cdf53b24fbb7a41e98df896a662ba59fb6e0bd9d6bdda58076"
+  },
+  "automatic_tp_cleanup": "excluded",
+  "commands": {
+    "complex": "python3.12 .scratch/unified-bus-lifecycle-performance/run_t28_acceptance.py complex",
+    "finalize": "python3.12 .scratch/unified-bus-lifecycle-performance/run_t28_acceptance.py finalize",
+    "performance": "python3.12 .scratch/unified-bus-lifecycle-performance/run_t28_acceptance.py performance",
+    "run": "/usr/bin/time -l <frozen-binary> --case-path=<copied-case> --rng-run=1"
+  },
+  "created_at": "2026-07-17T06:49:57.169817+00:00",
+  "inputs": {
+    "complex": {
+      "ctp-win1": {
+        "network_attribute.txt": "56781062f91579b22173ef7c17a7dfdf9caa63e2319d6c7a77caf70ba6709a4a",
+        "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+        "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+        "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+        "traffic.csv": "2218488e558c4e83045c82f6a5101833078339595e0529d587a8093cf805af1e",
+        "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+      },
+      "ctp-win128": {
+        "network_attribute.txt": "7d643906f399d90ee4376fc4ba67ed69dafc79159ab9dd32aa9ebc417dc08682",
+        "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+        "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+        "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+        "traffic.csv": "2218488e558c4e83045c82f6a5101833078339595e0529d587a8093cf805af1e",
+        "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+      },
+      "ctp-win4": {
+        "network_attribute.txt": "f41b93574a3c0546de78c3f824b496e4d2fe9d2f5999662c88bfe252851904d3",
+        "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+        "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+        "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
+        "traffic.csv": "2218488e558c4e83045c82f6a5101833078339595e0529d587a8093cf805af1e",
+        "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+      },
+      "rtp-gbn-double-drop": {
+        "fault.csv": "e8def2a40dd549b50acf307f307860cd9e97d121a60d580f251b56b9981f7b63",
+        "network_attribute.txt": "6199fe2b52655e65d7339bd84099f24d19065e7d3aaa7026d523cdcb061e44e0",
+        "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+        "retrans_fault.csv": "9f168c1f910539a05c9ed1658dc1f5f34d4dc60bc495506be1616a36efb9b49b",
+        "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+        "topology.csv": "3a6733d6ca53dc7b2e6f4c0303f52715e4fb016c0e7ee72c087d838a812a0d71",
+        "traffic.csv": "a26652f940be2ed897d9c378bf1c717ede259afb9ae31bc2b5639376375f11d3",
+        "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+      },
+      "rtp-shared-win1": {
+        "network_attribute.txt": "2eb6dea784cd9373eabb887dd77c72917a6934f2c938a2dbf2ee36823d4fc08d",
+        "node.csv": "e06b20b821325fcaf22d1bf739adabeedbb4a44fddbe969b446513758954e049",
+        "routing_table.csv": "919351b0b9a9b55f8d277d803be313d0dea088535f80f9515e6cb0f9e3a719ca",
+        "topology.csv": "71c3f7392484a68f8f78b8ec5afeb15468ae1f853c8b7c9230166a50fdfb1ee7",
+        "traffic.csv": "59766a47f6c81db54a6b7d84f0ff86ee4e074a555c96f2ce04765e48c804b7aa",
+        "transport_channel.csv": "eea247e19892911b8aba9a057847099200100ddc6f24118daa6ade3e976d22f2"
+      },
+      "rtp-tpg-gbn": {
+        "fault.csv": "e8def2a40dd549b50acf307f307860cd9e97d121a60d580f251b56b9981f7b63",
+        "network_attribute.txt": "c140e5f12accef4e16b449651a8d741ee83638d3d88cbdf9c3d9f6803cc51c30",
+        "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
+        "retrans_fault.csv": "d7b15da5bf19cc83b9208d859453a0a754ac85cdc9dbf0e19923c0a523386709",
+        "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
+        "topology.csv": "3a6733d6ca53dc7b2e6f4c0303f52715e4fb016c0e7ee72c087d838a812a0d71",
+        "traffic.csv": "dbff14b2ada8eda6104550d41e4da6aee4cdd5f7a172fe2ee0d89358fcda5b46",
+        "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
+      }
+    },
+    "p01": {
+      "hashes": {
+        "network_attribute.txt": "7b7aa4e0615ade5d32d58a26048e8ba0d0737fab2d8acdf707ca07198dca49c9",
+        "node.csv": "3111b2e82f96d7499c3bf101af87780117211b7e6cd15d8b3ca67471296a399e",
+        "routing_table.csv": "db0eab21b0c922c2584343a1a4fca08adc0af2b2b91a6fb1a397c44c9f21b3fc",
+        "topology.csv": "b25f671c254d98186b69f90e34c031ce422455a7fabcae9b33e9ff320ae3952f",
+        "traffic.csv": "1133ecd3c23b7c10bb2d41e5fb84c7f88ef1e0038cd2b313bcb24adf9c2c1521",
+        "transport_channel.csv": "11e779b63bdaa8c88aa77c46683e3e9aeb5177e22552836910df70f1a3388517"
+      },
+      "source": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260716-gitcode-main-lifecycle-differential/cases/p01-lifecycle/case-input"
+    },
+    "p02": {
+      "hashes": {
+        "network_attribute.txt": "c71704a6809d7a9d342444d3030868bccb018dc2fdd856f45134d282540d30f5",
+        "node.csv": "6e85e7c9292e41b00bb8026984529c920564b444e00f7032ede5ddfca0820957",
+        "routing_table.csv": "83449108639ed0dd1117b38b52de5a2bab5137336995324cebcf80b3d70a9b45",
+        "topology.csv": "c0aa128bd34c2787f7c06f963930a4216c92087a754b5254cc69d93f2cfffc2d",
+        "traffic.csv": "f0e65da391bd4b731287673af533737ba4845cc83fa1a565b7b7bcec437701a0",
+        "transport_channel.csv": "ce9feb791f8cb460b63778f49bb43f45d09d67a4c0dc09650bb71b895521d30a"
+      },
+      "source": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260716-gitcode-main-lifecycle-differential/cases/p02-lifecycle/case-input"
+    }
+  },
+  "orders": {
+    "complex": "alternating next/current, strictly serial",
+    "p01_p02": [
+      [
+        "main",
+        "current",
+        "next"
+      ],
+      [
+        "current",
+        "next",
+        "main"
+      ],
+      [
+        "next",
+        "main",
+        "current"
+      ],
+      [
+        "main",
+        "next",
+        "current"
+      ],
+      [
+        "next",
+        "current",
+        "main"
+      ]
+    ],
+    "p02_summary": [
+      [
+        "off",
+        "summary"
+      ],
+      [
+        "summary",
+        "off"
+      ],
+      [
+        "off",
+        "summary"
+      ],
+      [
+        "summary",
+        "off"
+      ],
+      [
+        "off",
+        "summary"
+      ]
+    ]
+  },
+  "raw_evidence_root": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/.scratch/unified-bus-lifecycle-performance/evidence/t28-final-v1",
+  "raw_summary_sha256": {
+    "complex_default_off": "7cb4e5c43ebe9b61629c0452ffaeecd4580ecbbe0ca7f29d60c0a36c3d7dae6e",
+    "complex_explicit_summary": "e2da1bd3c90c8bac2f23818ebb0d6c7f5d20588426596619433d3be3deaf0470",
+    "performance": "46f0f513d11b0a99a333aabb5e134ec71e9986e6d1a17d9485f6ed236c746d8e"
+  },
+  "roles": {
+    "current": {
+      "binary": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example",
+      "binary_bytes": 178464,
+      "binary_dependencies": [
+        "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/build/scratch/ns3.44-ub-quick-example:",
+        "\t@rpath/libns3.44-unified-bus.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t@rpath/libns3.44-config-store.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t@rpath/libns3.44-point-to-point.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t/usr/lib/libxml2.2.dylib (compatibility version 10.0.0, current version 10.9.0)",
+        "\t@rpath/libns3.44-applications.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t@rpath/libns3.44-internet.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t@rpath/libns3.44-bridge.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t@rpath/libns3.44-traffic-control.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t@rpath/libns3.44-network.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t@rpath/libns3.44-stats.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t@rpath/libns3.44-core.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t/usr/lib/libsqlite3.dylib (compatibility version 9.0.0, current version 382.0.0)",
+        "\t/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 2100.43.0)",
+        "\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)"
+      ],
+      "binary_sha256": "7756e587027029b4d551f70d490659bcea4af0f31cc5fbd47ddc47a46bb45a78",
+      "cmake": {
+        "CMAKE_BUILD_TYPE": "release",
+        "CMAKE_CXX_COMPILER": "/usr/bin/c++",
+        "NS3_EXAMPLES": "OFF",
+        "NS3_MPI": "OFF",
+        "NS3_TESTS": "ON"
+      },
+      "revision": "85c61e8bc4a6a47971f1e7f83e3eced72f47f531",
+      "source_root": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode",
+      "unified_bus_library": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/build/lib/libns3.44-unified-bus.dylib",
+      "unified_bus_library_bytes": 3254304,
+      "unified_bus_library_sha256": "0968fced00fb34f13331e73e603c91382601d99a1f588a37517a79aa93a32878"
+    },
+    "main": {
+      "binary": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/.worktrees/t00-reference-main/build/scratch/ns3.44-ub-quick-example",
+      "binary_bytes": 160328,
+      "binary_dependencies": [
+        "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/.worktrees/t00-reference-main/build/scratch/ns3.44-ub-quick-example:",
+        "\t@rpath/libns3.44-unified-bus.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t@rpath/libns3.44-config-store.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t@rpath/libns3.44-point-to-point.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t/usr/lib/libxml2.2.dylib (compatibility version 10.0.0, current version 10.9.0)",
+        "\t@rpath/libns3.44-applications.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t@rpath/libns3.44-internet.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t@rpath/libns3.44-bridge.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t@rpath/libns3.44-traffic-control.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t@rpath/libns3.44-network.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t@rpath/libns3.44-stats.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t@rpath/libns3.44-core.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t/usr/lib/libsqlite3.dylib (compatibility version 9.0.0, current version 382.0.0)",
+        "\t/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 2100.43.0)",
+        "\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)"
+      ],
+      "binary_sha256": "cf9deb34cc4efab04913dc44e43b1cfc46d6e69e20fa9dc5a3ac52ace4149740",
+      "cmake": {
+        "CMAKE_BUILD_TYPE": "release",
+        "CMAKE_CXX_COMPILER": "/usr/bin/c++",
+        "NS3_EXAMPLES": "OFF",
+        "NS3_MPI": "OFF",
+        "NS3_TESTS": "OFF"
+      },
+      "revision": "ccf41b58b0ba3b9711efea595732a2908e3e07cf",
+      "source_root": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/.worktrees/t00-reference-main",
+      "unified_bus_library": "/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/.worktrees/t00-reference-main/build/lib/libns3.44-unified-bus.dylib",
+      "unified_bus_library_bytes": 2447928,
+      "unified_bus_library_sha256": "cf05dd2d999218df9c2ed723b4682927f79ff509c2daaf55d983bd9dcea8ed98"
+    },
+    "next": {
+      "binary": "/Users/ytxing/workspace/ns-3-ub-routing-modes/build/scratch/ns3.44-ub-quick-example",
+      "binary_bytes": 181008,
+      "binary_dependencies": [
+        "/Users/ytxing/workspace/ns-3-ub-routing-modes/build/scratch/ns3.44-ub-quick-example:",
+        "\t@rpath/libns3.44-unified-bus.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t@rpath/libns3.44-config-store.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t@rpath/libns3.44-point-to-point.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t/usr/lib/libxml2.2.dylib (compatibility version 10.0.0, current version 10.9.0)",
+        "\t@rpath/libns3.44-applications.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t@rpath/libns3.44-internet.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t@rpath/libns3.44-bridge.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t@rpath/libns3.44-traffic-control.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t@rpath/libns3.44-network.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t@rpath/libns3.44-stats.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t@rpath/libns3.44-core.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "\t/usr/lib/libsqlite3.dylib (compatibility version 9.0.0, current version 382.0.0)",
+        "\t/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 2100.43.0)",
+        "\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)"
+      ],
+      "binary_sha256": "51129796c550755d9099746fd61aece09978970cf4f25e94faab83d59e82c387",
+      "cmake": {
+        "CMAKE_BUILD_TYPE": "release",
+        "CMAKE_CXX_COMPILER": "/usr/bin/c++",
+        "NS3_EXAMPLES": "OFF",
+        "NS3_MPI": "OFF",
+        "NS3_TESTS": "ON"
+      },
+      "revision": "cf8ee683e00e5b6210661013e93cec7217d662e5",
+      "source_root": "/Users/ytxing/workspace/ns-3-ub-routing-modes",
+      "unified_bus_library": "/Users/ytxing/workspace/ns-3-ub-routing-modes/build/lib/libns3.44-unified-bus.dylib",
+      "unified_bus_library_bytes": 2732832,
+      "unified_bus_library_sha256": "5d090eef16ff7b77791d65a32feaf3d80f59c2e3035d4d3ecd396d847d14cc92"
+    }
+  },
+  "runtime": {
+    "cxx": [
+      "Apple clang version 21.0.0 (clang-2100.1.1.101)",
+      "Target: arm64-apple-darwin25.5.0",
+      "Thread model: posix",
+      "InstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+    ],
+    "machine": "arm64",
+    "platform": "macOS-26.5.1-arm64-arm-64bit",
+    "python": "3.12.12",
+    "sw_vers": [
+      "ProductName:\t\tmacOS",
+      "ProductVersion:\t\t26.5.1",
+      "BuildVersion:\t\t25F80"
+    ],
+    "uname": "Darwin MateBook-Air.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:39:29 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8142 arm64"
+  },
+  "schema_version": 1,
+  "transforms": {
+    "complex_current": "global UB_LIFECYCLE_TRACE_LEVEL \"SUMMARY\"",
+    "p01_all_roles": "default ns3::UbLdstApi::UsePacketSpray \"false\"",
+    "p01_current": "global UB_LIFECYCLE_TRACE_LEVEL \"OFF\"",
+    "p02_all_roles": "default ns3::UbRoutingProcess::RoutingAlgorithm \"HASH\"",
+    "p02_current_modes": [
+      "OFF",
+      "SUMMARY"
+    ]
+  }
+}

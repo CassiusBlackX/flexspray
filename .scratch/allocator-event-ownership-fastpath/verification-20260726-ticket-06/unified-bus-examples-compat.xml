@@ -1,0 +1,50 @@
+<Test>
+  <Name>unified-bus-examples-compat</Name>
+  <Result>PASS</Result>
+  <Time real="2.170" user="0.000" system="0.000"/>
+  <Test>
+    <Name>UnifiedBus - ub-quick-example rejects missing case-path</Name>
+    <Result>PASS</Result>
+    <Time real="0.011" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - ub-quick-example rejects missing case directory</Name>
+    <Result>PASS</Result>
+    <Time real="0.011" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - ub-quick-example rejects case directory with missing required files</Name>
+    <Result>PASS</Result>
+    <Time real="0.011" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - ub-quick-example help marks case-path as required</Name>
+    <Result>PASS</Result>
+    <Time real="0.011" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - legacy scratch ub-quick-example remains usable</Name>
+    <Result>PASS</Result>
+    <Time real="1.953" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - ub-quick-example accepts equivalent duplicated case-path inputs</Name>
+    <Result>PASS</Result>
+    <Time real="0.107" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - ub-quick-example rejects conflicting case-path inputs</Name>
+    <Result>PASS</Result>
+    <Time real="0.011" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - ub-quick-example reports migration hint for legacy network attribute keys</Name>
+    <Result>PASS</Result>
+    <Time real="0.026" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - ub-quick-example reports migration hint for legacy CTP max outstanding</Name>
+    <Result>PASS</Result>
+    <Time real="0.026" user="0.000" system="0.000"/>
+  </Test>
+</Test>

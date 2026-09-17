@@ -1,0 +1,10 @@
+<Test>
+  <Name>unified-bus-lifecycle-storage</Name>
+  <Result>PASS</Result>
+  <Time real="0.006" user="0.000" system="0.000"/>
+  <Test>
+    <Name>UnifiedBus - retired lifecycle resources expose bounded storage</Name>
+    <Result>PASS</Result>
+    <Time real="0.006" user="0.000" system="0.000"/>
+  </Test>
+</Test>

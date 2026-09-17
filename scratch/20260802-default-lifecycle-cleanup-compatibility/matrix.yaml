@@ -1,0 +1,44 @@
+version: 2
+status: completed
+execution_approved: true
+claim: omitted-cleanup-attributes-equal-explicit-on-under-candidate-defaults
+changed_variable: lifecycle-attributes-explicit-true-vs-omitted
+
+shared:
+  source_package: ../20260802-main-next-controlled-comparison
+  source_fixture_revision: 7d700ed5704d58b46dfba954fe98c742ed695036
+  candidate_ref: HEAD
+  process_policy: serial
+  checkpoint_policy: pause_for_user
+  manual_approval_gate: true
+  route_runtime_mode: legacy-csv
+  dependency_visibility_delay: 100ns
+  required_runtime_defaults:
+    ns3::UbApp::EnableTaskScopedJettyDestroy: true
+    ns3::UbApp::EnablePlannedTpConnectionDestroy: true
+
+rows:
+  - {case_id: S01-explicit-local, scenario: S01-single-rtp, profile: explicit-on, mtp_threads: 0, pair: S01-default-local, case_dir: cases/S01-explicit-local}
+  - {case_id: S01-default-local, scenario: S01-single-rtp, profile: implicit-default, mtp_threads: 0, pair: S01-explicit-local, case_dir: cases/S01-default-local}
+
+  - {case_id: S03-explicit-local, scenario: S03-dwrr-fc-block, profile: explicit-on, mtp_threads: 0, pair: S03-default-local, case_dir: cases/S03-explicit-local}
+  - {case_id: S03-default-local, scenario: S03-dwrr-fc-block, profile: implicit-default, mtp_threads: 0, pair: S03-explicit-local, case_dir: cases/S03-default-local}
+  - {case_id: S03-explicit-mtp2, scenario: S03-dwrr-fc-block, profile: explicit-on, mtp_threads: 2, pair: S03-default-mtp2, case_dir: cases/S03-explicit-mtp2}
+  - {case_id: S03-default-mtp2, scenario: S03-dwrr-fc-block, profile: implicit-default, mtp_threads: 2, pair: S03-explicit-mtp2, case_dir: cases/S03-default-mtp2}
+
+  - {case_id: S08-explicit-local, scenario: S08-ctp-windowed, profile: explicit-on, mtp_threads: 0, pair: S08-default-local, case_dir: cases/S08-explicit-local}
+  - {case_id: S08-default-local, scenario: S08-ctp-windowed, profile: implicit-default, mtp_threads: 0, pair: S08-explicit-local, case_dir: cases/S08-default-local}
+
+  - {case_id: S09-explicit-local, scenario: S09-dependency-broadcast, profile: explicit-on, mtp_threads: 0, pair: S09-default-local, case_dir: cases/S09-explicit-local}
+  - {case_id: S09-default-local, scenario: S09-dependency-broadcast, profile: implicit-default, mtp_threads: 0, pair: S09-explicit-local, case_dir: cases/S09-default-local}
+  - {case_id: S09-explicit-mtp2, scenario: S09-dependency-broadcast, profile: explicit-on, mtp_threads: 2, pair: S09-default-mtp2, case_dir: cases/S09-explicit-mtp2}
+  - {case_id: S09-default-mtp2, scenario: S09-dependency-broadcast, profile: implicit-default, mtp_threads: 2, pair: S09-explicit-mtp2, case_dir: cases/S09-default-mtp2}
+
+  - {case_id: S10-explicit-mtp8, scenario: S10-dense-a2a-64, profile: explicit-on, mtp_threads: 8, pair: S10-default-mtp8, case_dir: cases/S10-explicit-mtp8}
+  - {case_id: S10-default-mtp8, scenario: S10-dense-a2a-64, profile: implicit-default, mtp_threads: 8, pair: S10-explicit-mtp8, case_dir: cases/S10-default-mtp8}
+
+  - {case_id: S11-explicit-local, scenario: S11-phased-a2a-128, profile: explicit-on, mtp_threads: 0, pair: S11-default-local, case_dir: cases/S11-explicit-local}
+  - {case_id: S11-default-local, scenario: S11-phased-a2a-128, profile: implicit-default, mtp_threads: 0, pair: S11-explicit-local, case_dir: cases/S11-default-local}
+
+  - {case_id: S12-explicit-local, scenario: S12-selective-retransmission, profile: explicit-on, mtp_threads: 0, pair: S12-default-local, case_dir: cases/S12-explicit-local}
+  - {case_id: S12-default-local, scenario: S12-selective-retransmission, profile: implicit-default, mtp_threads: 0, pair: S12-explicit-local, case_dir: cases/S12-default-local}

@@ -1,0 +1,2 @@
+ruleId,enabled,taskId,nodeId,portId,direction,packetType,psn,lastPacket,dropCount,delayNs,delayCount,comment
+s12_data_psn1,true,0,2,1,forward,DATA,1,any,1,0,0,drop DATA PSN 1 once

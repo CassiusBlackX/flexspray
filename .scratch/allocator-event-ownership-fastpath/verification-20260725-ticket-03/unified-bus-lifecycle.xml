@@ -1,0 +1,490 @@
+<Test>
+  <Name>unified-bus-lifecycle</Name>
+  <Result>PASS</Result>
+  <Time real="0.162" user="0.000" system="0.000"/>
+  <Test>
+    <Name>UnifiedBus - packet lifecycle balances typed terminals by generation</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - lifecycle OFF skips packet transfer evidence</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - parallel packet controls apply once in source order</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - direct egress queue rejection records a typed terminal</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - direct TP WQE submission is atomic</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - duplicate direct WQE submission is rejected atomically</Name>
+    <Result>PASS</Result>
+    <Time real="0.001" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - stale direct and TPG references reject before WQE generation</Name>
+    <Result>PASS</Result>
+    <Time real="0.001" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - two-member TPG submission uses the lifecycle RTP path</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - all-full TPG defers without advancing cursors</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - TPG skips a full member for an eligible member</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - direct TP capacity transition wakes one deferred source</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - ready sources report fixed RR fairness and throughput</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - local and remote ready sources share fixed TP order</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - real member ACKs coalesce one TPG capacity wake</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - live TPG destroy releases only its exact Jetty binding</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - AddMember validates ownership and restores an active empty TPG</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - last TPG member removal waits for use lease assignment</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - AddMember replaces pending last member and wakes its holder</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - non-last member removal pins old work and redirects continuation</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - active-use TPG destroy pends and finalizes exactly once</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - repeated deferred TPG destroy retires exact admission domain</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - error TPG cleanup terminates blocked tail exactly once</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - simulation-stop TPG cleanup terminates blocked tail exactly once</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - error last TPG member removal terminates active use</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - simulation-stop last TPG member removal terminates active use</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - reentrant typed cleanup repeats same group</Name>
+    <Result>PASS</Result>
+    <Time real="0.001" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - reentrant typed cleanup destroys another group</Name>
+    <Result>PASS</Result>
+    <Time real="0.001" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - Controller dispose force-cleans canonical TPG</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - multi-segment TPG round robin pins each TP generation</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - TPG retransmission stays on the resolved TP generation</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - TPG round robin preserves cross-Jetty initial phase</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - same-Jetty lifecycle WQEs make independent progress</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - strong-order failed pre-admission front wakes accepted successor</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - strong-order canceled pre-admission front wakes accepted successor</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - strong-order failed post-admission front wakes accepted successor</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - strong-order canceled post-admission front wakes accepted successor</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - strong-order failed pre-admission synchronous front wakes accepted successor</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - strong-order canceled pre-admission synchronous front wakes accepted successor</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - shared TP non-tail unsent failed compacts later admission</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - shared TP non-tail unsent canceled compacts later admission</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - started failed work retains correlation until response cleanup</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - started canceled work retains correlation until response cleanup</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - error pending tombstone upgrades to simulation-stop force</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - GBN retransmission trace cleanup error</Name>
+    <Result>PASS</Result>
+    <Time real="0.001" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - GBN retransmission trace cleanup simulation-stop</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - GBN retransmission trace cleanup replacement identity</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - selective retransmission trace cleanup error</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - selective retransmission trace cleanup simulation-stop</Name>
+    <Result>PASS</Result>
+    <Time real="0.001" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - selective retransmission trace cleanup replacement identity</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - response-bearing TP ACK precedes failed terminal</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - response-bearing TP ACK precedes canceled terminal</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - Jetty lifetime is explicit and scoped to one generation</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - app RTP Jetty is task-scoped at creation</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - task completion is visible before Jetty retirement drains</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - CTP task completion does not schedule RTP cleanup</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - duplicate task cleanup submission schedules exactly once</Name>
+    <Result>PASS</Result>
+    <Time real="0.014" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - pending task cleanup does not retain its app</Name>
+    <Result>PASS</Result>
+    <Time real="0.001" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - forced removal rejects missing unacknowledged segment</Name>
+    <Result>PASS</Result>
+    <Time real="0.010" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - explicit graceful drain continues accepted strong-order successor</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - protocol-complete graceful drain continues accepted strong-order successor</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - explicit pending drain upgrades monotonically to error abort</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - error strong-order drain does not wake successor</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - simulation-stop strong-order drain does not wake successor</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - accepted segment work blocks TP generation retirement</Name>
+    <Result>PASS</Result>
+    <Time real="0.010" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - rejected direct TP admission preserves lazy segment cursor</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - scheduler race backpressure preserves direct admission state</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - direct TP WRITE retires one atomic ownership chain</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - segment completion requires the resolved TP generation</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - late completion cannot finish a reused Jetty WQE and TASSN</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - late completion cannot finish a different WQE on reused TASSN</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - Transaction failure produces one typed WQE terminal</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - cancel and flush retain distinct typed WQE terminals</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - idle Jetty destroy completes synchronously without callback</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - Jetty destroy releases CTP binding without destroying service</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - forced Jetty disposal flushes accepted work synchronously</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - active Jetty freezes admission and finalizes once after drain</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - forced stop cancels tracked schedule work across Jetty generations</Name>
+    <Result>PASS</Result>
+    <Time real="0.001" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - reentrant forced stop defers running finish retirement</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - reentrant pending cleanup preserves replacement Jetty generation</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - reentrant direct forced drain refreshes manager WQE state</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - reentrant legacy forced flush refreshes Jetty WQE state</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - forced stop pending finish releases TP scheduler ownership</Name>
+    <Result>PASS</Result>
+    <Time real="0.001" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - cancel between tracked schedule phases cannot revive stale work</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - stale finish cannot commit into same-Jetty reused WQE key</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - app CTP cached Jetty rejects WQE admission while draining</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - accepted response work drains an explicit Jetty destroy</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - duplicate Transaction outcome fails before second notification</Name>
+    <Result>PASS</Result>
+    <Time real="0.021" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - stale direct WQE finish cannot terminate a reused operation key</Name>
+    <Result>PASS</Result>
+    <Time real="0.021" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - packet lifecycle identity survives queue link copy and serialization</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - fault parser view preserves packet identity and accounting</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - fault drop terminates only true drop results</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - normal and detached channel failures terminalize packets</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - malformed TPSACK terminalizes after production parser rejection</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - RTP data birth drains after queue link and endpoint consume</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - RTP route failure records one typed drop and drains</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - RTP ingress admission failure records one typed drop</Name>
+    <Result>PASS</Result>
+    <Time real="0.000" user="0.000" system="0.000"/>
+  </Test>
+  <Test>
+    <Name>UnifiedBus - packet lifecycle rejects underflow stale and retired mutation</Name>
+    <Result>PASS</Result>
+    <Time real="0.043" user="0.000" system="0.000"/>
+  </Test>
+</Test>

@@ -108,25 +108,31 @@ UbTrafficGen::IsMultiProcessRuntimeUnsupported()
     return false;
 }
 
+Time
+UbTrafficGen::SelectTaskCleanupDeliveryDelay(bool partitioned, Time causalDeliveryDelay)
+{
+    return partitioned ? causalDeliveryDelay : TimeStep(0);
+}
+
 void UbTrafficGen::AddTask(const TrafficRecord& record)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     AddTaskLocked(record, false);
 }
 
-void
+bool
 UbTrafficGen::AddTaskDuringInitialLoad(const TrafficRecord& record)
 {
-    AddTaskLocked(record, true);
+    return AddTaskLocked(record, true);
 }
 
-void
+bool
 UbTrafficGen::AddTaskDuringInitialLoad(const TrafficRecordView& record)
 {
-    AddTaskLocked(record, true);
+    return AddTaskLocked(record, true);
 }
 
-void
+bool
 UbTrafficGen::AddTaskLocked(const TrafficRecord& record, bool phaseAlreadyIndexed)
 {
     uint32_t taskId = record.taskId;
@@ -134,7 +140,7 @@ UbTrafficGen::AddTaskLocked(const TrafficRecord& record, bool phaseAlreadyIndexe
     if (!SetTaskLocked(task))
     {
         NS_LOG_ERROR("TaskId " << taskId << " already exists, cannot add duplicate task!");
-        return;
+        return false;
     }
     if (!phaseAlreadyIndexed) {
         RegisterTaskPhaseLocked(record.phaseId, taskId);
@@ -175,9 +181,10 @@ UbTrafficGen::AddTaskLocked(const TrafficRecord& record, bool phaseAlreadyIndexe
 
     NS_LOG_DEBUG("Added task " << taskId << " with " << uniqueDependencyPhaseCount
                                << " phase dependencies");
+    return true;
 }
 
-void
+bool
 UbTrafficGen::AddTaskLocked(const TrafficRecordView& record, bool phaseAlreadyIndexed)
 {
     const uint32_t taskId = record.taskId;
@@ -185,7 +192,7 @@ UbTrafficGen::AddTaskLocked(const TrafficRecordView& record, bool phaseAlreadyIn
     if (!SetTaskLocked(task))
     {
         NS_LOG_ERROR("TaskId " << taskId << " already exists, cannot add duplicate task!");
-        return;
+        return false;
     }
     if (!phaseAlreadyIndexed) {
         RegisterTaskPhaseLocked(record.phaseId, taskId);
@@ -244,6 +251,36 @@ UbTrafficGen::AddTaskLocked(const TrafficRecordView& record, bool phaseAlreadyIn
 
     NS_LOG_DEBUG("Added task " << taskId << " with " << uniqueDependencyPhaseCount
                                << " phase dependencies");
+    return true;
+}
+
+void
+UbTrafficGen::RegisterPlannedTpConnections(
+    uint32_t taskId,
+    const std::vector<UbLifecycleResourceIdentity>& connections)
+{
+    if (connections.empty())
+    {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(m_mutex);
+    NS_ABORT_MSG_IF(FindTaskLocked(taskId) == nullptr,
+                    "Cannot register planned TP connections for an unknown task " << taskId);
+    const auto [task, inserted] = m_taskPlannedTpConnections.emplace(taskId, connections);
+    NS_ABORT_MSG_IF(!inserted,
+                    "Planned TP connections already registered for task " << taskId);
+    for (const auto& identity : task->second)
+    {
+        NS_ABORT_MSG_IF(identity.kind != UbLifecycleResourceKind::RTP_CONNECTION,
+                        "Planned TP policy accepts only connection identities");
+        const PlannedTpConnectionKey key{identity.ownerNodeId,
+                                         identity.localId,
+                                         identity.generation};
+        auto [use, created] = m_plannedTpUses.emplace(key, PlannedTpUseRecord{identity, 0});
+        NS_ABORT_MSG_IF(!created && use->second.identity != identity,
+                        "Planned TP identity key collision");
+        ++use->second.remainingUses;
+    }
 }
 
 void
@@ -313,10 +350,10 @@ UbTrafficGen::ConvertToRuntimeTask(const TrafficRecord& record)
     task.priority = static_cast<uint8_t>(record.priority);
     task.delay = ParseDelayLocked(record.delay);
     task.op = ParseOpLocked(record.opType);
-    task.srcEntityId = record.srcEntityId;
-    task.dstEntityId = record.dstEntityId;
-    task.hasSrcEntityId = record.hasSrcEntityId;
-    task.hasDstEntityId = record.hasDstEntityId;
+    task.srcPortId = record.srcPortId;
+    task.dstPortId = record.dstPortId;
+    task.hasSrcPortId = record.hasSrcPortId;
+    task.hasDstPortId = record.hasDstPortId;
     task.hasPhaseDependencies = !record.dependOnPhases.empty();
 
     return task;
@@ -338,10 +375,10 @@ UbTrafficGen::ConvertToRuntimeTask(const TrafficRecordView& record)
     task.priority = record.priority;
     task.delay = ParseDelayLocked(record.delay);
     task.op = ParseOpLocked(record.opType);
-    task.srcEntityId = record.srcEntityId;
-    task.dstEntityId = record.dstEntityId;
-    task.hasSrcEntityId = record.hasSrcEntityId;
-    task.hasDstEntityId = record.hasDstEntityId;
+    task.srcPortId = record.srcPortId;
+    task.dstPortId = record.dstPortId;
+    task.hasSrcPortId = record.hasSrcPortId;
+    task.hasDstPortId = record.hasDstPortId;
     task.hasPhaseDependencies = !record.dependOnPhases.empty();
 
     return task;
@@ -728,6 +765,13 @@ UbTrafficGen::GetTaskCleanupInfoById(uint32_t taskId)
 
 void UbTrafficGen::MarkTaskCompleted(uint32_t taskId)
 {
+    SubmitTaskCompletion(taskId, std::nullopt);
+}
+
+void
+UbTrafficGen::SubmitTaskCompletion(uint32_t taskId,
+                                   std::optional<TaskCleanupRequest> cleanupRequest)
+{
     Time completionVisibleTs;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -735,6 +779,26 @@ void UbTrafficGen::MarkTaskCompleted(uint32_t taskId)
         TaskState* state = FindTaskStateLocked(taskId);
         if (state == nullptr || *state != TaskState::RUNNING) {
             return;
+        }
+
+        if (cleanupRequest.has_value())
+        {
+            const auto [cleanupIt, inserted] =
+                m_pendingTaskCleanups.emplace(taskId, *cleanupRequest);
+            NS_ABORT_MSG_IF(!inserted &&
+                                (cleanupIt->second.ownerNodeId != cleanupRequest->ownerNodeId ||
+                                 cleanupIt->second.ownerApplicationIndex !=
+                                     cleanupRequest->ownerApplicationIndex ||
+                                 cleanupIt->second.jettyNum != cleanupRequest->jettyNum ||
+                                 cleanupIt->second.destroyTaskScopedJetty !=
+                                     cleanupRequest->destroyTaskScopedJetty ||
+                                 cleanupIt->second.destroyPlannedTpConnections !=
+                                     cleanupRequest->destroyPlannedTpConnections),
+                            "Conflicting task cleanup request for task " << taskId);
+            if (!inserted)
+            {
+                return;
+            }
         }
 
         const Time delay = ResolveCompletionVisibleDelayLocked();
@@ -768,26 +832,8 @@ UbTrafficGen::ValidateDependencyVisibilityDelay(bool requireStrictlyPositive) co
         return;
     }
 
-    NS_ABORT_MSG_IF(!m_dependencyVisibilityDelay.has_value() &&
-                        !m_automaticDependencyVisibilityDelay.has_value(),
-                    "traffic.csv contains task dependencies but no dependency visibility delay is "
-                    "available. Configure a positive UB link delay or pass "
-                    "--dependency-visibility-delay=<Time>.");
-    NS_ABORT_MSG_IF(requireStrictlyPositive && !ResolveCompletionVisibleDelayLocked().IsStrictlyPositive(),
+    NS_ABORT_MSG_IF(requireStrictlyPositive && !m_dependencyVisibilityDelay.IsStrictlyPositive(),
                     "parallel traffic.csv dependencies require a positive dependency visibility delay.");
-}
-
-void
-UbTrafficGen::ConsiderAutomaticDependencyVisibilityDelay(Time delay)
-{
-    NS_ABORT_MSG_IF(delay.IsStrictlyNegative(),
-                    "automatic dependency visibility delay must be non-negative");
-    std::lock_guard<std::mutex> lock(m_mutex);
-    if (!m_automaticDependencyVisibilityDelay.has_value() ||
-        delay < *m_automaticDependencyVisibilityDelay)
-    {
-        m_automaticDependencyVisibilityDelay = delay;
-    }
 }
 
 void
@@ -890,6 +936,8 @@ void
 UbTrafficGen::ApplyTaskCompletion(uint32_t taskId)
 {
     ReadyTaskBatch readyBatch;
+    std::optional<TaskCleanupRequest> cleanupRequest;
+    bool releasePlannedTpBinding = false;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
 
@@ -942,13 +990,95 @@ UbTrafficGen::ApplyTaskCompletion(uint32_t taskId)
         }
 
         readyBatch = CollectReadyTaskBatchLocked();
+        const auto cleanupIt = m_pendingTaskCleanups.find(taskId);
+        if (cleanupIt != m_pendingTaskCleanups.end())
+        {
+            cleanupRequest = cleanupIt->second;
+            m_pendingTaskCleanups.erase(cleanupIt);
+        }
+
+        if (!m_taskPlannedTpConnections.empty())
+        {
+            const auto plannedTask = m_taskPlannedTpConnections.find(taskId);
+            if (plannedTask != m_taskPlannedTpConnections.end())
+            {
+                releasePlannedTpBinding = cleanupRequest.has_value() &&
+                                          cleanupRequest->destroyPlannedTpConnections;
+                for (const auto& identity : plannedTask->second)
+                {
+                    const PlannedTpConnectionKey key{identity.ownerNodeId,
+                                                     identity.localId,
+                                                     identity.generation};
+                    auto use = m_plannedTpUses.find(key);
+                    NS_ABORT_MSG_IF(use == m_plannedTpUses.end() ||
+                                        use->second.remainingUses == 0,
+                                    "Planned TP reference balance is corrupt for task " << taskId);
+                    --use->second.remainingUses;
+                    if (use->second.remainingUses == 0)
+                    {
+                        if (cleanupRequest.has_value() &&
+                            cleanupRequest->destroyPlannedTpConnections)
+                        {
+                            cleanupRequest->plannedTpConnections.push_back(identity);
+                        }
+                        m_plannedTpUses.erase(use);
+                    }
+                }
+                m_taskPlannedTpConnections.erase(plannedTask);
+            }
+        }
     }
 
     ScheduleTasks(readyBatch);
 
+    if (cleanupRequest.has_value())
+    {
+        Time deliveryDelay = TimeStep(0);
+#ifdef NS3_MTP
+        if (MtpInterface::isPartitioned())
+        {
+            deliveryDelay = SelectTaskCleanupDeliveryDelay(
+                true,
+                MtpInterface::GetCausalDeliveryDelay(cleanupRequest->ownerNodeId));
+        }
+#endif
+        Simulator::ScheduleWithContext(cleanupRequest->ownerNodeId,
+                                       deliveryDelay,
+                                       &UbTrafficGen::ApplyTaskCleanupOnOwner,
+                                       cleanupRequest->ownerNodeId,
+                                       cleanupRequest->ownerApplicationIndex,
+                                       taskId,
+                                       cleanupRequest->jettyNum,
+                                       cleanupRequest->destroyTaskScopedJetty,
+                                       releasePlannedTpBinding,
+                                       cleanupRequest->plannedTpConnections);
+    }
+
     if (IsCompleted()) {
         NS_LOG_DEBUG("[APPLICATION INFO] All tasks completed");
     }
+}
+
+void
+UbTrafficGen::ApplyTaskCleanupOnOwner(uint32_t ownerNodeId,
+                                      uint32_t ownerApplicationIndex,
+                                      uint32_t taskId,
+                                      uint32_t jettyNum,
+                                      bool destroyTaskScopedJetty,
+                                      bool releasePlannedTpBinding,
+                                      std::vector<UbLifecycleResourceIdentity> plannedTpConnections)
+{
+    Ptr<Node> ownerNode = NodeList::GetNode(ownerNodeId);
+    NS_ABORT_MSG_IF(ownerNode == nullptr || ownerApplicationIndex >= ownerNode->GetNApplications(),
+                    "Task cleanup owner is unavailable for task " << taskId);
+    Ptr<UbApp> cleanupOwner = DynamicCast<UbApp>(ownerNode->GetApplication(ownerApplicationIndex));
+    NS_ABORT_MSG_IF(cleanupOwner == nullptr,
+                    "Task cleanup owner application is not UbApp for task " << taskId);
+    cleanupOwner->CleanupCompletedTask(taskId,
+                                       jettyNum,
+                                       destroyTaskScopedJetty,
+                                       releasePlannedTpBinding,
+                                       plannedTpConnections);
 }
 
 bool UbTrafficGen::IsCompleted() const
@@ -998,7 +1128,7 @@ uint32_t UbTrafficGen::GetCompletedTaskCount() const
 }
 
 uint64_t
-UbTrafficGen::GetDependencyReferenceCountForTesting() const
+UbTrafficGen::GetDependencyReferenceCount() const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     uint64_t referenceCount = 0;
@@ -1023,7 +1153,7 @@ UbTrafficGen::IsUsingDenseTaskStoreForTesting() const
 }
 
 uint32_t
-UbTrafficGen::GetStoredTaskCountForTesting() const
+UbTrafficGen::GetStoredTaskCount() const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (!m_useDenseTaskStore) {
@@ -1132,14 +1262,7 @@ UbTrafficGen::HasDependenciesLocked() const
 Time
 UbTrafficGen::ResolveCompletionVisibleDelayLocked() const
 {
-    if (m_dependencyVisibilityDelay.has_value()) {
-        return *m_dependencyVisibilityDelay;
-    }
-    if (m_automaticDependencyVisibilityDelay.has_value())
-    {
-        return *m_automaticDependencyVisibilityDelay;
-    }
-    return Time(0);
+    return m_dependencyVisibilityDelay;
 }
 
 uint64_t
@@ -1277,6 +1400,36 @@ UbTrafficGen::StartTask(Ptr<UbApp> app, RuntimeTask task)
 void UbTrafficGen::OnTaskCompleted(uint32_t taskId)
 {
     MarkTaskCompleted(taskId);
+}
+
+void
+UbTrafficGen::OnTaskCompleted(uint32_t taskId,
+                              Ptr<UbApp> cleanupOwner,
+                              uint32_t jettyNum,
+                              bool destroyTaskScopedJetty,
+                              bool destroyPlannedTpConnections)
+{
+    NS_ABORT_MSG_IF(cleanupOwner == nullptr, "Task cleanup owner must not be null");
+    Ptr<Node> ownerNode = cleanupOwner->GetNode();
+    NS_ABORT_MSG_IF(ownerNode == nullptr, "Task cleanup owner must belong to a node");
+    uint32_t applicationIndex = ownerNode->GetNApplications();
+    for (uint32_t index = 0; index < ownerNode->GetNApplications(); ++index)
+    {
+        if (PeekPointer(ownerNode->GetApplication(index)) == PeekPointer(cleanupOwner))
+        {
+            applicationIndex = index;
+            break;
+        }
+    }
+    NS_ABORT_MSG_IF(applicationIndex == ownerNode->GetNApplications(),
+                    "Task cleanup owner must be installed on its node");
+    SubmitTaskCompletion(taskId,
+                         TaskCleanupRequest{ownerNode->GetId(),
+                                            applicationIndex,
+                                            jettyNum,
+                                            destroyTaskScopedJetty,
+                                            destroyPlannedTpConnections,
+                                            {}});
 }
 
 void

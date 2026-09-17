@@ -386,14 +386,10 @@ void UbDatalinkPacketHeader::SetConfig(uint8_t config)
     m_config = config & 0xF; // Ensure 4 bits
 }
 
-void UbDatalinkPacketHeader::SetLoadBalanceMode(bool mode)
+void
+UbDatalinkPacketHeader::SetRoutingType(RoutingType routingType)
 {
-    m_loadBalanceMode = mode;
-}
-
-void UbDatalinkPacketHeader::SetRoutingPolicy(bool policy)
-{
-    m_routingPolicy = policy;
+    m_routingType = routingType;
 }
 
 // Getters
@@ -417,14 +413,10 @@ uint8_t UbDatalinkPacketHeader::GetPacketVL() const
     return m_packetVL;
 }
 
-bool UbDatalinkPacketHeader::GetLoadBalanceMode() const
+RoutingType
+UbDatalinkPacketHeader::GetRoutingType() const
 {
-    return m_loadBalanceMode;
-}
-
-bool UbDatalinkPacketHeader::GetRoutingPolicy() const
-{
-    return m_routingPolicy;
+    return m_routingType;
 }
 
 uint8_t UbDatalinkPacketHeader::GetConfig() const
@@ -456,8 +448,7 @@ void UbDatalinkPacketHeader::Print(std::ostream& os) const
           " creditTargetVL=" << static_cast<uint32_t>(m_creditTargetVL) <<
           " packetVL=" << static_cast<uint32_t>(m_packetVL) <<
           " config=" << static_cast<uint32_t>(m_config) <<
-          " loadBalanceMode=" << m_loadBalanceMode <<
-          " routingPolicy=" << m_routingPolicy;
+          " routingType=" << static_cast<uint32_t>(m_routingType);
 }
 
 uint32_t UbDatalinkPacketHeader::GetSerializedSize(void) const
@@ -476,10 +467,9 @@ void UbDatalinkPacketHeader::Serialize(Buffer::Iterator start) const
     uint8_t byte1 = ((m_packetVL & 0x7) << 5) | ((reservE2Value & 0x1) << 4) | (m_config & 0xF);
     start.WriteU8(byte1);
 
-    // 字节2: [Load Balance Mode:1][Routing Policy:1][Packet Length in block (ignored):4][Last Block
-    // Length高2位:2]
-    uint8_t byte2 = (m_loadBalanceMode ? 0x80 : 0) | (m_routingPolicy ? 0x40 : 0) |
-                    ((ignoredFieldValue & 0xF) << 2) | ((ignoredFieldValue & 0x3));
+    // 字节2: [RT:2][Packet Length in block (ignored):4][Last Block Length高2位:2]
+    uint8_t byte2 = (static_cast<uint8_t>(m_routingType) << 6) |
+                    ((ignoredFieldValue & 0xF) << 2) | (ignoredFieldValue & 0x3);
     start.WriteU8(byte2);
 
     // 字节3: [Last Block Length低3位:3][Tail Payload Length:5]
@@ -516,11 +506,9 @@ uint32_t UbDatalinkPacketHeader::Deserialize(Buffer::Iterator start)
     }
     m_config = config;
 
-    // 字节2: [Load Balance Mode:1][Routing Policy:1][Packet Length in block (ignored):4][Last Block
-    // Length高2位:2]
+    // 字节2: [RT:2][Packet Length in block (ignored):4][Last Block Length高2位:2]
     uint8_t byte2 = start.ReadU8();
-    m_loadBalanceMode = (byte2 & 0x80) != 0;
-    m_routingPolicy = (byte2 & 0x40) != 0;
+    m_routingType = static_cast<RoutingType>((byte2 >> 6) & 0x3);
     // 忽略的字段就不读取了
 
     // 字节3: [Last Block Length低3位:3][Tail Payload Length:5] - 完全忽略
