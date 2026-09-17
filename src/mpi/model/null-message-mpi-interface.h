@@ -62,6 +62,9 @@ class NullMessageMpiInterface : public ParallelCommunicationInterface, Object
                             const Time& completionVisibleTs,
                             uint32_t rank) override;
     void SetTaskCompletionHandler(TaskCompletionHandler handler) override;
+    void SendCausalControl(const CausalControlRecord& record) override;
+    void SetCausalControlHandler(CausalControlHandler handler) override;
+    bool SupportsCausalControl() const override;
     MPI_Comm GetCommunicator() override;
 
   private:

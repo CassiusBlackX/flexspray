@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "ns3/ub-port.h"
+#include "ns3/ub-cbfc.h"
 #include "ns3/ub-link.h"
+#include "ns3/ub-pfc.h"
 #include "ns3/log.h"
 #include "ns3/ub-network-address.h"
 #include "ns3/ub-caqm.h"
@@ -293,6 +295,8 @@ UbPort::HasMpiReceive() const
 void UbPort::SetIfIndex(const uint32_t portId)
 {
     m_portId = portId;
+    NS_ABORT_MSG_IF(GetNode() == nullptr, "Unified Bus port index requires an attached node");
+    m_ubEQ->SetOwnerNodeId(GetNode()->GetId());
 }
 
 uint32_t UbPort::GetIfIndex() const
@@ -408,7 +412,7 @@ void UbPort::DequeuePacket(void)
     if (m_ubEQ->IsEmpty()) {
         // Switch allocation when port sendding packet.
         if (ubSwitch != nullptr && ubSwitch->GetAllocator() != nullptr) {
-            Simulator::ScheduleNow(&UbSwitchAllocator::TriggerAllocator, ubSwitch->GetAllocator(), this);
+            ubSwitch->GetAllocator()->ScheduleTriggerAllocator(this);
         }
     }
 
@@ -603,7 +607,7 @@ void UbPort::TriggerTransmit()
                 // Keep allocator prefetch alive while the current packet is still sending.
                 // This lets a late-arriving next packet hide AllocationTime behind the
                 // current serialization delay instead of always bubbling after tx-complete.
-                Simulator::ScheduleNow(&UbSwitchAllocator::TriggerAllocator, ubSwitch->GetAllocator(), this);
+                ubSwitch->GetAllocator()->ScheduleTriggerAllocator(this);
             }
         }
         NS_LOG_DEBUG("[UbPort TriggerTransmit] SendState::BUSY");
@@ -613,7 +617,7 @@ void UbPort::TriggerTransmit()
         NS_LOG_DEBUG("[UbPort TriggerTransmit] trigger Allocator");
         Ptr<UbSwitch> ubSwitch = GetNode()->GetObject<UbSwitch>();
         if (ubSwitch != nullptr && ubSwitch->GetAllocator() != nullptr) {
-            Simulator::ScheduleNow(&UbSwitchAllocator::TriggerAllocator, ubSwitch->GetAllocator(), this);
+            ubSwitch->GetAllocator()->ScheduleTriggerAllocator(this);
         }
         return;
     }

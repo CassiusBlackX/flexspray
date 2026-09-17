@@ -83,6 +83,7 @@ class HybridSimulatorImpl : public SimulatorImpl
      * @param lookAhead maximum lookahead, must be positive.
      */
     void BoundLookAhead(Time lookAhead);
+    Time GetLookAhead() const;
 
   private:
     // Inherited from Object

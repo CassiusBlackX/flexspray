@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "ticket": "T20",
+  "case": "medium-shared-tp-concurrency",
+  "runtime": "local-single",
+  "approval": {
+    "status": "approved",
+    "source": "T05/T17 root-reviewed exception and known acceptable difference policy",
+    "date": "2026-07-16",
+    "policy_statement": "A byte difference may pass only when root review confirms an exact, evidenced, acceptable cause and every other managed artifact remains accounted for.",
+    "approved_by": "root-review",
+    "approved_cause_ids": [
+      "t05-remote-response-same-timestamp-order"
+    ]
+  },
+  "evidence": {
+    "specification": "tickets.md Task 20 requires frozen-byte acceptance while allowing a known, evidenced, acceptable narrow difference.",
+    "reference_root": ".openusim/unified-bus-lifecycle/reference/runs/local-single/medium-shared-tp-concurrency/run-1/case",
+    "candidate_root": ".openusim/unified-bus-lifecycle/candidate/t20/medium-shared-tp-concurrency/case",
+    "diagnostics_root": ".openusim/unified-bus-lifecycle/diagnostics/t20-shared-tp-approved",
+    "comparison_result": "expected-differences-only",
+    "managed_artifact_count": 25,
+    "affected_artifact_count": 2,
+    "unaffected_artifact_count": 23,
+    "records": [
+      {
+        "id": "t20-shared-tp-same-timestamp-control",
+        "kind": "milestone-acceptance",
+        "summary": "The complete managed-tree comparison isolates the known same-timestamp Sends/Completes ordering change to two TaskTrace artifacts.",
+        "ticket": "T20",
+        "runtime": "local-single",
+        "reference_root": ".openusim/unified-bus-lifecycle/reference/runs/local-single/medium-shared-tp-concurrency/run-1/case",
+        "candidate_root": ".openusim/unified-bus-lifecycle/candidate/t20/medium-shared-tp-concurrency/case",
+        "affected_artifacts": [
+          "runlog/TaskTrace_node_0.tr",
+          "runlog/TaskTrace_node_1.tr"
+        ],
+        "claims": {
+          "prior_reviewed_exception": "tests/unified_bus_lifecycle/exceptions/t17-local-single-same-timestamp-order.json",
+          "event_membership_preserved": true,
+          "event_timestamps_preserved": true,
+          "protocol_and_packet_artifacts_identical": true,
+          "tasks_completed": 4,
+          "focused_test_ids": [
+            "unified-bus-lifecycle",
+            "unified-bus-transport-retrans"
+          ]
+        }
+      }
+    ]
+  },
+  "causes": [
+    {
+      "id": "t05-remote-response-same-timestamp-order",
+      "introduced_by": "T05",
+      "cause": "Remote response admission wakes synchronously inside the existing ready-source domain, so same-timestamp response Sends records can precede inbound Completes records.",
+      "impact": "Event membership and timestamps are preserved. Canonical events, task statistics, throughput, packet traces, port traces, inputs, and every other managed artifact remain byte-identical.",
+      "evidence": {
+        "ids": [
+          "t20-shared-tp-same-timestamp-control"
+        ]
+      },
+      "artifacts": [
+        "runlog/TaskTrace_node_0.tr",
+        "runlog/TaskTrace_node_1.tr"
+      ]
+    }
+  ],
+  "affected_artifacts": [
+    {
+      "path": "runlog/TaskTrace_node_0.tr",
+      "cause_ids": [
+        "t05-remote-response-same-timestamp-order"
+      ],
+      "first_byte_offset": 527,
+      "reference_byte_hex": "43",
+      "candidate_byte_hex": "53",
+      "reference_sha256": "cffc5fe21bb36a664bd37d947251e0076318c61e75192a29387f333d1cc8509a",
+      "candidate_sha256": "6cc420c2ef1fe531cdc194de2595e520a828fa28f77f703d01cc9ceeec67876a"
+    },
+    {
+      "path": "runlog/TaskTrace_node_1.tr",
+      "cause_ids": [
+        "t05-remote-response-same-timestamp-order"
+      ],
+      "first_byte_offset": 319,
+      "reference_byte_hex": "43",
+      "candidate_byte_hex": "53",
+      "reference_sha256": "e51d83596b52d826fe5df8fe3c7af47dfa1a7c5bd91a57f8a2b1539322c96526",
+      "candidate_sha256": "2ee13a96e9c800222a6c5c79e1e8283b1a2da22bb69480e548422ed31689793f"
+    }
+  ],
+  "unaffected_artifacts": [
+    {
+      "path": "canonical-events.rank0.txt",
+      "sha256": "d101cce5ff298758c0e16ae62b0f6ab9cd07e5054570893849949c571efe830d"
+    },
+    {
+      "path": "network_attribute.txt",
+      "sha256": "bab3bd6b97cd4a29fee5d8aaa9260cd0b303831bf2cfee012ca657f17bde4b84"
+    },
+    {
+      "path": "node.csv",
+      "sha256": "e06b20b821325fcaf22d1bf739adabeedbb4a44fddbe969b446513758954e049"
+    },
+    {
+      "path": "output/task_statistics.csv",
+      "sha256": "6512e4fd9b2f7b13e5bb3bdb33db067e7d8ff751e692bd874ac6c8b7e83c8512"
+    },
+    {
+      "path": "output/throughput.csv",
+      "sha256": "f89171335d16f78017cb6c8be3f31439c1529d0412d8f54e22d9d49519ea7b88"
+    },
+    {
+      "path": "routing_table.csv",
+      "sha256": "919351b0b9a9b55f8d277d803be313d0dea088535f80f9515e6cb0f9e3a719ca"
+    },
+    {
+      "path": "runlog/AllPacketTrace_ACK_node_0.tr",
+      "sha256": "ff826d9e5237e5497aa444838073db18b5a21028f1c1c01a3fbf2fd4f3697143"
+    },
+    {
+      "path": "runlog/AllPacketTrace_ACK_node_1.tr",
+      "sha256": "715a0dd69552ce215236431ba6bf74a12d1fd63d197ccfb880f1be0019101b61"
+    },
+    {
+      "path": "runlog/AllPacketTrace_PKT_node_0.tr",
+      "sha256": "3898244aff4d370f3685d03519326f995123894da155c1c194dc6d09f9c43ac2"
+    },
+    {
+      "path": "runlog/AllPacketTrace_PKT_node_1.tr",
+      "sha256": "a408c37aa78e853618ef999bc274c690920393cb9815efca396dffe8ca32deb9"
+    },
+    {
+      "path": "runlog/PacketTrace_node_0.tr",
+      "sha256": "a91f722926e15eef43794d5f72afb726d851c44a5b46eac80e99a4bbb116ca11"
+    },
+    {
+      "path": "runlog/PacketTrace_node_1.tr",
+      "sha256": "e7c7551f28ec043492f8d7423bdf0e0bcf3c291abc4541735785131b33f27cb9"
+    },
+    {
+      "path": "runlog/PacketTrace_node_2.tr",
+      "sha256": "44d3e5b8b1009f6b2bcbd5370bbe32a440f333f250d434d027ebded8b18f0619"
+    },
+    {
+      "path": "runlog/PacketTrace_node_3.tr",
+      "sha256": "3c2f9a5b44cd82eb5022f18c132c51dbd81ce2682415be810b8a9a5ce3369b71"
+    },
+    {
+      "path": "runlog/PortTrace_node_0_port_0.tr",
+      "sha256": "18905b16df34ea946cdac0a329b49ee0fde9d877fb5294e2b3cbfd3d8e942426"
+    },
+    {
+      "path": "runlog/PortTrace_node_1_port_0.tr",
+      "sha256": "fbe3f64e2db1136ea43692bfc4a717ed1fc128ba012865408b4758148baa3b19"
+    },
+    {
+      "path": "runlog/PortTrace_node_2_port_0.tr",
+      "sha256": "208eee5d7ebaa4cbe8d39d808c395fece733cf5217cb98cd359a280526fb3529"
+    },
+    {
+      "path": "runlog/PortTrace_node_2_port_1.tr",
+      "sha256": "fdd13a4e433019ee5d0c70646b6f6fa30ea0bb52d4896c4387c4e3f793a927f8"
+    },
+    {
+      "path": "runlog/PortTrace_node_3_port_0.tr",
+      "sha256": "feb3ea645e166c69134e30b093f99e2cafd4db111642e355aae58fcacbc3a35d"
+    },
+    {
+      "path": "runlog/PortTrace_node_3_port_1.tr",
+      "sha256": "8955795792a515b7ae3e25bbe13d28c32361003a3c94db0163b59501c9a077fc"
+    },
+    {
+      "path": "topology.csv",
+      "sha256": "71c3f7392484a68f8f78b8ec5afeb15468ae1f853c8b7c9230166a50fdfb1ee7"
+    },
+    {
+      "path": "traffic.csv",
+      "sha256": "59766a47f6c81db54a6b7d84f0ff86ee4e074a555c96f2ce04765e48c804b7aa"
+    },
+    {
+      "path": "transport_channel.csv",
+      "sha256": "eea247e19892911b8aba9a057847099200100ddc6f24118daa6ade3e976d22f2"
+    }
+  ]
+}

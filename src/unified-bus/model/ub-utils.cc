@@ -1,18 +1,30 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "ub-utils.h"
 
+#include "ns3/ub-next-hop-index.h"
+#include "ns3/ub-rule-routing.h"
+#include "ub-ldst-instance.h"
+
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <map>
+#include <optional>
+#include <set>
 #include <sstream>
 #include <string_view>
 #include <unordered_map>
+#ifndef _WIN32
+#include <sys/resource.h>
+#endif
 #ifdef NS3_MPI
 #include "ub-remote-link.h"
 #include "ns3/mpi-interface.h"
@@ -23,6 +35,46 @@ using namespace ns3;
 
 namespace
 {
+const char*
+LifecycleResourceKindToString(UbLifecycleResourceKind kind)
+{
+    switch (kind)
+    {
+    case UbLifecycleResourceKind::RTP_ENDPOINT:
+        return "RTP_ENDPOINT";
+    case UbLifecycleResourceKind::WQE:
+        return "WQE";
+    case UbLifecycleResourceKind::TRANSACTION_OPERATION:
+        return "TRANSACTION_OPERATION";
+    case UbLifecycleResourceKind::TRANSACTION_SEGMENT:
+        return "TRANSACTION_SEGMENT";
+    case UbLifecycleResourceKind::JETTY:
+        return "JETTY";
+    case UbLifecycleResourceKind::RTP_TPG:
+        return "RTP_TPG";
+    case UbLifecycleResourceKind::RTP_CONNECTION:
+        return "RTP_CONNECTION";
+    case UbLifecycleResourceKind::CTP_SERVICE:
+        return "CTP_SERVICE";
+    case UbLifecycleResourceKind::LDST_INSTANCE:
+        return "LDST_INSTANCE";
+    case UbLifecycleResourceKind::LDST_SEGMENT:
+        return "LDST_SEGMENT";
+    }
+    NS_ABORT_MSG("Unknown lifecycle resource kind");
+}
+
+void
+AccumulateLifecycleKindStorage(UbLifecycleKindStorageSnapshot& aggregate,
+                               const UbLifecycleKindStorageSnapshot& value)
+{
+    aggregate.resourceCount += value.resourceCount;
+    aggregate.compactHistoryRunCount += value.compactHistoryRunCount;
+    aggregate.activeStateCount += value.activeStateCount;
+    aggregate.retainedSummaryCount += value.retainedSummaryCount;
+    aggregate.activeLeaseCount += value.activeLeaseCount;
+}
+
 struct LegacyNetworkAttributeKey
 {
     const char* legacy;
@@ -62,6 +114,124 @@ constexpr std::array<NetworkAttributeAlias, 2> kNetworkAttributeAliases = {{
     {"ns3::UbTransportChannel::EnableFastSelectiveRetrans",
      "ns3::UbTransportChannel::EnableFastRetrans"},
 }};
+
+struct LegacyRoutingAttributes
+{
+    const char* typeName;
+    const char* packetSpray;
+    const char* shortestPaths;
+};
+
+constexpr std::array<LegacyRoutingAttributes, 3> kLegacyRoutingAttributes = {{
+    {"ns3::UbApp", "ns3::UbApp::UsePacketSpray", "ns3::UbApp::UseShortestPaths"},
+    {"ns3::UbTransportChannel",
+     "ns3::UbTransportChannel::UsePacketSpray",
+     "ns3::UbTransportChannel::UseShortestPaths"},
+    {"ns3::UbLdstApi",
+     "ns3::UbLdstApi::UsePacketSpray",
+     "ns3::UbLdstApi::UseShortestPaths"},
+}};
+
+struct ParsedDefaultAttribute
+{
+    std::string name;
+    std::string value;
+};
+
+std::optional<ParsedDefaultAttribute>
+ParseDefaultAttribute(const std::string& line)
+{
+    const auto firstNonSpace = line.find_first_not_of(" \t");
+    if (firstNonSpace == std::string::npos || line[firstNonSpace] == '#')
+    {
+        return std::nullopt;
+    }
+
+    std::istringstream tokens(line.substr(firstNonSpace));
+    std::string directive;
+    ParsedDefaultAttribute attribute;
+    tokens >> directive >> attribute.name >> attribute.value;
+    if (directive != "default" || attribute.name.empty() || attribute.value.empty())
+    {
+        return std::nullopt;
+    }
+    if (attribute.value.size() >= 2 && attribute.value.front() == '"' &&
+        attribute.value.back() == '"')
+    {
+        attribute.value = attribute.value.substr(1, attribute.value.size() - 2);
+    }
+    return attribute;
+}
+
+bool
+ParseLegacyRoutingBool(const std::string& value,
+                       const std::string& filename,
+                       uint32_t lineNumber)
+{
+    if (value == "true" || value == "1")
+    {
+        return true;
+    }
+    if (value == "false" || value == "0")
+    {
+        return false;
+    }
+    NS_FATAL_ERROR("Invalid legacy routing boolean at "
+                   << filename << ":" << lineNumber << ": " << value
+                   << ". Use true or false.");
+    return false;
+}
+
+template <typename T>
+T
+GetConfiguredDefaultEnum(TypeId typeId, const char* attributeName)
+{
+    TypeId::AttributeInformation info;
+    NS_ABORT_MSG_IF(!typeId.LookupAttributeByName(attributeName, &info),
+                    "Missing routing attribute " << typeId.GetName() << "::" << attributeName);
+    const auto* value = dynamic_cast<const EnumValue<T>*>(PeekPointer(info.initialValue));
+    NS_ABORT_MSG_IF(value == nullptr,
+                    "Routing attribute " << typeId.GetName() << "::" << attributeName
+                                         << " is not an enum");
+    return value->Get();
+}
+
+void
+ValidateConfiguredRoutingDefaults(const std::string& filename)
+{
+    const MultipathSelector selector = GetConfiguredDefaultEnum<MultipathSelector>(
+        UbRoutingProcess::GetTypeId(),
+        "MultipathSelector");
+    const std::array<std::pair<TypeId, const char*>, 3> routingOwners = {{
+        {UbApp::GetTypeId(), "ns3::UbApp"},
+        {UbTransportChannel::GetTypeId(), "ns3::UbTransportChannel"},
+        {UbLdstApi::GetTypeId(), "ns3::UbLdstApi"},
+    }};
+
+    for (const auto& [typeId, typeName] : routingOwners)
+    {
+        const RoutingType routingType =
+            GetConfiguredDefaultEnum<RoutingType>(typeId, "RoutingType");
+        if (MultipathSelectorIsValidForRoutingType(selector, routingType))
+        {
+            continue;
+        }
+
+        const RoutingType compatibleRoutingType =
+            MakeRoutingType(selector != MultipathSelector::INGRESS_PORT_STRIPE,
+                            RoutingTypeUsesShortestPaths(routingType));
+        NS_ABORT_MSG("Invalid routing configuration in "
+                     << filename << ": default " << typeName << "::RoutingType \""
+                     << RoutingTypeToString(routingType)
+                     << "\" cannot be combined with default "
+                        "ns3::UbRoutingProcess::MultipathSelector \""
+                     << MultipathSelectorToString(selector)
+                     << "\". Replace one line with either:\n"
+                     << "  default " << typeName << "::RoutingType \""
+                     << RoutingTypeToString(compatibleRoutingType) << "\"\n"
+                     << "  default ns3::UbRoutingProcess::MultipathSelector \"HASH64\"");
+    }
+}
 
 std::string
 DisplayFilename(const std::string& filename)
@@ -164,6 +334,28 @@ SplitCsvRow(const std::string& line)
     return fields;
 }
 
+void
+ValidateTrafficCsvHeader(const std::vector<std::string>& header)
+{
+    NS_ABORT_MSG_IF(header.size() != 9 && header.size() != 11,
+                    "traffic.csv header must have 9 base fields or 11 fields with "
+                        "srcPortId,dstPortId");
+    if (header.size() == 11)
+    {
+        NS_ABORT_MSG_IF(header[9] != "srcPortId" || header[10] != "dstPortId",
+                        "traffic.csv 11-field header must end with srcPortId,dstPortId");
+    }
+}
+
+void
+ValidateTrafficCsvRowWidth(const std::string& line, std::size_t expectedFieldCount)
+{
+    const std::size_t actualFieldCount = SplitCsvRow(line).size();
+    NS_ABORT_MSG_IF(actualFieldCount != expectedFieldCount,
+                    "traffic.csv row has " << actualFieldCount << " fields, expected "
+                                             << expectedFieldCount << " fields from the header");
+}
+
 std::map<std::string, std::size_t>
 BuildCsvHeaderIndex(const std::vector<std::string>& header)
 {
@@ -207,6 +399,74 @@ IsLegacyNodeForwardDelayHeader(const std::vector<std::string>& header)
 {
     return header.size() == 4 && header[0] == "nodeId" && header[1] == "nodeType" &&
            header[2] == "portNum" && header[3] == "forwardDelay";
+}
+
+uint32_t
+ReadStructuredUint32(std::istream& input, const char* field)
+{
+    uint64_t value = 0;
+    NS_ABORT_MSG_IF(!(input >> value), "structured topology missing or invalid " << field);
+    NS_ABORT_MSG_IF(value > std::numeric_limits<uint32_t>::max(),
+                    "structured topology " << field << " exceeds uint32 range");
+    return static_cast<uint32_t>(value);
+}
+
+std::string
+ReadStructuredToken(std::istream& input, const char* field)
+{
+    std::string value;
+    NS_ABORT_MSG_IF(!(input >> value), "structured topology missing " << field);
+    return value;
+}
+
+void
+ReadStructuredSection(std::istream& input, const char* expected, uint32_t& count)
+{
+    const std::string section = ReadStructuredToken(input, "section name");
+    NS_ABORT_MSG_IF(section != expected,
+                    "structured topology expected section " << expected << ", got " << section);
+    count = ReadStructuredUint32(input, "section count");
+}
+
+std::vector<uint32_t>
+ReadStructuredUint32List(std::istream& input, const char* field)
+{
+    const uint32_t count = ReadStructuredUint32(input, field);
+    std::vector<uint32_t> values;
+    values.reserve(count);
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        values.push_back(ReadStructuredUint32(input, field));
+    }
+    return values;
+}
+
+std::vector<std::string>
+ReadStructuredTokenList(std::istream& input, const char* field)
+{
+    const uint32_t count = ReadStructuredUint32(input, field);
+    std::vector<std::string> values;
+    values.reserve(count);
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        values.push_back(ReadStructuredToken(input, field));
+    }
+    return values;
+}
+
+std::vector<uint16_t>
+ReadStructuredPortList(std::istream& input, const char* field)
+{
+    const std::vector<uint32_t> values = ReadStructuredUint32List(input, field);
+    std::vector<uint16_t> ports;
+    ports.reserve(values.size());
+    for (uint32_t value : values)
+    {
+        NS_ABORT_MSG_IF(value > std::numeric_limits<uint16_t>::max(),
+                        "structured topology " << field << " contains an invalid port");
+        ports.push_back(static_cast<uint16_t>(value));
+    }
+    return ports;
 }
 
 void
@@ -270,12 +530,12 @@ SetTrafficRecordField(int fieldCount, std::string_view rawField, TrafficRecord& 
         AppendDependencyPhases(field, record);
         break;
     case 9:
-        record.srcEntityId = field.empty() ? 0 : ParseUint32Field(field);
-        record.hasSrcEntityId = true;
+        record.hasSrcPortId = !field.empty();
+        record.srcPortId = record.hasSrcPortId ? ParseUint32Field(field) : 0;
         break;
     case 10:
-        record.dstEntityId = field.empty() ? 0 : ParseUint32Field(field);
-        record.hasDstEntityId = true;
+        record.hasDstPortId = !field.empty();
+        record.dstPortId = record.hasDstPortId ? ParseUint32Field(field) : 0;
         break;
     }
 }
@@ -444,28 +704,237 @@ RewriteDefaultAttributeLine(std::string& line, const NetworkAttributeAlias& alia
 }
 
 std::string
-CreateConfigStoreInput(const std::string& filename, uint32_t& rewrittenAliasLines)
+CreateConfigStoreInput(const std::string& filename, uint32_t& rewrittenLines)
 {
     std::ifstream input(filename.c_str());
     NS_ASSERT_MSG(input.good(), "Can not open File: " << filename);
 
-    rewrittenAliasLines = 0;
-    std::ostringstream rewritten;
+    rewrittenLines = 0;
+    std::vector<std::string> lines;
     std::string line;
     while (std::getline(input, line))
     {
+        lines.push_back(line);
+    }
+
+    struct LegacyValue
+    {
+        std::string value;
+        uint32_t lineNumber;
+        std::vector<uint32_t> sourceLines;
+    };
+    struct RoutingState
+    {
+        std::optional<LegacyValue> packetSpray;
+        std::optional<LegacyValue> shortestPaths;
+        std::optional<uint32_t> canonicalLine;
+    };
+
+    std::array<RoutingState, kLegacyRoutingAttributes.size()> routingStates;
+    std::optional<LegacyValue> legacySelector;
+    std::optional<uint32_t> canonicalSelectorLine;
+    auto recordLegacyValue = [](std::optional<LegacyValue>& target,
+                                const std::string& value,
+                                uint32_t lineNumber) {
+        if (!target.has_value())
+        {
+            target = LegacyValue{value, lineNumber, {lineNumber}};
+            return;
+        }
+        target->value = value;
+        target->lineNumber = lineNumber;
+        target->sourceLines.push_back(lineNumber);
+    };
+
+    for (std::size_t index = 0; index < lines.size(); ++index)
+    {
+        const auto attribute = ParseDefaultAttribute(lines[index]);
+        if (!attribute.has_value())
+        {
+            continue;
+        }
+        const uint32_t lineNumber = static_cast<uint32_t>(index + 1);
+        for (std::size_t owner = 0; owner < kLegacyRoutingAttributes.size(); ++owner)
+        {
+            const auto& legacy = kLegacyRoutingAttributes[owner];
+            if (attribute->name == legacy.packetSpray)
+            {
+                recordLegacyValue(routingStates[owner].packetSpray,
+                                  attribute->value,
+                                  lineNumber);
+            }
+            else if (attribute->name == legacy.shortestPaths)
+            {
+                recordLegacyValue(routingStates[owner].shortestPaths,
+                                  attribute->value,
+                                  lineNumber);
+            }
+            else if (attribute->name == std::string(legacy.typeName) + "::RoutingType")
+            {
+                routingStates[owner].canonicalLine = lineNumber;
+            }
+        }
+        if (attribute->name == "ns3::UbRoutingProcess::RoutingAlgorithm")
+        {
+            recordLegacyValue(legacySelector, attribute->value, lineNumber);
+        }
+        else if (attribute->name == "ns3::UbRoutingProcess::MultipathSelector")
+        {
+            canonicalSelectorLine = lineNumber;
+        }
+    }
+
+    std::map<uint32_t, std::string> replacements;
+    std::set<uint32_t> removedLines;
+    std::vector<std::string> warningEntries;
+    for (std::size_t owner = 0; owner < kLegacyRoutingAttributes.size(); ++owner)
+    {
+        const auto& legacy = kLegacyRoutingAttributes[owner];
+        const auto& state = routingStates[owner];
+        if (!state.packetSpray.has_value() && !state.shortestPaths.has_value())
+        {
+            continue;
+        }
+        NS_ABORT_MSG_IF(state.canonicalLine.has_value(),
+                        "Conflicting routing configuration in "
+                            << filename << ": legacy " << legacy.packetSpray << "/"
+                            << legacy.shortestPaths << " cannot be combined with "
+                            << legacy.typeName << "::RoutingType at line "
+                            << *state.canonicalLine << ". Remove the legacy lines.");
+
+        const bool packetSpray =
+            state.packetSpray.has_value()
+                ? ParseLegacyRoutingBool(state.packetSpray->value,
+                                         filename,
+                                         state.packetSpray->lineNumber)
+                : false;
+        const bool shortestPaths =
+            state.shortestPaths.has_value()
+                ? ParseLegacyRoutingBool(state.shortestPaths->value,
+                                         filename,
+                                         state.shortestPaths->lineNumber)
+                : true;
+        const RoutingType routingType = MakeRoutingType(packetSpray, shortestPaths);
+        const std::string replacement = std::string("default ") + legacy.typeName +
+                                        "::RoutingType \"" + RoutingTypeToString(routingType) + "\"";
+
+        std::vector<uint32_t> sourceLines;
+        if (state.packetSpray.has_value())
+        {
+            sourceLines.insert(sourceLines.end(),
+                               state.packetSpray->sourceLines.begin(),
+                               state.packetSpray->sourceLines.end());
+            removedLines.insert(state.packetSpray->sourceLines.begin(),
+                                state.packetSpray->sourceLines.end());
+        }
+        if (state.shortestPaths.has_value())
+        {
+            sourceLines.insert(sourceLines.end(),
+                               state.shortestPaths->sourceLines.begin(),
+                               state.shortestPaths->sourceLines.end());
+            removedLines.insert(state.shortestPaths->sourceLines.begin(),
+                                state.shortestPaths->sourceLines.end());
+        }
+        std::sort(sourceLines.begin(), sourceLines.end());
+        replacements[sourceLines.front()] = replacement;
+
+        std::ostringstream entry;
+        entry << filename << ":";
+        for (std::size_t index = 0; index < sourceLines.size(); ++index)
+        {
+            if (index > 0)
+            {
+                entry << ",";
+            }
+            entry << sourceLines[index];
+        }
+        entry << " -> " << replacement;
+        warningEntries.push_back(entry.str());
+    }
+
+    if (legacySelector.has_value())
+    {
+        NS_ABORT_MSG_IF(canonicalSelectorLine.has_value(),
+                        "Conflicting routing configuration in "
+                            << filename
+                            << ": legacy ns3::UbRoutingProcess::RoutingAlgorithm at line "
+                            << legacySelector->lineNumber
+                            << " cannot be combined with "
+                               "ns3::UbRoutingProcess::MultipathSelector at line "
+                            << *canonicalSelectorLine << ". Remove the legacy line.");
+        std::string selector;
+        if (legacySelector->value == "HASH")
+        {
+            selector = "HASH64";
+        }
+        else if (legacySelector->value == "ADAPTIVE")
+        {
+            selector = "ADAPTIVE";
+        }
+        else
+        {
+            NS_FATAL_ERROR("Unsupported legacy routing algorithm at "
+                           << filename << ":" << legacySelector->lineNumber << ": "
+                           << legacySelector->value << ". Use MultipathSelector instead.");
+        }
+        const std::string replacement =
+            "default ns3::UbRoutingProcess::MultipathSelector \"" + selector + "\"";
+        replacements[legacySelector->sourceLines.front()] = replacement;
+        removedLines.insert(legacySelector->sourceLines.begin(),
+                            legacySelector->sourceLines.end());
+        std::ostringstream entry;
+        entry << filename << ":";
+        for (std::size_t index = 0; index < legacySelector->sourceLines.size(); ++index)
+        {
+            if (index > 0)
+            {
+                entry << ",";
+            }
+            entry << legacySelector->sourceLines[index];
+        }
+        entry << " -> " << replacement;
+        warningEntries.push_back(entry.str());
+    }
+
+    std::ostringstream rewritten;
+    for (std::size_t index = 0; index < lines.size(); ++index)
+    {
+        const uint32_t lineNumber = static_cast<uint32_t>(index + 1);
+        auto replacement = replacements.find(lineNumber);
+        if (replacement != replacements.end())
+        {
+            rewritten << replacement->second << '\n';
+            ++rewrittenLines;
+            continue;
+        }
+        if (removedLines.find(lineNumber) != removedLines.end())
+        {
+            ++rewrittenLines;
+            continue;
+        }
+        line = lines[index];
         for (const auto& alias : kNetworkAttributeAliases)
         {
             if (RewriteDefaultAttributeLine(line, alias))
             {
-                ++rewrittenAliasLines;
+                ++rewrittenLines;
                 break;
             }
         }
         rewritten << line << '\n';
     }
 
-    if (rewrittenAliasLines == 0)
+    if (!warningEntries.empty())
+    {
+        std::cerr << "WARNING: Legacy routing attributes are deprecated and may stop working in a "
+                     "future release. Replace them with:\n";
+        for (const auto& entry : warningEntries)
+        {
+            std::cerr << "  " << entry << '\n';
+        }
+    }
+
+    if (rewrittenLines == 0)
     {
         return filename;
     }
@@ -516,12 +985,12 @@ SetTrafficRecordViewField(int fieldCount, std::string_view rawField, TrafficReco
         record.dependOnPhases = field;
         break;
     case 9:
-        record.srcEntityId = field.empty() ? 0 : ParseUint32Field(field);
-        record.hasSrcEntityId = true;
+        record.hasSrcPortId = !field.empty();
+        record.srcPortId = record.hasSrcPortId ? ParseUint32Field(field) : 0;
         break;
     case 10:
-        record.dstEntityId = field.empty() ? 0 : ParseUint32Field(field);
-        record.hasDstEntityId = true;
+        record.hasDstPortId = !field.empty();
+        record.dstPortId = record.hasDstPortId ? ParseUint32Field(field) : 0;
         break;
     }
 }
@@ -588,13 +1057,13 @@ PreloadLocalTpIfOwned(Ptr<Node> node,
 
     Ptr<UbController> ctrl = node->GetObject<UbController>();
     NS_ASSERT_MSG(ctrl != nullptr, "Preloaded TP endpoint must have UbController");
-    if (ctrl->IsTPExists(srcTpn))
+    if (ctrl->GetTransportChannelManager()->Contains(srcTpn))
     {
         return;
     }
 
     auto congestionCtrl = UbCongestionControl::Create(UB_DEVICE);
-    ctrl->CreateTp(src, dest, sport, dport, priority, srcTpn, dstTpn, congestionCtrl);
+    ctrl->GetTransportChannelManager()->CreateTp(src, dest, sport, dport, priority, srcTpn, dstTpn, congestionCtrl);
 }
 
 Ptr<UbLink>
@@ -628,37 +1097,537 @@ namespace utils {
 UbUtils::TraceFileState&
 UbUtils::GetTraceFile(const std::string& fileName)
 {
-    namespace fs = std::filesystem;
-
+    ConfigureTraceWriter();
     std::lock_guard<std::mutex> filesGuard(files_mutex);
     auto [it, inserted] = files.try_emplace(fileName);
     if (inserted)
     {
-        std::error_code ec;
-        const fs::path parent = fs::path(fileName).parent_path();
-        if (!parent.empty())
+        it->second.fileName = fileName;
+    }
+    return it->second;
+}
+
+UbUtils::TraceSinkHandle
+UbUtils::ResolveTraceSink(const std::string& fileName)
+{
+    while (true)
+    {
+        const uint64_t epoch = trace_writer_epoch.load(std::memory_order_acquire);
+        TraceFileState* state = &GetTraceFile(fileName);
+        if (epoch == trace_writer_epoch.load(std::memory_order_acquire))
         {
-            fs::create_directories(parent, ec);
-            NS_ASSERT_MSG(!ec, "Failed to create trace parent dir: " << parent << " err=" << ec.message());
+            TraceSinkHandle handle;
+            handle.state = state;
+            handle.epoch = epoch;
+            return handle;
         }
-        it->second.stream.open(fileName.c_str(), std::ios::out | std::ios::app);
-        NS_ASSERT_MSG(it->second.stream.is_open(), "Can not open File: " << fileName);
-        it->second.pending.reserve(TRACE_FLUSH_THRESHOLD_BYTES);
+    }
+}
+
+UbUtils::TraceSinkHandle
+UbUtils::GetCachedTraceSink(const std::string& fileName)
+{
+    struct SinkCache
+    {
+        uint64_t epoch{0};
+        std::unordered_map<std::string, TraceSinkHandle> sinks;
+    };
+
+    thread_local SinkCache cache;
+
+    const uint64_t epoch = trace_writer_epoch.load(std::memory_order_acquire);
+    if (cache.epoch != epoch)
+    {
+        cache.epoch = epoch;
+        cache.sinks.clear();
+    }
+    auto it = cache.sinks.find(fileName);
+    if (it == cache.sinks.end())
+    {
+        it = cache.sinks.emplace(fileName, ResolveTraceSink(fileName)).first;
     }
     return it->second;
 }
 
 void
-UbUtils::FlushTraceFile(TraceFileState& fileState)
+UbUtils::ConfigureTraceWriter()
 {
-    std::lock_guard<std::mutex> fileGuard(fileState.mutex);
-    if (fileState.pending.empty())
+    std::lock_guard<std::mutex> guard(files_mutex);
+    if (trace_writer_configured)
     {
         return;
     }
-    fileState.stream.write(fileState.pending.data(),
-                           static_cast<std::streamsize>(fileState.pending.size()));
-    fileState.pending.clear();
+
+    UintegerValue chunkBytes;
+    UintegerValue highWaterBytes;
+    UintegerValue lowWaterBytes;
+    UintegerValue maxOpenFiles;
+    NS_ABORT_MSG_IF(!GlobalValue::GetValueByNameFailSafe("UB_TRACE_CHUNK_BYTES", chunkBytes),
+                    "Missing UB_TRACE_CHUNK_BYTES");
+    NS_ABORT_MSG_IF(
+        !GlobalValue::GetValueByNameFailSafe("UB_TRACE_OWNER_HIGH_WATER_BYTES", highWaterBytes),
+        "Missing UB_TRACE_OWNER_HIGH_WATER_BYTES");
+    NS_ABORT_MSG_IF(
+        !GlobalValue::GetValueByNameFailSafe("UB_TRACE_OWNER_LOW_WATER_BYTES", lowWaterBytes),
+        "Missing UB_TRACE_OWNER_LOW_WATER_BYTES");
+    NS_ABORT_MSG_IF(!GlobalValue::GetValueByNameFailSafe("UB_TRACE_MAX_OPEN_FILES", maxOpenFiles),
+                    "Missing UB_TRACE_MAX_OPEN_FILES");
+
+    trace_writer_config.chunkBytes = static_cast<std::size_t>(chunkBytes.Get());
+    trace_writer_config.highWaterBytes = static_cast<std::size_t>(highWaterBytes.Get());
+    trace_writer_config.lowWaterBytes = static_cast<std::size_t>(lowWaterBytes.Get());
+    trace_writer_config.maxOpenFiles = static_cast<std::size_t>(maxOpenFiles.Get());
+    NS_ABORT_MSG_IF(trace_writer_config.lowWaterBytes > trace_writer_config.highWaterBytes,
+                    "Trace owner low-water mark exceeds high-water mark");
+    NS_ABORT_MSG_IF(trace_writer_config.chunkBytes > trace_writer_config.highWaterBytes,
+                    "Trace chunk size exceeds owner high-water mark");
+
+    std::size_t platformLimit = 256;
+#ifndef _WIN32
+    constexpr std::size_t kReservedDescriptors = 128;
+    struct rlimit limit;
+    if (getrlimit(RLIMIT_NOFILE, &limit) == 0)
+    {
+        if (limit.rlim_cur == RLIM_INFINITY)
+        {
+            platformLimit = trace_writer_config.maxOpenFiles;
+        }
+        else if (limit.rlim_cur > kReservedDescriptors)
+        {
+            platformLimit = static_cast<std::size_t>(limit.rlim_cur) - kReservedDescriptors;
+        }
+        else
+        {
+            platformLimit = 1;
+        }
+    }
+#endif
+    trace_writer_config.effectiveMaxOpenFiles =
+        std::max<std::size_t>(1, std::min(trace_writer_config.maxOpenFiles, platformLimit));
+    trace_writer_configured = true;
+}
+
+UbUtils::TraceOwnerState&
+UbUtils::GetTraceOwner(uint32_t ownerId)
+{
+    struct OwnerCache
+    {
+        uint64_t epoch{0};
+        uint32_t ownerId{0};
+        TraceOwnerState* owner{nullptr};
+    };
+
+    thread_local OwnerCache cache;
+
+    const uint64_t epoch = trace_writer_epoch.load(std::memory_order_acquire);
+    if (cache.epoch == epoch && cache.owner != nullptr && cache.ownerId == ownerId)
+    {
+        return *cache.owner;
+    }
+    std::lock_guard<std::mutex> guard(files_mutex);
+    auto [it, inserted] = trace_owners.try_emplace(ownerId);
+    (void)inserted;
+    cache = {epoch, ownerId, &it->second};
+    return *cache.owner;
+}
+
+UbTraceWriterStorageSnapshot
+UbUtils::GetTraceWriterStorageSnapshot()
+{
+    UbTraceWriterStorageSnapshot snapshot;
+    std::vector<TraceOwnerState*> owners;
+    {
+        std::lock_guard<std::mutex> filesGuard(files_mutex);
+        snapshot.ownerCount = trace_owners.size();
+        snapshot.fileCount = files.size();
+        snapshot.openFileCount = trace_open_files;
+        snapshot.openCount = trace_writer_stats.openCount;
+        snapshot.writeCount = trace_writer_stats.writeCount;
+        snapshot.flushCount = trace_writer_stats.flushCount;
+        snapshot.closeCount = trace_writer_stats.closeCount;
+        snapshot.lruCloseCount = trace_writer_stats.lruCloseCount;
+        snapshot.pressureFlushCount = trace_writer_stats.pressureFlushCount;
+        snapshot.peakOpenFiles = trace_writer_stats.peakOpenFiles;
+        snapshot.peakBufferedBytes = trace_writer_stats.peakBufferedBytes;
+        owners.reserve(trace_owners.size());
+        for (auto& [ownerId, owner] : trace_owners)
+        {
+            (void)ownerId;
+            owners.push_back(&owner);
+        }
+    }
+    for (TraceOwnerState* owner : owners)
+    {
+        std::lock_guard<std::mutex> ownerGuard(owner->mutex);
+        snapshot.currentBufferedBytes += owner->bufferedBytes;
+        snapshot.maxOwnerBufferedBytes =
+            std::max<uint64_t>(snapshot.maxOwnerBufferedBytes, owner->bufferedBytes);
+    }
+    return snapshot;
+}
+
+UbRuntimeStorageSnapshot
+UbUtils::CaptureRuntimeStorageSnapshot()
+{
+    UbRuntimeStorageSnapshot snapshot;
+    snapshot.nodeCount = NodeList::GetNNodes();
+    for (auto node = NodeList::Begin(); node != NodeList::End(); ++node)
+    {
+        Ptr<UbController> controller = (*node)->GetObject<UbController>();
+        if (controller != nullptr)
+        {
+            Ptr<TpConnectionManager> connections = controller->GetTpConnManager();
+            if (connections != nullptr)
+            {
+                const ConnectionStorageSnapshot connectionStorage =
+                    connections->GetConnectionStorageSnapshot();
+                snapshot.canonicalConnections += connectionStorage.canonicalRecords;
+                snapshot.authoritativeLocalConnectionViews +=
+                    connectionStorage.authoritativeLocalViews;
+                snapshot.secondaryConnectionIndexEntries += connectionStorage.secondaryIndexEntries;
+                snapshot.reservedEndpointSlots += connectionStorage.unmaterializedEndpointSlots;
+            }
+            Ptr<UbTransportChannelManager> endpoints = controller->GetTransportChannelManager();
+            if (endpoints != nullptr)
+            {
+                snapshot.residentTpEndpoints += endpoints->GetCount();
+            }
+            Ptr<UbFunction> function = controller->GetUbFunction();
+            if (function != nullptr)
+            {
+                snapshot.residentWqes += function->GetResidentWqeCount();
+                const UbJettyStorageSnapshot jettyStorage = function->GetJettyStorageSnapshot();
+                snapshot.taskScopedJetties += jettyStorage.taskScopedJetties;
+                snapshot.reusableJetties += jettyStorage.reusableJetties;
+            }
+            Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+            if (transaction != nullptr)
+            {
+                snapshot.residentOperations += transaction->GetResidentOperationCount();
+                snapshot.residentSegments += transaction->GetResidentSegmentCount();
+            }
+        }
+
+        Ptr<UbLdstInstance> ldst = (*node)->GetObject<UbLdstInstance>();
+        if (ldst != nullptr)
+        {
+            snapshot.activeLdstTasks += ldst->GetActiveTaskCount();
+            snapshot.activeLdstSegments += ldst->GetActiveSegmentCount();
+        }
+
+        Ptr<UbLifecycleCoordinator> coordinator = (*node)->GetObject<UbLifecycleCoordinator>();
+        if (coordinator != nullptr)
+        {
+            const UbLifecycleStorageSnapshot nodeStorage = coordinator->GetStorageSnapshot();
+            AccumulateLifecycleKindStorage(snapshot.lifecycle, nodeStorage);
+            for (const auto& [kind, kindStorage] : nodeStorage.byKind)
+            {
+                AccumulateLifecycleKindStorage(snapshot.lifecycle.byKind[kind], kindStorage);
+            }
+        }
+    }
+
+    UbTrafficGen* traffic = UbTrafficGen::Get();
+    snapshot.storedTrafficTasks = traffic->GetStoredTaskCount();
+    snapshot.completedTrafficTasks = traffic->GetCompletedTaskCount();
+    snapshot.trafficDependencyReferences = traffic->GetDependencyReferenceCount();
+    snapshot.traceWriter = GetTraceWriterStorageSnapshot();
+    snapshot.simulatorEventCount = Simulator::GetEventCount();
+    return snapshot;
+}
+
+void
+UbUtils::WriteRuntimeStorageSnapshot(const std::string& outputPath)
+{
+    namespace fs = std::filesystem;
+    const fs::path path(outputPath);
+    NS_ABORT_MSG_IF(path.empty(), "Runtime storage snapshot path must not be empty");
+    std::error_code ec;
+    if (!path.parent_path().empty())
+    {
+        fs::create_directories(path.parent_path(), ec);
+        NS_ABORT_MSG_IF(ec,
+                        "Failed to create runtime storage snapshot directory: "
+                            << path.parent_path() << " err=" << ec.message());
+    }
+    std::ofstream output(path, std::ios::out | std::ios::trunc);
+    NS_ABORT_MSG_IF(!output.is_open(), "Cannot open runtime storage snapshot: " << outputPath);
+
+    const UbRuntimeStorageSnapshot snapshot = CaptureRuntimeStorageSnapshot();
+    const auto write = [&](std::string_view category,
+                           std::string_view metric,
+                           std::string_view resourceKind,
+                           uint64_t value) {
+        output << UbRuntimeStorageSnapshot::SCHEMA_VERSION << ',' << category << ',' << metric
+               << ',' << resourceKind << ',' << value << '\n';
+    };
+    output << "schema_version,category,metric,resource_kind,value\n";
+    write("runtime", "node_count", "", snapshot.nodeCount);
+    write("runtime", "canonical_connections", "", snapshot.canonicalConnections);
+    write("runtime",
+          "authoritative_local_connection_views",
+          "",
+          snapshot.authoritativeLocalConnectionViews);
+    write("runtime",
+          "secondary_connection_index_entries",
+          "",
+          snapshot.secondaryConnectionIndexEntries);
+    write("runtime", "resident_tp_endpoints", "", snapshot.residentTpEndpoints);
+    write("runtime", "reserved_endpoint_slots", "", snapshot.reservedEndpointSlots);
+    write("runtime", "task_scoped_jetties", "", snapshot.taskScopedJetties);
+    write("runtime", "reusable_jetties", "", snapshot.reusableJetties);
+    write("runtime", "simulator_event_count", "", snapshot.simulatorEventCount);
+    write("runtime", "resident_wqes", "", snapshot.residentWqes);
+    write("runtime", "resident_operations", "", snapshot.residentOperations);
+    write("runtime", "resident_segments", "", snapshot.residentSegments);
+    write("runtime", "active_ldst_tasks", "", snapshot.activeLdstTasks);
+    write("runtime", "active_ldst_segments", "", snapshot.activeLdstSegments);
+    write("traffic", "stored_tasks", "", snapshot.storedTrafficTasks);
+    write("traffic", "completed_tasks", "", snapshot.completedTrafficTasks);
+    write("traffic", "dependency_references", "", snapshot.trafficDependencyReferences);
+
+    const auto writeLifecycle = [&](std::string_view kind,
+                                    const UbLifecycleKindStorageSnapshot& storage) {
+        write("lifecycle", "resource_count", kind, storage.resourceCount);
+        write("lifecycle", "compact_history_run_count", kind, storage.compactHistoryRunCount);
+        write("lifecycle", "active_state_count", kind, storage.activeStateCount);
+        write("lifecycle", "retained_summary_count", kind, storage.retainedSummaryCount);
+        write("lifecycle", "active_lease_count", kind, storage.activeLeaseCount);
+    };
+    writeLifecycle("", snapshot.lifecycle);
+    for (const auto& [kind, storage] : snapshot.lifecycle.byKind)
+    {
+        writeLifecycle(LifecycleResourceKindToString(kind), storage);
+    }
+
+    write("trace_writer", "owner_count", "", snapshot.traceWriter.ownerCount);
+    write("trace_writer", "file_count", "", snapshot.traceWriter.fileCount);
+    write("trace_writer", "open_file_count", "", snapshot.traceWriter.openFileCount);
+    write("trace_writer", "current_buffered_bytes", "", snapshot.traceWriter.currentBufferedBytes);
+    write("trace_writer", "max_owner_buffered_bytes", "", snapshot.traceWriter.maxOwnerBufferedBytes);
+    write("trace_writer", "open_count", "", snapshot.traceWriter.openCount);
+    write("trace_writer", "write_count", "", snapshot.traceWriter.writeCount);
+    write("trace_writer", "flush_count", "", snapshot.traceWriter.flushCount);
+    write("trace_writer", "close_count", "", snapshot.traceWriter.closeCount);
+    write("trace_writer", "lru_close_count", "", snapshot.traceWriter.lruCloseCount);
+    write("trace_writer", "pressure_flush_count", "", snapshot.traceWriter.pressureFlushCount);
+    write("trace_writer", "peak_open_files", "", snapshot.traceWriter.peakOpenFiles);
+    write("trace_writer", "peak_buffered_bytes", "", snapshot.traceWriter.peakBufferedBytes);
+    output.flush();
+    NS_ABORT_MSG_IF(output.fail(), "Failed to write runtime storage snapshot: " << outputPath);
+}
+
+void
+UbUtils::CloseTraceFile(TraceFileState& fileState, bool lruClose)
+{
+    if (!fileState.open)
+    {
+        return;
+    }
+    NS_ABORT_MSG_IF(fileState.activeWrites != 0,
+                    "Cannot close active trace file: " << fileState.fileName);
+    fileState.stream.close();
+    NS_ABORT_MSG_IF(fileState.stream.fail(), "Failed to close trace file: " << fileState.fileName);
+    fileState.open = false;
+    --trace_open_files;
+    ++trace_writer_stats.closeCount;
+    if (lruClose)
+    {
+        ++trace_writer_stats.lruCloseCount;
+    }
+}
+
+void
+UbUtils::CommitTraceChunk(TraceFileState& fileState, std::string& chunk)
+{
+    if (chunk.empty())
+    {
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> filesGuard(files_mutex);
+        if (!fileState.open)
+        {
+            while (trace_open_files >= trace_writer_config.effectiveMaxOpenFiles)
+            {
+                TraceFileState* candidate = nullptr;
+                for (auto& [name, state] : files)
+                {
+                    (void)name;
+                    if (state.open && state.activeWrites == 0 && &state != &fileState &&
+                        (candidate == nullptr || state.lastUse < candidate->lastUse))
+                    {
+                        candidate = &state;
+                    }
+                }
+                NS_ABORT_MSG_IF(candidate == nullptr,
+                                "Trace file descriptor limit reached with no closable sink");
+                CloseTraceFile(*candidate, true);
+            }
+
+            namespace fs = std::filesystem;
+            std::error_code ec;
+            const fs::path parent = fs::path(fileState.fileName).parent_path();
+            if (!parent.empty())
+            {
+                fs::create_directories(parent, ec);
+                NS_ABORT_MSG_IF(ec,
+                                "Failed to create trace parent dir: " << parent
+                                                                      << " err=" << ec.message());
+            }
+            fileState.stream.clear();
+            fileState.stream.open(fileState.fileName.c_str(), std::ios::out | std::ios::app);
+            NS_ABORT_MSG_IF(!fileState.stream.is_open(),
+                            "Cannot open trace file: " << fileState.fileName);
+            fileState.open = true;
+            ++trace_open_files;
+            ++trace_writer_stats.openCount;
+            trace_writer_stats.peakOpenFiles =
+                std::max(trace_writer_stats.peakOpenFiles, trace_open_files);
+        }
+        ++fileState.activeWrites;
+        fileState.lastUse = ++trace_lru_clock;
+    }
+
+    {
+        std::lock_guard<std::mutex> fileGuard(fileState.mutex);
+        fileState.stream.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+        NS_ABORT_MSG_IF(fileState.stream.fail(),
+                        "Failed to write trace file: " << fileState.fileName);
+        fileState.stream.flush();
+        NS_ABORT_MSG_IF(fileState.stream.fail(),
+                        "Failed to flush trace file: " << fileState.fileName);
+    }
+
+    {
+        std::lock_guard<std::mutex> filesGuard(files_mutex);
+        --fileState.activeWrites;
+        fileState.lastUse = ++trace_lru_clock;
+        ++trace_writer_stats.writeCount;
+        ++trace_writer_stats.flushCount;
+    }
+    std::string empty;
+    chunk.swap(empty);
+}
+
+void
+UbUtils::AppendTraceLine(const TraceSinkHandle& sink, std::string line)
+{
+    const uint64_t epoch = trace_writer_epoch.load(std::memory_order_acquire);
+    NS_ABORT_MSG_IF(!sink.IsValid() || sink.epoch != epoch, "Stale or invalid trace sink handle");
+    auto& fileState = *static_cast<TraceFileState*>(sink.state);
+    TraceOwnerState& owner = GetTraceOwner(Simulator::GetSystemId());
+    std::lock_guard<std::mutex> ownerGuard(owner.mutex);
+
+    line.push_back('\n');
+    const auto pressureFlush = [&](std::size_t incomingBytes) {
+        std::vector<std::pair<TraceFileState*, std::string*>> pending;
+        pending.reserve(owner.chunks.size());
+        for (auto& [state, buffered] : owner.chunks)
+        {
+            if (!buffered.empty())
+            {
+                pending.emplace_back(state, &buffered);
+            }
+        }
+        std::sort(pending.begin(), pending.end(), [](const auto& lhs, const auto& rhs) {
+            return lhs.second->size() > rhs.second->size();
+        });
+        const std::size_t target = trace_writer_config.lowWaterBytes > incomingBytes
+                                       ? trace_writer_config.lowWaterBytes - incomingBytes
+                                       : 0;
+        for (auto& [state, buffered] : pending)
+        {
+            if (owner.bufferedBytes <= target)
+            {
+                break;
+            }
+            const std::size_t bytes = buffered->size();
+            CommitTraceChunk(*state, *buffered);
+            owner.bufferedBytes -= bytes;
+        }
+        std::lock_guard<std::mutex> filesGuard(files_mutex);
+        ++trace_writer_stats.pressureFlushCount;
+    };
+
+    if (owner.bufferedBytes + line.size() >= trace_writer_config.highWaterBytes)
+    {
+        pressureFlush(line.size());
+    }
+
+    std::string& chunk = owner.chunks[&fileState];
+    if (!chunk.empty() && chunk.size() + line.size() > trace_writer_config.chunkBytes)
+    {
+        const std::size_t bytes = chunk.size();
+        CommitTraceChunk(fileState, chunk);
+        owner.bufferedBytes -= bytes;
+    }
+    if (line.size() >= trace_writer_config.chunkBytes)
+    {
+        CommitTraceChunk(fileState, line);
+        return;
+    }
+
+    chunk += line;
+    owner.bufferedBytes += line.size();
+    {
+        std::lock_guard<std::mutex> filesGuard(files_mutex);
+        trace_writer_stats.peakBufferedBytes =
+            std::max(trace_writer_stats.peakBufferedBytes, owner.bufferedBytes);
+    }
+    if (chunk.size() >= trace_writer_config.chunkBytes)
+    {
+        const std::size_t bytes = chunk.size();
+        CommitTraceChunk(fileState, chunk);
+        owner.bufferedBytes -= bytes;
+    }
+}
+
+void
+UbUtils::AppendTraceInfoNoTs(const TraceSinkHandle& sink, const std::string& info)
+{
+    AppendTraceLine(sink, info);
+}
+
+void
+UbUtils::FlushTraceFile(TraceFileState& fileState)
+{
+    std::vector<TraceOwnerState*> owners;
+    {
+        std::lock_guard<std::mutex> filesGuard(files_mutex);
+        owners.reserve(trace_owners.size());
+        for (auto& [ownerId, owner] : trace_owners)
+        {
+            (void)ownerId;
+            owners.push_back(&owner);
+        }
+    }
+    for (TraceOwnerState* owner : owners)
+    {
+        std::lock_guard<std::mutex> ownerGuard(owner->mutex);
+        auto it = owner->chunks.find(&fileState);
+        if (it != owner->chunks.end() && !it->second.empty())
+        {
+            const std::size_t bytes = it->second.size();
+            CommitTraceChunk(fileState, it->second);
+            owner->bufferedBytes -= bytes;
+        }
+    }
+}
+
+void
+UbUtils::FlushTraceOwner(TraceOwnerState& owner)
+{
+    std::lock_guard<std::mutex> ownerGuard(owner.mutex);
+    for (auto& [fileState, chunk] : owner.chunks)
+    {
+        if (!chunk.empty())
+        {
+            CommitTraceChunk(*fileState, chunk);
+        }
+    }
+    owner.bufferedBytes = 0;
 }
 
 bool
@@ -827,20 +1796,59 @@ void UbUtils::Destroy()
     queue_sampler_events.clear();
     queue_sampler_started = false;
 
-    std::lock_guard<std::mutex> filesGuard(files_mutex);
-    for (auto& pair : files) {
-        std::lock_guard<std::mutex> fileGuard(pair.second.mutex);
-        if (!pair.second.pending.empty())
+    if (UbLifecycleTrace::GetLevel() != UbLifecycleTraceLevel::OFF)
+    {
+        for (auto node = NodeList::Begin(); node != NodeList::End(); ++node)
         {
-            pair.second.stream.write(pair.second.pending.data(),
-                                     static_cast<std::streamsize>(pair.second.pending.size()));
-            pair.second.pending.clear();
-        }
-        if (pair.second.stream.is_open()) {
-            pair.second.stream.close();
+            Ptr<UbLifecycleCoordinator> coordinator = (*node)->GetObject<UbLifecycleCoordinator>();
+            if (coordinator != nullptr)
+            {
+                coordinator->EmitLifecycleSummary();
+            }
         }
     }
-    files.clear();
+
+    for (auto& [ownerId, owner] : trace_owners)
+    {
+        (void)ownerId;
+        FlushTraceOwner(owner);
+    }
+
+    {
+        std::lock_guard<std::mutex> filesGuard(files_mutex);
+        for (auto& [fileName, fileState] : files)
+        {
+            (void)fileName;
+            CloseTraceFile(fileState, false);
+        }
+        const char* report = std::getenv("UB_TRACE_WRITER_REPORT");
+        if (report != nullptr && std::string_view(report) == "1")
+        {
+            std::cerr << "TRACE_WRITER_METRICS"
+                      << " chunkBytes=" << trace_writer_config.chunkBytes
+                      << " highWaterBytes=" << trace_writer_config.highWaterBytes
+                      << " lowWaterBytes=" << trace_writer_config.lowWaterBytes
+                      << " effectiveMaxOpenFiles=" << trace_writer_config.effectiveMaxOpenFiles
+                      << " opens=" << trace_writer_stats.openCount
+                      << " writes=" << trace_writer_stats.writeCount
+                      << " flushes=" << trace_writer_stats.flushCount
+                      << " closes=" << trace_writer_stats.closeCount
+                      << " lruCloses=" << trace_writer_stats.lruCloseCount
+                      << " pressureFlushes=" << trace_writer_stats.pressureFlushCount
+                      << " peakOpenFiles=" << trace_writer_stats.peakOpenFiles
+                      << " peakBufferedBytes=" << trace_writer_stats.peakBufferedBytes << '\n';
+        }
+        files.clear();
+        trace_owners.clear();
+        trace_writer_config = {};
+        trace_writer_stats = {};
+        trace_writer_configured = false;
+        trace_open_files = 0;
+        trace_lru_clock = 0;
+        trace_writer_epoch.fetch_add(1, std::memory_order_release);
+    }
+    UbLifecycleTrace::Reset();
+
 }
 
 std::string UbUtils::PrepareTraceDir(const std::string &configPath)
@@ -893,6 +1901,53 @@ void UbUtils::CreateTraceDir()
     trace_path = PrepareTraceDir(g_config_path);
     queue_sampler_started = false;
     queue_sampler_events.clear();
+
+    BooleanValue traceEnabled;
+    g_trace_enable.GetValue(traceEnabled);
+
+    UbLifecycleTraceLevel resolvedLevel = UbLifecycleTraceLevel::OFF;
+    if (traceEnabled.Get())
+    {
+        StringValue preset;
+        StringValue lifecycleLevel;
+        g_trace_preset.GetValue(preset);
+        g_lifecycle_trace_level.GetValue(lifecycleLevel);
+        resolvedLevel = UbLifecycleTrace::ResolveLevel(preset.Get(), lifecycleLevel.Get());
+    }
+
+    if (resolvedLevel == UbLifecycleTraceLevel::OFF)
+    {
+        UbLifecycleTrace::Configure(trace_path, resolvedLevel, 1, 0, 0, false, {});
+        PrintTimestamp("[setup] Prepare runlog directory: " + trace_path + "runlog");
+        return;
+    }
+
+    UintegerValue detailStride;
+    UintegerValue detailOffset;
+    g_lifecycle_detail_sample_stride.GetValue(detailStride);
+    g_lifecycle_detail_sample_offset.GetValue(detailOffset);
+    uint32_t rank = 0;
+    bool rankScoped = false;
+#ifdef NS3_MPI
+    rankScoped = MpiInterface::IsEnabled();
+    if (rankScoped)
+    {
+        rank = MpiInterface::GetSystemId();
+    }
+#endif
+    UbLifecycleTrace::Configure(trace_path,
+                                resolvedLevel,
+                                detailStride.Get(),
+                                detailOffset.Get(),
+                                rank,
+                                rankScoped,
+                                [](const std::string& filename) {
+                                    const auto sink = UbUtils::ResolveTraceSink(filename);
+                                    return [sink](const std::string& line) {
+                                        UbUtils::AppendTraceInfoNoTs(sink, line);
+                                    };
+                                });
+    UbLifecycleTrace::EmitMetadata();
     PrintTimestamp("[setup] Prepare runlog directory: " + trace_path + "runlog");
 }
 
@@ -999,31 +2054,16 @@ UbUtils::StartQueueSampler()
 
 void UbUtils::PrintTraceInfo(const string& fileName, const string& info)
 {
-    auto& fileState = GetTraceFile(fileName);
-    std::lock_guard<std::mutex> fileGuard(fileState.mutex);
-    fileState.pending += "[";
-    fileState.pending += std::to_string(Simulator::Now().GetSeconds() * 1e6);
-    fileState.pending += "us] ";
-    fileState.pending += info;
-    fileState.pending.push_back('\n');
-    if (fileState.pending.size() >= TRACE_FLUSH_THRESHOLD_BYTES) {
-        fileState.stream.write(fileState.pending.data(),
-                               static_cast<std::streamsize>(fileState.pending.size()));
-        fileState.pending.clear();
-    }
+    std::string line = "[";
+    line += std::to_string(Simulator::Now().GetSeconds() * 1e6);
+    line += "us] ";
+    line += info;
+    AppendTraceLine(GetCachedTraceSink(fileName), std::move(line));
 }
 
 void UbUtils::PrintTraceInfoNoTs(const string& fileName, const string& info)
 {
-    auto& fileState = GetTraceFile(fileName);
-    std::lock_guard<std::mutex> fileGuard(fileState.mutex);
-    fileState.pending += info;
-    fileState.pending.push_back('\n');
-    if (fileState.pending.size() >= TRACE_FLUSH_THRESHOLD_BYTES) {
-        fileState.stream.write(fileState.pending.data(),
-                               static_cast<std::streamsize>(fileState.pending.size()));
-        fileState.pending.clear();
-    }
+    AppendTraceInfoNoTs(GetCachedTraceSink(fileName), info);
 }
 
 inline void UbUtils::TpFirstPacketSendsNotify(
@@ -1851,6 +2891,239 @@ UbUtils::ResolveLinkDelayWithOffset(Time baseDelay,
     return baseDelay + TimeStep(static_cast<int64_t>(hash % slotCount));
 }
 
+UbStructuredTopologyConfig
+UbUtils::ReadStructuredTopologyConfig(std::istream& input)
+{
+    const std::string magic = ReadStructuredToken(input, "protocol header");
+    NS_ABORT_MSG_IF(magic != "NS3_UB_STRUCTURED",
+                    "invalid structured topology protocol header: " << magic);
+    const uint32_t version = ReadStructuredUint32(input, "protocol version");
+    NS_ABORT_MSG_IF(version != 1 && version != 2 && version != 3 && version != 4,
+                    "unsupported structured topology protocol version: " << version);
+
+    UbStructuredTopologyConfig config;
+    uint32_t count = 0;
+    ReadStructuredSection(input, "NODES", count);
+    config.nodes.reserve(count);
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        config.nodes.push_back(UbStructuredNodeConfig{
+            ReadStructuredUint32(input, "node ID"),
+            ReadStructuredToken(input, "node type"),
+            ReadStructuredUint32(input, "port count"),
+            ReadStructuredToken(input, "allocation delay"),
+            ReadStructuredToken(input, "forward delay"),
+            ReadStructuredUint32(input, "system ID"),
+        });
+    }
+
+    // Normalize prepared files before table/index materialization. Node IDs remain the
+    // canonical identity; only an unambiguous record-order variation is repaired here.
+    std::sort(config.nodes.begin(), config.nodes.end(), [](const auto& left, const auto& right) {
+        return left.nodeId < right.nodeId;
+    });
+    for (uint32_t index = 0; index < config.nodes.size(); ++index)
+    {
+        NS_ABORT_MSG_IF(config.nodes[index].nodeId != index,
+                        "structured topology node IDs must be unique and contiguous from zero");
+    }
+
+    ReadStructuredSection(input, "LINKS", count);
+    config.links.reserve(count);
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        config.links.push_back(UbStructuredLinkConfig{
+            ReadStructuredUint32(input, "first link node"),
+            ReadStructuredUint32(input, "first link port"),
+            ReadStructuredUint32(input, "second link node"),
+            ReadStructuredUint32(input, "second link port"),
+            ReadStructuredToken(input, "link bandwidth"),
+            ReadStructuredToken(input, "link delay"),
+        });
+    }
+
+    if (version >= 4)
+    {
+        const std::string section = ReadStructuredToken(input, "routing fingerprint section");
+        NS_ABORT_MSG_IF(section != "ROUTING_FINGERPRINT",
+                        "structured topology expected ROUTING_FINGERPRINT, got " << section);
+        config.routingFingerprint = ReadStructuredToken(input, "routing fingerprint");
+        NS_ABORT_MSG_IF(
+            config.routingFingerprint.size() != 64 ||
+                !std::all_of(config.routingFingerprint.begin(),
+                             config.routingFingerprint.end(),
+                             [](unsigned char character) { return std::isxdigit(character); }),
+            "structured topology routing fingerprint must be a 64-character hexadecimal digest");
+    }
+
+    ReadStructuredSection(input, "TABLE", count);
+    config.tableRouteCount = count;
+    std::unique_ptr<UbNextHopIndexBuilder> tableBuilder;
+    if (count != 0)
+    {
+        tableBuilder = std::make_unique<UbNextHopIndexBuilder>(config.nodes.size(), count);
+    }
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        UbStructuredTableRoute route{
+            ReadStructuredUint32(input, "table current node"),
+            ReadStructuredUint32(input, "table destination node"),
+            ReadStructuredUint32(input, "table destination port"),
+            ReadStructuredPortList(input, "shortest table ports"),
+            ReadStructuredPortList(input, "non-shortest table ports"),
+        };
+        NS_ABORT_MSG_IF(route.currentNodeId >= config.nodes.size() ||
+                            route.destinationNodeId >= config.nodes.size(),
+                        "structured table route references an unknown node");
+        const auto& current = config.nodes[route.currentNodeId];
+        const auto& destination = config.nodes[route.destinationNodeId];
+        NS_ABORT_MSG_IF(route.destinationPortId >= destination.portCount,
+                        "structured table route destination port is outside the node port count");
+        auto validatePorts = [&](const std::vector<uint16_t>& ports) {
+            for (uint16_t port : ports)
+            {
+                NS_ABORT_MSG_IF(
+                    port >= current.portCount,
+                    "structured table route output port is outside the node port count");
+            }
+        };
+        validatePorts(route.shortestPorts);
+        validatePorts(route.nonShortestPorts);
+        tableBuilder->AddRoute(route);
+    }
+    if (tableBuilder != nullptr)
+    {
+        config.tableNextHopIndex = tableBuilder->Build();
+    }
+
+    ReadStructuredSection(input, "PORT_GROUPS", count);
+    config.portGroups.reserve(count);
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        config.portGroups.push_back(UbPortGroup{
+            ReadStructuredUint32(input, "port-group node"),
+            ReadStructuredUint32(input, "port-group ID"),
+            ReadStructuredPortList(input, "port-group ports"),
+        });
+    }
+
+    ReadStructuredSection(input, "RULES", count);
+    config.routingRules.reserve(count);
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        config.routingRules.push_back(UbRoutingRule{
+            ReadStructuredUint32(input, "rule current node"),
+            UbRuleDestination{
+                ReadStructuredUint32(input, "rule destination node"),
+                ReadStructuredUint32(input, "rule destination port"),
+            },
+            ReadStructuredUint32List(input, "shortest rule groups"),
+            ReadStructuredUint32List(input, "non-shortest rule groups"),
+        });
+    }
+
+    if (version >= 2)
+    {
+        ReadStructuredSection(input, "RULE_RANGES", count);
+        config.routingRangeRules.reserve(count);
+        for (uint32_t index = 0; index < count; ++index)
+        {
+            config.routingRangeRules.push_back(UbRoutingRangeRule{
+                ReadStructuredUint32(input, "range-rule current node"),
+                ReadStructuredUint32(input, "range-rule destination start node"),
+                ReadStructuredUint32(input, "range-rule destination end node"),
+                ReadStructuredUint32(input, "range-rule destination port"),
+                ReadStructuredUint32List(input, "shortest range-rule groups"),
+                ReadStructuredUint32List(input, "non-shortest range-rule groups"),
+            });
+        }
+    }
+
+    if (version >= 3)
+    {
+        auto parseRuleType = [](const std::string& value) {
+            if (value == "dimension")
+            {
+                return UbTopologyRuleType::DIMENSION;
+            }
+            if (value == "direct-switch")
+            {
+                return UbTopologyRuleType::DIRECT_SWITCH;
+            }
+            if (value == "two-level-switch")
+            {
+                return UbTopologyRuleType::TWO_LEVEL_SWITCH;
+            }
+            if (value == "dragonfly")
+            {
+                return UbTopologyRuleType::DRAGONFLY;
+            }
+            NS_ABORT_MSG("unknown topology rule type: " << value);
+            return UbTopologyRuleType::DIMENSION;
+        };
+        auto parseConnection = [](const std::string& value) {
+            if (value == "line")
+            {
+                return UbDimensionConnection::LINE;
+            }
+            if (value == "ring")
+            {
+                return UbDimensionConnection::RING;
+            }
+            if (value == "fullMesh")
+            {
+                return UbDimensionConnection::FULL_MESH;
+            }
+            NS_ABORT_MSG("unknown dimension connection: " << value);
+            return UbDimensionConnection::LINE;
+        };
+
+        ReadStructuredSection(input, "TOPOLOGY_RULES", count);
+        config.topologyRules.reserve(count);
+        for (uint32_t index = 0; index < count; ++index)
+        {
+            const UbTopologyRuleType type =
+                parseRuleType(ReadStructuredToken(input, "topology rule type"));
+            std::vector<uint32_t> shape = ReadStructuredUint32List(input, "topology rule shape");
+            const auto connectionTokens =
+                ReadStructuredTokenList(input, "topology rule connections");
+            std::vector<UbDimensionConnection> connections;
+            connections.reserve(connectionTokens.size());
+            std::transform(connectionTokens.begin(),
+                           connectionTokens.end(),
+                           std::back_inserter(connections),
+                           parseConnection);
+            const uint32_t nodeCount = ReadStructuredUint32(input, "topology rule node count");
+            std::vector<UbTopologyRuleNode> nodes;
+            nodes.reserve(nodeCount);
+            for (uint32_t nodeIndex = 0; nodeIndex < nodeCount; ++nodeIndex)
+            {
+                const uint32_t nodeId = ReadStructuredUint32(input, "topology rule node ID");
+                const std::string nodeType = ReadStructuredToken(input, "topology rule node type");
+                NS_ABORT_MSG_IF(nodeType != "HOST" && nodeType != "SWITCH",
+                                "unknown topology rule node type: " << nodeType);
+                nodes.push_back(UbTopologyRuleNode{
+                    nodeId,
+                    nodeType == "HOST",
+                    ReadStructuredUint32List(input, "topology rule coordinates"),
+                });
+            }
+            config.topologyRules.push_back(UbTopologyRule{
+                type,
+                std::move(shape),
+                std::move(connections),
+                std::move(nodes),
+            });
+        }
+    }
+
+    const std::string end = ReadStructuredToken(input, "protocol terminator");
+    NS_ABORT_MSG_IF(end != "END", "structured topology expected END, got " << end);
+    std::string trailing;
+    NS_ABORT_MSG_IF(input >> trailing, "structured topology contains data after END: " << trailing);
+    return config;
+}
+
 // 读取拓扑文件
 void
 UbUtils::CreateTopo(const string& filename)
@@ -1861,20 +3134,16 @@ UbUtils::CreateTopo(const string& filename)
 UbUtils::LinkDelayOffsetStats
 UbUtils::CreateTopo(const string& filename, Time offsetWindow, uint32_t offsetSeed)
 {
-    NS_ABORT_MSG_IF(offsetWindow.IsStrictlyNegative(),
-                    "link delay offset window must be non-negative");
-    LinkDelayOffsetStats offsetStats;
-    std::unordered_map<int64_t, uint64_t> slotOccupancy;
-
     PrintTimestamp("[setup] Load " + DisplayFilename(filename));
     ifstream file(filename);
     if (!file.is_open())
         NS_ASSERT_MSG(0, "Can not open File: " << filename);
     string line;
     getline(file, line);
+    std::vector<UbStructuredLinkConfig> links;
     // node1,port1,node2,port2,bandwidth,delay 0,0,2,0,400Gbps,10ns
-    while (getline(file, line)) {
-        vector<string> row;
+    while (getline(file, line))
+    {
         stringstream ss(line);
         // 跳过空行、#开头行、纯空格行
         if (line.empty() || line[0] == '#' || line.find_first_not_of(" \t") == string::npos) {
@@ -1899,21 +3168,49 @@ UbUtils::CreateTopo(const string& filename, Time offsetWindow, uint32_t offsetSe
         bandwidth = TrimFieldCopy(cell);
         getline(ss, cell, ',');
         delay = TrimFieldCopy(cell);
-        Ptr<Node> n1 = NodeList::GetNode(node1);
-        Ptr<Node> n2 = NodeList::GetNode(node2);
+        links.push_back(UbStructuredLinkConfig{node1, port1, node2, port2, bandwidth, delay});
+    }
+    file.close();
+    return CreateTopo(links, offsetWindow, offsetSeed);
+}
 
-        Ptr<UbPort> p1 = DynamicCast<UbPort>(n1->GetDevice(port1));
-        Ptr<UbPort> p2 = DynamicCast<UbPort>(n2->GetDevice(port2));
-        p1->SetDataRate(DataRate(bandwidth));
-        p2->SetDataRate(DataRate(bandwidth));
-        const Time baseDelay(delay);
+UbUtils::LinkDelayOffsetStats
+UbUtils::CreateTopo(const std::vector<UbStructuredLinkConfig>& links,
+                    Time offsetWindow,
+                    uint32_t offsetSeed)
+{
+    NS_ABORT_MSG_IF(offsetWindow.IsStrictlyNegative(),
+                    "link delay offset window must be non-negative");
+    LinkDelayOffsetStats offsetStats;
+    std::unordered_map<int64_t, uint64_t> slotOccupancy;
+    std::set<std::pair<uint32_t, uint32_t>> usedEndpoints;
+
+    for (const auto& link : links)
+    {
+        NS_ABORT_MSG_IF(link.node1 >= NodeList::GetNNodes() || link.node2 >= NodeList::GetNNodes(),
+                        "structured topology link references an unknown node");
+        Ptr<Node> n1 = NodeList::GetNode(link.node1);
+        Ptr<Node> n2 = NodeList::GetNode(link.node2);
+        NS_ABORT_MSG_IF(link.port1 >= n1->GetNDevices() || link.port2 >= n2->GetNDevices(),
+                        "structured topology link references a port outside the node port count");
+        NS_ABORT_MSG_IF(!usedEndpoints.emplace(link.node1, link.port1).second ||
+                            !usedEndpoints.emplace(link.node2, link.port2).second,
+                        "structured topology physical port is connected more than once");
+
+        Ptr<UbPort> p1 = DynamicCast<UbPort>(n1->GetDevice(link.port1));
+        Ptr<UbPort> p2 = DynamicCast<UbPort>(n2->GetDevice(link.port2));
+        NS_ABORT_MSG_IF(p1 == nullptr || p2 == nullptr,
+                        "structured topology link endpoint is not a unified-bus port");
+        p1->SetDataRate(DataRate(link.bandwidth));
+        p2->SetDataRate(DataRate(link.bandwidth));
+        const Time baseDelay(link.delay);
         const Time effectiveDelay = ResolveLinkDelayWithOffset(baseDelay,
                                                                offsetWindow,
                                                                offsetSeed,
-                                                               node1,
-                                                               port1,
-                                                               node2,
-                                                               port2);
+                                                               link.node1,
+                                                               link.port1,
+                                                               link.node2,
+                                                               link.port2);
         if (baseDelay.IsZero())
         {
             ++offsetStats.zeroDelayLinkCount;
@@ -1939,8 +3236,6 @@ UbUtils::CreateTopo(const string& filename, Time offsetWindow, uint32_t offsetSe
             swCaqm->ResetLocalCc();
         }
     }
-    file.close();
-
     if (offsetWindow.IsStrictlyPositive())
     {
         offsetStats.distinctOffsetCount = slotOccupancy.size();
@@ -2008,34 +3303,57 @@ void UbUtils::CreateNode(const string &filename)
         ParseNodeRange(nodeEle.nodeIdStr, nodeEle);
     }
     file.close();
-    // 创建节点
-    for (auto it: nodeEle_map) {
-        string nodeIdStr = it.second.nodeIdStr;
-        string nodeTypeStr = it.second.nodeTypeStr;
-        string portNumStr = it.second.portNumStr;
-        string forwardDelay = it.second.forwardDelay;
-        string allocationDelay = it.second.allocationDelay;
-        string systemIdStr = it.second.systemIdStr;
-        int portNum = stoi(portNumStr);
-        uint32_t systemId = systemIdStr.empty() ? 0 : static_cast<uint32_t>(stoul(systemIdStr));
-        Ptr<Node> node = CreateObject<Node>(systemId);
+
+    std::vector<UbStructuredNodeConfig> nodes;
+    nodes.reserve(nodeEle_map.size());
+    for (const auto& [nodeId, nodeEle] : nodeEle_map)
+    {
+        nodes.push_back(UbStructuredNodeConfig{
+            nodeId,
+            nodeEle.nodeTypeStr,
+            static_cast<uint32_t>(stoul(nodeEle.portNumStr)),
+            nodeEle.allocationDelay,
+            nodeEle.forwardDelay,
+            nodeEle.systemIdStr.empty() ? 0 : static_cast<uint32_t>(stoul(nodeEle.systemIdStr)),
+        });
+    }
+    CreateNode(nodes);
+}
+
+void
+UbUtils::CreateNode(const std::vector<UbStructuredNodeConfig>& nodes)
+{
+    const uint32_t firstNodeId = NodeList::GetNNodes();
+    for (std::size_t index = 0; index < nodes.size(); ++index)
+    {
+        const auto& nodeConfig = nodes[index];
+        NS_ABORT_MSG_IF(nodeConfig.nodeId != firstNodeId + index,
+                        "node IDs must be consecutive and continue from the current NodeList");
+
+        Ptr<Node> node = CreateObject<Node>(nodeConfig.systemId);
         Ptr<UbSwitch> sw = CreateObject<UbSwitch>();
         node->AggregateObject(sw);
         Ptr<ns3::UbLdstInstance> ldst = CreateObject<UbLdstInstance>();
         node->AggregateObject(ldst);
         ldst->Init(node->GetId());
-        if (nodeTypeStr == "DEVICE") {
+        if (nodeConfig.nodeType == "DEVICE")
+        {
             Ptr<UbController> ubCtrl = CreateObject<UbController>();
             node->AggregateObject(ubCtrl);
             ubCtrl->CreateUbFunction();
             ubCtrl->CreateUbTransaction();
             sw->SetNodeType(UB_DEVICE);
-        } else if (nodeTypeStr == "SWITCH") {
-            sw->SetNodeType(UB_SWITCH);
-        } else {
-            NS_ASSERT_MSG(0, "node type not support");
         }
-        for (int i = 0; i < portNum; i++) {
+        else if (nodeConfig.nodeType == "SWITCH")
+        {
+            sw->SetNodeType(UB_SWITCH);
+        }
+        else
+        {
+            NS_ABORT_MSG("unsupported structured topology node type: " << nodeConfig.nodeType);
+        }
+        for (uint32_t portId = 0; portId < nodeConfig.portCount; ++portId)
+        {
             Ptr<UbPort> port = CreateObject<UbPort>();
             port->SetAddress(Mac48Address::Allocate());
             node->AddDevice(port);
@@ -2043,12 +3361,14 @@ void UbUtils::CreateNode(const string &filename)
         sw->Init();
         auto cc = UbCongestionControl::Create(UB_SWITCH);
         cc->OnSwitchAttached(sw);
-        if (!forwardDelay.empty()) {
-            sw->SetAttribute("InPortProcessingDelay", StringValue(forwardDelay));
+        if (!nodeConfig.forwardDelay.empty())
+        {
+            sw->SetAttribute("InPortProcessingDelay", StringValue(nodeConfig.forwardDelay));
         }
-        if (!allocationDelay.empty()) {
+        if (!nodeConfig.allocationDelay.empty())
+        {
             auto allocator = sw->GetAllocator();
-            allocator->SetAttribute("AllocationTime", StringValue(allocationDelay));
+            allocator->SetAttribute("AllocationTime", StringValue(nodeConfig.allocationDelay));
         }
     }
 }
@@ -2075,8 +3395,11 @@ void UbUtils::AddRoutingTable(const string &filename)
     std::vector<uint16_t> outports;
     std::vector<uint32_t> metrics;
     std::vector<RouteRangeCsvRow> rangeRows;
+    using MetricPorts = std::map<uint32_t, std::vector<uint16_t>>;
+    std::map<std::tuple<uint32_t, uint32_t, uint32_t>, MetricPorts> exactRows;
+    std::map<std::pair<uint32_t, uint32_t>, MetricPorts> primaryRows;
 
-    std::unordered_map<uint32_t, std::unordered_map<uint32_t, std::map<uint32_t, std::vector<uint16_t>>>> rtTable;
+    auto exactBuilder = std::make_unique<UbNextHopIndexBuilder>(NodeList::GetNNodes());
     getline(file, line);
     while (std::getline(file, line)) {
         ++rowNumber;
@@ -2109,11 +3432,9 @@ void UbUtils::AddRoutingTable(const string &filename)
         const auto routeValue = NormalizeRouteValue(outports, metrics, rowNumber);
         const bool isRangeRoute = nodeStart != nodeEnd || destStart != destEnd;
         if (!isRangeRoute) {
-            Ipv4Address ip_node = NodeIdToIp(destStart);
-            Ipv4Address ip_nodePort = NodeIdToIp(destStart, destport);
-            for (auto i = 0u; i < outports.size(); i++) {
-                rtTable[nodeStart][ip_node.Get()][metrics[i]].push_back(outports[i]);
-                rtTable[nodeStart][ip_nodePort.Get()][metrics[i]].push_back(outports[i]);
+            for (const auto& [port, routeMetric] : routeValue) {
+                exactRows[{nodeStart, destStart, destport}][routeMetric].push_back(port);
+                primaryRows[{nodeStart, destStart}][routeMetric].push_back(port);
             }
             continue;
         }
@@ -2127,6 +3448,35 @@ void UbUtils::AddRoutingTable(const string &filename)
                                              routeValue});
     }
     ValidateRouteRangeRowsNoConflicts(rangeRows);
+
+    auto classifyMetrics = [](const MetricPorts& metricPorts) {
+        UbStructuredTableRoute route{};
+        bool shortest = true;
+        for (const auto& [metric, ports] : metricPorts)
+        {
+            auto& destination = shortest ? route.shortestPorts : route.nonShortestPorts;
+            destination.insert(destination.end(), ports.begin(), ports.end());
+            shortest = false;
+        }
+        return route;
+    };
+    for (const auto& [lookup, metricPorts] : exactRows)
+    {
+        auto route = classifyMetrics(metricPorts);
+        std::tie(route.currentNodeId, route.destinationNodeId, route.destinationPortId) = lookup;
+        exactBuilder->AddRoute(route);
+    }
+    for (const auto& [lookup, metricPorts] : primaryRows)
+    {
+        const auto route = classifyMetrics(metricPorts);
+        exactBuilder->AddPrimaryRoute(lookup.first,
+                                      lookup.second,
+                                      route.shortestPorts,
+                                      route.nonShortestPorts);
+    }
+
+    // The runtime keeps only the minimum-metric ports and one combined non-shortest group.
+    // TODO: Preserve numeric metrics if a future routing policy needs more than these two groups.
     for (const auto& row : rangeRows) {
         const uint32_t nodeStart = row.nodeStart;
         const uint32_t nodeEnd = row.nodeEnd;
@@ -2146,9 +3496,9 @@ void UbUtils::AddRoutingTable(const string &filename)
             for (const auto& [outport, metric] : row.value) {
                 std::vector<uint16_t> outPortGroup = {outport};
                 if (metric == shortestMetric) {
-                    rt->AddShortestRouteRange(destStart, destEnd, destport, outPortGroup);
+                    rt->GetRoutingTable().AddShortestRouteRange(destStart, destEnd, destport, outPortGroup);
                 } else {
-                    rt->AddOtherRouteRange(destStart, destEnd, destport, outPortGroup);
+                    rt->GetRoutingTable().AddOtherRouteRange(destStart, destEnd, destport, outPortGroup);
                 }
             }
             if (nodeId == nodeEnd) {
@@ -2156,22 +3506,316 @@ void UbUtils::AddRoutingTable(const string &filename)
             }
         }
     }
-    for (auto &nodert : rtTable) {
-        auto rt = NodeList::GetNode(nodert.first)->GetObject<ns3::UbSwitch>()->GetRoutingProcess();
-        for (auto &destiprow : nodert.second) {
-            auto ip = destiprow.first;
-            int i = 0;
-            for (auto &metricrow : destiprow.second) {
-                if (i == 0) {
-                    rt->AddShortestRoute(ip, metricrow.second);
-                } else {
-                    rt->AddOtherRoute(ip, metricrow.second);
-                }
-                i++;
-            }
+    if (!exactRows.empty()) {
+        const auto nextHopIndex = exactBuilder->Build();
+        for (uint32_t nodeId = 0; nodeId < NodeList::GetNNodes(); ++nodeId) {
+            auto routing = NodeList::GetNode(nodeId)->GetObject<UbSwitch>()->GetRoutingProcess();
+            routing->SetNextHopIndex(nextHopIndex);
         }
     }
     file.close();
+}
+
+void
+UbUtils::AddRoutingTable(const std::vector<UbStructuredTableRoute>& routes)
+{
+    if (routes.empty())
+    {
+        return;
+    }
+    for (const auto& route : routes)
+    {
+        NS_ABORT_MSG_IF(route.currentNodeId >= NodeList::GetNNodes() ||
+                            route.destinationNodeId >= NodeList::GetNNodes(),
+                        "structured table route references an unknown node");
+        Ptr<Node> current = NodeList::GetNode(route.currentNodeId);
+        Ptr<Node> destination = NodeList::GetNode(route.destinationNodeId);
+        NS_ABORT_MSG_IF(route.destinationPortId >= destination->GetNDevices(),
+                        "structured table route destination port is outside the node port count");
+        NS_ABORT_MSG_IF(
+            route.destinationPortId >= BYTE_RANGE - 1,
+            "structured table route destination port cannot be encoded in the UB address");
+        NS_ABORT_MSG_IF(route.shortestPorts.empty() && route.nonShortestPorts.empty(),
+                        "structured table route must contain at least one output port");
+
+        auto validatePorts = [&](const std::vector<uint16_t>& ports) {
+            for (uint16_t port : ports)
+            {
+                NS_ABORT_MSG_IF(
+                    port >= current->GetNDevices(),
+                    "structured table route output port is outside the node port count");
+            }
+        };
+        validatePorts(route.shortestPorts);
+        validatePorts(route.nonShortestPorts);
+    }
+
+    const auto nextHopIndex = ns3::UbNextHopIndex::Build(routes, NodeList::GetNNodes());
+    for (uint32_t nodeId = 0; nodeId < NodeList::GetNNodes(); ++nodeId)
+    {
+        auto routing = NodeList::GetNode(nodeId)->GetObject<UbSwitch>()->GetRoutingProcess();
+        routing->SetNextHopIndex(nextHopIndex);
+    }
+}
+
+void
+UbUtils::AddRuleRoutingTable(const std::string& portGroupFilename,
+                             const std::string& ruleFilename,
+                             const std::string& rangeRuleFilename)
+{
+    PrintTimestamp("[setup] Load " + DisplayFilename(portGroupFilename));
+    std::ifstream portGroupFile(portGroupFilename);
+    NS_ABORT_MSG_IF(!portGroupFile.is_open(), "Can not open File: " << portGroupFilename);
+
+    auto parseValues = [](const std::string& field) {
+        std::vector<uint32_t> values;
+        std::stringstream stream(field);
+        uint32_t value;
+        while (stream >> value)
+        {
+            values.push_back(value);
+        }
+        return values;
+    };
+
+    std::vector<UbPortGroup> portGroups;
+    std::string line;
+    std::getline(portGroupFile, line);
+    while (std::getline(portGroupFile, line))
+    {
+        if (line.empty())
+        {
+            continue;
+        }
+        std::stringstream row(line);
+        std::string nodeField;
+        std::string groupField;
+        std::string portsField;
+        std::getline(row, nodeField, ',');
+        std::getline(row, groupField, ',');
+        std::getline(row, portsField, ',');
+        const auto portValues = parseValues(portsField);
+        std::vector<uint16_t> ports;
+        ports.reserve(portValues.size());
+        for (uint32_t port : portValues)
+        {
+            NS_ABORT_MSG_IF(port > std::numeric_limits<uint16_t>::max(),
+                            "routing port group contains an invalid port");
+            ports.push_back(static_cast<uint16_t>(port));
+        }
+        portGroups.push_back(UbPortGroup{
+            static_cast<uint32_t>(std::stoul(nodeField)),
+            static_cast<uint32_t>(std::stoul(groupField)),
+            std::move(ports),
+        });
+    }
+
+    PrintTimestamp("[setup] Load " + DisplayFilename(ruleFilename));
+    std::ifstream ruleFile(ruleFilename);
+    NS_ABORT_MSG_IF(!ruleFile.is_open(), "Can not open File: " << ruleFilename);
+    std::vector<UbRoutingRule> routingRules;
+    std::getline(ruleFile, line);
+    while (std::getline(ruleFile, line))
+    {
+        if (line.empty())
+        {
+            continue;
+        }
+        std::stringstream row(line);
+        std::array<std::string, 5> fields;
+        for (size_t index = 0; index < fields.size(); ++index)
+        {
+            std::getline(row, fields[index], ',');
+        }
+        routingRules.push_back(UbRoutingRule{
+            static_cast<uint32_t>(std::stoul(fields[0])),
+            UbRuleDestination{
+                static_cast<uint32_t>(std::stoul(fields[1])),
+                static_cast<uint32_t>(std::stoul(fields[2])),
+            },
+            parseValues(fields[3]),
+            parseValues(fields[4]),
+        });
+    }
+
+    std::vector<UbRoutingRangeRule> routingRangeRules;
+    if (!rangeRuleFilename.empty())
+    {
+        PrintTimestamp("[setup] Load " + DisplayFilename(rangeRuleFilename));
+        std::ifstream rangeRuleFile(rangeRuleFilename);
+        NS_ABORT_MSG_IF(!rangeRuleFile.is_open(), "Can not open File: " << rangeRuleFilename);
+        std::getline(rangeRuleFile, line);
+        while (std::getline(rangeRuleFile, line))
+        {
+            if (line.empty())
+            {
+                continue;
+            }
+            std::stringstream row(line);
+            std::array<std::string, 6> fields;
+            for (size_t index = 0; index < fields.size(); ++index)
+            {
+                std::getline(row, fields[index], ',');
+            }
+            routingRangeRules.push_back(UbRoutingRangeRule{
+                static_cast<uint32_t>(std::stoul(fields[0])),
+                static_cast<uint32_t>(std::stoul(fields[1])),
+                static_cast<uint32_t>(std::stoul(fields[2])),
+                static_cast<uint32_t>(std::stoul(fields[3])),
+                parseValues(fields[4]),
+                parseValues(fields[5]),
+            });
+        }
+    }
+    AddRuleRoutingTable(portGroups, routingRules, routingRangeRules);
+}
+
+void
+UbUtils::AddRuleRoutingTable(const std::vector<UbPortGroup>& portGroups,
+                             const std::vector<UbRoutingRule>& routingRules,
+                             const std::vector<UbRoutingRangeRule>& routingRangeRules,
+                             const std::vector<UbTopologyLink>& topologyLinks,
+                             const std::vector<UbTopologyRule>& topologyRules)
+{
+    if (portGroups.empty() && routingRules.empty() && routingRangeRules.empty() &&
+        topologyRules.empty())
+    {
+        return;
+    }
+
+    auto ruleTable = std::make_shared<UbRuleRoutingTable>();
+    for (const auto& portGroup : portGroups)
+    {
+        NS_ABORT_MSG_IF(portGroup.nodeId >= NodeList::GetNNodes(),
+                        "structured port group references an unknown node");
+        const uint32_t portCount = NodeList::GetNode(portGroup.nodeId)->GetNDevices();
+        for (uint16_t port : portGroup.ports)
+        {
+            NS_ABORT_MSG_IF(port >= portCount,
+                            "structured port group contains a port outside the node port count");
+        }
+        ruleTable->AddPortGroup(portGroup);
+    }
+    for (const auto& rule : routingRules)
+    {
+        NS_ABORT_MSG_IF(rule.currentNodeId >= NodeList::GetNNodes() ||
+                            rule.destination.nodeId >= NodeList::GetNNodes(),
+                        "structured routing rule references an unknown node");
+        if (rule.destination.portId != UbRuleDestination::ANY_PORT)
+        {
+            NS_ABORT_MSG_IF(
+                rule.destination.portId >=
+                    NodeList::GetNode(rule.destination.nodeId)->GetNDevices(),
+                "structured routing rule destination port is outside the node port count");
+            NS_ABORT_MSG_IF(
+                rule.destination.portId >= BYTE_RANGE - 1,
+                "structured routing rule destination port cannot be encoded in the UB address");
+        }
+        ruleTable->AddRule(rule);
+    }
+    for (const auto& rule : routingRangeRules)
+    {
+        NS_ABORT_MSG_IF(rule.currentNodeId >= NodeList::GetNNodes() ||
+                            rule.destinationStartNodeId > rule.destinationEndNodeId ||
+                            rule.destinationEndNodeId >= NodeList::GetNNodes(),
+                        "structured routing range references an invalid node range");
+        if (rule.destinationPortId != UbRuleDestination::ANY_PORT)
+        {
+            NS_ABORT_MSG_IF(
+                rule.destinationPortId >= BYTE_RANGE - 1,
+                "structured routing range destination port cannot be encoded in the UB address");
+            for (uint32_t destinationNodeId = rule.destinationStartNodeId;
+                 destinationNodeId <= rule.destinationEndNodeId;
+                 ++destinationNodeId)
+            {
+                NS_ABORT_MSG_IF(
+                    rule.destinationPortId >= NodeList::GetNode(destinationNodeId)->GetNDevices(),
+                    "structured routing range destination port is outside a node port count");
+            }
+        }
+        ruleTable->AddRangeRule(rule);
+    }
+    for (const auto& link : topologyLinks)
+    {
+        NS_ABORT_MSG_IF(link.node1 >= NodeList::GetNNodes() || link.node2 >= NodeList::GetNNodes(),
+                        "topology routing link references an unknown node");
+        NS_ABORT_MSG_IF(link.port1 >= NodeList::GetNode(link.node1)->GetNDevices() ||
+                            link.port2 >= NodeList::GetNode(link.node2)->GetNDevices(),
+                        "topology routing link references an invalid port");
+        ruleTable->AddTopologyLink(link);
+    }
+    for (const auto& rule : topologyRules)
+    {
+        for (const auto& node : rule.nodes)
+        {
+            NS_ABORT_MSG_IF(node.nodeId >= NodeList::GetNNodes(),
+                            "topology rule references an unknown node");
+            const bool isHost =
+                NodeList::GetNode(node.nodeId)->GetObject<UbSwitch>()->GetNodeType() == UB_DEVICE;
+            NS_ABORT_MSG_IF(isHost != node.isHost,
+                            "topology rule node type differs from the installed node");
+        }
+        ruleTable->AddTopologyRule(rule);
+    }
+    ruleTable->PrepareForLookup();
+
+    for (uint32_t nodeId = 0; nodeId < NodeList::GetNNodes(); ++nodeId)
+    {
+        auto routing = NodeList::GetNode(nodeId)->GetObject<UbSwitch>()->GetRoutingProcess();
+        routing->SetRuleRoutingTable(ruleTable);
+    }
+}
+
+UbUtils::LinkDelayOffsetStats
+UbUtils::InstallStructuredTopology(const UbStructuredTopologyConfig& config,
+                                   Time offsetWindow,
+                                   uint32_t offsetSeed)
+{
+    NS_ABORT_MSG_IF(NodeList::GetNNodes() != 0,
+                    "structured topology installation requires an empty NodeList");
+    NS_ABORT_MSG_IF(config.nodes.empty(), "structured topology must contain at least one node");
+    PrintTimestamp("[setup] Install structured topology and routing");
+    CreateNode(config.nodes);
+    const LinkDelayOffsetStats offsetStats = CreateTopo(config.links, offsetWindow, offsetSeed);
+    if (config.tableNextHopIndex != nullptr)
+    {
+        for (uint32_t nodeId = 0; nodeId < NodeList::GetNNodes(); ++nodeId)
+        {
+            auto routing = NodeList::GetNode(nodeId)->GetObject<UbSwitch>()->GetRoutingProcess();
+            routing->SetNextHopIndex(config.tableNextHopIndex);
+        }
+    }
+    else
+    {
+        AddRoutingTable(config.tableRoutes);
+    }
+    std::vector<UbTopologyLink> topologyLinks;
+    if (!config.topologyRules.empty())
+    {
+        topologyLinks.reserve(config.links.size());
+        for (const auto& link : config.links)
+        {
+            NS_ABORT_MSG_IF(link.port1 > std::numeric_limits<uint16_t>::max() ||
+                                link.port2 > std::numeric_limits<uint16_t>::max(),
+                            "topology routing cannot encode a physical port above uint16 range");
+            topologyLinks.push_back(UbTopologyLink{
+                link.node1,
+                static_cast<uint16_t>(link.port1),
+                link.node2,
+                static_cast<uint16_t>(link.port2),
+            });
+        }
+    }
+    if (!config.portGroups.empty() || !config.routingRules.empty() ||
+        !config.routingRangeRules.empty() || !config.topologyRules.empty())
+    {
+        AddRuleRoutingTable(config.portGroups,
+                            config.routingRules,
+                            config.routingRangeRules,
+                            topologyLinks,
+                            config.topologyRules);
+    }
+    return offsetStats;
 }
 
 // 读取TP配置文件
@@ -2305,6 +3949,14 @@ void UbUtils::SetRecord(int fieldCount, string field, TrafficRecord &record)
             }
             break;
         }
+        case FIELDCOUNT::SRCPORTID:
+            record.hasSrcPortId = !field.empty();
+            record.srcPortId = record.hasSrcPortId ? static_cast<uint32_t>(std::stoul(field)) : 0;
+            break;
+        case FIELDCOUNT::DSTPORTID:
+            record.hasDstPortId = !field.empty();
+            record.dstPortId = record.hasDstPortId ? static_cast<uint32_t>(std::stoul(field)) : 0;
+            break;
     }
 }
 
@@ -2362,11 +4014,16 @@ UbUtils::ForEachTrafficPhaseIndexRecord(const string& filename,
     }
 
     string line;
-    getline(file, line);
+    NS_ABORT_MSG_IF(!getline(file, line), "traffic.csv is missing its header");
+    const std::vector<std::string> header = SplitCsvRow(line);
+    ValidateTrafficCsvHeader(header);
+    const std::size_t expectedFieldCount = header.size();
     while (getline(file, line)) {
         if (line.empty() || line[0] == '#' || line.find_first_not_of(" \t") == string::npos) {
             continue;
         }
+
+        ValidateTrafficCsvRowWidth(line, expectedFieldCount);
 
         uint32_t taskId = 0;
         uint32_t phaseId = 0;
@@ -2433,12 +4090,17 @@ UbUtils::ForEachTrafficRecordInternal(const string& filename,
         return;
     }
     string line;
-    getline(file, line);  // 跳过标题行
+    NS_ABORT_MSG_IF(!getline(file, line), "traffic.csv is missing its header");
+    const std::vector<std::string> header = SplitCsvRow(line);
+    ValidateTrafficCsvHeader(header);
+    const std::size_t expectedFieldCount = header.size();
     TrafficRecord record;
     while (getline(file, line)) {
         if (line.empty() || line[0] == '#' || line.find_first_not_of(" \t") == string::npos) {
             continue;
         }
+
+        ValidateTrafficCsvRowWidth(line, expectedFieldCount);
 
         record.taskId = 0;
         record.sourceNode = 0;
@@ -2449,10 +4111,10 @@ UbUtils::ForEachTrafficRecordInternal(const string& filename,
         record.delay.clear();
         record.phaseId = 0;
         record.dependOnPhases.clear();
-        record.srcEntityId = 0;
-        record.dstEntityId = 0;
-        record.hasSrcEntityId = false;
-        record.hasDstEntityId = false;
+        record.srcPortId = 0;
+        record.dstPortId = 0;
+        record.hasSrcPortId = false;
+        record.hasDstPortId = false;
 
         int fieldCount = 0;
         size_t fieldStart = 0;
@@ -2475,7 +4137,7 @@ UbUtils::ForEachTrafficRecordInternal(const string& filename,
         }
         NS_ABORT_MSG_IF(
             fieldCount != 9 && fieldCount != 11,
-            "traffic.csv row must have 9 base fields or 11 fields with srcEntityId,dstEntityId");
+            "traffic.csv row must have 9 base fields or 11 fields with srcPortId,dstPortId");
         callback(record);
     }
     file.close();
@@ -2494,11 +4156,16 @@ UbUtils::ForEachTrafficRecordViewInternal(
         return;
     }
     string line;
-    getline(file, line);  // 跳过标题行
+    NS_ABORT_MSG_IF(!getline(file, line), "traffic.csv is missing its header");
+    const std::vector<std::string> header = SplitCsvRow(line);
+    ValidateTrafficCsvHeader(header);
+    const std::size_t expectedFieldCount = header.size();
     while (getline(file, line)) {
         if (line.empty() || line[0] == '#' || line.find_first_not_of(" \t") == string::npos) {
             continue;
         }
+
+        ValidateTrafficCsvRowWidth(line, expectedFieldCount);
 
         TrafficRecordView record;
         int fieldCount = 0;
@@ -2522,7 +4189,7 @@ UbUtils::ForEachTrafficRecordViewInternal(
         }
         NS_ABORT_MSG_IF(
             fieldCount != 9 && fieldCount != 11,
-            "traffic.csv row must have 9 base fields or 11 fields with srcEntityId,dstEntityId");
+            "traffic.csv row must have 9 base fields or 11 fields with srcPortId,dstPortId");
         callback(record);
     }
     file.close();
@@ -2538,18 +4205,19 @@ void UbUtils::SetComponentsAttribute(const string &filename)
         NS_ASSERT_MSG(0, "Can not open File: " << filename);
     }
     ValidateLegacyNetworkAttributeKeys(filename);
-    uint32_t rewrittenAliasLines = 0;
-    const std::string configStoreFilename = CreateConfigStoreInput(filename, rewrittenAliasLines);
-    if (rewrittenAliasLines > 0)
+    uint32_t rewrittenLines = 0;
+    const std::string configStoreFilename = CreateConfigStoreInput(filename, rewrittenLines);
+    if (rewrittenLines > 0)
     {
-        PrintTimestamp("[setup] Rewrite legacy network attribute aliases: " +
-                       std::to_string(rewrittenAliasLines));
+        PrintTimestamp("[setup] Adapt legacy network attributes: " +
+                       std::to_string(rewrittenLines) + " line(s)");
     }
     Config::SetDefault("ns3::ConfigStore::Filename", StringValue(configStoreFilename));
     Config::SetDefault("ns3::ConfigStore::FileFormat", StringValue("RawText"));
     Config::SetDefault("ns3::ConfigStore::Mode", StringValue("Load"));
     ConfigStore config;
     config.ConfigureDefaults();
+    ValidateConfiguredRoutingDefaults(filename);
     if (configStoreFilename != filename)
     {
         Config::SetDefault("ns3::ConfigStore::Filename", StringValue(filename));
@@ -2628,7 +4296,7 @@ void UbUtils::TopoTraceConnect()
 
         std::map<uint32_t, Ptr<UbTransportChannel>> tpnMap;
         if (ubCtrl) {
-            tpnMap = ubCtrl->GetTpnMap();
+            tpnMap = ubCtrl->GetTransportChannelManager()->GetTpnMap();
             for (const auto &pair : tpnMap) { // 设置 TP的trace callback
                 auto tp = pair.second;
                 if (tp) {
@@ -2731,7 +4399,7 @@ void UbUtils::SingleTpTraceConnect(uint32_t nodeId, uint32_t tpn)
 
     Ptr<Node> node = NodeList::GetNode(nodeId);
     Ptr<UbController> ubCtrl = node->GetObject<ns3::UbController>();
-    Ptr<UbTransportChannel> tp = ubCtrl->GetTpByTpn(tpn);
+    Ptr<UbTransportChannel> tp = ubCtrl->GetTransportChannelManager()->PeekLiveTp(tpn);
     if (tp) {
         if (PacketTraceEnable) {
             tp->TraceConnectWithoutContext("FirstPacketSendsNotify", MakeCallback(TpFirstPacketSendsNotify));

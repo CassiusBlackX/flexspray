@@ -15,11 +15,13 @@
 #include "ns3/ub-ldst-api.h"
 
 #include <cstdint>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <set>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 
@@ -31,7 +33,7 @@ class UbTrafficGenDuplicateDependencyPhaseTest;
 class UbTrafficGenRecordViewDependencyTest;
 class UbTrafficGenReadyOrderTest;
 class UbTrafficGenIntegerDelayParserTest;
-class UbTrafficGenRuntimeTaskEntityFieldsTest;
+class UbTrafficGenRuntimeTaskEndpointPortFieldsTest;
 class UbTrafficGenInitialTaskStartOffsetTest;
 
 using namespace utils;
@@ -76,10 +78,10 @@ public:
         uint8_t priority{0};
         RuntimeTaskOp op{RuntimeTaskOp::UNKNOWN};
         Time delay{Time(0)};
-        uint32_t srcEntityId{0};
-        uint32_t dstEntityId{0};
-        bool hasSrcEntityId{false};
-        bool hasDstEntityId{false};
+        uint32_t srcPortId{0};
+        uint32_t dstPortId{0};
+        bool hasSrcPortId{false};
+        bool hasDstPortId{false};
         bool hasPhaseDependencies{false};
     };
 
@@ -92,6 +94,8 @@ public:
 
     static bool IsMultiProcessRuntimeUnsupported();
 
+    static Time SelectTaskCleanupDeliveryDelay(bool partitioned, Time causalDeliveryDelay);
+
     static inline std::string GetMultiProcessUnsupportedMessage()
     {
         return "UbTrafficGen supports MPI multi-process traffic DAG usage when dependency "
@@ -102,9 +106,13 @@ public:
 
     void AddTask(const TrafficRecord& record);
 
-    void AddTaskDuringInitialLoad(const TrafficRecord& record);
+    bool AddTaskDuringInitialLoad(const TrafficRecord& record);
 
-    void AddTaskDuringInitialLoad(const TrafficRecordView& record);
+    bool AddTaskDuringInitialLoad(const TrafficRecordView& record);
+
+    void RegisterPlannedTpConnections(
+        uint32_t taskId,
+        const std::vector<UbLifecycleResourceIdentity>& connections);
 
     void SetPhaseDepend(uint32_t phaseId, uint32_t taskId);
 
@@ -126,8 +134,6 @@ public:
 
     void ValidateDependencyVisibilityDelay(bool requireStrictlyPositive) const;
 
-    void ConsiderAutomaticDependencyVisibilityDelay(Time delay);
-
     /**
      * @brief Configure deterministic start offsets for tasks without phase dependencies.
      * @param window Half-open offset window; zero disables offsets.
@@ -147,10 +153,20 @@ public:
 
     uint32_t GetCompletedTaskCount() const;
 
+    uint32_t GetStoredTaskCount() const;
+
+    uint64_t GetDependencyReferenceCount() const;
+
     /**
      * @brief 任务完成回调
      */
     void OnTaskCompleted(uint32_t taskId);
+
+    void OnTaskCompleted(uint32_t taskId,
+                         Ptr<UbApp> cleanupOwner,
+                         uint32_t jettyNum,
+                         bool destroyTaskScopedJetty,
+                         bool destroyPlannedTpConnections);
 
     /**
      * @brief 调度下一批可执行的任务
@@ -166,7 +182,7 @@ public:
     friend class ::UbTrafficGenRecordViewDependencyTest;
     friend class ::UbTrafficGenReadyOrderTest;
     friend class ::UbTrafficGenIntegerDelayParserTest;
-    friend class ::UbTrafficGenRuntimeTaskEntityFieldsTest;
+    friend class ::UbTrafficGenRuntimeTaskEndpointPortFieldsTest;
     friend class ::UbTrafficGenInitialTaskStartOffsetTest;
 
     enum class TaskState {
@@ -189,6 +205,24 @@ public:
         uint32_t totalTasks{0};
         uint32_t completedTasks{0};
         std::vector<uint32_t> dependentTasks{};
+    };
+
+    struct TaskCleanupRequest
+    {
+        uint32_t ownerNodeId{0};
+        uint32_t ownerApplicationIndex{0};
+        uint32_t jettyNum{0};
+        bool destroyTaskScopedJetty{false};
+        bool destroyPlannedTpConnections{false};
+        std::vector<UbLifecycleResourceIdentity> plannedTpConnections{};
+    };
+
+    using PlannedTpConnectionKey = std::tuple<uint32_t, uint64_t, uint64_t>;
+
+    struct PlannedTpUseRecord
+    {
+        UbLifecycleResourceIdentity identity{};
+        uint32_t remainingUses{0};
     };
 
     void RecordCanonicalEvent(const std::string& type, const RuntimeTask& task);
@@ -219,12 +253,15 @@ public:
     bool m_readyTasksSorted{true};
     std::vector<Ptr<UbApp>> m_sourceApps{};
     std::unordered_map<std::string, Time> m_delayParseCache{};
-    std::optional<Time> m_dependencyVisibilityDelay{};
-    std::optional<Time> m_automaticDependencyVisibilityDelay{};
+    Time m_dependencyVisibilityDelay{NanoSeconds(100)};
     bool m_canonicalOutputEnabled = false;
     std::string m_canonicalOutputPath;
     uint32_t m_canonicalRank = 0;
     std::vector<CanonicalEvent> m_canonicalEvents;
+    std::unordered_map<uint32_t, TaskCleanupRequest> m_pendingTaskCleanups{};
+    std::unordered_map<uint32_t, std::vector<UbLifecycleResourceIdentity>>
+        m_taskPlannedTpConnections{};
+    std::map<PlannedTpConnectionKey, PlannedTpUseRecord> m_plannedTpUses{};
     Time m_initialTaskStartOffsetWindow{Time(0)};
     uint32_t m_initialTaskStartOffsetSeed{1};
 
@@ -238,9 +275,9 @@ public:
 
     void RegisterTaskPhaseLocked(uint32_t phaseId, uint32_t taskId);
 
-    void AddTaskLocked(const TrafficRecord& record, bool phaseAlreadyIndexed);
+    bool AddTaskLocked(const TrafficRecord& record, bool phaseAlreadyIndexed);
 
-    void AddTaskLocked(const TrafficRecordView& record, bool phaseAlreadyIndexed);
+    bool AddTaskLocked(const TrafficRecordView& record, bool phaseAlreadyIndexed);
 
     void AddReadyTaskLocked(uint32_t taskId);
 
@@ -290,19 +327,36 @@ public:
 
     void SetPendingPhaseCountLocked(uint32_t taskId, uint32_t count);
 
-    uint64_t GetDependencyReferenceCountForTesting() const;
+    uint64_t GetDependencyReferenceCountForTesting() const
+    {
+        return GetDependencyReferenceCount();
+    }
 
     uint32_t GetPendingPhaseCountForTesting(uint32_t taskId) const;
 
     bool IsUsingDenseTaskStoreForTesting() const;
 
-    uint32_t GetStoredTaskCountForTesting() const;
+    uint32_t GetStoredTaskCountForTesting() const
+    {
+        return GetStoredTaskCount();
+    }
 
     std::vector<uint32_t> CollectReadyTaskIdsForTesting();
 
     bool HasDependenciesLocked() const;
 
     Time ResolveCompletionVisibleDelayLocked() const;
+
+    void SubmitTaskCompletion(uint32_t taskId,
+                              std::optional<TaskCleanupRequest> cleanupRequest);
+
+    static void ApplyTaskCleanupOnOwner(uint32_t ownerNodeId,
+                                        uint32_t ownerApplicationIndex,
+                                        uint32_t taskId,
+                                        uint32_t jettyNum,
+                                        bool destroyTaskScopedJetty,
+                                        bool releasePlannedTpBinding,
+                                        std::vector<UbLifecycleResourceIdentity> plannedTpConnections);
 
     void ScheduleTaskCompletionVisibility(uint32_t taskId, Time completionVisibleTs);
 

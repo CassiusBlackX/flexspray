@@ -21,6 +21,8 @@
 #include "ns3/object.h"
 #include "ns3/packet.h"
 
+#include <array>
+#include <cstdint>
 #include <list>
 #include <functional>
 #include <mpi.h>
@@ -49,6 +51,19 @@ class ParallelCommunicationInterface
 {
   public:
     using TaskCompletionHandler = std::function<void(uint32_t taskId)>;
+
+    static constexpr std::size_t CAUSAL_CONTROL_PAYLOAD_WORDS = 12;
+
+    struct CausalControlRecord
+    {
+        uint32_t targetNodeId{0};
+        uint32_t protocol{0};
+        uint64_t visibleTs{0};
+        uint64_t orderKey{0};
+        std::array<uint64_t, CAUSAL_CONTROL_PAYLOAD_WORDS> payload{};
+    };
+
+    using CausalControlHandler = std::function<void(const CausalControlRecord& record)>;
 
     /**
      * Destructor
@@ -99,6 +114,18 @@ class ParallelCommunicationInterface
      * @copydoc MpiInterface::SetTaskCompletionHandler
      */
     virtual void SetTaskCompletionHandler(TaskCompletionHandler handler) = 0;
+    /**
+     * Send one fixed-size causal control record to its target node owner.
+     */
+    virtual void SendCausalControl(const CausalControlRecord& record) = 0;
+    /**
+     * Register the process-local causal control dispatcher.
+     */
+    virtual void SetCausalControlHandler(CausalControlHandler handler) = 0;
+    /**
+     * Return whether this parallel transport supports causal control records.
+     */
+    virtual bool SupportsCausalControl() const = 0;
     /**
      * @copydoc MpiInterface::GetCommunicator
      */

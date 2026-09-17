@@ -2,11 +2,12 @@
 #ifndef UB_CONGESTION_CTRL_H
 #define UB_CONGESTION_CTRL_H
 
-#include <stdexcept>
 #include "ns3/object.h"
-#include "ns3/ub-switch.h"
-#include "ns3/ub-header.h"
 #include "ns3/ub-datatype.h"
+#include "ns3/ub-header.h"
+#include "ns3/ub-switch.h"
+
+#include <stdexcept>
 namespace ns3 {
 
 class UbTransportChannel;
@@ -101,6 +102,7 @@ public:
 
     // 发送端TP在发送工作清空后进入空闲态
     virtual void OnSenderTransportIdle() {}
+    virtual void OnTpDestroyRequested() {}
 
     // 绑定switch，初始化参数
     virtual void OnSwitchAttached(Ptr<UbSwitch> sw);

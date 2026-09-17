@@ -20,13 +20,18 @@
 
 ## Core Principle
 
-**Always generate a new Python script** in the case directory that calls `net_sim_builder.py` library. Do NOT copy or modify existing example scripts (`user_topo_*.py`). These are code templates for reference only, not reusable tools.
+**Always generate a new Python builder function** in the case directory that returns
+`NetworkSimulationGraph`. Do NOT copy or modify existing example scripts (`user_topo_*.py`). These are
+code templates for reference only, not reusable tools. Prefer prepared structured cases for new
+auto-generated routing cases; use CSV generation only when the experiment explicitly requires CSV as
+its topology input or needs a manual route table.
 
 ## Node Delay Fields
 
 - `node.csv` `forwardDelay` maps to `ns3::UbSwitch::InPortProcessingDelay`.
 - `node.csv` `allocationDelay` maps to `ns3::UbSwitchAllocator::AllocationTime`.
 - `forwardDelay` is fixed non-blocking in-port processing latency after route/output are known and before a forwarded packet becomes visible in VOQ to the allocator.
+- Buffer Occupancy includes processing + VOQ + egress queued bytes. DCQCN/CAQM use Queue Backlog (VOQ + egress), excluding processing. Ingress admission and PFC still account for processing residency.
 - `allocationDelay` is allocator arbitration latency. It is the only CSV field that overrides `AllocationTime`.
 - Do not use `forwardDelay` to model allocator scheduling delay.
 
@@ -39,11 +44,20 @@
 3. **Generate a new script** `{case_dir}/generate_topology.py`:
    - Copy the complete pattern from `topology-options.md`
    - Substitute spec parameters (host_num, leaf_sw_num, etc.)
-   - Set `graph.output_dir = str(Path(case_dir)) + "/"` so CSVs land directly in the case directory
+   - Expose `build_topology()` and return the graph
    - Adjust bandwidth/delay if specified in Network Overrides
    - Adjust priority_list if specified in Network Overrides
-4. **Run the script:** `python3 {case_dir}/generate_topology.py`
-5. **Outputs:** `node.csv`, `topology.csv`, `routing_table.csv`, and `transport_channel.csv` only when `transport_channel_mode = precomputed`
+4. **For prepared structured routing**, record two commands in the manifest. First prepare:
+   `python3 scratch/ns-3-ub-tools/ub_tools.py topology build {case_dir}/generate_topology.py --output-dir {case_dir} --route-generation mixed`.
+   Then run: `python3 scratch/run_structured_topo_case.py --case-path {case_dir} --route-runtime-mode compressed-table-lookup`.
+5. **For CSV output**, use the same generated builder with
+   `python3 scratch/ns-3-ub-tools/ub_tools.py topology build {case_dir}/generate_topology.py --output-dir {case_dir} --case-format csv`.
+   This defaults to full route generation; structured and mixed route generation require the
+   structured case format. The original scripts that call `write_config(...)` remain the independent
+   v1 path.
+6. After topology, `network_attribute.txt`, and `traffic.csv` are present, run
+   `python3 scratch/ns-3-ub-tools/ub_tools.py case check {case_dir}`. The check requires those shared
+   runtime inputs and also requires `routing_table.csv` for CSV cases.
 
 ### Important Rules
 
@@ -51,7 +65,8 @@
 - **Do NOT** run `net_sim_builder.py` directly (it's a library, not a CLI)
 - **Do NOT** reuse scripts across cases (each case gets its own generated script)
 - **Always** use the complete pattern from `topology-options.md`, not abbreviated code
-- **Always** write generated CSVs into `{case_dir}/`, not an extra timestamped output directory
+- When CSV output is selected, write it into `{case_dir}/`, not an extra timestamped output directory
+- Do not export diagnostic CSV from the prepared path unless the experiment evidence plan requires it
 
 ### Example
 
@@ -150,21 +165,29 @@ When the spec specifies different bandwidths per link layer, modify the `add_net
 
 ### Built-in collective algorithms
 
-If the spec workload is one of `ar_ring`, `ar_nhr`, `ar_rhd`, `a2a_pairwise`, `a2a_scatter`, map spec fields to CLI arguments:
+For a supported collective, map the spec to the v2 collective and algorithm names:
 
 ```
-python3 scratch/ns-3-ub-tools/traffic_maker/build_traffic.py \
-  -n {host_num} \
-  -c {comm_domain_size} \
-  -b {data_size} \
-  -a {algo} \
-  --scatter-k {scatter_k} \
-  -d {phase_delay} \
-  --rank-mapping {rank_mapping} \
-  -o {case_dir}
+python3 scratch/ns-3-ub-tools/ub_tools.py traffic {collective} \
+  --host-count {host_num} \
+  --group-size {group_size} \
+  --data-size {data_size} \
+  --algorithm {algorithm} \
+  --group-layout {group_layout} \
+  --phase-delay {phase_delay} \
+  --output-dir {case_dir}
 ```
 
-Copy the generated `traffic.csv` from the output subdirectory into the case directory.
+The command validates the collective schedule before it writes `{case_dir}/traffic.csv`. Use
+`--placement-file` instead of `--group-layout` for an explicit group/rank/node mapping. AllToAll
+`pairwise` additionally accepts `--peers-per-phase`; AllToAllV uses `--distribution` and its
+related matrix/seed options. AllToAllV `--include-local` only emits self tasks during lowering;
+it does not alter the schedule. `scatter` is not a current AllToAll algorithm name.
+
+For an existing SimAI flow export, use
+`python3 scratch/ns-3-ub-tools/ub_tools.py traffic convert-simai FLOW.jsonl --output {case_dir}/traffic.csv`.
+This is an import path rather than collective algorithm selection, and it refuses to overwrite an
+existing file unless `--overwrite` is supplied.
 
 ### Reference traffic.csv
 
@@ -175,9 +198,10 @@ If the workload is a reference `traffic.csv`, copy it into the case directory.
 If the spec workload is `custom-traffic-skeleton`, generate `{case_dir}/traffic.csv` directly by following the decomposition steps in `workload-options.md`. The generated CSV must conform to the `traffic.csv Schema` section in that document.
 
 Use the Write tool to create the CSV. Verify:
-- Header matches exactly: `taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases`
+- Header matches exactly: `taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,srcPortId,dstPortId`, or the nine-column form without the optional port columns
 - `taskId` is 0-indexed and sequential
 - `sourceNode` and `destNode` are valid host IDs for the topology (0 to `host_num - 1`)
+- `srcPortId` and `dstPortId`, when present, are valid endpoint ports; each may be empty independently, and an explicit `0` means port 0
 - `opType` is a valid value from `TaOpcodeMap` (see `workload-options.md` "Valid `opType` values" or grep `TaOpcodeMap` in `src/unified-bus/model/ub-app.h`)
 - `dependOnPhases` is empty string for first-phase tasks, space-separated phaseIds otherwise
 
@@ -254,6 +278,13 @@ Do not write these older keys into `network_attribute.txt`; current `UbUtils::Se
 | `ns3::UbSwitch::EnablePFC` | `ns3::UbSwitch::FlowControl "PFC_FIXED"` or `"PFC_DYNAMIC"` |
 | `ns3::UbApiThread::*` | `ns3::UbLdstThread::*` |
 
+Routing has a separate temporary read-compatibility window at
+`UbUtils::SetComponentsAttribute()`. Old `UsePacketSpray` / `UseShortestPaths` pairs and
+`UbRoutingProcess::RoutingAlgorithm` are translated before ConfigStore, with one warning that
+contains complete canonical replacement lines and states that compatibility may stop working in a
+future release. New cases must write only `RoutingType` and `MultipathSelector`; model APIs do not
+expose the legacy fields.
+
 When the discussion turns from "which knob exists" to "what these congestion/PFC knobs mean in queue dynamics", consult:
 
 - `congestion-control-and-pfc-lessons.md`
@@ -264,7 +295,7 @@ For values not discoverable from the catalog, check the C++ source:
 
 | What to verify | Source of truth in C++ | How to find |
 |----------------|----------------------|-------------|
-| Enum attribute values (FlowControl, RoutingAlgorithm, VlScheduler, ...) | `MakeEnumChecker(...)` calls in the corresponding `GetTypeId()` | Grep for `MakeEnumChecker` in `src/unified-bus/model/` |
+| Enum attribute values (FlowControl, RoutingType, MultipathSelector, VlScheduler, ...) | `MakeEnumChecker(...)` calls in the corresponding `GetTypeId()` | Grep for `MakeEnumChecker` in `src/unified-bus/model/` |
 | GlobalValue enum values (UB_CC_ALGO, ...) | `MakeEnumChecker(...)` in `GlobalValue(...)` definitions | Grep for `GlobalValue.*UB_` in `src/unified-bus/` |
 | Boolean attributes | `MakeBooleanChecker()` in `GetTypeId()` | Values are always `true` / `false` |
 | Integer attributes with range | `MakeUintegerChecker<T>()` or `MakeIntegerChecker<T>(min, max)` | Grep for the attribute name in `src/unified-bus/` |
@@ -276,9 +307,35 @@ If the user requests a value for an enum parameter, verify it against the C++ so
 
 ## Routing Intent Slot → Route Generation
 
-- `routing_algorithm` maps to `default ns3::UbRoutingProcess::RoutingAlgorithm "..."`
-- `use_shortest_paths` maps to the corresponding shortest-path toggles in the case attributes
-- `path_source = auto-path-finder` means the topology script should call `graph.gen_compressed_route_table(...)` by default for new cases.
+Use `routing-strategy-selection.md` to choose a scenario-appropriate profile. This section owns the
+mechanical mapping from the confirmed profile to case attributes and route generation.
+
+- `routing_type` maps to the `RoutingType` attribute on `UbApp`, `UbTransportChannel`, and `UbLdstApi` as applicable:
+  - `PER_FLOW_ALL_PATHS` = RT bits `00`
+  - `PER_PACKET_ALL_PATHS` = RT bits `01`
+  - `PER_FLOW_SHORTEST_PATHS` = RT bits `10`
+  - `PER_PACKET_SHORTEST_PATHS` = RT bits `11`
+- `multipath_selector` maps to `default ns3::UbRoutingProcess::MultipathSelector "..."`.
+- Valid per-flow selectors: `HASH64`, `CRC32`, `TOEPLITZ`, `INGRESS_PORT_STRIPE`.
+- Valid per-packet selectors: `HASH64`, `CRC32`, `TOEPLITZ`, `ROUND_ROBIN`, `ADAPTIVE`.
+- Hash selectors consume the complete 17-byte routing key once: `sip`, `dip`, `sport/Lb`, `dport`, `priority`, and node salt. Do not add a separate entropy or packet-ordinal field.
+- `INGRESS_PORT_STRIPE` maps ingress port modulo candidate count; local injection falls back to full-key `HASH64`.
+- Invalid routing-type/selector combinations are rejected during `network_attribute.txt` loading.
+- `path_source = auto-path-finder` uses a prepared structured case by default. Call
+  `graph.gen_compressed_route_table(...)` only when the selected topology input is CSV table routing.
+- For a prepared structured case, `ub_tools.py topology build` calls
+  `graph.prepare_structured_case(case_path=..., route_generation=...)`; it discovers and verifies the
+  physical graph and writes `structured_topology.txt` plus `compressed_routing.bin` without
+  intermediate topology or route CSV. `run_structured_topo_case.py` later launches ns-3 using only
+  the prepared case directory. `--route-runtime-mode=compressed-table-lookup` loads the binary index;
+  `structured-rule-compute` evaluates verified rules without the complete route matrix.
+- Complete verified structures emit coordinate/group topology rules. Partly recognized graphs build
+  destination DAGs and exact/range rules without a complete baseline table. A custom path finder keeps
+  complete baseline equivalence validation and content caching.
+- For an existing custom case with explicit endpoint ports, pass the case directory to
+  `ub_tools.py topology build` rather than repacking ports with `build_graph_config()`.
+- `mixed` assigns each destination-port lookup to either rules or table entries; candidate sets are not
+  merged. `rule` fails if any lookup still needs table routing.
 - `graph.gen_route_table(...)` is only for cases that explicitly need exact per-destination rows plus precomputed transport channels.
 - `graph.gen_2layer_clos_compressed_route_table(host_num, leaf_sw_num)` is an explicit two-layer Clos optimization, not the default new-case path.
 - `path_source = manual-route-table` means the topology script should use `graph.set_route_table(...)` for bounded route entries or directly write `routing_table.csv`
@@ -292,8 +349,11 @@ When the user asks for a non-template topology but provides bounded node/link fa
 - Default to `on-demand`; do not ask the user to precompute TP mappings unless they explicitly want fixed TP ids / priorities / endpoint pairs.
 - `precomputed`: topology generation should call `config_transport_channel(...)` and `graph.write_config(include_transport=True)`; the case checker should require `transport_channel.csv`
 - `on-demand`: `transport_channel.csv` may be omitted; topology generation should call `graph.write_config(include_transport=False)` so large cases do not precompute host-pair TP mappings. Compressed route generators require this mode.
-- `TransportMode=CTP`: `traffic.csv` may include optional `srcEntityId,dstEntityId`; missing values default to `0`.
-- CTP multipath is entity based and should not be represented by multiple TP rows.
+- `traffic.csv` may include optional trailing `srcPortId,dstPortId`; empty cells are wildcards and
+  the two cells are independent.
+- The endpoint tuple is `sourceNode,destNode,srcPortId,dstPortId`. Entity IDs, CTP service entities,
+  and RTP TP records are protocol-internal consequences of that tuple and are not traffic-file inputs.
+- CTP multipath remains entity based internally and should not be represented by multiple RTP TP rows.
 
 ## Observability Slot → Observability Overrides
 
@@ -307,6 +367,18 @@ overrides = observability_preset("balanced")
 overrides = observability_preset("minimal")
 overrides["UB_PORT_TRACE_ENABLE"] = "true"  # add port trace to minimal
 
+# Lifecycle DETAIL is custom-only. Sampling is deterministic by complete identity chain.
+overrides["UB_TRACE_PRESET"] = "custom"
+overrides["UB_LIFECYCLE_TRACE_LEVEL"] = "DETAIL"
+overrides["UB_LIFECYCLE_DETAIL_SAMPLE_STRIDE"] = "4"
+overrides["UB_LIFECYCLE_DETAIL_SAMPLE_OFFSET"] = "0"
+
+# Optional host-I/O tuning. These values do not alter simulated network semantics.
+overrides["UB_TRACE_CHUNK_BYTES"] = str(64 * 1024)
+overrides["UB_TRACE_OWNER_HIGH_WATER_BYTES"] = str(1024 * 1024)
+overrides["UB_TRACE_OWNER_LOW_WATER_BYTES"] = str(512 * 1024)
+overrides["UB_TRACE_MAX_OPEN_FILES"] = "1024"
+
 # Pass to write_network_attributes
 write_network_attributes(
     case_dir=Path("<case_dir>"),
@@ -316,6 +388,16 @@ write_network_attributes(
 ```
 
 Refer to `trace-observability.md` for tier semantics and safe wording constraints.
+
+Validate lifecycle artifacts independently after a run:
+
+```bash
+python3 scratch/ns-3-ub-tools/trace_analysis/lifecycle_trace.py {case_dir}
+```
+
+The lifecycle parser requires the C++-emitted schema metadata and rejects missing metadata,
+unsupported versions or enum values, and inconsistent MPI-rank registries. It does not replace the
+existing task or throughput parsers.
 
 ## Execution
 
@@ -333,6 +415,6 @@ Use toolchain-native parameter names in `experiment-spec.md`:
 - `leaf_sw_num` (not `leaf_count`)
 - `comm_domain_size` (not `comm_size`)
 - `data_size` with unit (e.g. `1GB`)
-- `routing_algorithm`, `use_shortest_paths`, `path_source`, `transport_channel_mode`
+- `routing_type`, `multipath_selector`, `path_source`, `transport_channel_mode`
 
 This avoids translation ambiguity at the plan→run boundary.

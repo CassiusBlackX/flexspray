@@ -15,6 +15,25 @@ The repository also contains one optional post-analysis companion skill:
 
 It is not a fifth stage in the normal experiment flow. Use it only after analysis has already produced a stable reusable conclusion and the user agrees to preserve it as a knowledge card.
 
+## Agent skills
+
+### Issue tracker
+
+Engineering specifications and tickets use the repository-local Markdown tracker. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The tracker uses the default five-role triage vocabulary. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This is a single-context repository with one root `CONTEXT.md` and root-level ADRs. See `docs/agents/domain.md`.
+
+### Implementation workflow
+
+Engineering tickets use the repository-local
+[Matt implement extension](docs/agents/implementation-workflow.md).
+
 ## Skill Routing
 
 When the user wants help with Unified Bus / OpenUSim work in this repository, route by stage:
@@ -215,7 +234,7 @@ Affected mappings:
 - `src/unified-bus/model/ub-utils.h` + `src/unified-bus/model/ub-datatype.cc` + `src/unified-bus/model/protocol/ub-congestion-control.cc` UB GlobalValue definitions → `network_attribute_writer.py` `_FALLBACK_UB_GLOBAL_KEYS`
 - `src/unified-bus/model/ub-app.h` + `src/unified-bus/model/ub-traffic-gen.h` `TaOpcodeMap` → `workload-options.md` valid opType table
 - `src/unified-bus/model/ub-switch.cc` `MakeEnumChecker` (FlowControl, VlScheduler) → `spec-to-toolchain.md` parameter value source-of-truth table
-- `src/unified-bus/model/protocol/ub-routing-process.cc` `MakeEnumChecker` (RoutingAlgorithm) → `spec-to-toolchain.md` parameter value source-of-truth table
+- `src/unified-bus/model/protocol/ub-routing-process.cc` `MakeEnumChecker` (MultipathSelector) → `spec-to-toolchain.md` parameter value source-of-truth table
 - `SKILL.md` Required references changes → `test_skill_docs.py` assertions
 
 ---

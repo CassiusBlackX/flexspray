@@ -50,6 +50,14 @@ build_lib_example(
 
 if(${ENABLE_MTP})
   build_lib_example(
+    NAME causal-control-ordering
+    SOURCE_FILES causal-control-ordering.cc
+    LIBRARIES_TO_LINK
+    ${libmpi}
+    ${libmtp}
+  )
+
+  build_lib_example(
     NAME hybrid-prescheduled-node-event
     SOURCE_FILES hybrid-prescheduled-node-event.cc
     LIBRARIES_TO_LINK

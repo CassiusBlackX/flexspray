@@ -18,6 +18,17 @@ namespace ns3 {
 
 NS_LOG_COMPONENT_DEFINE("UbApp");
 
+namespace
+{
+uint32_t
+DeriveCtpEntityId(bool hasPort, uint32_t port)
+{
+    NS_ABORT_MSG_IF(hasPort && port == UINT32_MAX,
+                    "CTP endpoint port cannot be represented by an internal Entity id");
+    return hasPort ? port + 1 : 0;
+}
+} // namespace
+
 NS_OBJECT_ENSURE_REGISTERED(UbApp);
 TypeId UbApp::GetTypeId(void)
 {
@@ -31,16 +42,29 @@ TypeId UbApp::GetTypeId(void)
                           BooleanValue(false),
                           MakeBooleanAccessor(&UbApp::m_multiPathEnable),
                           MakeBooleanChecker())
-            .AddAttribute("UseShortestPaths",
-                          "If true, only create TPs on source ports that belong to shortest paths.",
+            .AddAttribute("EnableTaskScopedJettyDestroy",
+                          "Destroy standard-driver task-scoped Jetties after task completion.",
                           BooleanValue(true),
-                          MakeBooleanAccessor(&UbApp::m_useShortestPaths),
+                          MakeBooleanAccessor(&UbApp::m_enableTaskScopedJettyDestroy),
                           MakeBooleanChecker())
-            .AddAttribute("UsePacketSpray",
-                          "If true, packet-spray routing uses a per-packet salt instead of per-flow routing.",
-                          BooleanValue(false),
-                          MakeBooleanAccessor(&UbApp::m_usePacketSpray),
-                          MakeBooleanChecker())
+            .AddAttribute(
+                "EnablePlannedTpConnectionDestroy",
+                "Destroy exact standard-driver-owned TP connections after their last planned use.",
+                BooleanValue(true),
+                MakeBooleanAccessor(&UbApp::m_enablePlannedTpConnectionDestroy),
+                MakeBooleanChecker())
+            .AddAttribute("RoutingType",
+                          "UB routing type used by application-created transport channels.",
+                          EnumValue(RoutingType::PER_FLOW_SHORTEST_PATHS),
+                          MakeEnumAccessor<RoutingType>(&UbApp::m_routingType),
+                          MakeEnumChecker(RoutingType::PER_FLOW_ALL_PATHS,
+                                          "PER_FLOW_ALL_PATHS",
+                                          RoutingType::PER_PACKET_ALL_PATHS,
+                                          "PER_PACKET_ALL_PATHS",
+                                          RoutingType::PER_FLOW_SHORTEST_PATHS,
+                                          "PER_FLOW_SHORTEST_PATHS",
+                                          RoutingType::PER_PACKET_SHORTEST_PATHS,
+                                          "PER_PACKET_SHORTEST_PATHS"))
             .AddAttribute("TransportMode",
                           "Transport mode used for URMA traffic.",
                           EnumValue(TransportMode::RTP),
@@ -49,16 +73,6 @@ TypeId UbApp::GetTypeId(void)
                                           "RTP",
                                           TransportMode::CTP,
                                           "CTP"))
-            .AddAttribute("LocalEntityId",
-                          "Default local entity id used for CTP URMA traffic.",
-                          UintegerValue(0),
-                          MakeUintegerAccessor(&UbApp::m_localEntityId),
-                          MakeUintegerChecker<uint32_t>())
-            .AddAttribute("PeerEntityId",
-                          "Default peer entity id used for CTP URMA traffic.",
-                          UintegerValue(0),
-                          MakeUintegerAccessor(&UbApp::m_peerEntityId),
-                          MakeUintegerChecker<uint32_t>())
             .AddAttribute("CtpUseUnboundSourceJetty",
                           "When true, CTP reuses one unbound source Jetty per source entity and VL.",
                           BooleanValue(false),
@@ -112,18 +126,6 @@ UbApp::SetTransportMode(TransportMode mode)
     m_transportMode = mode;
 }
 
-void
-UbApp::SetLocalEntityId(uint32_t localEntityId)
-{
-    m_localEntityId = localEntityId;
-}
-
-void
-UbApp::SetPeerEntityId(uint32_t peerEntityId)
-{
-    m_peerEntityId = peerEntityId;
-}
-
 void UbApp::SendTraffic(TrafficRecord record)
 {
     NS_ABORT_MSG_IF(record.priority < 0 ||
@@ -138,10 +140,10 @@ void UbApp::SendTraffic(TrafficRecord record)
     task.dataSize = static_cast<uint32_t>(record.dataSize);
     task.priority = static_cast<uint8_t>(record.priority);
     task.delay = record.delay.empty() ? Time(0) : Time(record.delay);
-    task.srcEntityId = record.srcEntityId;
-    task.dstEntityId = record.dstEntityId;
-    task.hasSrcEntityId = record.hasSrcEntityId;
-    task.hasDstEntityId = record.hasDstEntityId;
+    task.srcPortId = record.srcPortId;
+    task.dstPortId = record.dstPortId;
+    task.hasSrcPortId = record.hasSrcPortId;
+    task.hasDstPortId = record.hasDstPortId;
     if (record.opType == "URMA_WRITE") {
         task.op = UbTrafficGen::RuntimeTaskOp::URMA_WRITE;
     } else if (record.opType == "URMA_READ") {
@@ -170,10 +172,10 @@ UbApp::SendCtpUrmaTraffic(TrafficRecord record)
     task.destNode = static_cast<uint32_t>(record.destNode);
     task.dataSize = static_cast<uint32_t>(record.dataSize);
     task.priority = static_cast<uint8_t>(record.priority);
-    task.srcEntityId = record.srcEntityId;
-    task.dstEntityId = record.dstEntityId;
-    task.hasSrcEntityId = record.hasSrcEntityId;
-    task.hasDstEntityId = record.hasDstEntityId;
+    task.srcPortId = record.srcPortId;
+    task.dstPortId = record.dstPortId;
+    task.hasSrcPortId = record.hasSrcPortId;
+    task.hasDstPortId = record.hasDstPortId;
     if (record.opType == "URMA_WRITE") {
         task.op = UbTrafficGen::RuntimeTaskOp::URMA_WRITE;
     } else if (record.opType == "URMA_READ") {
@@ -199,11 +201,10 @@ UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
                     "CTP transport mode requires UbTransaction");
 
     Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-    service->SetUseShortestPaths(m_useShortestPaths);
-    service->SetUsePacketSpray(m_usePacketSpray);
+    service->SetRoutingType(m_routingType);
 
-    const uint32_t srcEntityId = task.hasSrcEntityId ? task.srcEntityId : m_localEntityId;
-    const uint32_t dstEntityId = task.hasDstEntityId ? task.dstEntityId : m_peerEntityId;
+    const uint32_t srcEntityId = DeriveCtpEntityId(task.hasSrcPortId, task.srcPortId);
+    const uint32_t dstEntityId = DeriveCtpEntityId(task.hasDstPortId, task.dstPortId);
     const uint8_t vl = task.priority;
     uint32_t jettyNum = m_jettyNum;
     Ptr<UbJetty> jetty;
@@ -220,6 +221,13 @@ UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
                                          vl,
                                          &jettyNum);
     }
+    if (!ubFunc->IsJettyAcceptingWqes(jettyNum))
+    {
+        NS_LOG_WARN("CTP WQE submission rejected because Jetty " << jettyNum
+                                                                  << " is draining");
+        return;
+    }
+    service->SetRoutingType(m_routingType);
     service->PrepareJetty(jetty);
 
     NS_LOG_INFO("CTP WQE Starts, jettyNum: " << jettyNum << " taskId: " << task.taskId);
@@ -235,16 +243,24 @@ UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
     wqe->SetPriority(task.priority);
     controller->GetUbTransaction()->SetTransactionServiceMode(jettyNum, TransactionServiceMode::ROI);
     jetty->SetNodeId(GetNode()->GetId());
-    controller->GetUbTransaction()->AddWqe(jettyNum, wqe);
-    jetty->PushWqe(wqe);
 
-    UbCtpEntityKey key{.srcNodeId = task.sourceNode,
-                       .srcEntityId = srcEntityId,
+    UbCtpEntityKey key{.srcEntityId = srcEntityId,
                        .dstNodeId = task.destNode,
                        .dstEntityId = dstEntityId,
                        .vl = vl};
+    if (task.hasSrcPortId)
+    {
+        service->SetSourcePortHint(key, task.srcPortId);
+    }
+    if (task.hasDstPortId)
+    {
+        service->SetDestinationPortHint(key, task.dstPortId);
+    }
     const UbCtpEntityKey jettyKey =
         m_ctpUseUnboundSourceJetty ? service->MakeSourceGroupKeyForRequest(key) : key;
+    const UbWqeSubmissionResult submission = ubFunc->SubmitCtpWqe(wqe, jettyNum, jettyKey);
+    NS_ABORT_MSG_IF(submission.status != UbWqeSubmissionStatus::ACCEPTED,
+                    "Validated CTP WQE submission failed before transport start");
     service->StartJetty(jetty, jettyKey);
 }
 
@@ -339,7 +355,11 @@ void UbApp::SendTraffic(UbTrafficGen::RuntimeTask task)
                                      task.priority,
                                      type,
                                      threadIds,
-                                     0);
+                                     0,
+                                     task.srcPortId,
+                                     task.hasSrcPortId,
+                                     task.dstPortId,
+                                     task.hasDstPortId);
     } else if (task.op == UbTrafficGen::RuntimeTaskOp::URMA_WRITE ||
                task.op == UbTrafficGen::RuntimeTaskOp::URMA_READ) {
         if (m_transportMode == TransportMode::CTP)
@@ -356,10 +376,16 @@ void UbApp::SendTraffic(UbTrafficGen::RuntimeTask task)
             NS_LOG_ERROR("Jetty already exists");
             return;
         }
-        ubFunc->CreateJetty(task.sourceNode, task.destNode, m_jettyNum);
+        ubFunc->CreateJetty(task.sourceNode,
+                            task.destNode,
+                            m_jettyNum,
+                            UbJettyLifetime::TASK_SCOPED);
         vector<uint32_t> tpns = GetNode()->GetObject<UbController>()->GetTpConnManager()->GetTpns(
-            m_getTpnRule, m_useShortestPaths, m_multiPathEnable, task.sourceNode,
-            task.destNode, UINT32_MAX, UINT32_MAX, task.priority);
+            m_getTpnRule, RoutingTypeUsesShortestPaths(m_routingType), m_multiPathEnable, task.sourceNode,
+            task.destNode,
+            task.hasSrcPortId ? task.srcPortId : UINT32_MAX,
+            task.hasDstPortId ? task.dstPortId : UINT32_MAX,
+            task.priority);
         bool bindRst = ubTa->JettyBindTp(task.sourceNode, task.destNode, m_jettyNum, m_multiPathEnable, tpns);
         if (bindRst) {
             Ptr<UbJetty> curr_jetty = ubFunc->GetJetty(m_jettyNum);
@@ -390,12 +416,65 @@ void UbApp::OnTaskCompleted(uint32_t taskId, uint32_t jettyNum)
     NS_LOG_INFO("[APPLICATION INFO] taskId: " << taskId << ",finish time:" << Simulator::Now().GetNanoSeconds() << "ns");
     if (m_transportMode == TransportMode::RTP)
     {
-        // 删除无用tp
-        auto cleanup = UbTrafficGen::Get()->GetTaskCleanupInfoById(taskId);
-        GetNode()->GetObject<UbController>()->GetTpConnManager()->RemoveUselessTps(
-            jettyNum, cleanup.sourceNode, cleanup.destNode, cleanup.priority);
+        Ptr<UbFunction> function = GetNode()->GetObject<UbController>()->GetUbFunction();
+        UbJettyLifetime lifetime = UbJettyLifetime::REUSABLE;
+        const bool destroyTaskScopedJetty =
+            m_enableTaskScopedJettyDestroy && function->TryGetJettyLifetime(jettyNum, lifetime) &&
+            lifetime == UbJettyLifetime::TASK_SCOPED;
+        if (destroyTaskScopedJetty || m_enablePlannedTpConnectionDestroy)
+        {
+            UbTrafficGen::Get()->OnTaskCompleted(taskId,
+                                                 this,
+                                                 jettyNum,
+                                                 destroyTaskScopedJetty,
+                                                 m_enablePlannedTpConnectionDestroy);
+            return;
+        }
     }
     UbTrafficGen::Get()->OnTaskCompleted(taskId);
+}
+
+void
+UbApp::CleanupCompletedTask(
+    uint32_t taskId,
+    uint32_t jettyNum,
+    bool destroyTaskScopedJetty,
+    bool releasePlannedTpBinding,
+    const std::vector<UbLifecycleResourceIdentity>& plannedTpConnections)
+{
+    if (m_transportMode == TransportMode::RTP)
+    {
+        Ptr<UbTransaction> transaction =
+            GetNode()->GetObject<UbController>()->GetUbTransaction();
+        if (releasePlannedTpBinding)
+        {
+            transaction->ReleaseCompletedJettyTransportBinding(
+                jettyNum,
+                !plannedTpConnections.empty());
+        }
+
+        Ptr<UbFunction> function = GetNode()->GetObject<UbController>()->GetUbFunction();
+        UbJettyLifetime lifetime = UbJettyLifetime::REUSABLE;
+        if (destroyTaskScopedJetty && function->TryGetJettyLifetime(jettyNum, lifetime) &&
+            lifetime == UbJettyLifetime::TASK_SCOPED)
+        {
+            const UbDestroyStatus status =
+                function->DestroyJetty(jettyNum, UbDestroyReason::PROTOCOL_COMPLETE);
+            NS_ABORT_MSG_IF(status == UbDestroyStatus::REJECTED,
+                            "Task-scoped Jetty cleanup was rejected for task " << taskId);
+        }
+
+        Ptr<TpConnectionManager> manager =
+            GetNode()->GetObject<UbController>()->GetTpConnManager();
+        for (const auto& identity : plannedTpConnections)
+        {
+            const UbDestroyStatus status =
+                manager->DestroyConnection(identity, UbDestroyReason::PROTOCOL_COMPLETE);
+            NS_ABORT_MSG_IF(status == UbDestroyStatus::REJECTED,
+                            "Planned TP connection cleanup rejected a stale identity for task "
+                                << taskId);
+        }
+    }
 }
 
 void UbApp::OnTestTaskCompleted(uint32_t taskId, uint32_t jettyNum)

@@ -249,6 +249,22 @@ LogicalProcess::ReceiveMessages()
 }
 
 void
+LogicalProcess::EnqueueBootstrapEvent(const Scheduler::Event& publicEvent)
+{
+    Scheduler::Event localEvent = publicEvent;
+    localEvent.key.m_uid = EventId::UID::INVALID;
+
+    std::lock_guard<std::mutex> lock(m_mailboxMutex);
+    m_mailbox[0].push_back(RemoteEvent{
+        localEvent.key.m_ts,
+        0,
+        0,
+        publicEvent.key.m_uid,
+        localEvent,
+    });
+}
+
+void
 LogicalProcess::BoundLookAhead(Time lookAhead)
 {
     if (lookAhead.IsStrictlyPositive() && lookAhead < m_lookAhead)
@@ -359,26 +375,6 @@ LogicalProcess::ScheduleWithContext(LogicalProcess* remote,
             ev,
         });
     }
-}
-
-void
-LogicalProcess::InvokeNow(const Scheduler::Event& ev)
-{
-    uint32_t oldSystemId = MtpInterface::GetSystem()->GetSystemId();
-    MtpInterface::SetSystem(m_systemId);
-
-    m_eventCount++;
-    NS_LOG_LOGIC("handle " << ev.key.m_ts);
-
-    m_currentTs = ev.key.m_ts;
-    m_currentContext = ev.key.m_context;
-    m_currentUid = ev.key.m_uid;
-
-    ev.impl->Invoke();
-    ev.impl->Unref();
-
-    // restore previous thread context
-    MtpInterface::SetSystem(oldSystemId);
 }
 
 void

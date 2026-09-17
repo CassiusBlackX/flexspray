@@ -100,8 +100,8 @@ def build_traffic(args: argparse.Namespace, case_dir: Path) -> None:
             "--output-dir",
             tmp,
         ]
-        if args.algo == "a2a_scatter":
-            cmd.extend(["--scatter-k", str(args.scatter_k)])
+        if args.algo == "a2a_pairwise":
+            cmd.extend(["--peers-per-phase", str(args.peers_per_phase)])
         subprocess.run(cmd, check=True)
         generated = sorted(Path(tmp).glob("*/traffic.csv"))
         if len(generated) != 1:
@@ -130,10 +130,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-size", default="1MB")
     parser.add_argument(
         "--algo",
-        choices=["ar_ring", "ar_nhr", "ar_rhd", "a2a_pairwise", "a2a_scatter"],
-        default="a2a_scatter",
+        choices=["ar_ring", "ar_nhr", "ar_rhd", "a2a_pairwise"],
+        default="a2a_pairwise",
     )
-    parser.add_argument("--scatter-k", type=int, default=2)
+    parser.add_argument("--peers-per-phase", type=int, default=2)
     parser.add_argument("--phase-delay-ns", type=int, default=10)
     parser.add_argument("--rank-mapping", choices=["linear", "round-robin"], default="linear")
     return parser.parse_args()

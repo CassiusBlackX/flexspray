@@ -79,6 +79,17 @@ class LogicalProcess
      * @brief Receive events sent by other logical processes in the previous round.
      */
     void ReceiveMessages();
+
+    /**
+     * @brief Queue a pre-run public event for worker-local UID assignment.
+     *
+     * The public event UID is retained only as a deterministic mailbox order key.
+     * The event receives its scheduler UID when ReceiveMessages() runs.
+     *
+     * @param ev The public event being migrated to this worker LP.
+     */
+    void EnqueueBootstrapEvent(const Scheduler::Event& ev);
+
     void BoundLookAhead(Time lookAhead);
 
     /**
@@ -120,18 +131,6 @@ class LogicalProcess
         return m_events;
     }
 
-    /**
-     * @brief Invoke an event immediately at the current time.
-     *
-     * This method is called when another thread wants to process an event of an LP
-     * that does not belongs to it. It is used at the very beginning of the simulation
-     * when the main thread will invoke events of newly allocated LP, whose timestamps
-     * are zero.
-     * 
-     * @param ev The event to be invoked now
-     */
-    void InvokeNow(const Scheduler::Event& ev);
-
     // The following methods are mapped from MultithreadedSimulatorImpl
     EventId Schedule(const Time& delay, EventImpl* event);
     void ScheduleAt(const uint32_t context, const Time& time, EventImpl* event);
@@ -158,6 +157,11 @@ class LogicalProcess
     inline Time Now() const
     {
         return TimeStep(m_currentTs);
+    }
+
+    inline Time GetLookAhead() const
+    {
+        return m_lookAhead;
     }
 
     inline Time GetDelayLeft(const EventId& id) const

@@ -165,6 +165,8 @@ def load_or_build_parameter_catalog() -> tuple[dict, Path]:
 
 _OBSERVABILITY_PRESETS = {
     "minimal": {
+        "UB_TRACE_PRESET": "minimal",
+        "UB_LIFECYCLE_TRACE_LEVEL": "OFF",
         "UB_TRACE_ENABLE": "true",
         "UB_TASK_TRACE_ENABLE": "true",
         "UB_PACKET_TRACE_ENABLE": "false",
@@ -174,6 +176,8 @@ _OBSERVABILITY_PRESETS = {
         "UB_PARSE_TRACE_ENABLE": "true",
     },
     "balanced": {
+        "UB_TRACE_PRESET": "balanced",
+        "UB_LIFECYCLE_TRACE_LEVEL": "SUMMARY",
         "UB_TRACE_ENABLE": "true",
         "UB_TASK_TRACE_ENABLE": "true",
         "UB_PACKET_TRACE_ENABLE": "true",
@@ -183,6 +187,8 @@ _OBSERVABILITY_PRESETS = {
         "UB_PARSE_TRACE_ENABLE": "true",
     },
     "detailed": {
+        "UB_TRACE_PRESET": "detailed",
+        "UB_LIFECYCLE_TRACE_LEVEL": "EVENT",
         "UB_TRACE_ENABLE": "true",
         "UB_TASK_TRACE_ENABLE": "true",
         "UB_PACKET_TRACE_ENABLE": "true",
@@ -206,6 +212,14 @@ _FALLBACK_UB_GLOBAL_KEYS = {
     "UB_QUEUE_TRACE_ENABLE",
     "UB_PARSE_TRACE_ENABLE",
     "UB_RECORD_PKT_TRACE",
+    "UB_TRACE_PRESET",
+    "UB_LIFECYCLE_TRACE_LEVEL",
+    "UB_LIFECYCLE_DETAIL_SAMPLE_STRIDE",
+    "UB_LIFECYCLE_DETAIL_SAMPLE_OFFSET",
+    "UB_TRACE_CHUNK_BYTES",
+    "UB_TRACE_OWNER_HIGH_WATER_BYTES",
+    "UB_TRACE_OWNER_LOW_WATER_BYTES",
+    "UB_TRACE_MAX_OPEN_FILES",
     "UB_PYTHON_SCRIPT_PATH",
 }
 
