@@ -46,6 +46,7 @@ struct UbRetransReceiveDecision
 struct UbRetransTimeoutResult
 {
     bool triggerTransmit{false};
+    uint32_t retransmitBytes{0};
 };
 
 class UbRetransStrategy

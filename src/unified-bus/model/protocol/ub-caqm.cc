@@ -463,6 +463,17 @@ UbHostCaqm::OnSenderCongestionNotification(TpOpcode opcode,
 }
 
 void
+UbHostCaqm::OnSenderRetransmissionRollback(uint32_t retransmitBytes)
+{
+    if (!m_congestionCtrlEnabled)
+    {
+        return;
+    }
+    m_dataByteSent = (m_dataByteSent >= retransmitBytes) ? m_dataByteSent - retransmitBytes : 0;
+    m_inFlight = std::min(m_inFlight, m_dataByteSent);
+}
+
+void
 UbHostCaqm::OnSenderRetransmissionPacketSent(uint32_t psn, uint32_t size)
 {
     OnSenderDataPacketSent(psn, size);
