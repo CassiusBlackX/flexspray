@@ -843,6 +843,7 @@ bool UbSwitch::SinkTpDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Pars
         targetTp->RecvDataPacket(packet);
     } else {
         NS_LOG_WARN("Dropping reserved transport opcode " << static_cast<uint32_t>(tpOpcode));
+        utils::UbUtils::RecordRuntimePacketDrop("reserved transport opcode");
     }
     return true;
 }

@@ -3817,6 +3817,50 @@ public:
     }
 };
 
+class UbSwitchRejectsReservedTpOpcodeTest : public TestCase
+{
+public:
+    UbSwitchRejectsReservedTpOpcodeTest()
+        : TestCase("UnifiedBus - local sink rejects reserved transport opcode")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(false));
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbTransportChannel> txTp =
+            topo.sender->GetObject<UbController>()->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
+        Ptr<Packet> packet = Create<Packet>(0);
+        packet->AddHeader(UbAckTransactionHeader());
+        UbTransportHeader tpHeader;
+        tpHeader.SetTPOpcode(TpOpcode::TP_OPCODE_RESERVED1);
+        tpHeader.SetRspSt(3);
+        tpHeader.SetSrcTpn(kUrmaWriteRegressionReceiverTpn);
+        tpHeader.SetDestTpn(kUrmaWriteRegressionSenderTpn);
+        packet->AddHeader(tpHeader);
+        packet->AddHeader(UdpHeader());
+        UbPort::AddIpv4Header(packet,
+                              NodeIdToIp(topo.receiver->GetId(), topo.receiverPort->GetIfIndex()),
+                              NodeIdToIp(topo.sender->GetId(), topo.senderPort->GetIfIndex()));
+        packet->AddHeader(UbIpBasedNetworkHeader());
+        UbDataLink::GenPacketHeader(packet, false, true, kUrmaWriteRegressionPriority,
+                                    kUrmaWriteRegressionPriority, RoutingType::PER_FLOW_SHORTEST_PATHS,
+                                    UbDatalinkHeaderConfig::PACKET_IPV4);
+        txTp->SetPsnSndUnaForTest(7);
+        txTp->SetPsnRecvNxtForTest(11);
+        topo.sender->GetObject<UbSwitch>()->SwitchHandlePacket(topo.senderPort, packet);
+        NS_TEST_ASSERT_MSG_EQ(txTp->GetPsnSndUnaForTest(), 7u,
+                              "reserved TPOpcode must not enter the ACK path");
+        NS_TEST_ASSERT_MSG_EQ(txTp->GetPsnRecvNxtForTest(), 11u,
+                              "reserved TPOpcode must not enter the data path");
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
 class UbGbnReceiverKeepsOutOfOrderAckSilentTest : public TestCase
 {
 public:
@@ -5349,6 +5393,67 @@ public:
                               0u,
                               "retransmission send accounting should use payload bytes");
 
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+class UbGbnTimeoutCaqmRollbackTest : public TestCase
+{
+public:
+    UbGbnTimeoutCaqmRollbackTest()
+        : TestCase("UnifiedBus - GBN timeout rolls back CAQM descriptor payload bytes")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(true));
+        GlobalValue::Bind("UB_CC_ALGO", StringValue("CAQM"));
+        Config::SetDefault("ns3::UbTransportChannel::EnableRetrans", BooleanValue(true));
+        Config::SetDefault("ns3::UbTransportChannel::RetransmissionMode",
+                           EnumValue(UbRetransmissionMode::GBN));
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbTransportChannel> tp = topo.sender->GetObject<UbController>()
+                                        ->GetTransportChannelManager()
+                                        ->GetTp(kUrmaWriteRegressionSenderTpn);
+        Ptr<UbHostCaqm> cc = DynamicCast<UbHostCaqm>(tp->GetCongestionCtrlForTest());
+        NS_TEST_ASSERT_MSG_NE(cc, nullptr, "sender should use CAQM");
+        for (uint32_t psn = 6; psn <= 8; ++psn) {
+            const uint32_t bytes = psn == 8 ? 200 : 100;
+            tp->RetainSentPsnForTest(psn, bytes);
+            cc->OnSenderDataPacketSent(psn, bytes);
+        }
+        tp->SetPsnSndUnaForTest(7);
+        UbCongestionExtTph feedback;
+        feedback.SetAckSequence(100);
+        feedback.SetC(0);
+        feedback.SetI(1);
+        cc->OnSenderCongestionNotification(TpOpcode::TP_OPCODE_ACK_WITH_CETPH, 6, feedback);
+        NS_TEST_ASSERT_MSG_EQ(cc->GetInflightForTest(), 300u, "only PSNs 7 and 8 remain in flight");
+
+        tp->ReTxTimeout();
+        NS_TEST_ASSERT_MSG_EQ(cc->GetDataByteSentForTest(), 100u,
+                              "timeout must deduct only outstanding descriptor payload bytes");
+        NS_TEST_ASSERT_MSG_EQ(tp->GetPsnSndNxtForTest(), 9u,
+                              "descriptor retry must not rewind next new-data PSN");
+        NS_TEST_ASSERT_MSG_EQ(tp->GetGbnRetransmissionCursorForTest(), 7u,
+                              "timeout should retry from the first unacknowledged descriptor");
+        cc->OnSenderRetransmissionPacketSent(7, 100);
+        cc->OnSenderRetransmissionPacketSent(8, 200);
+        NS_TEST_ASSERT_MSG_EQ(cc->GetDataByteSentForTest(), 400u,
+                              "retransmission must restore the original sent-byte total");
+        feedback.SetAckSequence(400);
+        cc->OnSenderCongestionNotification(TpOpcode::TP_OPCODE_ACK_WITH_CETPH, 8, feedback);
+        NS_TEST_ASSERT_MSG_EQ(cc->GetInflightForTest(), 0u,
+                              "ACK after retransmission must clear inflight");
+
+        tp->SetPsnSndUnaForTest(9);
+        tp->ReTxTimeout();
+        NS_TEST_ASSERT_MSG_EQ(cc->GetDataByteSentForTest(), 400u,
+                              "timeout without outstanding descriptors must not deduct bytes");
         Simulator::Destroy();
         Config::Reset();
     }
@@ -22361,18 +22466,22 @@ class UbExplicitConnectionDestroyDrainsAdmittedWriteTest : public TestCase
         if (m_mtp)
         {
             Config::SetDefault("ns3::UbLink::Delay", TimeValue(NanoSeconds(10)));
+#ifdef NS3_MTP
             MtpInterface::Enable(2, 2);
+#endif
         }
         LocalTpTopology topo =
             BuildLocalTpTopology(true, m_mtp ? 1u : 0u, m_mtp ? 2u : 0u);
         if (m_mtp)
         {
+#ifdef NS3_MTP
             NS_TEST_ASSERT_MSG_EQ(MtpInterface::RequireNodeLocalLpId(topo.sender->GetId()),
                                   1u,
                                   "Sender should execute on the first worker LP");
             NS_TEST_ASSERT_MSG_EQ(MtpInterface::RequireNodeLocalLpId(topo.receiver->GetId()),
                                   2u,
                                   "Receiver should execute on the second worker LP");
+#endif
         }
         InstallStaticTpPair(topo);
         topo.sender->GetObject<UbController>()
@@ -28944,6 +29053,7 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbSelectiveReceiverTpsackWithCetphOrderTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTransportRecvTpsackDoesNotMisparseSaetphTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbSwitchDispatchesTpsackAsTransportResponseTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbSwitchRejectsReservedTpOpcodeTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbGbnReceiverKeepsOutOfOrderAckSilentTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbGbnReceiverEmitsSpecTpnakWireFormatTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbGbnTpnakCcWireAndConsumptionTest(), TestCase::Duration::QUICK);
@@ -28983,6 +29093,7 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbSelectiveRetransmissionAccountsDcqcnSendStateTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbSelectiveRetransmissionUsesPayloadBytesForCongestionControlTest(),
                 TestCase::Duration::QUICK);
+    AddTestCase(new UbGbnTimeoutCaqmRollbackTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCaqmSelectiveAckWithCetphAccountingTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTransportTpsackCcReportsRetransmitBytesOnceTest(),
                 TestCase::Duration::QUICK);
@@ -29651,6 +29762,7 @@ UbTransportRetransTestSuite::UbTransportRetransTestSuite()
     AddTestCase(new UbSelectiveReceiverTpsackWithCetphOrderTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTransportRecvTpsackDoesNotMisparseSaetphTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbSwitchDispatchesTpsackAsTransportResponseTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbSwitchRejectsReservedTpOpcodeTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbGbnReceiverKeepsOutOfOrderAckSilentTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbGbnReceiverEmitsSpecTpnakWireFormatTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbGbnTpnakCcWireAndConsumptionTest(), TestCase::Duration::QUICK);
@@ -29800,6 +29912,7 @@ UbCongestionControlTestSuite::UbCongestionControlTestSuite()
     AddTestCase(new UbSelectiveRetransmissionAccountsDcqcnSendStateTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbSelectiveRetransmissionUsesPayloadBytesForCongestionControlTest(),
                 TestCase::Duration::QUICK);
+    AddTestCase(new UbGbnTimeoutCaqmRollbackTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCaqmSelectiveAckWithCetphAccountingTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTransportTpsackCcReportsRetransmitBytesOnceTest(),
                 TestCase::Duration::QUICK);
@@ -29945,6 +30058,7 @@ public:
                     TestCase::Duration::QUICK);
         AddTestCase(new UbSelectiveRetransmissionUsesPayloadBytesForCongestionControlTest(),
                     TestCase::Duration::QUICK);
+        AddTestCase(new UbGbnTimeoutCaqmRollbackTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbCaqmSelectiveAckWithCetphAccountingTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbTransportTpsackCcReportsRetransmitBytesOnceTest(),
                     TestCase::Duration::QUICK);
