@@ -29,7 +29,7 @@
 
 <p align="center">
   <strong>Release 2.1.0</strong> · 2026 年 9 月<br>
-  灵衢基础规范 2.1 版本 · CFG7 24-bit CNA 寻址 · Atomic 与队列事务 · 可靠重路由<br>
+  灵衢基础规范 2.1 版本 · 丰富事务类型 完善传输层服务模式 支持网络层可靠重路由<br>
   <a href="RELEASE_NOTES_UB.md#release-210">完整发布说明 →</a>
 </p>
 

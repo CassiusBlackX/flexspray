@@ -28,7 +28,7 @@
 
 <p align="center">
   <strong>Release 2.1.0</strong> · September 2026<br>
-  UB Base Specification 2.1 · CFG7 24-bit CNA addressing · Atomic and queue transactions · Reliable rerouting<br>
+  UB Base Specification 2.1 · Additional transaction types, more transport service modes, reliable rerouting at the network layer<br>
   <a href="RELEASE_NOTES_UB_en.md#release-210">Full release notes →</a>
 </p>
 
