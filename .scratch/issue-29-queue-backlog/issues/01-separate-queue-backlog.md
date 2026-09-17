@@ -1,6 +1,6 @@
 # Issue 29: separate buffer occupancy from queue backlog
 
-Status: in progress
+Status: complete
 Source: https://gitcode.com/open-usim/ns-3-ub/issues/29
 Branch: fix/issue-29-queue-backlog (from origin/next)
 
@@ -55,4 +55,14 @@ Re-approval triggers: changes outside the preceding behavior and ownership bound
   VOQ-to-egress, port isolation, and release at transmission start. DCQCN also
   marks against a backlog residing entirely in egress.
 - Diff is stable for read-only Standards/Spec review against d7bd987.
-- Full configured build and unified-bus unit suite pending.
+- PASS: `ninja -C cmake-cache -j 6` (all configured targets).
+- PASS: `./build/utils/ns3.44-test-runner --test-name=unified-bus --verbose`
+  (265 cases, including the three new CC regressions).
+- PASS: `python3.12 -m unittest discover -s tests/openusim_skills -p test_skill_docs.py`
+  (20 cases).
+- PASS: `git diff --check`; separate read-only Standards and Spec reviews found
+  no actionable issues. Reviewed code remained unchanged during review.
+- Implementation commit: 0d1e598.
+- Limitations: issue reporter's exact 400-Gbps Clos throughput case was not provided
+  or rerun. No claim of throughput recovery; MPI/MTP were disabled in this build.
+- Local branch only; no remote publication or issue comment.
