@@ -496,6 +496,18 @@ _Avoid_: flit
 The fixed-length data-link unit of transfer and physical-layer interface.
 _Avoid_: packet
 
+**Retry buffer**:
+The sender-side data-link backup store for transmitted flits awaiting acknowledgement. Reliable rerouting additionally retains the complete DLLDP containing the peer's receive boundary, as defined in UB Base Specification 2.1, sections 4.8.3.2 and 5.3.9.2.
+_Avoid_: transport retransmission queue, unsent output queue
+
+**Reliable rerouting**:
+Recovery of data affected by a UB link failure over an alternate path, starting at the packet boundary reported by the failed link's receiver. UB Base Specification 2.1, section 5.3.9 defines this mechanism.
+_Avoid_: transport retransmission, route selection alone
+
+**ReliableRerouting_LastAckMsg**:
+The network control message reporting the failed-link port identity and RcvPtr_Packet to the peer sender for reliable rerouting. RcvPtr_Packet identifies the start of the DLLDP being received or the next DLLDP expected by that receiver.
+_Avoid_: transport ACK, credit return, delay alone
+
 **Credit-based flow control**:
 Receiver-driven credit return that limits how much traffic a sender can inject per VL.
 _Avoid_: congestion control
@@ -533,6 +545,18 @@ _Avoid_: standard CFG7 TP bypass, CTP, full transaction-header format
 **Simulation boundary**:
 The set of claims that this simulator can support with its modeled protocol behavior and emitted evidence.
 _Avoid_: hardware truth, real cluster measurement
+
+**Packet-level reliable rerouting**:
+A simulator modeling boundary for reliable rerouting using whole-packet backups and idealized link acknowledgements. It preserves the peer's complete-packet receive boundary without guaranteeing arrival order between new and recovered packets, and abstracts flit pointers, partial-packet reception, and on-wire ACK and ReliableRerouting_LastAckMsg transmission.
+_Avoid_: full data-link retry implementation, replay of all historical packets
+
+**Packet-level retry buffer**:
+A per-transmit-direction collection of whole-packet backups whose complete reception by the adjacent peer has not yet been confirmed in the packet-level reliable rerouting model.
+_Avoid_: unsent VOQ contents, transport retransmission queue
+
+**Idealized link acknowledgement**:
+Simulator confirmation that the adjacent peer has received one complete packet, without an on-wire acknowledgement exchange. It permits release of the corresponding packet-level backup and does not imply end-to-end delivery or receiver credit return.
+_Avoid_: transport ACK, application completion, credit return
 
 **Atomic timing model**:
 A simulator-local representation of atomic transaction traffic and completion timing with abstract operand and result values and no address-contention delays.
