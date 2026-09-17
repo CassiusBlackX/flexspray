@@ -12,8 +12,10 @@ The core build depends on the following tools. Download can be via either Git or
 | ------------- | ---------------------------- | ---------------------- |
 | Download      | git (for Git download) <br/>or: tar and bunzip2 (Web)      | No minimum version     |
 | Compiler      | g++<br/>or: clang++          | >= 10<br/>>= 11        |
-| Configuration | python3                      | >= 3.8                 |
+| Configuration | python3                      | 3.8 - 3.13             |
 | Build system  | cmake plus one system-provided build tool | cmake >= 3.13<br/>Platform-dependent |
+
+The `./ns3` launcher fails on Python 3.14 because of an argparse behavior change; use an interpreter in the 3.8 - 3.13 range. The commands below use `python3.12` throughout — substitute any interpreter on your machine that satisfies the version requirement.
 
 If using Conda/virtualenv, please ensure that the `python3` used later matches the interpreter used to install dependencies.
 
@@ -32,7 +34,7 @@ From the command line, you can check the versions as follows:
 ## Get the Code
 
 ```bash
-# Clone the project
+# Clone the project (the default branch is main; use -b to select another branch or tag)
 git clone https://gitcode.com/open-usim/ns-3-ub.git
 cd ns-3-ub
 
@@ -72,14 +74,14 @@ conda install pandas matplotlib seaborn
 # Or manually install the above dependencies
 ```
 
-Note: Please install the required third-party packages via `requirements.txt` before running `trace_analysis/parse_trace.py`.
+Note: These packages are mainly for the topology / traffic generation and visualization tools (`net_sim_builder.py`, `topo_plot.py`, `traffic_maker/*`). The trace post-processing scripts under `trace_analysis/` depend only on the Python standard library and need no installation.
 
 Tip: If you use an agent that supports repo-local skills, this repository includes OpenUSim skills under ` .codex/skills/ `. They check startup facts from this page and `README_en.md`, then help plan experiments, generate cases, run simulations, and analyze results through `openusim-welcome`, `openusim-plan-experiment`, `openusim-run-experiment`, and `openusim-analyze-results`. They cover smoke runs, old-case reproduction, one-off debugging, A/B comparisons, parameter sweeps, and controlled-variable studies. For comparisons, the plan records the baseline, compared configurations, fixed controls, prediction, and evidence source before cases are generated. After analysis confirms a root cause or a reusable judgment, `openusim-capture-insights` can write it as a knowledge card with user approval. These skills depend on the current `ns-3-ub` working tree and `scratch/ns-3-ub-tools/`, and are maintained with this repository.
 
 ## Build
 
 ```bash
-# Known issue: the ns-3 launcher (./ns3) is incompatible with Python 3.14 (argparse); use python3.12 to run it.
+# Below, python3.12 can be replaced by any interpreter in the 3.8 - 3.13 range (see Prerequisites).
 # One build may use -j for speed; do not start multiple build/test tasks at once.
 BUILD_JOBS=${BUILD_JOBS:-$(python3.12 -c 'import os; print(os.cpu_count() or 1)')}
 
@@ -116,9 +118,6 @@ See [UNISON_README.md](UNISON_README.md) for additional MTP usage, behavioral bo
 # If using Conda, ensure its bin is in PATH first (or activate environment first)
 # export PATH=<your-conda-path>/bin:$PATH
 
-# Install dependencies
-python3 -m pip install --user -r scratch/ns-3-ub-tools/requirements.txt
-
 # Run small example and trigger trace analysis
 python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_single-tp'
 
@@ -127,7 +126,7 @@ ls scratch/2nodes_single-tp/output/
 # Expected to contain: task_statistics.csv  throughput.csv
 ```
 
-If you encounter `ModuleNotFoundError: No module named 'pandas'`, it means the runtime `python3` is inconsistent with the interpreter used to install dependencies; please check PATH, or use `python3 -m pip install --user ...` to install dependencies in the current interpreter.
+This example needs no third-party packages: the post-processing scripts `trace_analysis/parse_trace.py` and the `task_statistics.py` / `cal_throughput.py` it invokes depend only on the Python standard library. The packages listed under "Python Tools & Dependencies" are needed only when you use the topology / traffic generation and visualization tools (`net_sim_builder.py`, `topo_plot.py`, `user_topo_*.py`, `traffic_maker/*`). If you then encounter `ModuleNotFoundError: No module named 'pandas'`, it means the runtime `python3` is inconsistent with the interpreter used to install dependencies; please check PATH, or install the dependencies again under that interpreter.
 
 ## Examples under scratch
 
@@ -177,17 +176,21 @@ Note: Some large-scale use cases take a long time to run. Please use `--mtp-thre
 # Run complete example, including Python post-processing
 python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2dfm4x4-multipath_a2a'
 
-# Expected output:
-[01:23:37]:Run case: scratch/2dfm4x4-multipath_a2a
-[01:23:37]:Set component attributes
-[01:23:37]:Create node.
-[01:23:37]:Start Client.
-[01:23:37]:Simulator finished!
-[01:23:37]:Start Parse Trace File.
-All dependencies are satisfied, starting script execution...
-Processing complete, results saved to scratch/2dfm4_4-multipath_a2a/output/task_statistics.csv
-Processing complete, results saved to scratch/2dfm4_4-multipath_a2a/output/throughput.csv
-[01:23:37]:Program finished.
+# Expected output (timestamps and absolute paths vary by environment):
+[19:14:22] [case] Run case: <repo>/scratch/2dfm4x4-multipath_a2a
+[19:14:22] [setup] Load network_attribute.txt
+[19:14:22] [setup] Load node.csv
+[19:14:22] [setup] Load topology.csv
+[19:14:22] [setup] Load routing_table.csv
+[19:14:22] [setup] Load transport_channel.csv
+[19:14:22] [traffic] Load traffic.csv
+[19:14:23] [run] Simulation finished.
+[19:14:23] [trace] Parse runlog into output artifacts.
+Stats: Processed 2 tasks.
+Saved traffic tasks throughput results to <repo>/scratch/2dfm4x4-multipath_a2a/output/task_statistics.csv
+Stats: Generated throughput metrics for 32 port-directions.
+Saved per-port throughput results to <repo>/scratch/2dfm4x4-multipath_a2a/output/throughput.csv
+[19:14:23] [summary] Program finished.
 
 # View generated result files
 ls scratch/2dfm4x4-multipath_a2a/output/
@@ -206,6 +209,7 @@ Each use case directory typically contains the following files (format can refer
 - `traffic.csv` - Traffic definitions
 
 For the `ub-quick-example` entry, configuration semantics, and commands, see [scratch/README.md](scratch/README.md).
+
 ---
 
 ## Related Documentation
