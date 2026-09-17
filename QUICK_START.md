@@ -12,8 +12,10 @@
 | ---------- | ----------------------------- | -------------------- |
 | 下载       | git（Git 下载）<br/>或：tar 与 bunzip2（Web 下载）               | 无最低版本要求       |
 | 编译器     | g++<br/>或：clang++           | >= 10<br/>>= 11      |
-| 配置       | python3                       | >= 3.8               |
+| 配置       | python3                       | 3.8 – 3.13           |
 | 构建系统   | cmake，以及系统可用的构建工具其一 | cmake >= 3.13<br/>按平台提供 |
+
+`./ns3` 启动器在 Python 3.14 下会因 argparse 行为变更而报错，请使用 3.8 – 3.13 的解释器。下文命令统一以 `python3.12` 为例，可替换为本机任意符合版本要求的解释器。
 
 如使用 Conda/virtualenv，请确保后续运行的 `python3` 与安装依赖的解释器一致。
 
@@ -32,7 +34,7 @@
 ## 获取代码
 
 ```bash
-# 克隆项目
+# 克隆项目（默认分支为 main，可用 -b 指定其他分支或标签）
 git clone https://gitcode.com/open-usim/ns-3-ub.git
 cd ns-3-ub
 
@@ -72,14 +74,14 @@ conda install pandas matplotlib seaborn
 # 或者手动安装以上依赖
 ```
 
-说明： 请在运行 `trace_analysis/parse_trace.py` 前通过 `requirements.txt` 预先安装所需第三方包。
+说明： 以上依赖主要用于拓扑 / 流量生成与可视化工具（`net_sim_builder.py`、`topo_plot.py`、`traffic_maker/*`）。`trace_analysis/` 下的 trace 后处理脚本只依赖 Python 标准库，无需安装这些包。
 
 提示：如果你使用支持 repo-local skill 的 Agent，本仓库在 ` .codex/skills/ ` 下提供 OpenUSim skills。它们会先按本页和 `README.md` 检查启动状态，再处理实验定义、case 生成、仿真执行和结果分析。普通 smoke run、旧 case 复现、单次调试、A/B 对比、参数 sweep 和控制变量实验都可以走这套流程；对比类实验会先定下 baseline、待比较配置、固定控制项、预期结果和证据来源。分析得到稳定根因或通用判断后，也可以在用户同意后写成知识卡。这些 skills 依赖当前 `ns-3-ub` 工作树与 `scratch/ns-3-ub-tools/`，不作为独立 submodule 维护。
 
 ## 配置与编译
 
 ```bash
-# 已知问题：ns-3 launcher（./ns3）与 Python 3.14 存在 argparse 兼容问题，建议用 python3.12 运行。
+# 下文 python3.12 可替换为本机任意 3.8 – 3.13 的解释器（见「环境要求」）。
 # 单个 build 可用 -j 加速；不要同时启动多个 build/test 构建任务。
 BUILD_JOBS=${BUILD_JOBS:-$(python3.12 -c 'import os; print(os.cpu_count() or 1)')}
 
@@ -117,9 +119,6 @@ python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2n
 # 如使用 Conda，请确保其 bin 在 PATH 前（或先激活环境）
 # export PATH=<your-conda-path>/bin:$PATH
 
-# 安装依赖
-python3 -m pip install --user -r scratch/ns-3-ub-tools/requirements.txt
-
 # 运行小示例并触发 trace 分析
 python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_single-tp'
 
@@ -128,7 +127,7 @@ ls scratch/2nodes_single-tp/output/
 # 预期包含：task_statistics.csv  throughput.csv
 ```
 
-如遇到 `ModuleNotFoundError: No module named 'pandas'`，说明运行时的 `python3` 与安装依赖所用解释器不一致；请检查 PATH，或使用 `python3 -m pip install --user ...` 在当前解释器中安装依赖。
+本节示例不需要安装第三方包：后处理脚本 `trace_analysis/parse_trace.py` 及其调用的 `task_statistics.py`、`cal_throughput.py` 只依赖 Python 标准库。只有使用拓扑 / 流量生成与可视化工具（`net_sim_builder.py`、`topo_plot.py`、`user_topo_*.py`、`traffic_maker/*`）时才需要安装「Python 工具与依赖」一节列出的包；届时如遇到 `ModuleNotFoundError: No module named 'pandas'`，说明运行时的 `python3` 与安装依赖所用解释器不一致，请检查 PATH 或在该解释器下重新安装依赖。
 
 ## scratch 目录下的示例
 
@@ -178,17 +177,21 @@ ls scratch/2nodes_single-tp/output/
 # 运行完整示例，包含 Python 后处理
 python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2dfm4x4-multipath_a2a'
 
-# 预期输出：
-[01:23:37]:Run case: scratch/2dfm4x4-multipath_a2a
-[01:23:37]:Set component attributes
-[01:23:37]:Create node.
-[01:23:37]:Start Client.
-[01:23:37]:Simulator finished!
-[01:23:37]:Start Parse Trace File.
-所有依赖已满足，开始执行脚本...
-处理完成，结果已保存到 scratch/2dfm4_4-multipath_a2a/output/task_statistics.csv
-处理完成，结果已保存到 scratch/2dfm4_4-multipath_a2a/output/throughput.csv
-[01:23:37]:Program finished.
+# 预期输出（时间戳与绝对路径随环境变化）：
+[19:14:22] [case] Run case: <repo>/scratch/2dfm4x4-multipath_a2a
+[19:14:22] [setup] Load network_attribute.txt
+[19:14:22] [setup] Load node.csv
+[19:14:22] [setup] Load topology.csv
+[19:14:22] [setup] Load routing_table.csv
+[19:14:22] [setup] Load transport_channel.csv
+[19:14:22] [traffic] Load traffic.csv
+[19:14:23] [run] Simulation finished.
+[19:14:23] [trace] Parse runlog into output artifacts.
+Stats: Processed 2 tasks.
+Saved traffic tasks throughput results to <repo>/scratch/2dfm4x4-multipath_a2a/output/task_statistics.csv
+Stats: Generated throughput metrics for 32 port-directions.
+Saved per-port throughput results to <repo>/scratch/2dfm4x4-multipath_a2a/output/throughput.csv
+[19:14:23] [summary] Program finished.
 
 # 查看生成的结果文件
 ls scratch/2dfm4x4-multipath_a2a/output/
