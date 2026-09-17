@@ -22,8 +22,9 @@ Re-approval triggers: protocol semantics outside these merge adaptations.
 
 ## Status
 
-Conflict contents resolved; index not staged yet. Read-only integration review found no
-semantic omissions or duplicate legacy retransmission paths.
+Conflict contents resolved in merge commit aa1d21d (parents 61eea8e and 7f558d9).
+Read-only integration review found no semantic omissions or duplicate legacy
+retransmission paths. No push or remote merge has been performed.
 
 ## Validation
 
