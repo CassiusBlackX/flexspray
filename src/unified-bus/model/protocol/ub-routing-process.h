@@ -10,6 +10,7 @@
 #include <array>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace ns3 {
@@ -98,6 +99,23 @@ class UbRoutingProcess : public Object
                               uint16_t inPort = UINT16_MAX);
 
     /**
+     * @brief Mark one output port as detected-failed for every later candidate selection.
+     *
+     * The filter applies inside the shared candidate-selection path, so table, compressed-index,
+     * structured-rule, endpoint, and restricted candidate lookups all exclude the failed output
+     * without changing compiled routing artifacts.
+     */
+    void SetOutputUnavailable(uint16_t outPort);
+    void ClearOutputUnavailable(uint16_t outPort);
+    bool IsOutputUnavailable(uint16_t outPort) const;
+
+    /**
+     * @brief Whether the most recent selection failed only because detected failed outputs were
+     *        excluded while legal candidates existed before the exclusion.
+     */
+    bool LastFailureExcludedAllCandidates() const { return m_lastFailureExcludedAllCandidates; }
+
+    /**
      * @brief Select an output port from exact endpoint candidates and an allow-list.
      * @param key Endpoint routing lookup and selector input.
      * @param allowedOutPorts Output ports eligible for selection, in any order.
@@ -161,6 +179,11 @@ class UbRoutingProcess : public Object
 
     UbRoutingTable::PortSetView LookupCandidatePorts(uint32_t& dip, bool shortest) const;
 
+    int SelectCandidateFromView(RoutingKey& key,
+                                const UbRoutingCandidateView& candidates,
+                                bool& selectedShortestPath,
+                                uint16_t inPort);
+
     uint32_t m_nodeId{0};
     MultipathSelector m_multipathSelector{MultipathSelector::HASH64};
     UbRoutingTable m_table;
@@ -168,6 +191,10 @@ class UbRoutingProcess : public Object
     std::shared_ptr<const UbRuleRoutingTable> m_ruleRoutingTable;
     uint64_t m_hotPathLookups{0};
     uint64_t m_hotPathTemporaryContainerAllocations{0};
+    std::unordered_set<uint16_t> m_unavailableOutputs;
+    std::vector<uint16_t> m_filteredShortest;
+    std::vector<uint16_t> m_filteredNonShortest;
+    bool m_lastFailureExcludedAllCandidates{false};
 };
 
 } // namespace ns3

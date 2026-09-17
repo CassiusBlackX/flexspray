@@ -64,9 +64,11 @@ build_lib(
 	model/protocol/ub-flow-control.cc
 	model/protocol/ub-cbfc.cc
 	model/protocol/ub-pfc.cc
+	model/protocol/ub-reliable-rerouting.cc
 	model/ub-ingress-queue.cc
 	model/ub-queue-manager.cc
 	model/ub-fault.cc
+	model/ub-link-fault-schedule.cc
 	model/ub-tp-connection-manager.cc
 	model/ub-tag.cc
   HEADER_FILES
@@ -113,10 +115,12 @@ build_lib(
 	model/protocol/ub-flow-control.h
 	model/protocol/ub-cbfc.h
 	model/protocol/ub-pfc.h
+	model/protocol/ub-reliable-rerouting.h
 	model/ub-ingress-queue.h
 	model/ub-queue-manager.h
 	model/ub-tag.h
 	model/ub-fault.h
+	model/ub-link-fault-schedule.h
   LIBRARIES_TO_LINK ${libnetwork}
                     ${libinternet}
                     ${libapplications}
@@ -130,6 +134,8 @@ build_lib(
     test/ub-transaction-header-extension-test.cc
     test/ub-target-execution-test.cc
     test/ub-ldst-cfg-test.cc
+    test/ub-link-fault-input-test.cc
+    test/ub-reliable-rerouting-test.cc
     test/ub-structured-routing-test.cc
     test/ub-packet-rate-control-test.cc
 )

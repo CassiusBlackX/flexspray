@@ -1655,7 +1655,13 @@ UbUtils::CommitTraceChunk(TraceFileState& fileState, std::string& chunk)
                                                                       << " err=" << ec.message());
             }
             fileState.stream.clear();
-            fileState.stream.open(fileState.fileName.c_str(), std::ios::out | std::ios::app);
+            // The first commit of a run owns the file: run-scoped CSV artifacts must not append to
+            // a previous run's header and rows. Later commits (LRU reopen) append normally.
+            const std::ios::openmode mode =
+                fileState.headerCommitted || fileState.csvHeader.empty()
+                    ? (std::ios::out | std::ios::app)
+                    : (std::ios::out | std::ios::trunc);
+            fileState.stream.open(fileState.fileName.c_str(), mode);
             NS_ABORT_MSG_IF(!fileState.stream.is_open(),
                             "Cannot open trace file: " << fileState.fileName);
             fileState.open = true;
@@ -2276,6 +2282,34 @@ UbUtils::AppendCsvRow(const std::string& fileName,
     }
 
     AppendTraceLine(sink, row);
+}
+
+void
+UbUtils::ReliableReroutingNotify(const UbReliableReroutingEvent& record)
+{
+    BooleanValue enabled;
+    if (!GlobalValue::GetValueByNameFailSafe("UB_TRACE_ENABLE", enabled) || !enabled.Get())
+    {
+        return;
+    }
+    if (!GlobalValue::GetValueByNameFailSafe("UB_PACKET_TRACE_ENABLE", enabled) || !enabled.Get())
+    {
+        return;
+    }
+
+    constexpr const char* header =
+        "time_ps,node_id,port_id,event,attempt_id,old_output,new_output,retry_packets,retry_bytes,"
+        "pending_packets,pending_bytes";
+    const auto outputField = [](uint32_t outPort) {
+        return outPort == UB_REROUTING_NO_OUTPUT ? std::string("na") : std::to_string(outPort);
+    };
+
+    std::ostringstream row;
+    row << Simulator::Now().GetPicoSeconds() << ',' << record.nodeId << ',' << record.portId << ','
+        << record.event << ',' << record.attemptId << ',' << outputField(record.oldOutput) << ','
+        << outputField(record.newOutput) << ',' << record.retryPackets << ',' << record.retryBytes
+        << ',' << record.pendingPackets << ',' << record.pendingBytes;
+    AppendCsvRow(trace_path + "output/reliable_rerouting.csv", header, row.str());
 }
 
 void
@@ -4996,6 +5030,11 @@ void UbUtils::TopoTraceConnect()
                 if (port) {
                     port->TraceConnectWithoutContext("PortTxNotify", MakeCallback(PortTxNotify));
                     port->TraceConnectWithoutContext("PortRxNotify", MakeCallback(PortRxNotify));
+                    if (port->GetReliableRerouting() != nullptr) {
+                        port->GetReliableRerouting()->TraceConnectWithoutContext(
+                            "Rerouting",
+                            MakeCallback(&UbUtils::ReliableReroutingNotify));
+                    }
                 } else {
                     NS_ASSERT_MSG(0, "port is null");
                 }

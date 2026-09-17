@@ -463,6 +463,7 @@ UbRoutingProcess::GetOutPortInternal(RoutingKey& key,
 
     ValidateRoutingType(key.routingType, "packet forwarding");
     ++m_hotPathLookups;
+    m_lastFailureExcludedAllCandidates = false;
 
     std::vector<uint16_t> structuredShortest;
     std::vector<uint16_t> structuredNonShortest;
@@ -556,6 +557,7 @@ UbRoutingProcess::GetOutPortForEndpointInternal(RoutingKey& key,
                                                 uint16_t inPort)
 {
     ValidateRoutingType(key.routingType, "endpoint packet forwarding");
+    m_lastFailureExcludedAllCandidates = false;
     std::vector<uint16_t> shortestPorts;
     std::vector<uint16_t> nonShortestPorts;
     const bool handledByRule = TryGetRuleCandidatesExact(key.dip, shortestPorts, nonShortestPorts);
@@ -597,6 +599,7 @@ UbRoutingProcess::SelectOutPort(RoutingKey& key,
                                 uint16_t inPort)
 {
     ValidateRoutingType(key.routingType, "packet forwarding");
+    m_lastFailureExcludedAllCandidates = false;
     const UbRoutingCandidateView candidates{shortestPorts, nonShortestPorts, UINT16_MAX};
     if (UbRoutingPolicy::Count(candidates) == 0)
     {
@@ -620,6 +623,63 @@ UbRoutingProcess::SelectCandidate(RoutingKey& key,
                                   const UbRoutingCandidateView& candidates,
                                   bool& selectedShortestPath,
                                   uint16_t inPort)
+{
+    if (m_unavailableOutputs.empty())
+    {
+        m_lastFailureExcludedAllCandidates = false;
+        return SelectCandidateFromView(key, candidates, selectedShortestPath, inPort);
+    }
+
+    const auto countLegal = [&candidates](const UbRoutingCandidateView& view) {
+        size_t count = 0;
+        for (const auto& ports : {view.shortest, view.nonShortest})
+        {
+            for (uint16_t port : ports)
+            {
+                if (port != view.excludedPort)
+                {
+                    ++count;
+                }
+            }
+        }
+        return count;
+    };
+    const bool hadLegalCandidates = countLegal(candidates) != 0;
+
+    // Failure-aware filtering keeps a single candidate-selection path: the failed output is
+    // removed before hash, round-robin, adaptive, or ingress-stripe selection can pick it, and no
+    // compiled routing artifact changes.
+    const auto isUnavailable = [this](uint16_t port) { return IsOutputUnavailable(port); };
+    m_filteredShortest.assign(candidates.shortest.begin(), candidates.shortest.end());
+    m_filteredNonShortest.assign(candidates.nonShortest.begin(), candidates.nonShortest.end());
+    m_filteredShortest.erase(std::remove_if(m_filteredShortest.begin(),
+                                            m_filteredShortest.end(),
+                                            isUnavailable),
+                             m_filteredShortest.end());
+    m_filteredNonShortest.erase(std::remove_if(m_filteredNonShortest.begin(),
+                                               m_filteredNonShortest.end(),
+                                               isUnavailable),
+                                m_filteredNonShortest.end());
+
+    const UbRoutingCandidateView filtered{m_filteredShortest,
+                                          m_filteredNonShortest,
+                                          candidates.excludedPort};
+    if (UbRoutingPolicy::Count(filtered) == 0)
+    {
+        NS_LOG_ERROR("No candidate ports remain after excluding detected failed outputs for dip: "
+                     << Ipv4Address(key.dip));
+        m_lastFailureExcludedAllCandidates = hadLegalCandidates;
+        return -1;
+    }
+    m_lastFailureExcludedAllCandidates = false;
+    return SelectCandidateFromView(key, filtered, selectedShortestPath, inPort);
+}
+
+int
+UbRoutingProcess::SelectCandidateFromView(RoutingKey& key,
+                                          const UbRoutingCandidateView& candidates,
+                                          bool& selectedShortestPath,
+                                          uint16_t inPort)
 {
     if (m_multipathSelector == MultipathSelector::ADAPTIVE)
     {
@@ -710,6 +770,24 @@ UbRoutingProcess::SelectCandidate(RoutingKey& key,
     }
     NS_ASSERT_MSG(outPort != -1, "No available output port found");
     return outPort;
+}
+
+void
+UbRoutingProcess::SetOutputUnavailable(uint16_t outPort)
+{
+    m_unavailableOutputs.insert(outPort);
+}
+
+void
+UbRoutingProcess::ClearOutputUnavailable(uint16_t outPort)
+{
+    m_unavailableOutputs.erase(outPort);
+}
+
+bool
+UbRoutingProcess::IsOutputUnavailable(uint16_t outPort) const
+{
+    return m_unavailableOutputs.find(outPort) != m_unavailableOutputs.end();
 }
 
 uint64_t

@@ -6,6 +6,7 @@
 #include "ns3/node-list.h"
 #include "ns3/ub-app.h"
 #include "ns3/ub-link.h"
+#include "ns3/ub-link-fault-schedule.h"
 #include "ns3/ub-next-hop-index.h"
 #include "ns3/ub-port.h"
 #include "ns3/ub-traffic-gen.h"
@@ -607,6 +608,44 @@ BuildScenarioFromConfig(const QuickExampleOptions& options, const RuntimeSelecti
     }
 }
 
+/**
+ * @brief Resolve the optional `link_fault.csv` schedule against the built topology.
+ *
+ * The whole file is validated before any fault action is scheduled or any link is mutated, so an
+ * invalid later row cannot leave earlier failure actions behind.
+ */
+std::vector<UbLinkFaultTarget> ResolveLinkFaultSchedule(const std::string& configPath)
+{
+    const std::string schedulePath = configPath + "/link_fault.csv";
+    std::vector<UbLinkFaultScheduleRow> rows;
+    std::string error;
+    if (!TryReadLinkFaultSchedule(schedulePath, rows, error))
+    {
+        NS_ABORT_MSG(error);
+    }
+    if (rows.empty())
+    {
+        return {};
+    }
+    std::vector<UbLinkFaultTarget> targets;
+    if (!TryResolveLinkFaultSchedule(rows, targets, error))
+    {
+        NS_ABORT_MSG(error);
+    }
+    return targets;
+}
+
+void ScheduleResolvedLinkFaults(const std::vector<UbLinkFaultTarget>& targets)
+{
+    if (targets.empty())
+    {
+        return;
+    }
+    UbUtils::Get()->PrintTimestamp("[fault] Schedule " + std::to_string(targets.size()) +
+                                   " link failure action(s) from link_fault.csv.");
+    ScheduleLinkFaults(targets);
+}
+
 void ConfigureTrafficDependencyVisibility(const QuickExampleOptions& options)
 {
     if (!options.dependencyVisibilityDelay.empty())
@@ -1113,6 +1152,7 @@ PhaseTiming RunScenario(const QuickExampleOptions& options,
                                   runtime.enableMpi,
                                   runtime.mpiRank,
                                   runtime.enableMpi || ModeUsesMtp(runtime.mode));
+    ScheduleResolvedLinkFaults(ResolveLinkFaultSchedule(options.configPath));
     ApplyDependencyVisibilityLookaheadBound(runtime);
     UbTrafficGen::Get()->ScheduleNextTasks();
     UbUtils::Get()->PrintTimestamp("[traffic] Scheduled local tasks: " +

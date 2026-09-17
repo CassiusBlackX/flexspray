@@ -4,6 +4,7 @@
 #include "ns3/ub-ldst-packet-utils.h"
 
 #include <optional>
+#include <unordered_map>
 #include <vector>
 #include "ns3/nstime.h"
 #include "ns3/ub-routing-process.h"
@@ -19,6 +20,8 @@ class UbSwitchCaqm;
 class UbPort;
 class UbSwitchAllocator;
 class UbCongestionControl;
+class UbReliableRerouting;
+enum class UbRecoverySubmitResult : uint8_t;
 
 enum class FcType {
     CBFC,
@@ -139,6 +142,55 @@ public:
     Ptr<UbQueueManager> GetQueueManager();    // Queue Manage Unit
     void SendPacket(Ptr<Packet> p, uint32_t inPort, uint32_t outPort, uint32_t priority);
     void SendControlFrame(Ptr<Packet> packet, uint32_t portId);
+
+    /**
+     * @brief Detection completion for a failed output.
+     *
+     * Excludes the output from route selection, freezes its pending allocator work, and blocks the
+     * port from starting new transmissions. Called by the endpoint recovery component at the
+     * configured detection time.
+     */
+    void NotifyOutputDetectedFailed(uint32_t outPort);
+
+    /**
+     * @brief Admit one retained recovery packet into a healthy VOQ.
+     * @param packet Retained whole-packet copy (never a live transmission).
+     * @param inPort Original ingress port identity.
+     * @param priority Original VL/priority.
+     * @param oldOutput The detected failed output the packet was retained for.
+     * @param entryId Local attempt or backlog identity, for evidence only.
+     * @return true when the packet entered a healthy VOQ, false when ingress admission is full and
+     *         the caller must keep or park the retained packet.
+     */
+    UbRecoverySubmitResult SubmitRecoveryPacket(Ptr<Packet> packet,
+                                                uint32_t inPort,
+                                                uint32_t priority,
+                                                uint32_t oldOutput,
+                                                uint64_t entryId);
+
+    /**
+     * @brief Modeled LastAck arrival for a detected failed output.
+     *
+     * Migrates the switch-owned backlog for that output (VOQ membership and egress-queue
+     * ownership) into retained recovery storage and lets the endpoint retry its own attempts.
+     */
+    void StartOutputRecovery(uint32_t outPort);
+
+    /** True while this switch still owns retained recovery packets for the given output. */
+    bool HasPendingRecoveryFor(uint32_t outPort) const;
+
+    /** Output selected by the most recent successful recovery transfer. */
+    uint32_t GetLastRecoveryOutput() const { return m_lastRecoveryOutput; }
+
+    /** Retained work currently owned by this switch for one detected failed output. */
+    uint64_t GetPendingRecoveryPacketCount(uint32_t outPort) const;
+    uint64_t GetPendingRecoveryByteCount(uint32_t outPort) const;
+
+    bool HasDetectedFailedOutput() const { return m_detectedFailedOutput != UINT32_MAX; }
+    uint32_t GetDetectedFailedOutput() const { return m_detectedFailedOutput; }
+    uint32_t GetRecoveryTransferCountForTest() const { return m_recoveryTransferCount; }
+    uint32_t GetRecoveryResolutionCountForTest() const { return m_recoveryResolutionCount; }
+
     UbPacketType_t GetPacketTypeForTest(Ptr<Packet> packet) { return GetPacketType(packet); }
     RoutingKey GetLdstRoutingKeyForTest(Ptr<Packet> packet);
     RoutingKey GetCtpRoutingKeyForTest(Ptr<Packet> packet);
@@ -192,6 +244,18 @@ private:
         uint32_t packetBytes;
     };
 
+    struct PendingRecoveryEntry
+    {
+        Ptr<Packet> packet;
+        uint32_t inPort;
+        uint32_t priority;
+        uint32_t oldOutput;
+        uint64_t entryId;
+        bool ingressHeld{false};
+        bool outputResolved{false};
+        uint16_t selectedOutput{UINT16_MAX};
+    };
+
     void LastPacketTraversesNotify(uint32_t nodeId, UbTransportHeader ubTpHeader);
 
     void VoqInit();
@@ -237,7 +301,45 @@ private:
     void FinalizeForwardedPacketEnqueue(Ptr<Packet> packet,
                                         uint32_t inPort,
                                         uint32_t outPort,
-                                        uint32_t priority);
+                                        uint32_t priority,
+                                        bool recoveryTransfer = false);
+    void AbortNoRecoveryRoute(const RoutingKey& key,
+                              uint32_t inPort,
+                              uint32_t outPort,
+                              const std::string& packetFamily) const;
+    void PublishRecoveryBacklogCounters(uint32_t outPort);
+    void ReportForwardingRouteFailure(const RoutingKey& key, uint32_t inPort);
+    bool ResolveRecoveryOutput(Ptr<Packet> packet,
+                               uint32_t inPort,
+                               uint32_t oldOutput,
+                               uint16_t& newOutput);
+    void ParkRecoveryPacket(Ptr<Packet> packet,
+                            uint32_t inPort,
+                            uint32_t priority,
+                            bool ingressHeld);
+    void TryTransferPendingRecovery();
+    void ScheduleRecoveryWakeup();
+    void RunRecoveryWakeup();
+    void OnIngressSpaceReleased(uint32_t inPort, uint32_t priority);
+    void ClearRecoveryBacklogForOutput(uint32_t outPort);
+    bool TransferOnePendingEntry(PendingRecoveryEntry& entry);
+    void ClearOldLinkPiggybackMetadata(Ptr<Packet> packet);
+    Ptr<UbReliableRerouting> FailedOutputRerouting();
+    int ResolveURMAOutput(Ptr<Packet> packet,
+                          const ParsedURMAHeaders& headers,
+                          uint32_t inPort,
+                          RoutingKey& key,
+                          bool& selectedShortestPath);
+    int ResolveLdstOutput(Ptr<Packet> packet,
+                          const ParsedLdstHeaders& headers,
+                          uint32_t inPort,
+                          RoutingKey& key,
+                          bool& selectedShortestPath);
+    int ResolveCtpOutput(Ptr<Packet> packet,
+                         const ParsedCtpHeaders& headers,
+                         uint32_t inPort,
+                         RoutingKey& key,
+                         bool& selectedShortestPath);
     void InitAllocator(Ptr<Node> node);
     void InitQueueManager(Ptr<Node> node);
     void InitRoutingProcess(Ptr<Node> node);
@@ -258,6 +360,20 @@ private:
     uint64_t m_forcedBufferedByteResidue = 0;
     VirtualOutputQueueStorage m_voq; // on-demand VOQ groups keyed by outPort/priority
     Ptr<UbRoutingProcess> m_routingProcess;   // Router Model
+
+    uint32_t m_detectedFailedOutput{UINT32_MAX};
+    uint32_t m_lastRecoveryOutput{UINT32_MAX};
+    uint32_t m_recoveryTransferCount{0};
+    uint32_t m_recoveryResolutionCount{0};
+
+    // Retained work that the switch itself owns during recovery (never a live transmission).
+    std::vector<PendingRecoveryEntry> m_pendingRecovery;
+    EventId m_recoveryWakeup;
+    bool m_recoveryWakeupPending{false};
+    bool m_recoveryBacklogMigrated{false};
+    bool m_recoveryDisposed{false};
+    uint64_t m_nextRecoveryEntryId{0};
+    std::unordered_map<uint64_t, uint16_t> m_blockedRetryOutput;
 
     Ipv4Address m_Ipv4Addr;
     bool m_isECNEnable;

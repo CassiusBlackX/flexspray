@@ -328,5 +328,49 @@ class UbExplicitPayloadTag : public Tag
     uint8_t m_marker{1};
 };
 
+/**
+ * @brief Marks a recovered packet whose original upstream credit was already returned.
+ *
+ * The tag is local to the switch that owns the recovery transfer: the allocator consumes it when
+ * the recovered packet leaves its healthy VOQ, so it never reaches a later hop and never changes
+ * serialized bytes.
+ */
+class UbRecoveredCreditTag : public Tag
+{
+  public:
+    static TypeId GetTypeId()
+    {
+        static TypeId tid = TypeId("ns3::UbRecoveredCreditTag")
+                                .SetParent<Tag>()
+                                .AddConstructor<UbRecoveredCreditTag>();
+        return tid;
+    }
+
+    TypeId GetInstanceTypeId() const override
+    {
+        return GetTypeId();
+    }
+
+    uint32_t GetSerializedSize() const override
+    {
+        return 1;
+    }
+
+    void Serialize(TagBuffer i) const override
+    {
+        i.WriteU8(1);
+    }
+
+    void Deserialize(TagBuffer i) override
+    {
+        i.ReadU8();
+    }
+
+    void Print(std::ostream& os) const override
+    {
+        os << "RecoveredPacketWithReturnedCredit";
+    }
+};
+
 }
 #endif

@@ -21,6 +21,7 @@
 #include "ns3/ub-controller.h"
 #include "ns3/ub-switch.h"
 #include "ns3/ub-flow-control.h"
+#include "ns3/ub-reliable-rerouting.h"
 #include "ns3/ub-small-fifo-queue.h"
 
 #define TIME_TO_LIVE   64
@@ -212,6 +213,21 @@ public:
 
     uint32_t GetIfIndex() const override;
 
+    /**
+     * @brief Access this port's direction-local reliable-rerouting component.
+     *
+     * The component exists on every port and is armed only after an eligible switch-to-switch
+     * link is fully attached.
+     */
+    Ptr<UbReliableRerouting> GetReliableRerouting() const { return m_rerouting; }
+
+    /** Confirm a retained transmit attempt at the peer receipt boundary. */
+    void ConfirmTransmitAttempt(uint64_t token);
+
+    /** Block or unblock this port's output. A detected failed output never unblocks. */
+    void SetOutputBlocked(bool blocked) { m_outputBlocked = blocked; }
+    bool IsOutputBlocked() const { return m_outputBlocked; }
+
     void IncreaseRcvQueueSize(Ptr<Packet> p, Ptr<UbPort> port);
     void DecreaseRcvQueueSize(Ptr<Packet> p, uint32_t portId);
 
@@ -350,6 +366,10 @@ private:
     Ptr<UbEgressQueue> m_ubEQ;
 
     Ptr<UbLink> m_channel;
+
+    Ptr<UbReliableRerouting> m_rerouting;
+
+    bool m_outputBlocked{false};
 
     uint64_t m_txBytes;
 

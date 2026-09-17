@@ -9,6 +9,7 @@
 #include "ns3/enum.h"
 #include "ns3/internet-module.h"
 #include "ns3/ipv4-static-routing-helper.h"
+#include "ns3/ub-reliable-rerouting.h"
 #include "ns3/network-module.h"
 #include "ns3/object-factory.h"
 #include "ns3/point-to-point-module.h"
@@ -375,6 +376,14 @@ public:
                                      uint16_t initialPort,
                                      const std::vector<uint16_t>& memberPorts,
                                      const std::string& strategy);
+
+    /**
+     * @brief Trace sink for reliable-rerouting events.
+     *
+     * Writes `output/reliable_rerouting.csv` through the existing buffered trace writer when the
+     * packet-trace category is enabled. Correctness and counters never depend on this sink.
+     */
+    static void ReliableReroutingNotify(const UbReliableReroutingEvent& record);
 
     static void TpDebugStateNotify(uint32_t nodeId,
                                    uint32_t tpn,

@@ -6,6 +6,7 @@
 #include "ns3/log.h"
 #include "ns3/ub-network-address.h"
 #include "ns3/ub-caqm.h"
+#include "ns3/ub-reliable-rerouting.h"
 #include "ns3/ub-tag.h"
 #include "ns3/ub-utils.h"
 #include "ns3/ub-header.h"
@@ -343,7 +344,11 @@ UbPort::UbPort()
 {
     NS_LOG_FUNCTION(this);
     m_ubEQ = CreateObject<UbEgressQueue>();
+    m_rerouting = CreateObject<UbReliableRerouting>();
     m_sendState = SendState::READY;
+    // An unattached port is not link-up. Leaving this indeterminate let queue-only fixtures reach
+    // the transmit path with a null channel.
+    m_linkUp = false;
     m_txBytes = 0;
     m_mpiReceiveEnabled = false;
     BooleanValue val;
@@ -429,6 +434,15 @@ uint32_t UbPort::GetIfIndex() const
 void UbPort::SetSendState(SendState state)
 {
     m_sendState = state;
+}
+
+void
+UbPort::ConfirmTransmitAttempt(uint64_t token)
+{
+    if (m_rerouting != nullptr)
+    {
+        m_rerouting->ConfirmAttempt(token);
+    }
 }
 
 void UbPort::CreateAndInitFc(FcType type)
@@ -519,6 +533,12 @@ void UbPort::DequeuePacket(void)
 {
     NS_ASSERT_MSG(!m_ubEQ->IsEmpty(), "No packets can be sent! NodeId: "<< GetNode()->GetId()
         << " PortId: " << m_portId);
+    if (m_outputBlocked)
+    {
+        // A detected failed output keeps its egress backlog for recovery; it must not dequeue.
+        NS_LOG_DEBUG("[UbPort DequeuePacket] output blocked; retaining egress backlog");
+        return;
+    }
     m_sendState = SendState::BUSY;
 
     auto [inPortId, priority, packet] = m_ubEQ->DoDequeue();
@@ -787,11 +807,20 @@ void UbPort::TransmitPacket(Ptr<Packet> packet, Time delay)
     // changes this packet's own serialization time.
     Time txCompleteTime = txTime + m_tInterframeGap + ComputePacketRateNobTime(packet);
 
+    // Retain an independent whole-packet copy at the actual send boundary so a failed link can
+    // recover an attempt that the peer never completely received. The token is local simulator
+    // metadata; it is never serialized and is unrelated to TCP-style PSNs or Packet::GetUid().
+    const uint64_t attemptToken =
+        m_rerouting != nullptr
+            ? m_rerouting->CreateAttempt(packet, m_currentInPortId, m_currentPriority)
+            : 0;
+
     // Try to start transmission on the channel first. Only if it succeeds
     // should we schedule the TransmitComplete event and notify traces.
-    bool result = m_channel->TransmitStart(packet, this, txTime);
+    bool result = m_channel->TransmitStart(packet, this, txTime, attemptToken);
     if (result == false) {
         NS_LOG_WARN("Channel transmission failed! Packet dropped at Node " << GetNode()->GetId() << " Port " << m_portId);
+        ConfirmTransmitAttempt(attemptToken);
         // Reset port state so it won't remain BUSY and try next packet
         m_sendState = SendState::READY;
         m_currentPkt = nullptr;
@@ -965,6 +994,11 @@ void UbPort::TriggerTransmit()
         NS_LOG_DEBUG("[UbPort TriggerTransmit] m_linkUp");
         return;
     } // if link is down, return
+    if (m_outputBlocked) {
+        // Detection stops new sends; the retained backlog waits for the modeled LastAck.
+        NS_LOG_DEBUG("[UbPort TriggerTransmit] output blocked");
+        return;
+    }
     if (IsBusy()) {
         if (m_ubEQ->IsEmpty()) {
             Ptr<UbSwitch> ubSwitch = GetNode()->GetObject<UbSwitch>();
@@ -991,6 +1025,9 @@ void UbPort::TriggerTransmit()
 
 void UbPort::NotifyAllocationFinish()
 {
+    if (m_outputBlocked) {
+        return;
+    }
     if (IsBusy()) {
         return;
     }
@@ -1124,6 +1161,8 @@ void UbPort::DoDispose()
     m_ubEQ = nullptr;
     m_channel = nullptr;
     m_currentPkt = nullptr;
+    m_rerouting = nullptr;
+    m_outputBlocked = false;
     m_datalink = nullptr;
     m_flowControl = nullptr;
     m_mpiReceiveEnabled = false;
