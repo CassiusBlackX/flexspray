@@ -42,9 +42,12 @@ retransmission paths. No push or remote merge has been performed.
 - `python3.12 -m unittest discover -s tests/openusim_skills -p test_skill_docs.py`:
   20 tests PASS.
 - `git diff --check`: PASS.
-- `unified-bus-tp-reservation`: process exited with SIGSEGV; diagnosis pending.
+- `unified-bus-tp-reservation`: 30 consecutive runs passed, 15 cases each, after
+  limiting its concurrent Ptr-copy fixture to NS3_MTP (atomic reference counts).
+  Raw stdout/stderr and exit files verified in `/tmp/next-main-reservation-repeat/`.
+  The main 234-case suite and five-case retransmission/CC suite passed again.
   LLDB affects fork-based tests; debugger runs with skipped functions are diagnostic
-  only and must not be counted as passing tests.
+  only and are not counted as passing tests. Temporary core diagnostic logging removed.
 
 Logs: `/tmp/next-main-*.log`. The historical main-next performance matrix was not rerun;
 this candidate has not been tested with MPI/MTP or Windows.

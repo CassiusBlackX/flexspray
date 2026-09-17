@@ -29355,8 +29355,11 @@ UbTpReservationTestSuite::UbTpReservationTestSuite()
 #ifndef _WIN32
     AddTestCase(new UbInboundTpChannelKeyValidationTest(), TestCase::Duration::QUICK);
 #endif
+#ifdef NS3_MTP
+    // Concurrent Ptr copies require the atomic reference counts in an MTP build.
     AddTestCase(new UbConcurrentReservedReceiverTpnMaterializationTest(),
                 TestCase::Duration::QUICK);
+#endif
     AddTestCase(new UbRepeatedTpResolutionReusesReservationTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbUnreservedReceiverTpnDoesNotMaterializeTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbExplicitTpDestroyDrainsAndRematerializesTest(),

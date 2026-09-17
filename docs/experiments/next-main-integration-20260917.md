@@ -12,6 +12,8 @@ It does not include GitHub `feat/ub2.1-atomic`.
 - Carry main's reserved transport opcode drop accounting and rejection test.
 - Carry main's current contact QR code and round-robin knowledge card.
 - Guard MTP-only references in an existing test so a non-MTP test build compiles.
+- Register the concurrent receiver-materialization test only with MTP, which enables
+  atomic ns-3 reference counts. Sequential idempotence coverage remains enabled.
 
 ## Environment and commands
 
@@ -46,12 +48,21 @@ the compile guards correct this test-only issue.
 | unified-bus-create-node-delay-mapping | 4 cases passed |
 | unified-bus-examples-smoke | 6 cases passed |
 | OpenUSim skill documentation | 20 tests passed |
-| unified-bus-tp-reservation | SIGSEGV; diagnosis pending |
+| unified-bus-tp-reservation | 30 consecutive runs passed, 15 cases per run |
 
 Suite counts overlap because focused suites reuse cases from broader suites.
 The new GBN timeout case checks outstanding payload rollback, unchanged new-data PSN,
 retry cursor placement, restored byte accounting after retry, final ACK convergence,
 and an empty retry window.
+
+The first reservation-suite runs exposed an intermittent crash in the 16-thread
+receiver-materialization fixture (one failure in five diagnostic runs). The fixture
+copies shared `Ptr` objects concurrently, whereas `SimpleRefCount` uses a plain
+`uint32_t` without `NS3_MTP`. Restricting that concurrent fixture to MTP matches its
+reference-counting prerequisite. After rebuilding, 30 sequential suite runs passed;
+the 234-case main suite and five-case retransmission/CC suite also passed again.
+Exit-code files and stdout/stderr logs were checked under
+`/tmp/next-main-reservation-repeat/`. Temporary per-test diagnostic logging was removed.
 
 The historical main/next performance matrix has not been rerun. This verification
 does not establish MPI/MTP or Windows compatibility. LLDB changes fork-test behavior;
