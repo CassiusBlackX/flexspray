@@ -31,6 +31,7 @@ its topology input or needs a manual route table.
 - `node.csv` `forwardDelay` maps to `ns3::UbSwitch::InPortProcessingDelay`.
 - `node.csv` `allocationDelay` maps to `ns3::UbSwitchAllocator::AllocationTime`.
 - `forwardDelay` is fixed non-blocking in-port processing latency after route/output are known and before a forwarded packet becomes visible in VOQ to the allocator.
+- Buffer Occupancy includes processing + VOQ + egress queued bytes. DCQCN/CAQM use Queue Backlog (VOQ + egress), excluding processing. Ingress admission and PFC still account for processing residency.
 - `allocationDelay` is allocator arbitration latency. It is the only CSV field that overrides `AllocationTime`.
 - Do not use `forwardDelay` to model allocator scheduling delay.
 

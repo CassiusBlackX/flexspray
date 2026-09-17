@@ -364,6 +364,7 @@ Notes on `forwardDelay`:
 - **Meaning**: `forwardDelay` sets fixed non-blocking in-port processing latency after route/output are known and before the packet becomes visible in VOQ to the allocator.
 - **Code mapping**: when present, `UbUtils::CreateNode()` applies this value as `UbSwitch::InPortProcessingDelay`.
 - **Mechanism**: this delay is non-serial. Bytes are visible to existing ingress/outPort/switch-total buffer queries during processing, but the allocator cannot schedule the packet until processing completes.
+- **Congestion feedback**: DCQCN/CAQM use Queue Backlog (VOQ + egress queued bytes), excluding these processing bytes. Buffer Occupancy (processing + VOQ + egress) and ingress admission still include them.
 - **Scope**: Applies to both `SWITCH` nodes and `DEVICE` nodes.
 - **Format**: use ns-3 Time literals (e.g. `10ns`, `1us`, `1ms`).
 - **Example**: `0,SWITCH,4,10ns,` sets `InPortProcessingDelay` to `10ns` for node `0`.
