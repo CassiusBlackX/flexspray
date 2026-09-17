@@ -26,6 +26,7 @@ Do not hardcode switch names in experiment specs or agent logic.
   lifecycle output to `OFF`; lifecycle correctness accounting remains enabled.
 - `trace/debug` mode is an attribute overlay on `network_attribute.txt`, not a separate simulation result.
 - `UB_QUEUE_TRACE_ENABLE` gates queue trace files such as `QueueTrace_*` from queue events and periodic sampling.
+- `QueueTrace` includes processing residency in output-port occupancy; DCQCN/CAQM Queue Backlog includes only VOQ and egress queued bytes.
 - `UB_PACKET_TRACE_ENABLE` gates packet timing files such as `PacketTrace_node_*.tr`,
   including CTP first-send and last-ACK rows.
 - `QueueTrace_*` can include ingress queue occupancy rows with the `ingress` marker when `UB_QUEUE_TRACE_ENABLE` is enabled.

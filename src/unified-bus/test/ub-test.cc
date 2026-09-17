@@ -18943,11 +18943,23 @@ class UbQueueManagerTotalBufferedBytesTracksEgressTransferTest : public TestCase
         constexpr uint32_t kPriority = 1;
 
         fixture.sw->SendPacket(Create<Packet>(kPacketBytes), kIngressPort, kEgressPort, kPriority);
+        NS_TEST_ASSERT_MSG_EQ(fixture.queueManager->GetOutPortBufferOccupancyBytes(kEgressPort),
+                              512u, "VOQ packet should count in Buffer Occupancy");
+        NS_TEST_ASSERT_MSG_EQ(fixture.queueManager->GetOutPortQueueBacklogBytes(kEgressPort),
+                              512u, "VOQ packet should count in Queue Backlog");
         NS_TEST_ASSERT_MSG_EQ(fixture.queueManager->GetSwitchBufferOccupancy().total_buffered_bytes,
                               static_cast<uint64_t>(kPacketBytes),
                               "VOQ enqueue should contribute to total buffered bytes");
 
         fixture.sw->GetAllocator()->AllocateNextPacket(fixture.ports[kEgressPort]);
+        NS_TEST_ASSERT_MSG_EQ(fixture.queueManager->GetOutPortBufferOccupancyBytes(kEgressPort),
+                              512u, "VOQ to egress transfer should preserve Buffer Occupancy");
+        NS_TEST_ASSERT_MSG_EQ(fixture.queueManager->GetOutPortQueueBacklogBytes(kEgressPort),
+                              512u, "VOQ to egress transfer should count queued bytes once");
+        NS_TEST_ASSERT_MSG_EQ(fixture.queueManager->GetOutPortBufferOccupancyBytes(kIngressPort),
+                              0u, "An ingress port is not the packet's output-port occupancy");
+        NS_TEST_ASSERT_MSG_EQ(fixture.queueManager->GetOutPortQueueBacklogBytes(kIngressPort),
+                              0u, "Egress bytes must not leak into another output port's backlog");
         NS_TEST_ASSERT_MSG_EQ(fixture.queueManager->GetSwitchBufferOccupancy().total_buffered_bytes,
                               static_cast<uint64_t>(kPacketBytes),
                               "moving a packet from VOQ to egress should preserve total buffered bytes");
@@ -18958,6 +18970,10 @@ class UbQueueManagerTotalBufferedBytesTracksEgressTransferTest : public TestCase
         fixture.ports[kEgressPort]->SetFaultCallBack(MakeCallback(&ConsumeEgressPacketForTest));
         fixture.ports[kEgressPort]->NotifyLinkUp();
         fixture.ports[kEgressPort]->TriggerTransmit();
+        NS_TEST_ASSERT_MSG_EQ(fixture.queueManager->GetOutPortBufferOccupancyBytes(kEgressPort),
+                              0u, "Transmitting bytes no longer occupy the egress queue");
+        NS_TEST_ASSERT_MSG_EQ(fixture.queueManager->GetOutPortQueueBacklogBytes(kEgressPort),
+                              0u, "Transmitting bytes are not queued backlog");
         NS_TEST_ASSERT_MSG_EQ(fixture.queueManager->GetSwitchBufferOccupancy().total_buffered_bytes,
                               0u,
                               "egress dequeue should release total buffered bytes");
@@ -18993,6 +19009,13 @@ class UbQueueManagerInPortProcessingAccountingTest : public TestCase
 
         queueManager->PushToInPortProcessing(kInPort, kOutPort, kPriority, kPacketBytes);
 
+        NS_TEST_ASSERT_MSG_EQ(queueManager->GetOutPortBufferOccupancyBytes(kOutPort),
+                              120u, "Processing bytes consume Buffer Occupancy");
+        NS_TEST_ASSERT_MSG_EQ(queueManager->GetOutPortQueueBacklogBytes(kOutPort),
+                              0u, "Processing bytes are not queued backlog");
+        NS_TEST_ASSERT_MSG_EQ(queueManager->CheckInPortSpace(kInPort, kPriority, 400),
+                              false, "Processing bytes must still limit ingress admission");
+
         NS_TEST_ASSERT_MSG_EQ(queueManager->GetQueueIngressNonHeadroomBytes(kInPort, kPriority),
                               static_cast<uint64_t>(kPacketBytes),
                               "processing bytes should consume ingress admission exactly once");
@@ -19013,6 +19036,11 @@ class UbQueueManagerInPortProcessingAccountingTest : public TestCase
                               "processing bytes should count in switch total occupancy");
 
         queueManager->MoveInPortProcessingToVoq(kInPort, kOutPort, kPriority, kPacketBytes);
+
+        NS_TEST_ASSERT_MSG_EQ(queueManager->GetOutPortBufferOccupancyBytes(kOutPort),
+                              120u, "Processing to VOQ must preserve Buffer Occupancy");
+        NS_TEST_ASSERT_MSG_EQ(queueManager->GetOutPortQueueBacklogBytes(kOutPort),
+                              120u, "Processing to VOQ makes bytes eligible queued backlog");
 
         NS_TEST_ASSERT_MSG_EQ(queueManager->GetQueueIngressNonHeadroomBytes(kInPort, kPriority),
                               static_cast<uint64_t>(kPacketBytes),
@@ -19051,6 +19079,138 @@ class UbQueueManagerInPortProcessingAccountingTest : public TestCase
         Simulator::Destroy();
         Config::Reset();
     }
+};
+
+class UbDcqcnProcessingBytesDoNotMarkTest : public TestCase
+{
+  public:
+    UbDcqcnProcessingBytesDoNotMarkTest()
+        : TestCase("UnifiedBus - DCQCN excludes processing bytes but marks queued backlog")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(true));
+        GlobalValue::Bind("UB_CC_ALGO", StringValue("DCQCN"));
+        Config::SetDefault("ns3::UbSwitchDcqcn::KminBytes", UintegerValue(1024));
+        Config::SetDefault("ns3::UbSwitchDcqcn::KmaxBytes", UintegerValue(2048));
+        Config::SetDefault("ns3::UbSwitchDcqcn::Pmax", DoubleValue(1.0));
+        auto fixture = CreateMultiPortSwitchFixture(FcType::NONE, 2, 8192, 0, 0, 16, 0, {});
+        Ptr<UbCongestionControl> cc = UbCongestionControl::Create(UB_SWITCH);
+        cc->OnSwitchAttached(fixture.sw);
+        fixture.sw->SetAttribute("InPortProcessingDelay", TimeValue(NanoSeconds(500)));
+        Ptr<Packet> processing = MakePacket(4096);
+        fixture.sw->SendPacket(processing, 0, 1, 1);
+
+        fixture.sw->SetAttribute("InPortProcessingDelay", TimeValue(NanoSeconds(0)));
+        Ptr<Packet> ready = MakePacket(128);
+        fixture.sw->SendPacket(ready, 0, 1, 1);
+        NS_TEST_ASSERT_MSG_EQ(IsMarked(ready), false,
+                              "A small ready queue must not be marked due to processing bytes");
+
+        Simulator::Stop(NanoSeconds(501));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(IsMarked(processing), true,
+                              "The same bytes must trigger marking once they enter VOQ");
+
+        fixture.sw->GetAllocator()->AllocateNextPacket(fixture.ports[1]);
+        fixture.sw->GetAllocator()->AllocateNextPacket(fixture.ports[1]);
+        NS_TEST_ASSERT_MSG_EQ(fixture.queueManager->GetTotalOutPortBufferUsed(1), 0u,
+                              "Both packets should have moved to egress");
+        Ptr<Packet> behindEgress = MakePacket(128);
+        fixture.sw->SendPacket(behindEgress, 0, 1, 1);
+        NS_TEST_ASSERT_MSG_EQ(IsMarked(behindEgress), true,
+                              "Egress queued bytes must still trigger DCQCN marking");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    static Ptr<Packet> MakePacket(uint32_t payloadBytes)
+    {
+        Ptr<Packet> packet = Create<Packet>(payloadBytes);
+        UbIpBasedNetworkHeader network;
+        network.SetMode(0);
+        network.SetC(0);
+        network.SetI(0);
+        network.SetHint(0);
+        packet->AddHeader(network);
+        UbDatalinkPacketHeader datalink;
+        datalink.SetConfig(static_cast<uint8_t>(UbDatalinkHeaderConfig::PACKET_IPV4));
+        datalink.SetPacketVL(1);
+        packet->AddHeader(datalink);
+        return packet;
+    }
+
+    static bool IsMarked(Ptr<Packet> packet)
+    {
+        Ptr<Packet> copy = packet->Copy();
+        UbDatalinkPacketHeader datalink;
+        UbIpBasedNetworkHeader network;
+        copy->RemoveHeader(datalink);
+        copy->PeekHeader(network);
+        return network.GetMode() == 0b100 && network.GetFecn() != 0;
+    }
+};
+
+class UbCaqmProcessingBytesDoNotMarkTest : public TestCase
+{
+  public:
+    explicit UbCaqmProcessingBytesDoNotMarkTest(bool queued)
+        : TestCase(queued ? "UnifiedBus - CAQM accounts queued backlog in congestion credit"
+                          : "UnifiedBus - CAQM excludes processing bytes from congestion credit"),
+          m_queued(queued)
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(true));
+        GlobalValue::Bind("UB_CC_ALGO", StringValue("CAQM"));
+        Config::SetDefault("ns3::UbCaqm::UbCaqmQt", UintegerValue(4096));
+        Config::SetDefault("ns3::UbCaqm::UbCaqmLambda", DoubleValue(1.0));
+        Config::SetDefault("ns3::UbCaqm::UbMarkProbability", DoubleValue(1.0));
+        Config::SetDefault("ns3::UbSwitchCaqm::UbCcUpdatePeriod", TimeValue(NanoSeconds(500)));
+        auto fixture = CreateMultiPortSwitchFixture(FcType::NONE, 2, 8192, 0, 0, 16, 0, {});
+        fixture.ports[1]->SetDataRate(DataRate("16Gbps"));
+        Ptr<UbSwitchCaqm> cc = DynamicCast<UbSwitchCaqm>(UbCongestionControl::Create(UB_SWITCH));
+        cc->OnSwitchAttached(fixture.sw);
+        fixture.sw->SetAttribute("InPortProcessingDelay",
+                                 TimeValue(m_queued ? NanoSeconds(0) : NanoSeconds(500)));
+        fixture.sw->SendPacket(Create<Packet>(4000), 0, 1, 1);
+
+        // One period supplies 1000 bytes and Qt supplies 4096. A 4096-byte
+        // request fits with processing only, but not with 4000 queued bytes.
+        cc->ResetLocalCc();
+        Ptr<Packet> request = Create<Packet>(128);
+        UbIpBasedNetworkHeader network;
+        network.SetMode(0);
+        network.SetC(0);
+        network.SetI(1);
+        network.SetHint(128);
+        request->AddHeader(network);
+        UbDatalinkPacketHeader datalink;
+        datalink.SetConfig(static_cast<uint8_t>(UbDatalinkHeaderConfig::PACKET_IPV4));
+        datalink.SetPacketVL(1);
+        request->AddHeader(datalink);
+        cc->OnSwitchPostDequeue(0, 1, request);
+        request->RemoveHeader(datalink);
+        request->PeekHeader(network);
+        NS_TEST_ASSERT_MSG_EQ(network.GetC(), (m_queued ? 1u : 0u),
+                              "CAQM should mark only when actual queued backlog consumes credit");
+        NS_TEST_ASSERT_MSG_EQ(network.GetI(), (m_queued ? 0u : 1u),
+                              "Processing alone must not suppress the requested window increase");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+  private:
+    bool m_queued;
 };
 
 class UbSwitchInPortProcessingDelayHidesPacketFromAllocatorTest : public TestCase
@@ -28750,6 +28910,9 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbDcqcnHostAckCeTphDefaultTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCaqmHostRttUsesSmoothedEstimateTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnCnpHeaderRoundTripTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbDcqcnProcessingBytesDoNotMarkTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCaqmProcessingBytesDoNotMarkTest(false), TestCase::Duration::QUICK);
+    AddTestCase(new UbCaqmProcessingBytesDoNotMarkTest(true), TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnSwitchMarksFecnTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnSwitchNoMarkPreservesPacketHeadersTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnSwitchMarksAboveKmaxEvenWhenPmaxIsZeroTest(), TestCase::Duration::QUICK);
@@ -29623,6 +29786,9 @@ static UbFlowControlTestSuite g_ubFlowControlTestSuite;
 UbCongestionControlTestSuite::UbCongestionControlTestSuite()
     : TestSuite("unified-bus-congestion-control", Type::UNIT)
 {
+    AddTestCase(new UbCaqmProcessingBytesDoNotMarkTest(false), TestCase::Duration::QUICK);
+    AddTestCase(new UbCaqmProcessingBytesDoNotMarkTest(true), TestCase::Duration::QUICK);
+    AddTestCase(new UbDcqcnProcessingBytesDoNotMarkTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnHostAckCeTphDefaultTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCaqmHostRttUsesSmoothedEstimateTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbDcqcnSwitchMarksFecnTest(), TestCase::Duration::QUICK);

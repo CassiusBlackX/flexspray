@@ -136,8 +136,14 @@ public:
     /** OutPort视图：某(outPort, priority)的buffer占用 */
     uint64_t GetOutPortBufferUsed(uint32_t outPort, uint32_t priority);
     
-    /** OutPort视图：某outPort所有优先级的总buffer占用 */
+    /** Legacy out-port view: processing + VOQ bytes, excluding egress. */
     uint64_t GetTotalOutPortBufferUsed(uint32_t outPort) const;
+
+    /** Buffer Occupancy: processing + VOQ + egress queued bytes for one out port. */
+    uint64_t GetOutPortBufferOccupancyBytes(uint32_t outPort) const;
+
+    /** Queue Backlog: VOQ + egress queued bytes, excluding fixed processing latency. */
+    uint64_t GetOutPortQueueBacklogBytes(uint32_t outPort) const;
     
     uint32_t GetReservePerQueueBytes() const { return m_reservePerQueueBytes; }
     void SetReservePerQueueBytes(uint32_t size);
@@ -171,6 +177,7 @@ private:
     uint64_t GetPaperPauseThresholdBytes(uint64_t totalBufferedBytes) const;
     uint64_t GetPaperResumeThresholdBytes(uint64_t totalBufferedBytes) const;
     uint64_t GetSwitchTotalBufferedBytes() const;
+    uint64_t GetOutPortEgressBytes(uint32_t outPort) const;
     void UpdateIngressAdmission(uint32_t inPort, uint32_t priority, uint32_t pSize);
     void RemoveFromIngressAdmission(uint32_t inPort, uint32_t priority, uint32_t pSize);
 
