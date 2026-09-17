@@ -36705,15 +36705,15 @@ class UbQuickExampleSystemTestSuite : public TestSuite
                     TestCase::Duration::QUICK);
         AddTestCase(new UbQuickExampleLocalDependentDagSingleThreadSystemTest(),
                     TestCase::Duration::QUICK);
-        AddTestCase(new UbQuickExampleLocalDependentDagMtpRedSystemTest(),
-                    TestCase::Duration::QUICK);
         AddTestCase(new UbQuickExampleInvalidTrafficPrioritySystemTest(),
                     TestCase::Duration::QUICK);
         AddTestCase(new UbQuickExampleLocalDependencyVisibilityDelaySystemTest(),
                     TestCase::Duration::QUICK);
+#ifdef NS3_MTP
+        AddTestCase(new UbQuickExampleLocalDependentDagMtpRedSystemTest(),
+                    TestCase::Duration::QUICK);
         AddTestCase(new UbQuickExampleMtpDependencyVisibilityDelaySystemTest(),
                     TestCase::Duration::QUICK);
-#ifdef NS3_MTP
         AddTestCase(new UbQuickExampleMtpZeroDependencyVisibilityDelaySystemTest(),
                     TestCase::Duration::QUICK);
         AddTestCase(new UbQuickExampleLocalMtpSystemTest(), TestCase::Duration::QUICK);
@@ -36724,15 +36724,17 @@ class UbQuickExampleSystemTestSuite : public TestSuite
                     TestCase::Duration::QUICK);
 #endif
 #ifdef NS3_MPI
-        AddTestCase(new UbQuickExampleHybridEmptyRankSystemTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbQuickExampleMpiDependencyVisibilityDelaySystemTest(),
                     TestCase::Duration::QUICK);
         AddTestCase(new UbQuickExampleMpiZeroDependencyVisibilityDelaySystemTest(),
                     TestCase::Duration::QUICK);
+#ifdef NS3_MTP
+        AddTestCase(new UbQuickExampleHybridEmptyRankSystemTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbQuickExampleHybridDependencyVisibilityDelaySystemTest(),
                     TestCase::Duration::QUICK);
         AddTestCase(new UbQuickExampleCanonicalOutputMatchesMpiSystemTest(),
                     TestCase::Duration::QUICK);
+#endif
         AddTestCase(new UbQuickExampleSpoofedMpiEnvSystemTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbQuickExampleMpiSystemTest("UnifiedBus - ub-quick-example runs MPI minimal case",
                                                     "scratch/ub-mpi-minimal",
@@ -36742,6 +36744,7 @@ class UbQuickExampleSystemTestSuite : public TestSuite
                                                     "scratch/ub-mpi-minimal",
                                                     "--mtp-threads=1"),
                     TestCase::Duration::QUICK);
+#ifdef NS3_MTP
         AddTestCase(new UbQuickExampleMpiSystemTest("UnifiedBus - ub-quick-example runs hybrid minimal case",
                                                     "scratch/ub-mpi-minimal",
                                                     "--mtp-threads=2"),
@@ -36754,6 +36757,7 @@ class UbQuickExampleSystemTestSuite : public TestSuite
                                                     "scratch/ub-mpi-minimal",
                                                     "--mtp-threads=2"),
                     TestCase::Duration::QUICK);
+#endif
         AddTestCase(new UbQuickExampleMpiCrossRankPhaseDependencySystemTest(),
                     TestCase::Duration::QUICK);
 #endif
@@ -36783,8 +36787,10 @@ class UbQuickExampleMpiDependencyVisibilityFocusedTestSuite : public TestSuite
     {
         AddTestCase(new UbQuickExampleMpiDependencyVisibilityDelaySystemTest(),
                     TestCase::Duration::QUICK);
+#ifdef NS3_MTP
         AddTestCase(new UbQuickExampleHybridDependencyVisibilityDelaySystemTest(),
                     TestCase::Duration::QUICK);
+#endif
     }
 };
 
