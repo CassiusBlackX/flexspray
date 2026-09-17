@@ -108,6 +108,52 @@ CFG9 is the default of the `HeaderConfig` attribute on `UbLdstApi` and `UbLdstEn
 
 ---
 
+## Release 2.0.0
+
+**Release Date**: September 2026
+
+This release focuses on the topology and routing tooling for large-scale simulation, runtime resource management, and switch scheduling, and completes port-level traffic configuration and collective-communication workload generation.
+
+### New Features
+
+- **Structured topology and routing**: Simulation cases can be generated from Python, JSON/YAML, or existing CSV topologies, removing the need for large intermediate topology and routing CSV files. Structural rules, physical graph, and hybrid route generation are supported, and a run can use either compressed table lookup or structural rule evaluation.
+- **Explicit resource lifecycle management**: Jetty and TP connection destroy, drain, and resource reclamation are completed, including cleanup after a task finishes, reducing connection state that otherwise stays resident across dense, multi-phase communication.
+- **Port-level traffic configuration**: Traffic files accept the optional `srcPortId` and `dstPortId` fields to select communication endpoint ports, distinguishing a wildcard port from an explicit port 0. The existing nine-column traffic format remains supported.
+- **Collective communication and a unified tool entry point**: Semantic collective-communication scheduling is integrated, and topology generation, traffic generation, case checking, and trace parsing now share one entry point, simplifying experiment preparation.
+
+### Simulation Engine Improvements
+
+- Optimized switch arbitration completion and wakeup logic, reducing duplicate scheduling events and per-packet processing overhead.
+- Compacted the TP connection index and reservation state, and streamlined resource ownership and cleanup paths.
+- Improved candidate selection among equally loaded paths in adaptive routing by breaking ties with a hash.
+
+### Key Fixes
+
+- Fixed C-AQM in-flight byte accounting during GBN timeout retransmission, keeping the counters consistent while retransmission and acknowledgement converge.
+- Fixed deficit rollback in DWRR when a preselected grant is blocked by flow control or egress capacity.
+- Separated queue backlog from buffer occupancy statistics, correcting accounting errors caused by conflating the two.
+- Corrected the TPNAK packet format and completed rejection and counting for reserved transport opcodes.
+- Fixed lifecycle accounting when bidirectional traffic shares a TP connection, along with connection destroy, remote cleanup, and teardown callback issues.
+
+### Compatibility and Migration
+
+- Existing CSV cases remain supported. Structured cases use the new generation and run entry points; migration is optional.
+- The default switch arbitration time is now **5 ns**, and the traffic dependency notification delay is uniformly **100 ns**. These are simulation modeling parameters; set them explicitly when reproducing experiments.
+- Parallel dependency DAGs do not accept an explicitly set `0 ns` dependency visibility delay.
+- Changes in scheduling order and route selection can affect completion times and per-packet paths; use identical configuration and measurement conventions when comparing across versions.
+
+### Validation
+
+Based on the merge validation record for this main integration, under macOS arm64, AppleClang, a release build, and MPI/MTP disabled:
+
+- The main Unified Bus suite passed **234 cases**, along with focused suites for retransmission, congestion control, lifecycle, switch queues, and example smoke tests.
+- The TP reservation suite passed **30 consecutive runs**, 15 cases each.
+- OpenUSim documentation checks passed **20 items**.
+
+Focused suites overlap with the main suite, so these counts do not add up to an independent total. This integration validation did not cover MPI/MTP or Windows, and did not re-run the performance matrix on the final commit, so this note lists no 2.0.0 performance percentages.
+
+---
+
 ## Release 1.3.0
 
 **Release Date**: July 2026
