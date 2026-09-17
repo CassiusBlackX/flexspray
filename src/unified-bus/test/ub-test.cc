@@ -28202,20 +28202,28 @@ class UbAllocatorDirectCompletionStartsIdlePortTest : public TestCase
     void DoRun() override
     {
         Config::Reset();
+        const Time allocationTime = NanoSeconds(10);
+        Config::SetDefault("ns3::UbSwitchAllocator::AllocationTime", TimeValue(allocationTime));
         auto fixture = CreateSinglePortPfcFixture(FcType::NONE, 1024, 0, 0, 0, 0, 0, 0);
         fixture.sw->SetCongestionCtrl(CreateObject<UbCongestionControl>());
         fixture.port->SetFaultCallBack(MakeCallback(&ConsumeEgressPacketForTest));
         fixture.port->NotifyLinkUp();
 
         fixture.sw->SendPacket(Create<Packet>(128), 0, 0, 1);
-        fixture.sw->GetAllocator()->AllocateNextPacket(fixture.port);
-
-        NS_TEST_ASSERT_MSG_EQ(fixture.port->GetUbQueue()->IsEmpty(),
-                              true,
-                              "Default direct completion should synchronously drain an idle port");
-        NS_TEST_ASSERT_MSG_EQ(fixture.port->IsBusy(),
-                              true,
-                              "Direct completion should enter the port send state immediately");
+        // Observe after the owned allocation callback, before any notification it could schedule.
+        Simulator::Schedule(allocationTime, [this, fixture]() {
+            NS_TEST_ASSERT_MSG_EQ(fixture.port->GetUbQueue()->IsEmpty(),
+                                  true,
+                                  "Default direct completion should synchronously drain an idle port");
+            NS_TEST_ASSERT_MSG_EQ(fixture.port->IsBusy(),
+                                  true,
+                                  "Direct completion should enter the port send state immediately");
+            NS_TEST_ASSERT_MSG_EQ(fixture.sw->GetAllocator()->GetPendingEventCountForTest(),
+                                  1u,
+                                  "Direct completion should leave only the deadlock check pending");
+        });
+        Simulator::Stop(allocationTime + NanoSeconds(1));
+        Simulator::Run();
 
         Simulator::Destroy();
         Config::Reset();
@@ -28233,6 +28241,8 @@ class UbAllocatorScheduledCompletionCompatibilityTest : public TestCase
     void DoRun() override
     {
         Config::Reset();
+        const Time allocationTime = NanoSeconds(10);
+        Config::SetDefault("ns3::UbSwitchAllocator::AllocationTime", TimeValue(allocationTime));
         Config::SetDefault("ns3::UbSwitchAllocator::EnableDirectAllocationCompletion",
                            BooleanValue(false));
         auto fixture = CreateSinglePortPfcFixture(FcType::NONE, 1024, 0, 0, 0, 0, 0, 0);
@@ -28241,16 +28251,21 @@ class UbAllocatorScheduledCompletionCompatibilityTest : public TestCase
         fixture.port->NotifyLinkUp();
 
         fixture.sw->SendPacket(Create<Packet>(128), 0, 0, 1);
-        fixture.sw->GetAllocator()->AllocateNextPacket(fixture.port);
-
-        NS_TEST_ASSERT_MSG_EQ(fixture.port->GetUbQueue()->GetCurrentBytes(),
-                              128u,
-                              "Compatibility mode should retain the zero-delay completion boundary");
         NS_TEST_ASSERT_MSG_EQ(
             fixture.sw->GetAllocator()->GetPendingEventCountForTest(),
-            3u,
-            "Scheduled mode should own deadlock, allocation, and port notification events");
-        Simulator::Stop(NanoSeconds(1));
+            2u,
+            "Packet enqueue should own deadlock and one allocation event");
+        // Same-time FIFO places this probe between allocation and its ScheduleNow notification.
+        Simulator::Schedule(allocationTime, [this, fixture]() {
+            NS_TEST_ASSERT_MSG_EQ(fixture.port->GetUbQueue()->GetCurrentBytes(),
+                                  128u,
+                                  "Compatibility mode should retain the zero-delay completion boundary");
+            NS_TEST_ASSERT_MSG_EQ(
+                fixture.sw->GetAllocator()->GetPendingEventCountForTest(),
+                2u,
+                "Completed allocation should leave deadlock and port notification events");
+        });
+        Simulator::Stop(allocationTime + NanoSeconds(1));
         Simulator::Run();
         NS_TEST_ASSERT_MSG_EQ(fixture.port->GetUbQueue()->IsEmpty(),
                               true,
