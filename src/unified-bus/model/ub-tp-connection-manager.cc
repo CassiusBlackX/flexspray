@@ -1749,9 +1749,10 @@ TpConnectionManager::ReserveNewTpConnections(uint32_t src,
             }
         }
     }
-    // 如果为空，则判错，路由有问题。不考虑省略host路由的情况
     if (routingEntries.empty()) {
-        NS_ASSERT_MSG(0, "Invalid routing! Traffic can't arrive!");
+        // Reservation may find no eligible route. GetTpns rejects an empty result
+        // when a caller requires a connection for actual traffic.
+        return tpns;
     }
     for (auto it = routingEntries.begin(); it != routingEntries.end(); it++) {
         Ipv4Address dstIp = it->first;
