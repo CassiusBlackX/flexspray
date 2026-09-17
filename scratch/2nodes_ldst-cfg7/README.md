@@ -44,8 +44,8 @@ python3 scratch/2nodes_ldst-cfg7/test_verify_results.py
 
 `prepare_run.py` 将旧 runlog/output、runner 证据和起始记录移入唯一 history 子目录，
 随后记录本次起始时间和五个输入文件的 SHA256。校验器只读取当前输出；不要跳过准备
-步骤，也不要在运行后重新生成输入。成功证据副本位于
-`../../.scratch/ldst-cfg7/evidence/scratch-success/`。
+步骤，也不要在运行后重新生成输入。成功证据副本原先存放在
+`.scratch/ldst-cfg7/evidence/scratch-success/`，该目录已不再随仓库保留（可从 Git 历史恢复）。
 
 校验器要求固定集合 `{0,1,2,3}` 各有一次开始、一次完成；检查原始时间及 parser 摘要
 一致、首包/末 ACK 的因果顺序、Switch 2 两个端口均有收发、输入摘要及输出新鲜度、
@@ -62,7 +62,8 @@ runner 退出 0 和成功阶段标记、没有错误或丢包信息。本用例�
 ```bash
 source .venv-ldst-tools/bin/activate
 python3 scratch/2nodes_ldst-cfg7/generate_case.py
-UB_LDST_COMPARE_BASELINE=.scratch/ldst-cfg7/evidence/cfg9-stable \
+# cfg9-stable 基线不再随仓库保留，需先从 Git 历史恢复并把下面的值指向该目录
+UB_LDST_COMPARE_BASELINE=<restored-cfg9-stable-dir> \
   ./build/utils/ns3.44-test-runner --test-name=unified-bus-ldst-cfg --verbose
 ```
 

@@ -209,7 +209,12 @@ Use the Write tool to create the CSV. Verify:
 - `taskId` is 0-indexed and sequential
 - `sourceNode` and `destNode` are valid host IDs for the topology (0 to `host_num - 1`)
 - `srcPortId` and `dstPortId`, when present, are valid endpoint ports; each may be empty independently, and an explicit `0` means port 0
-- `opType` is a valid value from the runtime traffic-op parser (see `workload-options.md` "Valid `opType` values" and `ParseOpLocked` in `src/unified-bus/model/ub-traffic-gen.cc`); MegaMoE cases may additionally use `COMPUTE` and `LOCAL_READY`
+- `opType` is a valid value from the runtime traffic-op parser (see `workload-options.md`
+  "Valid `opType` values" / "URMA request operation names" and `ParseOpLocked` in
+  `src/unified-bus/model/ub-traffic-gen.cc`); every accepted URMA name must also satisfy
+  `UbTrafficGen::IsUrmaTask`, and the six references under
+  `scratch/2nodes_transaction_extensions/` show the transport/operation split. MegaMoE cases may
+  additionally use `COMPUTE` and `LOCAL_READY`
 - `dependOnPhases` is empty string for first-phase tasks, space-separated phaseIds otherwise
 
 ### Multi-collective composition

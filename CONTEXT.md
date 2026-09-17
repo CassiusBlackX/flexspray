@@ -137,7 +137,7 @@ One operation identified by a transaction operation code and represented by at l
 _Avoid_: packet
 
 **Normalized transaction result**:
-The simulator's validated description of a transaction request, including its operation, logical length, request and response payload lengths, response requirement, and resolved field values.
+The simulator's validated description of a transaction request, including its operation, logical length, request payload length, permitted response payload lengths and default, response requirement, and resolved field values.
 _Avoid_: recomputed payload metadata, Atomic-only resolution
 
 **Required extension header**:
@@ -209,7 +209,7 @@ A transaction type used for memory operations such as write, read, and atomic op
 _Avoid_: MEM_STORE only
 
 **Atomic transaction**:
-A memory transaction that applies an indivisible operation to target memory and executes only once. Its response reports completion and, except for Atomic_store, returns the original data.
+A memory transaction that applies an indivisible operation to target memory and executes only once. Its response reports completion; whether it also returns the original data depends on the selected operation.
 _Avoid_: ordinary read followed by write, CPU atomic instruction
 
 **Atomic sub-operation**:
@@ -219,6 +219,10 @@ _Avoid_: LDST operation, separate transaction opcode
 **Atomic operand width**:
 The byte width of one operand and the target data item involved in an atomic operation; UB Base Specification 2.0.1 defines widths of 1, 2, 4, 8, 16, 32, and 64 bytes.
 _Avoid_: request payload length, operation count
+
+**Queue transaction**:
+A memory-transaction subtype defined by UB Base Specification 2.1.0 for queue-related communication: Atomic_store_with_return_status and Atomic_sync. It is not a fifth top-level transaction type or a transaction queue.
+_Avoid_: transaction queue, Atomic_store sub-operation
 
 **Message transaction**:
 A transaction type used for two-sided message communication.
@@ -275,6 +279,14 @@ _Avoid_: payload metadata
 **Acknowledge transaction header (ATAH)**:
 The transaction-layer acknowledgement or response header, whose full or compact format matches the request's BTAH format.
 _Avoid_: TPACK
+
+**User defined extended transaction header (UDETAH)**:
+A four-byte transaction extension whose presence is indicated by BTAH.UD_Flag. UB Base Specification 2.1.0 defines typed fields for selected atomic operations and remote-sync writes within this header.
+_Avoid_: arbitrary offset header, unstructured vendor data only
+
+**Byte enable extended transaction header (BEETAH)**:
+A transaction extension containing a bitmap that marks which payload bytes are valid for a byte-enabled write. Its bits describe payload validity rather than removing bytes from the transmitted payload.
+_Avoid_: BEEATAH, compressed payload
 
 ### Transport Layer
 
@@ -525,6 +537,10 @@ _Avoid_: hardware truth, real cluster measurement
 **Atomic timing model**:
 A simulator-local representation of atomic transaction traffic and completion timing with abstract operand and result values and no address-contention delays.
 _Avoid_: functional atomic memory model, address-contention model
+
+**Transaction traffic and timing model**:
+A simulator-local representation of transaction headers, payload sizes, request/response exchanges, and task completion timing. Target data values and operation effects remain abstract, without functional memory updates or synchronization effects.
+_Avoid_: functional memory model, proof of remote synchronization correctness
 
 **Atomic request payload length**:
 The number of operand bytes carried by one simulated atomic request, including any reserved operand slots in the selected layout and excluding headers. It is distinct from operand width and has no fixed two-operand assumption in this model.

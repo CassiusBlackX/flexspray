@@ -88,6 +88,39 @@ Snapshot (verify against code before relying on this list):
 `UbTrafficGen::ParseOpLocked` parser; do not use it for new cases without an explicit compatibility
 adapter.
 
+### URMA request operation names
+
+The current URMA CSV surface accepts 25 request names: the nine `URMA_ATOMIC_*` rows documented
+below and the following sixteen names. Response opcodes
+(`TAACK`/`READ_RESPONSE`/`ATOMIC_RESPONSE`) and reserved values are rejected as task input.
+`UbTrafficGen::IsUrmaTask` must classify every accepted name as URMA so the task reaches
+`UbApp::SendTraffic` and the shared submit path.
+
+| opType | Request opcode | Notes |
+| --- | --- | --- |
+| `URMA_WRITE` | 0x03 | Remote write; single or multi-packet by segment size |
+| `URMA_READ` | 0x06 | Remote read; response carries the requested data |
+| `URMA_SEND` | 0x00 | Message send with the required MTETAH |
+| `URMA_SEND_WITH_IMMEDIATE` | 0x01 | MTETAH plus IMMETAH |
+| `URMA_WRITE_WITH_IMMEDIATE` | 0x04 | MTETAH plus MAETAH plus IMMETAH |
+| `URMA_WRITE_WITH_NOTIFY` | 0x05 | Write with the required NTFETAH |
+| `URMA_PREFETCH_TGT` | 0x15 | Maintenance prefetch request |
+| `URMA_WRITEBACK` | 0x17 | Full writeback |
+| `URMA_MANAGEMENT` | 0x10 | Management PDU, payload at most 1024 bytes |
+| `URMA_WRITE_WITH_ATOMIC_STORE_ADD` | 0x19 | Multi-packet write with NTFETAH on every packet |
+| `URMA_WRITE_WITH_REMOTE_SYNC` | 0x1A | Multi-packet write with UDETAH Type=2 |
+| `URMA_WRITE_WITH_REMOTE_SYNC_WITH_BE` | 0x1B | Single-packet BE write at 64/128/256/512/1024 bytes |
+| `URMA_ATOMIC_STORE_WITH_RETURN_STATUS` | 0x1C | Queue operation, P=N power of two 1..64, zero-payload 0x11 response |
+| `URMA_ATOMIC_SYNC` | 0x1D | Queue operation, 0x13 response defaults to N; executor may select 0 or N |
+| `URMA_WRITE_WITH_BE` | 0x14 | Single-packet BE write at 64/128/256/512/1024 bytes |
+| `URMA_WRITEBACK_WITH_BE` | 0x18 | Single-packet partial writeback at 64/128/256/512/1024 bytes |
+
+The six runnable references under `scratch/2nodes_transaction_extensions/` split the coverage by
+transport and operation family: `*-queue` covers the two 0x1C/0x1D queue operations over all seven
+N values, `*-writes` covers 0x19/0x1A and the three BE writes, and `*-existing` covers the seven
+older operations plus the nine atomics. The collective `build_traffic.py` CLI remains
+`URMA_WRITE`-only.
+
 ### Atomic inputs
 
 URMA/Jetty atomic supports ROI over RTP and CTP. One row creates one WQE, one atomic operation,

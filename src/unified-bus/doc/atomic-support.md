@@ -81,13 +81,27 @@ python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2n
 
 每例复用两个端点、五交换机的现有拓扑，25 个任务覆盖九种 atomic、八子操作、七 N、
 默认/显式 P，以及 Write → 23 个 atomic → Read 的 phase 依赖。配置为当前运行时参数全量
-快照。具体输入和执行记录见各例 `experiment-spec.md`；原始验证日志与退出码在
-[实施证据](../../../.scratch/atomic-support/evidence/)，API 测试为 `unified-bus-atomic`。
+快照。具体输入和执行记录见各例 `experiment-spec.md`；实施期间的原始验证日志与退出码收集于
+`.scratch/atomic-support/evidence/`，该目录已不再随仓库保留，API 测试为 `unified-bus-atomic`。
 
 固定版本的 `ub_tools.py case check` 和 `trace parse` 接受这些 CSV，无需修改工具子模块。
 collective 流量 CLI 仍只生成 Write。task statistics 使用 N 计算 atomic taskThroughput，
 当 N 与 P/S 不同时它不代表线上吞吐；Payload 证据应使用生产包解析或对应 trace。
 CTP 默认没有 AllPacketTrace，不能从其 `Last Packet ACKs` 的逻辑 N 推断响应 S。
+
+## 2.1.0 事务扩展参考用例
+
+`scratch/2nodes_transaction_extensions/` 下的六个 case 在同样的两节点拓扑上覆盖 25 种 URMA
+请求名称及本轮七种新操作。`*-queue` 覆盖 0x1C/0x1D 与七种 N；`*-writes` 覆盖 0x19/0x1A、
+三种 BE 写和五档长度；`*-existing` 覆盖七种此前已实现但 CSV 原先未接通的请求与九种 atomic。
+每例默认 `Atomic_sync` 返回 N；显式 0 响应由 `unified-bus-transaction-extensions` 的 API
+往返测试验证，CSV 不增加参数列。各例的预期任务数、实际完成数和命令记录见对应
+`experiment-spec.md`。
+
+RTP 和 CTP 共用规则、头计划、Target executor 与完成路径；CTP 仍沿用 CFG=6 与精简事务头的
+既有模型约定，不是完整 UB 2.1.0 线格式。旧的九种 atomic 不整体迁移到 2.1.0 UDETAH，
+其子操作仍只在本地 WQE 保留。Atomic N 是逻辑操作数宽度；用 N 计算的 taskThroughput
+不代表线上吞吐，跨 CTP 的逻辑 N 也不能反推响应 Payload。
 
 ## 模型边界
 

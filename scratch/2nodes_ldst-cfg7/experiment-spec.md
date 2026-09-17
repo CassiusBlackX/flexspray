@@ -46,7 +46,8 @@ Release test-runner and ub-quick-example built with logs/tests enabled; final fu
 
 ## Execution Record
 Completed: runner exit 0, strict verifier PASS, tasks 0..3 each complete once; middle
-Switch ports each Rx=Tx=32. Full evidence is in ../../.scratch/ldst-cfg7/evidence/.
+Switch ports each Rx=Tx=32. Full evidence was collected under `.scratch/ldst-cfg7/evidence/`
+and is no longer kept in the repository.
 Before every run, move existing runlog/output/runner evidence into a unique history
 directory; current validation reads only current files. Generator does not run a
 simulation and writes only this case's inputs plus the documented project catalog cache.
