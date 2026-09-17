@@ -36810,6 +36810,22 @@ class UbAtomicRulesTest : public TestCase
         return ValidateTransactionRequest(request);
     }
 
+    /** Resolve one Atomic submission that carries no local options at all. */
+    static UbTransactionValidationResult ValidateAtomicWithoutOptions(
+        UbTransactionOpcode opcode,
+        uint32_t width,
+        UbTransactionRequestOrigin origin)
+    {
+        UbTransactionRequestInput request;
+        request.opcode = opcode;
+        request.logicalBytes = width;
+        request.payloadBytes = width;
+        request.fields.memoryAccess = UbMemoryAccessFields{0, 0, width};
+        request.maxPayloadBytes = 4096;
+        request.origin = origin;
+        return ValidateTransactionRequest(request);
+    }
+
     void DoRun() override
     {
         for (uint8_t code = 7; code <= 15; ++code)
@@ -36872,6 +36888,40 @@ class UbAtomicRulesTest : public TestCase
             ValidateAtomic(UbTransactionOpcode::ATOMIC_LOAD, 8, {}, 4096).IsValid(),
             false,
             "Load needs a suboperation");
+        // Omitting local options must fall back to the opcode defaults rather than skipping the
+        // Atomic rules: Compare/Swap carries 2N, and Load/Store still has to name a suboperation.
+        const auto localCompareSwap =
+            ValidateAtomicWithoutOptions(UbTransactionOpcode::ATOMIC_COMPARE_SWAP,
+                                         8,
+                                         UbTransactionRequestOrigin::LOCAL_SUBMISSION);
+        NS_TEST_ASSERT_MSG_EQ(localCompareSwap.IsValid(),
+                              true,
+                              "Local Compare/Swap needs no options");
+        NS_TEST_ASSERT_MSG_EQ(localCompareSwap.resolved.requestPayloadBytes,
+                              16u,
+                              "Local Compare/Swap without options must default to 2N");
+        NS_TEST_ASSERT_MSG_EQ(
+            ValidateAtomicWithoutOptions(UbTransactionOpcode::ATOMIC_LOAD,
+                                         8,
+                                         UbTransactionRequestOrigin::LOCAL_SUBMISSION)
+                .IsValid(),
+            false,
+            "Local Load without options must be rejected");
+        NS_TEST_ASSERT_MSG_EQ(
+            ValidateAtomicWithoutOptions(UbTransactionOpcode::ATOMIC_STORE,
+                                         8,
+                                         UbTransactionRequestOrigin::LOCAL_SUBMISSION)
+                .IsValid(),
+            false,
+            "Local Store without options must be rejected");
+        // The sub-operation is not encoded, so an inbound request keeps its wire payload.
+        NS_TEST_ASSERT_MSG_EQ(
+            ValidateAtomicWithoutOptions(UbTransactionOpcode::ATOMIC_LOAD,
+                                         8,
+                                         UbTransactionRequestOrigin::INBOUND_DECODE)
+                .IsValid(),
+            true,
+            "Inbound Load must keep the payload the wire carried");
     }
 };
 

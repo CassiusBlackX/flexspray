@@ -209,11 +209,14 @@ bool CheckRequiredFields(UbTransactionOpcode opcode, const UbTransactionFields& 
 /**
  * Resolve the Atomic request payload.
  *
- * A local submission resolves the request payload from its local options; an inbound request takes
- * the payload that the wire carried, because the Load/Store sub-operation is not encoded.
+ * A local submission resolves the request payload from its local options; omitting them applies the
+ * opcode defaults, so a Compare/Swap still carries 2N and a Load/Store still has to name its
+ * sub-operation. An inbound request takes the payload that the wire carried, because the
+ * Load/Store sub-operation is not encoded.
  */
 bool ResolveAtomicPayloads(UbTransactionOpcode opcode, uint32_t logicalBytes, uint32_t payloadBytes,
-                           const std::optional<UbAtomicOptions>& options, uint32_t maxPayloadBytes,
+                           const std::optional<UbAtomicOptions>& options,
+                           UbTransactionRequestOrigin origin, uint32_t maxPayloadBytes,
                            UbTransactionValidationResult& result, uint32_t& requestPayloadBytes)
 {
     if (logicalBytes == 0 || logicalBytes > 64 || (logicalBytes & (logicalBytes - 1)) != 0)
@@ -224,26 +227,32 @@ bool ResolveAtomicPayloads(UbTransactionOpcode opcode, uint32_t logicalBytes, ui
         return false;
     }
     const bool loadStore = opcode == O::ATOMIC_LOAD || opcode == O::ATOMIC_STORE;
-    uint32_t payload = payloadBytes;
-    if (options)
+    std::optional<UbAtomicOptions> resolvedOptions = options;
+    if (!resolvedOptions && origin == UbTransactionRequestOrigin::LOCAL_SUBMISSION)
     {
-        if (loadStore != options->subOperation.has_value())
+        resolvedOptions = UbAtomicOptions{};
+    }
+    uint32_t payload = payloadBytes;
+    if (resolvedOptions)
+    {
+        if (loadStore != resolvedOptions->subOperation.has_value())
         {
             result.code = UbTransactionErrorCode::INVALID_ATOMIC_OPTIONS;
             result.field = "atomicOptions.subOperation";
             result.message = "subOperation is required only for Load/Store";
             return false;
         }
-        if (options->subOperation && *options->subOperation > UbAtomicSubOperation::UMIN)
+        if (resolvedOptions->subOperation &&
+            *resolvedOptions->subOperation > UbAtomicSubOperation::UMIN)
         {
             result.code = UbTransactionErrorCode::INVALID_ATOMIC_OPTIONS;
             result.field = "atomicOptions.subOperation";
             result.message = "invalid atomic suboperation";
             return false;
         }
-        payload = options->requestPayloadBytes.value_or(opcode == O::ATOMIC_COMPARE_SWAP
-                                                            ? logicalBytes * 2
-                                                            : logicalBytes);
+        payload = resolvedOptions->requestPayloadBytes.value_or(opcode == O::ATOMIC_COMPARE_SWAP
+                                                                    ? logicalBytes * 2
+                                                                    : logicalBytes);
     }
     if (payload == 0 || payload > maxPayloadBytes)
     {
@@ -300,8 +309,8 @@ UbTransactionValidationResult ValidateTransactionRequest(const UbTransactionRequ
     if (AtomicOpcode(request.opcode))
     {
         if (!ResolveAtomicPayloads(request.opcode, request.logicalBytes, request.payloadBytes,
-                                   request.atomicOptions, request.maxPayloadBytes, result,
-                                   requestPayloadBytes))
+                                   request.atomicOptions, request.origin, request.maxPayloadBytes,
+                                   result, requestPayloadBytes))
         {
             return result;
         }
