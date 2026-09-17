@@ -12,10 +12,10 @@ The core build depends on the following tools. Download can be via either Git or
 | ------------- | ---------------------------- | ---------------------- |
 | Download      | git (for Git download) <br/>or: tar and bunzip2 (Web)      | No minimum version     |
 | Compiler      | g++<br/>or: clang++          | >= 10<br/>>= 11        |
-| Configuration | python3                      | 3.8 - 3.13             |
+| Configuration | python3                      | 3.12                   |
 | Build system  | cmake plus one system-provided build tool | cmake >= 3.13<br/>Platform-dependent |
 
-The `./ns3` launcher fails on Python 3.14 because of an argparse behavior change; use an interpreter in the 3.8 - 3.13 range. The commands below use `python3.12` throughout — substitute any interpreter on your machine that satisfies the version requirement.
+The `./ns3` launcher does not work on Python 3.14: its argparse no longer accepts positional arguments that consume no arguments, so startup fails with `ValueError: action 'store_true' is not valid for positional arguments`. Use Python 3.12; the commands below use `python3.12` throughout, and any 3.9 - 3.13 interpreter can be substituted.
 
 If using Conda/virtualenv, please ensure that the `python3` used later matches the interpreter used to install dependencies.
 
@@ -81,7 +81,7 @@ Tip: If you use an agent that supports repo-local skills, this repository includ
 ## Build
 
 ```bash
-# Below, python3.12 can be replaced by any interpreter in the 3.8 - 3.13 range (see Prerequisites).
+# This page uses python3.12 throughout (see Prerequisites).
 # One build may use -j for speed; do not start multiple build/test tasks at once.
 BUILD_JOBS=${BUILD_JOBS:-$(python3.12 -c 'import os; print(os.cpu_count() or 1)')}
 
