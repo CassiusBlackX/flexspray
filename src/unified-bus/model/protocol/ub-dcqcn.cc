@@ -728,11 +728,7 @@ UbSwitchDcqcn::GetOutPortBacklogBytes(uint32_t outPort) const
 {
     NS_ASSERT_MSG(m_switch != nullptr, "UbSwitchDcqcn must bind to a switch before queue inspection");
 
-    Ptr<Node> node = m_switch->GetObject<Node>();
-    Ptr<UbPort> port = DynamicCast<UbPort>(node->GetDevice(outPort));
-    uint64_t egressUsed = port != nullptr ? port->GetUbQueue()->GetCurrentBytes() : 0;
-    uint64_t voqUsed = m_switch->GetQueueManager()->GetTotalOutPortBufferUsed(outPort);
-    return voqUsed + egressUsed;
+    return m_switch->GetQueueManager()->GetOutPortQueueBacklogBytes(outPort);
 }
 
 void

@@ -296,6 +296,29 @@ void UbQueueManager::SetReservePerQueueBytes(uint32_t size)
     m_reservePerQueueBytes = size;
 }
 
+uint64_t
+UbQueueManager::GetOutPortEgressBytes(uint32_t outPort) const
+{
+    // Standalone QueueManager fixtures have no owning port or egress queue.
+    if (m_ownerNode == nullptr) {
+        return 0;
+    }
+    Ptr<UbPort> port = DynamicCast<UbPort>(m_ownerNode->GetDevice(outPort));
+    return port != nullptr ? port->GetUbQueue()->GetCurrentBytes() : 0;
+}
+
+uint64_t
+UbQueueManager::GetOutPortBufferOccupancyBytes(uint32_t outPort) const
+{
+    return GetTotalOutPortBufferUsed(outPort) + GetOutPortEgressBytes(outPort);
+}
+
+uint64_t
+UbQueueManager::GetOutPortQueueBacklogBytes(uint32_t outPort) const
+{
+    return m_totalOutPortVoqBufferedBytes[outPort] + GetOutPortEgressBytes(outPort);
+}
+
 // ========== Three-Tier Buffer ==========
 
 bool UbQueueManager::CheckIngressAdmission(uint32_t inPort, uint32_t priority, uint32_t pSize)
