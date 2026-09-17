@@ -12,10 +12,10 @@
 | ---------- | ----------------------------- | -------------------- |
 | 下载       | git（Git 下载）<br/>或：tar 与 bunzip2（Web 下载）               | 无最低版本要求       |
 | 编译器     | g++<br/>或：clang++           | >= 10<br/>>= 11      |
-| 配置       | python3                       | 3.8 – 3.13           |
+| 配置       | python3                       | 3.12                 |
 | 构建系统   | cmake，以及系统可用的构建工具其一 | cmake >= 3.13<br/>按平台提供 |
 
-`./ns3` 启动器在 Python 3.14 下会因 argparse 行为变更而报错，请使用 3.8 – 3.13 的解释器。下文命令统一以 `python3.12` 为例，可替换为本机任意符合版本要求的解释器。
+`./ns3` 启动器在 Python 3.14 下不可用：3.14 的 argparse 不再接受不消费参数的位置参数，启动时直接报 `ValueError: action 'store_true' is not valid for positional arguments`。请使用 Python 3.12；下文命令统一以 `python3.12` 为例，可替换为本机 3.9 – 3.13 的解释器。
 
 如使用 Conda/virtualenv，请确保后续运行的 `python3` 与安装依赖的解释器一致。
 
@@ -81,7 +81,7 @@ conda install pandas matplotlib seaborn
 ## 配置与编译
 
 ```bash
-# 下文 python3.12 可替换为本机任意 3.8 – 3.13 的解释器（见「环境要求」）。
+# 下文统一使用 python3.12（原因见「环境要求」）。
 # 单个 build 可用 -j 加速；不要同时启动多个 build/test 构建任务。
 BUILD_JOBS=${BUILD_JOBS:-$(python3.12 -c 'import os; print(os.cpu_count() or 1)')}
 
