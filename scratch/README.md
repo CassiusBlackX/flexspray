@@ -5,6 +5,12 @@
 推荐先用 `ns-3-ub-tools` 准备拓扑、路由和流量，再由 scratch runner 读取已经准备好的
 目录启动仿真。tools 不直接启动 ns-3，runner 也不会在运行时导入 Python 或 NetworkX。
 
+交换机 `forwardDelay` 表示固定、可并行的入端口处理时延。缓冲占用（Buffer Occupancy）
+统计 processing + VOQ + egress；DCQCN/CAQM 使用的排队积压（Queue Backlog）统计
+VOQ + egress，不含 processing。Ingress admission 和 PFC 仍统计处理中的报文。
+现有 QueueTrace 输出是缓冲占用口径，具体接口见
+[交换机缓冲架构](../src/unified-bus/doc/switch-buffer-architecture.md#23-buffer-occupancy-与-queue-backlog)。
+
 ## 构建一次
 
 在 parent 仓库根目录执行：
