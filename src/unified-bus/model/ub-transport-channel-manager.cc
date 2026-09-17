@@ -513,7 +513,8 @@ UbTransportChannelManager::ResolveLiveTpLocked(uint32_t tpn,
 UbDestroyStatus
 UbTransportChannelManager::DestroyTp(uint32_t tpn,
                                      UbDestroyReason reason,
-                                     UbDestroyCallback callback)
+                                     UbDestroyCallback callback,
+                                     bool releaseConnectionDrainHold)
 {
     auto it = m_endpoints.find(tpn);
     if (it == m_endpoints.end())
@@ -521,6 +522,10 @@ UbTransportChannelManager::DestroyTp(uint32_t tpn,
         return UbDestroyStatus::NOT_FOUND;
     }
     EndpointRecord& record = it->second;
+    if (releaseConnectionDrainHold)
+    {
+        record.connectionDrainHold = false;
+    }
     const bool beginDrain = record.state == EndpointState::LIVE;
     record.state = EndpointState::DRAINING;
     record.reason = reason;
@@ -541,12 +546,24 @@ UbTransportChannelManager::DestroyTp(uint32_t tpn,
     {
         return UbDestroyStatus::COMPLETED;
     }
-    if (!CanFinalize(it->second))
+    if (it->second.connectionDrainHold || !CanFinalize(it->second))
     {
         return UbDestroyStatus::PENDING;
     }
     FinalizeDestroy(tpn, false);
     return UbDestroyStatus::COMPLETED;
+}
+
+void
+UbTransportChannelManager::FreezeTp(uint32_t tpn)
+{
+    const auto it = m_endpoints.find(tpn);
+    if (it == m_endpoints.end() || it->second.channel == nullptr)
+    {
+        return;
+    }
+    it->second.connectionDrainHold = true;
+    it->second.channel->FreezeNewWork();
 }
 
 bool
@@ -564,7 +581,8 @@ UbTransportChannelManager::NotifyStateChanged(uint32_t tpn)
     {
         return;
     }
-    if (it->second.state == EndpointState::DRAINING && CanFinalize(it->second))
+    if (it->second.state == EndpointState::DRAINING && !it->second.connectionDrainHold &&
+        CanFinalize(it->second))
     {
         FinalizeDestroy(tpn, false);
     }

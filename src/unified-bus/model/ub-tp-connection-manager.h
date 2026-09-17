@@ -333,6 +333,10 @@ private:
                               const UbLifecycleResourceIdentity& identity,
                               uint8_t slot,
                               UbDestroyReason reason);
+    void RequestFreezeNotice(const Connection& connection,
+                             const UbLifecycleResourceIdentity& identity,
+                             uint8_t slot,
+                             UbDestroyReason reason);
     void OnLocalEndpointDestroyed(UbLifecycleResourceIdentity connectionIdentity,
                                   uint8_t slot,
                                   UbLifecycleResourceIdentity endpointIdentity,

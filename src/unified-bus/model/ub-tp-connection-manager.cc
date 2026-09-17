@@ -976,8 +976,10 @@ TpConnectionManager::DestroyConnectionOwned(const UbLifecycleResourceIdentity& i
         lifecycle.slot2 = EndpointSlotState::DRAINING;
     }
 
+    // Freeze the peer first but keep its transport state resident. The owner endpoint
+    // drains admitted work; only then may the peer endpoint be retired.
+    RequestFreezeNotice(connection, identity, 2, reason);
     RequestDestroyNotice(connection, identity, 1, reason);
-    RequestDestroyNotice(connection, identity, 2, reason);
     TryFinalizeConnection(identity);
 
     std::lock_guard<std::mutex> lock(m_stateLock);
@@ -997,6 +999,24 @@ TpConnectionManager::RequestDestroyNotice(const Connection& connection,
     control.sourceNodeId = m_ownerNodeId;
     control.targetNodeId = slot == 1 ? connection.node1 : connection.node2;
     control.operation = UbLifecycleControlOperation::CONNECTION_DESTROY_NOTICE;
+    control.resource = identity;
+    control.nodeId = control.targetNodeId;
+    control.tpn = slot == 1 ? connection.tpn1 : connection.tpn2;
+    control.requestId = slot;
+    control.value = static_cast<uint64_t>(reason);
+    UbParallelLifecycleAdapter::RouteControl(control);
+}
+
+void
+TpConnectionManager::RequestFreezeNotice(const Connection& connection,
+                                         const UbLifecycleResourceIdentity& identity,
+                                         uint8_t slot,
+                                         UbDestroyReason reason)
+{
+    UbLifecycleControlRecord control;
+    control.sourceNodeId = m_ownerNodeId;
+    control.targetNodeId = slot == 1 ? connection.node1 : connection.node2;
+    control.operation = UbLifecycleControlOperation::CONNECTION_FREEZE_NOTICE;
     control.resource = identity;
     control.nodeId = control.targetNodeId;
     control.tpn = slot == 1 ? connection.tpn1 : connection.tpn2;
@@ -1029,6 +1049,9 @@ TpConnectionManager::OnEndpointDestroyed(const UbLifecycleResourceIdentity& iden
 {
     NS_ABORT_MSG_IF(status != UbDestroyStatus::COMPLETED,
                     "Endpoint destroy callback must report completion");
+    Connection connection;
+    UbDestroyReason reason = UbDestroyReason::EXPLICIT;
+    bool requestPeerDestroy = false;
     {
         std::lock_guard<std::mutex> lock(m_stateLock);
         auto it = m_canonicalConnections.find(
@@ -1041,16 +1064,23 @@ TpConnectionManager::OnEndpointDestroyed(const UbLifecycleResourceIdentity& iden
         NS_ABORT_MSG_IF(record.lifecycle == nullptr,
                         "Endpoint destroy completed without lifecycle state");
         ConnectionLifecycleSidecar& lifecycle = *record.lifecycle;
+        connection = record.connection;
+        reason = lifecycle.reason;
         if (slot == 1)
         {
             lifecycle.slot1 = EndpointSlotState::RETIRED;
             lifecycle.slot1Materialized = false;
+            requestPeerDestroy = true;
         }
         else
         {
             lifecycle.slot2 = EndpointSlotState::RETIRED;
             lifecycle.slot2Materialized = false;
         }
+    }
+    if (requestPeerDestroy)
+    {
+        RequestDestroyNotice(connection, identity, 2, reason);
     }
     TryFinalizeConnection(identity);
 }
@@ -1277,7 +1307,8 @@ TpConnectionManager::ApplyLifecycleControl(const UbLifecycleControlRecord& contr
             control.tpn,
             static_cast<UbDestroyReason>(control.value),
             MakeCallback(&TpConnectionManager::OnLocalEndpointDestroyed, PeekPointer(manager))
-                .Bind(control.resource, slot));
+                .Bind(control.resource, slot),
+            true);
         if (status == UbDestroyStatus::NOT_FOUND)
         {
             manager->OnLocalEndpointDestroyed(control.resource,
@@ -1285,6 +1316,21 @@ TpConnectionManager::ApplyLifecycleControl(const UbLifecycleControlRecord& contr
                                               {},
                                               UbDestroyStatus::COMPLETED);
         }
+        return true;
+    }
+    case UbLifecycleControlOperation::CONNECTION_FREEZE_NOTICE:
+    {
+        Connection connection;
+        if (!manager->TryGetLocalConnection(control.nodeId, control.tpn, connection) ||
+            GetConnectionIdentity(connection) != control.resource)
+        {
+            return false;
+        }
+        {
+            std::lock_guard<std::mutex> lock(manager->m_stateLock);
+            manager->m_destroyRequestedViews.insert({control.nodeId, control.tpn});
+        }
+        controller->GetTransportChannelManager()->FreezeTp(control.tpn);
         return true;
     }
     case UbLifecycleControlOperation::ENDPOINT_DESTROY_REQUEST:

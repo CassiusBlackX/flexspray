@@ -65,6 +65,7 @@ enum class UbLifecycleControlOperation : uint8_t
     ERASE_CONNECTION_VIEW_COMPLETE = 8,
     CONNECTION_DESTROY_RESULT = 9,
     CONNECTION_DESTROY_NOTICE = 10,
+    CONNECTION_FREEZE_NOTICE = 11,
 };
 
 struct UbLifecycleResourceIdentity
