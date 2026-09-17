@@ -11391,6 +11391,13 @@ class UbLifecycleLocalAndRemoteRtpTxEntriesShareFixedOrderTest : public TestCase
         Ptr<UbController> controller = topo.sender->GetObject<UbController>();
         Ptr<UbFunction> function = controller->GetUbFunction();
         m_transaction = controller->GetUbTransaction();
+        NS_TEST_ASSERT_MSG_EQ(
+            m_transaction->SetTargetExecutor(UbTargetExecutor(
+                [](Ptr<const UbWqeSegment>, const UbTransactionRule&, UbTargetCompletion done) {
+                    done(UbWorkExecutionResult{});
+                })),
+            true,
+            "target executor registration");
         m_tp = controller->GetTransportChannelManager()->GetTp(kUrmaWriteRegressionSenderTpn);
         function->CreateJetty(topo.sender->GetId(),
                               topo.receiver->GetId(),
@@ -11467,7 +11474,7 @@ class UbLifecycleLocalAndRemoteRtpTxEntriesShareFixedOrderTest : public TestCase
     }
 
   private:
-    Ptr<UbWqeSegment> BuildRemoteRequest() const
+    Ptr<UbWqeSegment> BuildRemoteRequest()
     {
         Ptr<UbWqeSegment> request = CreateObject<UbWqeSegment>();
         request->SetSrc(1);
@@ -11491,6 +11498,16 @@ class UbLifecycleLocalAndRemoteRtpTxEntriesShareFixedOrderTest : public TestCase
         request->SetRemoteAddress(0);
         request->SetTransactionFields(
             UbTransactionFields{.memoryAccess = UbMemoryAccessFields{0, 0, 64}});
+        UbTransactionRequestInput input;
+        input.opcode = UbTransactionOpcode::WRITE;
+        input.logicalBytes = 64;
+        input.payloadBytes = 64;
+        input.fields = request->GetTransactionFields();
+        input.maxPayloadBytes = UINT32_MAX;
+        input.origin = UbTransactionRequestOrigin::INBOUND_DECODE;
+        const auto validation = ValidateTransactionRequest(input);
+        NS_TEST_EXPECT_MSG_EQ(validation.IsValid(), true, validation.message);
+        request->SetTransactionResolved(validation.resolved);
         return request;
     }
 
@@ -16978,6 +16995,8 @@ class UbLifecycleSegmentCompletionRequiresResolvedTpGenerationTest : public Test
         InstallStaticTpPair(topo);
         Ptr<UbController> controller = topo.sender->GetObject<UbController>();
         Ptr<UbController> receiverController = topo.receiver->GetObject<UbController>();
+        m_senderNodeId = topo.sender->GetId();
+        m_receiverNodeId = topo.receiver->GetId();
         controller->GetTransportChannelManager()->CreateTp(topo.sender->GetId(),
                              topo.receiver->GetId(),
                              topo.senderPort->GetIfIndex(),
@@ -17123,12 +17142,16 @@ class UbLifecycleSegmentCompletionRequiresResolvedTpGenerationTest : public Test
         response->SetOriginJettyNum(kUrmaWriteRegressionJettyNum);
         response->SetRequestTassn(0);
         response->SetTaskId(kUrmaWriteRegressionTaskId);
+        response->SetSrc(m_receiverNodeId);
+        response->SetDest(m_senderNodeId);
         response->SetResolvedTpIdentity(tpIdentity);
         response->SetTransactionCorrelation(operationIdentity, segmentIdentity);
         response->SetTpn(static_cast<uint32_t>(tpIdentity.localId));
         return response;
     }
 
+    uint32_t m_senderNodeId{0};
+    uint32_t m_receiverNodeId{0};
     bool m_admissionObserved{false};
 };
 
@@ -17145,6 +17168,8 @@ class UbLifecycleLateCompletionRejectsReusedJettyWqeAndTassnTest : public TestCa
         Config::Reset();
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
+        m_senderNodeId = topo.sender->GetId();
+        m_receiverNodeId = topo.receiver->GetId();
         Ptr<UbController> controller = topo.sender->GetObject<UbController>();
         Ptr<UbFunction> function = controller->GetUbFunction();
         Ptr<UbTransaction> transaction = controller->GetUbTransaction();
@@ -17290,6 +17315,8 @@ class UbLifecycleLateCompletionRejectsReusedJettyWqeAndTassnTest : public TestCa
         response->SetTaskId(taskId);
         response->SetResolvedTpIdentity(tpIdentity);
         response->SetTransactionCorrelation(operationIdentity, segmentIdentity);
+        response->SetSrc(m_receiverNodeId);
+        response->SetDest(m_senderNodeId);
         response->SetTpn(static_cast<uint32_t>(tpIdentity.localId));
         return response;
     }
@@ -17304,6 +17331,8 @@ class UbLifecycleLateCompletionRejectsReusedJettyWqeAndTassnTest : public TestCa
         }
     }
 
+    uint32_t m_senderNodeId{0};
+    uint32_t m_receiverNodeId{0};
     uint32_t m_admissionCount{0};
 };
 
@@ -17320,6 +17349,8 @@ class UbLifecycleLateCompletionRejectsDifferentWqeOnReusedTassnTest : public Tes
         Config::Reset();
         LocalTpTopology topo = BuildLocalTpTopology();
         InstallStaticTpPair(topo);
+        m_senderNodeId = topo.sender->GetId();
+        m_receiverNodeId = topo.receiver->GetId();
         Ptr<UbController> controller = topo.sender->GetObject<UbController>();
         Ptr<UbFunction> function = controller->GetUbFunction();
         Ptr<UbTransaction> transaction = controller->GetUbTransaction();
@@ -17441,6 +17472,8 @@ class UbLifecycleLateCompletionRejectsDifferentWqeOnReusedTassnTest : public Tes
         response->SetOriginJettyNum(kUrmaWriteRegressionJettyNum);
         response->SetRequestTassn(0);
         response->SetTaskId(taskId);
+        response->SetSrc(m_receiverNodeId);
+        response->SetDest(m_senderNodeId);
         response->SetResolvedTpIdentity(tpIdentity);
         response->SetTransactionCorrelation(operationIdentity, segmentIdentity);
         response->SetTpn(static_cast<uint32_t>(tpIdentity.localId));
@@ -17455,6 +17488,9 @@ class UbLifecycleLateCompletionRejectsDifferentWqeOnReusedTassnTest : public Tes
             Simulator::Stop();
         }
     }
+
+    uint32_t m_senderNodeId{0};
+    uint32_t m_receiverNodeId{0};
 };
 
 class UbLifecycleFailedWqeOutcomeTest : public TestCase
