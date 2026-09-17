@@ -106,5 +106,5 @@ release benchmark corpus. Byte-level output comparisons must cover multiple mult
 because every runtime representation feeds the same `GetOutPort()` path, identical inputs and RNG
 state must produce identical selected ports and shortest-path decisions.
 
-The implementation history, current measurements, raw samples, and reproducible benchmark sources are
-indexed by `.scratch/structured-topology-routing/README.md`.
+The implementation history, current measurements, raw samples, and reproducible benchmark sources
+are maintained outside the released tree.

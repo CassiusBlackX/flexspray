@@ -1,7 +1,7 @@
 # CFG7 LDST engineering regression
 
 ## Planning Mode
-single-case; approved engineering fixture from ../../.scratch/ldst-cfg7/design.md.
+single-case; approved engineering fixture for the CFG7 LDST bypass path.
 User authorized generation, execution and repair of this bounded fixture.
 
 ## Goal

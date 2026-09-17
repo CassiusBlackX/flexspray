@@ -8,7 +8,7 @@ or a prepared structured topology compiled from Python/NetworkX or JSON/YAML.
 Use `ns-3-ub-tools` to prepare topology, routing, and traffic, then start the simulation with a scratch
 runner. The tools do not start ns-3, and the runner does not import Python or NetworkX at runtime.
 
-See the [Unified Bus trace runlog format](../docs/trace-runlog-format.md) for the `runlog/` CSV
+See the [Unified Bus trace runlog format](../doc/trace-runlog-format.md) for the `runlog/` CSV
 categories, fields, and units.
 
 ---
@@ -112,9 +112,8 @@ with `--export-csv`, but the runner never reads that export back. Add `--verify-
 exhaustive comparison against the complete route baseline is wanted.
 
 See the [ns-3-ub-tools README](https://gitcode.com/open-usim/ns-3-ub-tools/blob/main/README_en.md) for Python and JSON/YAML input details,
-supported structures, cache behavior, routing modes, and diagnostic export. See the
-[structured topology optimization overview](../.scratch/structured-topology-routing/README.md) for
-correctness evidence and 1024-NPU generation, memory, startup, and lookup results.
+supported structures, cache behavior, routing modes, and diagnostic export. Correctness evidence and
+1024-NPU generation, memory, startup, and lookup results are maintained outside the released tree.
 
 ## Migrating existing cases
 

@@ -12,7 +12,7 @@ VOQ + egress，不含 processing。Ingress admission 和 PFC 仍统计处理中�
 [交换机缓冲架构](../src/unified-bus/doc/switch-buffer-architecture.md#23-buffer-occupancy-与-queue-backlog)。
 
 仿真产生的 `runlog/` CSV 文件类别、字段和单位见
-[Unified Bus trace runlog 格式说明](../docs/trace-runlog-format.md)。
+[Unified Bus trace runlog 格式说明](../doc/trace-runlog-format.md)。
 
 ## 构建一次
 
@@ -192,7 +192,6 @@ CSV 字段、trace 字段和旧 case 行为保留在
 - [ns-3-ub-tools 中文说明](./ns-3-ub-tools/README.md)
 - [集合通信流量生成](./ns-3-ub-tools/traffic_maker/README.md)
 - [English scratch reference](README_en.md)
-- [结构化拓扑优化设计与验收](../.scratch/structured-topology-routing/README.md)
 
 ## Atomic 参考用例
 

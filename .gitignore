@@ -57,6 +57,9 @@ cmake-cache/
 __pycache__/
 testpy-output/
 
+# Local task tracker (see doc/agents/issue-tracker.md)
+.scratch/
+
 # Simulation outputs
 **/runlog/
 **/output/

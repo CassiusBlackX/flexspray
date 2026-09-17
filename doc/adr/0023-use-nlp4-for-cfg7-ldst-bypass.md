@@ -14,7 +14,5 @@ the requested work into a different transaction representation. A distinct NLP4 
 CTP interpretation remain intact while both LDST formats reuse the current operation and completion
 paths. Responses retain their request's CFG even when the responder's default outgoing format differs.
 
-Sources: `~/workspace/UB-DOC/UB-Base-Specification-2.0.1-zh-clean.pdf` and
-`~/workspace/UB-DOC/UB-Base-Specification-2.0-en.pdf`, sections 5.2.1–5.2.2, 6.1–6.2,
-and appendices B.2.5–B.2.6; the LDST CFG7 design discussion recorded in
-[the feature design](../../.scratch/ldst-cfg7/design.md).
+Sources: UB Base Specification 2.0.1 (Chinese) and 2.0 (English), sections 5.2.1–5.2.2,
+6.1–6.2, and appendices B.2.5–B.2.6.

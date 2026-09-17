@@ -1,7 +1,7 @@
 # 2nodes_reliable-rerouting
 
-Checked-in demonstration of UB 2.1 packet-level reliable rerouting
-(`.scratch/ub21-reliable-rerouting/design.md`).
+Checked-in demonstration of UB 2.1 packet-level reliable rerouting. The design record is
+maintained outside the released tree.
 
 ## Topology
 

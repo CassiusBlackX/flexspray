@@ -25,5 +25,5 @@ the CTP CFG=6/compact-base-header modeling deviation remain compatibility bounda
 old wire formats would change existing traffic and is deferred. The common executor ownership and
 ADR 0025's single target execution delay remain unchanged.
 
-The accepted model is specified in the
-[transaction extension spec](../../.scratch/transaction-operation-extensions/design.md).
+The accepted model is implemented by the transaction rules, the shared TA codec, and the common
+target executor and result path.
