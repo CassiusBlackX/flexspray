@@ -239,8 +239,11 @@ UbGbnRetransStrategy::OnTimeout()
         return result;
     }
 
-    result.triggerTransmit =
-        PrepareRetransmissionFromPsn(m_controller.GetTransport().GetPsnSndUna());
+    const uint64_t sndUna = m_controller.GetTransport().GetPsnSndUna();
+    result.triggerTransmit = PrepareRetransmissionFromPsn(sndUna);
+    if (result.triggerTransmit) {
+        result.retransmitBytes = GetRetransmissionPayloadBytesFrom(sndUna);
+    }
     return result;
 }
 

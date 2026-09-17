@@ -84,6 +84,11 @@ public:
         (void)opcode;
     }
 
+    virtual void OnSenderRetransmissionRollback(uint32_t retransmitBytes)
+    {
+        (void)retransmitBytes;
+    }
+
     // TPSACK-CC 在同一个反馈里同时携带 CETPH 和选择性重传扣账摘要。
     // SAETPH bitmap 由重传层消费，CC 层只看到归一化后的 CETPH 与 missing bytes。
     virtual void OnSenderCongestionNotification(TpOpcode opcode,
