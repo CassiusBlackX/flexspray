@@ -52,6 +52,14 @@ UbRemoteLink::TransmitStart(Ptr<Packet> p, Ptr<UbPort> src, Time txTime)
 }
 
 bool
+UbRemoteLink::TransmitStart(Ptr<Packet> p, Ptr<UbPort> src, Time txTime, uint64_t attemptToken)
+{
+    NS_ABORT_MSG_IF(attemptToken != 0,
+                    "UbRemoteLink does not support reliable-rerouting attempts");
+    return TransmitStart(p, src, txTime);
+}
+
+bool
 UbRemoteLink::IsRemote(void) const
 {
     return true;

@@ -181,6 +181,16 @@ bool UbLink::TransmitStart(Ptr<Packet> p, Ptr<UbPort> src, Time txTime, uint64_t
 
     uint32_t wire = src == m_link[0].m_src ? 0 : 1;
 
+    if (!m_reroutingArmed)
+    {
+        Simulator::ScheduleWithContext(m_link[wire].m_dst->GetNode()->GetId(),
+                                       txTime + m_delay,
+                                       &UbPort::Receive,
+                                       m_link[wire].m_dst,
+                                       p);
+        return true;
+    }
+
     Simulator::ScheduleWithContext(m_link[wire].m_dst->GetNode()->GetId(),
                                    txTime + m_delay,
                                    &UbLink::Deliver,

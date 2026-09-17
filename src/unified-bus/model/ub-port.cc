@@ -817,7 +817,9 @@ void UbPort::TransmitPacket(Ptr<Packet> packet, Time delay)
 
     // Try to start transmission on the channel first. Only if it succeeds
     // should we schedule the TransmitComplete event and notify traces.
-    bool result = m_channel->TransmitStart(packet, this, txTime, attemptToken);
+    bool result = attemptToken == 0
+                      ? m_channel->TransmitStart(packet, this, txTime)
+                      : m_channel->TransmitStart(packet, this, txTime, attemptToken);
     if (result == false) {
         NS_LOG_WARN("Channel transmission failed! Packet dropped at Node " << GetNode()->GetId() << " Port " << m_portId);
         ConfirmTransmitAttempt(attemptToken);
