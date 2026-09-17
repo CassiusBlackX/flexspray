@@ -141,7 +141,7 @@
       <td>FECN_RTT marking mode</td>
     </tr>
     <tr>
-      <td align="center" rowspan="4">Data Link Layer</td>
+      <td align="center" rowspan="5">Data Link Layer</td>
       <td>Datalink Header Configuration</td>
       <td>CFG9 (16-bit CNA addressing), CFG7 (24-bit CNA addressing)</td>
       <td>—</td>
@@ -160,6 +160,11 @@
       <td>Credit Flow Control</td>
       <td>CBFC (exclusive / shared-credit), PFC (fixed / dynamic thresholds)</td>
       <td>Control plane credit initialization behavior, user-customizable credit sharing policies</td>
+    </tr>
+    <tr>
+      <td>Packet Rate Control</td>
+      <td>Static and dynamic packet rate control</td>
+      <td>—</td>
     </tr>
   </tbody>
 </table>

@@ -146,7 +146,7 @@
       <td>FECN_RTT 标记模式</td>
     </tr>
     <tr>
-      <td align="center" rowspan="4">数据链路层</td>
+      <td align="center" rowspan="5">数据链路层</td>
       <td>数据链路层包头配置</td>
       <td>CFG9（16-bit CNA 地址）、CFG7（24-bit CNA 地址）</td>
       <td>—</td>
@@ -165,6 +165,11 @@
       <td>信用流控</td>
       <td>CBFC（独占信用 / 共享信用）、PFC（固定阈值 / 动态阈值）</td>
       <td>控制面的信用初始化行为、用户自定义信用共享策略</td>
+    </tr>
+    <tr>
+      <td>包率控制</td>
+      <td>静态、动态包率控制</td>
+      <td>—</td>
     </tr>
   </tbody>
 </table>

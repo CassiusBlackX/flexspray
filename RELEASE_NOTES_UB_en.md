@@ -89,6 +89,7 @@
 - Packet transmission: packet-level modeling
 - Virtual channels: up to 16 VLs on a point-to-point link, SP / DWRR based inter-VL scheduling
 - Credit flow control: CBFC (exclusive / shared-credit), PFC (fixed / dynamic thresholds)
+- Packet rate control: † static, \* **dynamic**
 
 ### Specification Alignment
 

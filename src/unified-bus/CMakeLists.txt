@@ -131,4 +131,5 @@ build_lib(
     test/ub-target-execution-test.cc
     test/ub-ldst-cfg-test.cc
     test/ub-structured-routing-test.cc
+    test/ub-packet-rate-control-test.cc
 )
