@@ -1360,7 +1360,7 @@ class UbTrafficConfigEndpointPortFieldsTest : public TestCase
             std::ofstream trafficFile(trafficPath);
             NS_TEST_ASSERT_MSG_EQ(trafficFile.good(), true, "temporary traffic file should open");
             trafficFile << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
-                          "dependOnPhases,srcPortId,dstPortId\r\n";
+                           "dependOnPhases,srcPortId,dstPortId\r\n";
             trafficFile << "1,2,3,64,URMA_WRITE,1,0ns,10,,,\r\n";
             trafficFile << "2,4,5,128,URMA_READ,2,7ns,20,10,11,12\r\n";
             trafficFile << "3,6,7,256,URMA_WRITE,3,0ns,30,,,\r\n";
@@ -1535,7 +1535,7 @@ class UbTrafficConfigRejectsEntityColumnsTest : public TestCase
             std::ofstream entityFile(entityPath);
             NS_TEST_ASSERT_MSG_EQ(entityFile.good(), true, "Entity traffic file should open");
             entityFile << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
-                          "dependOnPhases,srcEntityId,dstEntityId\n";
+                           "dependOnPhases,srcEntityId,dstEntityId\n";
             entityFile << "1,2,3,64,URMA_WRITE,1,0ns,10,,11,12\n";
 
             std::ofstream combinedFile(combinedPath);
@@ -1722,7 +1722,7 @@ class UbTrafficConfigRejectsRowHeaderWidthMismatchTest : public TestCase
             std::ofstream trafficFile(trafficPath);
             NS_TEST_ASSERT_MSG_EQ(trafficFile.good(), true, "temporary traffic file should open");
             trafficFile << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
-                          "dependOnPhases,srcPortId,dstPortId\n";
+                           "dependOnPhases,srcPortId,dstPortId\n";
             trafficFile << "1,2,3,64,URMA_WRITE,1,0ns,10,\n";
         }
 
