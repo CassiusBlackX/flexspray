@@ -9,7 +9,6 @@
   <a href="https://gitcode.com/open-usim/ns-3-ub">GitCode</a> ·
   <a href="QUICK_START.md">快速开始</a> ·
   <a href="scratch/README.md">场景指南</a> ·
-  <a href="docs/experiments/main-next-controlled-comparison-20260802.md">next 验证报告</a> ·
   <a href="RELEASE_NOTES_UB.md#release-210">发布说明</a> ·
   <a href="README_en.md">English</a>
 </p>
