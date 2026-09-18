@@ -12,7 +12,7 @@
 - Key Questions
 - Diagnostic Ladder
 - Practical Rules
-- General Lessons from the Two UB128 Cases
+- General Lessons from Two Large-Scale Cases
 - Safe Wording
 - Unsafe Wording
 - Related References
@@ -171,11 +171,11 @@ trace 代码不是透明空气，它也是会出 bug 的软件。
 
 否则你后面对协议问题的所有观察都可能不可靠。
 
-## General Lessons from the Two UB128 Cases
+## General Lessons from Two Large-Scale Cases
 
 ### Lesson A: “ACK 不回来”首先是 completion-chain 问题，不是礼貌地等 ACK
 
-在第一个 UB128 case 里，真正该问的不是“为什么没有 ACK”，而是：
+在第一个大规模 case 里，真正该问的不是“为什么没有 ACK”，而是：
 
 - completion 依赖的是哪一种 ACK / response
 - 它之前的哪一跳最后一次出现在哪里
@@ -191,7 +191,7 @@ trace 代码不是透明空气，它也是会出 bug 的软件。
 
 ### Lesson B: “task completion 停在 110us”不等于整个仿真不再前进
 
-在第二个 UB128 case 里，旧结论是：
+在第二个大规模 case 里，旧结论是：
 
 - `task-level completion` 在大约 `110.081us` 后停止增长
 - 但 `segment-level` 事件还继续出现
@@ -206,7 +206,7 @@ trace 代码不是透明空气，它也是会出 bug 的软件。
 
 ### Lesson C: “看起来卡了十几分钟”可能只是 observability 非常重
 
-一次 UB128 规模 case 的 fresh rerun 里（原始 case 目录已不再归档在仓库中）：
+一次上百节点规模 case 的 fresh rerun 里（原始 case 目录已不再归档在仓库中）：
 
 - 仿真时间最终推进到 `400 us`
 - 进程自然结束
