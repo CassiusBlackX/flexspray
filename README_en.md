@@ -28,7 +28,8 @@
 
 <p align="center">
   <strong>Release 2.1.0</strong> · September 2026<br>
-  UB Base Specification 2.1 · Richer transaction types, more transport layer modes, reliable rerouting at the network layer<br>
+  Based on the UB Base Specification 2.1: atomic transactions · CFG7 compact packet format · 24-bit CNA addressing · reliable rerouting at the network layer · dynamic packet rate control<br>
+  Engine optimizations: leaner switch arbitration and wakeup · compressed TP connection index · hash tie-breaking in adaptive routing<br>
   <a href="RELEASE_NOTES_UB_en.md#release-210">Full release notes →</a>
 </p>
 
