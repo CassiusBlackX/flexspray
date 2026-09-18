@@ -28,23 +28,12 @@
 
 <p align="center">
   <strong>Release 2.1.0</strong> · September 2026<br>
-  Simulation models updated for the UB Base Specification 2.1 · Simulation engine optimizations<br>
+  Simulation models based on the UB Base Specification 2.1: richer queue and other transaction types · more transport layer modes · reliable rerouting at the network layer · datalink header configuration and packet rate control<br>
+  Engine optimizations: fewer simulation events · on-demand resource loading · topology structure recognition · fast route computation · lower memory footprint<br>
   <a href="RELEASE_NOTES_UB_en.md#release-210">Full release notes →</a>
 </p>
 
 ---
-
-| Area | Updates in this release |
-| --- | --- |
-| **Simulation models** | Richer queue and other transaction types |
-| | More transport layer modes |
-| | Reliable rerouting at the network layer |
-| | Datalink header configuration and packet rate control |
-| **Simulation engine** | Fewer simulation events |
-| | On-demand resource loading |
-| | Topology structure recognition |
-| | Fast route computation |
-| | Lower memory footprint |
 
 **Contents**: [Project Overview](#-project-overview) · [Project Architecture](#-project-architecture) · [Key Components](#-key-components) · [OpenUSim Skills](#4-openusim-skills-repository-bundled) · [License](#-license) · [Citation](#-citation)
 
@@ -181,10 +170,6 @@
   </tbody>
 </table>
 
-> This project is built on ns-3.44. For detailed platform support, installation steps, system requirements, and build options, see [ns-3.44 Documentation](https://www.nsnam.org/releases/ns-3-44/documentation/), [Installation Guide](https://www.nsnam.org/docs/release/3.44/installation/singlehtml/), and [ns-3.44 Source](https://gitlab.com/nsnam/ns-3-dev/-/tree/ns-3.44?ref_type=tags).
->
-> This project integrates Unison for ns-3 multi-threaded parallel simulation ([EuroSys '24 paper](https://dl.acm.org/doi/10.1145/3627703.3629574)); see [UNISON_README.md](UNISON_README.md) and [QUICK_START_en.md](QUICK_START_en.md) for usage details.
-
 ## Project Architecture
 
 ```
@@ -313,6 +298,10 @@ This project follows the ns-3 license agreement, GPL v2. See the [`LICENSE`](LIC
   year = {2026}
 }
 ```
+
+> This project is built on ns-3.44. For detailed platform support, installation steps, system requirements, and build options, see [ns-3.44 Documentation](https://www.nsnam.org/releases/ns-3-44/documentation/), [Installation Guide](https://www.nsnam.org/docs/release/3.44/installation/singlehtml/), and [ns-3.44 Source](https://gitlab.com/nsnam/ns-3-dev/-/tree/ns-3.44?ref_type=tags).
+>
+> This project integrates Unison for ns-3 multi-threaded parallel simulation ([EuroSys '24 paper](https://dl.acm.org/doi/10.1145/3627703.3629574)); see [UNISON_README.md](UNISON_README.md) and [QUICK_START_en.md](QUICK_START_en.md) for usage details.
 
 ---
 
