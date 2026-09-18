@@ -269,7 +269,8 @@ bool UbPfc::UpdatePfcStatus(Ptr<Packet> p)
     Ptr<Node> node = NodeList::GetNode(m_nodeId);
     Ptr<UbPort> port = DynamicCast<UbPort>(node->GetDevice(m_portId));
 
-    UbDatalinkControlCreditHeader pfcHeader = UbDataLink::ParseCreditHeader(p, port);
+    UbDatalinkControlCreditHeader pfcHeader =
+        UbDataLink::ConsumeCreditHeaderAndRestoreCredits(p, port);
     bool ret = false;
     IntegerValue val;
     g_ub_vl_num.GetValue(val);
@@ -401,7 +402,7 @@ Ptr<Packet> UbPfc::CheckPfcThreshold(Ptr<Packet> p, uint32_t portId)
             << (uint32_t)port->m_credits[10] << " " << (uint32_t)port->m_credits[11] << " "
             << (uint32_t)port->m_credits[12] << " " << (uint32_t)port->m_credits[13] << " "
             << (uint32_t)port->m_credits[14] << " " << (uint32_t)port->m_credits[15] << "}");
-    pfcPkt = UbDataLink::GenControlCreditPacket(port->m_credits);
+    pfcPkt = UbDataLink::BuildControlCreditPacket(port->m_credits);
     NS_LOG_DEBUG("Create pfcpkt uid: " << pfcPkt->GetUid());
 
     return pfcPkt;

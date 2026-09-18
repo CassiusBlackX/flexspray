@@ -103,11 +103,6 @@ are an ordering proxy, not a precise retransmission count. Follow `throughput-ev
 The reusable recommendations above were validated on the current OpenUSim reference implementation
 with 197 successful controlled cases across hash width/key seeds, flow sizes, path delay/rate
 heterogeneity, arrival density, ingress cardinality, candidate scope, and RTP/CTP/LDST profiles.
-The durable experiment conclusions are in:
-
-```text
-scratch/20260715-routing-strategy-suitability/analysis/conclusions.md
-```
 
 This evidence characterizes the simulator implementation. It is not UB specification policy and is
 not a physical-device measurement.

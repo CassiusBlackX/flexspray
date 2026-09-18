@@ -49,6 +49,8 @@ public:
     void SetNode(Ptr<Node> node); // 设置当前节点
 
     void SetTransportMode(TransportMode mode);
+    void SetLocalEntityId(uint32_t localEntityId);
+    void SetPeerEntityId(uint32_t peerEntityId);
 
     /**
      * @brief Get the configured transport mode.
@@ -89,6 +91,7 @@ public:
     void OnTaskCompleted(uint32_t taskId, uint32_t jettyNum);
     void OnTestTaskCompleted(uint32_t taskId, uint32_t jettyNum);
     void OnMemTaskCompleted(uint32_t taskId);
+    void CompleteComputeTask(uint32_t taskId);
 
     // ========== 回调函数 ==========
     void SetFinishCallback(Callback<void, uint32_t, uint32_t> cb, Ptr<UbJetty> jetty);
@@ -106,14 +109,22 @@ private:
         bool destroyTaskScopedJetty,
         bool releasePlannedTpBinding,
         const std::vector<UbLifecycleResourceIdentity>& plannedTpConnections);
+    void OnTaskCompletedVisible(uint32_t taskId, uint32_t jettyNum);
+    std::map<std::pair<uint32_t, uint32_t>, EventId> m_completionVisibilityEvents;
 
     TracedCallback<uint32_t, uint32_t> m_traceMemTaskStartsNotify;
     TracedCallback<uint32_t, uint32_t> m_traceMemTaskCompletesNotify;
+    TracedCallback<uint32_t, uint32_t> m_traceComputeTaskQueuedNotify;
+    TracedCallback<uint32_t, uint32_t> m_traceComputeTaskStartsNotify;
+    TracedCallback<uint32_t, uint32_t> m_traceComputeTaskCompletesNotify;
     TracedCallback<uint32_t, uint32_t, uint32_t> m_traceWqeTaskStartsNotify;
     TracedCallback<uint32_t, uint32_t, uint32_t> m_traceWqeTaskCompletesNotify;
 
     void MemTaskStartsNotify(uint32_t nodeId, uint32_t taskId);
     void MemTaskCompletesNotify(uint32_t nodeId, uint32_t taskId);
+    void ComputeTaskQueuedNotify(uint32_t nodeId, uint32_t taskId);
+    void ComputeTaskStartsNotify(uint32_t nodeId, uint32_t taskId);
+    void ComputeTaskCompletesNotify(uint32_t nodeId, uint32_t taskId);
     void WqeTaskStartsNotify(uint32_t nodeId, uint32_t jettyNum, uint32_t taskId);
     void WqeTaskCompletesNotify(uint32_t nodeId, uint32_t jettyNum, uint32_t taskId);
     void WriteNotifyTaskStarts(uint32_t nodeId, uint32_t jettyNum, uint32_t baseTaskId);
@@ -135,6 +146,8 @@ private:
 
     uint32_t m_jettyNum = 0;       // 当前节点维护的jettynum,不会重复
     TransportMode m_transportMode{TransportMode::RTP};
+    uint32_t m_localEntityId{1};
+    uint32_t m_peerEntityId{1};
 
 };
 

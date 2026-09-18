@@ -1,1 +1,0 @@
-python3.12 ./ns3 run --no-build scratch/ub-quick-example --case-path=/Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260717-next-lifecycle-ctp-rtp-complex-differential/cases/ctp-win1/next/case-input --rng-run=1

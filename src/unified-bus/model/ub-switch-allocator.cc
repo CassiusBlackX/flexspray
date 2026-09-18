@@ -6,11 +6,14 @@
 #include "ub-queue-manager.h"
 
 #include "ns3/ub-controller.h"
+#include "ns3/hash.h"
 #include "ns3/ub-port.h"
 #include "ns3/ub-switch.h"
+#include "ns3/ub-tag.h"
 
 #include <algorithm>
 #include <limits>
+#include <sstream>
 
 namespace ns3 {
 
@@ -23,6 +26,19 @@ ComputeInitialIngressPhase(uint32_t nodeId, uint32_t outPortId, size_t qSize)
         return 0;
     }
     return static_cast<uint32_t>((nodeId + outPortId) % qSize);
+}
+
+uint32_t
+ComputeSeededIngressPhase(uint32_t seed,
+                          uint32_t nodeId,
+                          uint32_t outPortId,
+                          uint32_t priority,
+                          size_t qSize)
+{
+    std::ostringstream key;
+    key << "ALLOCATOR_RR_PHASE:" << seed << ':' << nodeId << ':' << outPortId << ':'
+        << priority << ':' << qSize;
+    return qSize == 0 ? 0 : static_cast<uint32_t>(Hash64(key.str()) % qSize);
 }
 
 } // namespace
@@ -40,12 +56,17 @@ MakeAllocatorFlowControlEventContext(Ptr<Packet> packet,
                                      uint32_t outPortId,
                                      uint32_t priority)
 {
+    // A recovered packet carries a switch-local marker while it sits in the healthy VOQ. Consume it
+    // here so the marker never reaches a later hop and never changes serialized bytes.
+    UbRecoveredCreditTag recoveredCreditTag;
+    const bool upstreamCreditAlreadyReturned = packet->RemovePacketTag(recoveredCreditTag);
     return {
         .packet = packet,
         .ingressQueue = ingressQueue,
         .inPortId = inPortId,
         .outPortId = outPortId,
         .priority = priority,
+        .upstreamCreditAlreadyReturned = upstreamCreditAlreadyReturned,
     };
 }
 
@@ -140,6 +161,9 @@ void UbSwitchAllocator::ScheduleAllocation(Ptr<UbPort> outPort)
         return;
     }
     const uint32_t outPortId = outPort->GetIfIndex();
+    if (!GetEgressStatus(outPortId)) {
+        return;
+    }
     NS_ASSERT_MSG(outPortId < m_portEventState.size(),
                   "Allocation requires initialized output-port ownership state");
     auto& state = m_portEventState[outPortId];
@@ -291,6 +315,12 @@ void UbSwitchAllocator::TriggerAllocator(Ptr<UbPort> outPort)
     if (m_disposed || outPortId >= m_running.size()) {
          NS_LOG_WARN("Port ID out of range in Allocator");
          return;
+    }
+
+    if (!GetEgressStatus(outPortId)) {
+        // Detected failed output: no grant may commit to it.
+        NS_LOG_DEBUG("[" << typeName << " TriggerAllocator] output suspended: " << outPortId);
+        return;
     }
 
     if (m_running[outPortId]) {
@@ -538,12 +568,49 @@ void UbSwitchAllocator::RegisterEgressStauts(uint32_t portsNum)
 
 void UbSwitchAllocator::SetEgressStatus(uint32_t portId, bool status)
 {
+    if (portId >= m_egressStatus.size())
+    {
+        m_egressStatus.resize(portId + 1, true);
+    }
     m_egressStatus[portId] = status;
 }
 
 bool UbSwitchAllocator::GetEgressStatus(uint32_t portId)
 {
-    return m_egressStatus[portId];
+    // An unregistered port is a healthy output: the vector is only sized by the derived Init().
+    return portId >= m_egressStatus.size() || m_egressStatus[portId];
+}
+
+void
+UbSwitchAllocator::SuspendOutput(uint32_t portId)
+{
+    if (portId >= m_egressStatus.size())
+    {
+        m_egressStatus.resize(portId + 1, true);
+    }
+    m_egressStatus[portId] = false;
+
+    auto& state = m_portEventState[portId];
+    if (state.allocationPending)
+    {
+        state.allocation.Cancel();
+        state.allocationPending = false;
+        NS_ASSERT(state.schedulingWorkCount > 0);
+        --state.schedulingWorkCount;
+    }
+    for (auto& [token, event] : state.notifications)
+    {
+        (void)token;
+        event.Cancel();
+    }
+    state.notifications.clear();
+    NS_LOG_DEBUG("[UbSwitchAllocator] suspended output port " << portId);
+}
+
+bool
+UbSwitchAllocator::IsOutputSuspended(uint32_t portId) const
+{
+    return portId < m_egressStatus.size() && !m_egressStatus[portId];
 }
 
 /*-----------------------------------------UbRoundRobinAllocator----------------------------------------------*/
@@ -571,6 +638,7 @@ void UbRoundRobinAllocator::Init()
         v.resize(vlNum, false);
     }
     m_selectedIngressQueueSlot.assign(portsNum, 0);
+    RegisterEgressStauts(portsNum);
     m_ingressSources.resize(portsNum);
     m_running.assign(portsNum, false);
     m_runAgain.assign(portsNum, false);
@@ -593,6 +661,12 @@ void UbRoundRobinAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
         SetActiveIngressQueue(ingressQueue);
     }
     if (m_disposed) {
+        m_running[outPortId] = false;
+        return;
+    }
+    if (!GetEgressStatus(outPortId)) {
+        // Detected failed output: keep the packet in its ingress queue for recovery.
+        ClearActiveIngressQueue(outPortId);
         m_running[outPortId] = false;
         return;
     }
@@ -681,8 +755,21 @@ Ptr<UbIngressQueue> UbRoundRobinAllocator::SelectNextIngressQueue(Ptr<UbPort> ou
             continue;
         }
         if (!m_rrPhaseSeeded[outPortId][pi]) {
-            m_rrIdx[outPortId][pi] =
-                ComputeInitialIngressPhase(m_nodeId, outPortId, ingressQueueSlotCount);
+            BooleanValue enabled;
+            UintegerValue seed;
+            const bool useSeededPhase =
+                GlobalValue::GetValueByNameFailSafe("UB_ALLOCATOR_RR_PHASE_HASH_ENABLE", enabled) &&
+                enabled.Get() &&
+                GlobalValue::GetValueByNameFailSafe("UB_ALLOCATOR_RR_PHASE_SEED", seed);
+            m_rrIdx[outPortId][pi] = useSeededPhase
+                                         ? ComputeSeededIngressPhase(seed.Get(),
+                                                                      m_nodeId,
+                                                                      outPortId,
+                                                                      pi,
+                                                                      ingressQueueSlotCount)
+                                         : ComputeInitialIngressPhase(m_nodeId,
+                                                                       outPortId,
+                                                                       ingressQueueSlotCount);
             m_rrPhaseSeeded[outPortId][pi] = true;
         } else if (m_rrIdx[outPortId][pi] >= ingressQueueSlotCount) {
             m_rrIdx[outPortId][pi] %= ingressQueueSlotCount;
@@ -745,6 +832,7 @@ void UbDwrrAllocator::Init()
     m_runAgain.assign(portsNum, false);
     m_nonEmptyIngressCount.assign(portsNum, 0);
     m_voqIngressSlotCount = portsNum;
+    RegisterEgressStauts(portsNum);
 
     m_ingressSources.resize(portsNum);
     for (auto &i : m_ingressSources) {
@@ -797,8 +885,21 @@ Ptr<UbIngressQueue> UbDwrrAllocator::SelectNextIngressQueue(Ptr<UbPort> outPort)
         }
 
         if (!m_rrPhaseSeeded[outPortId][pi]) {
-            m_rrIdx[outPortId][pi] =
-                ComputeInitialIngressPhase(m_nodeId, outPortId, ingressQueueSlotCount);
+            BooleanValue enabled;
+            UintegerValue seed;
+            const bool useSeededPhase =
+                GlobalValue::GetValueByNameFailSafe("UB_ALLOCATOR_RR_PHASE_HASH_ENABLE", enabled) &&
+                enabled.Get() &&
+                GlobalValue::GetValueByNameFailSafe("UB_ALLOCATOR_RR_PHASE_SEED", seed);
+            m_rrIdx[outPortId][pi] = useSeededPhase
+                                         ? ComputeSeededIngressPhase(seed.Get(),
+                                                                      m_nodeId,
+                                                                      outPortId,
+                                                                      pi,
+                                                                      ingressQueueSlotCount)
+                                         : ComputeInitialIngressPhase(m_nodeId,
+                                                                       outPortId,
+                                                                       ingressQueueSlotCount);
             m_rrPhaseSeeded[outPortId][pi] = true;
         } else if (m_rrIdx[outPortId][pi] >= ingressQueueSlotCount) {
             m_rrIdx[outPortId][pi] %= ingressQueueSlotCount;
@@ -847,6 +948,12 @@ void UbDwrrAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
         SetActiveIngressQueue(ingressQueue);
     }
     if (m_disposed) {
+        m_running[outPortId] = false;
+        return;
+    }
+    if (!GetEgressStatus(outPortId)) {
+        // Detected failed output: keep the packet in its ingress queue for recovery.
+        ClearActiveIngressQueue(outPortId);
         m_running[outPortId] = false;
         return;
     }

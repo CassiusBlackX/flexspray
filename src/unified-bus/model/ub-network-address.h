@@ -2,6 +2,7 @@
 #ifndef UB_NETWORK_ADDRESS_H
 #define UB_NETWORK_ADDRESS_H
 
+#include <cstdint>
 #include <chrono>
 #include <iomanip>
 #include <iostream>
@@ -14,6 +15,11 @@ using namespace std;
 using namespace ns3;
 
 namespace utils {
+
+// CTP uses the existing WQE/segment sport and dport fields.  UINT8_MAX is
+// reserved for a wildcard; CNA16 can encode only port ids 0 through 14.
+constexpr uint8_t CTP_WILDCARD_PORT = UINT8_MAX;
+constexpr uint32_t CTP_MAX_CNA16_PORT_ID = 14;
 
 // brief
 struct TrafficRecord
@@ -31,6 +37,8 @@ struct TrafficRecord
     uint32_t dstPortId = 0;
     bool hasSrcPortId{false};
     bool hasDstPortId{false};
+    std::string atomicSubOperation;
+    std::string requestPayloadBytes;
 };
 
 // Lightweight CSV row view. string_view fields are valid only during the parser callback.
@@ -49,6 +57,8 @@ struct TrafficRecordView
     uint32_t dstPortId{0};
     bool hasSrcPortId{false};
     bool hasDstPortId{false};
+    std::string_view atomicSubOperation{};
+    std::string_view requestPayloadBytes{};
 };
 
 constexpr long DEFAULT_PORT_BUFFER_SIZE = 2097152;

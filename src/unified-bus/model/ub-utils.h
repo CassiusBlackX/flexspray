@@ -9,6 +9,7 @@
 #include "ns3/enum.h"
 #include "ns3/internet-module.h"
 #include "ns3/ipv4-static-routing-helper.h"
+#include "ns3/ub-reliable-rerouting.h"
 #include "ns3/network-module.h"
 #include "ns3/object-factory.h"
 #include "ns3/point-to-point-module.h"
@@ -252,9 +253,18 @@ public:
                                                    ns3::Time offsetWindow,
                                                    uint32_t offsetSeed);
 
-    void CreateTp(const std::string &filename);
+    void CreateTp(const std::string& filename);
 
-    void SetComponentsAttribute(const std::string &filename);
+    /**
+     * @brief Provision and freeze the standard Host CTP Entity registries.
+     *
+     * The runner-only setup creates Entity 1 on each UB_DEVICE host and binds every local
+     * CNA16-encodable UB port. Additional Entity definitions remain a controller API concern;
+     * there is no case-file input for them.
+     */
+    void CreateDefaultCtpEntities();
+
+    void SetComponentsAttribute(const std::string& filename);
 
     // Runtime trace wiring / attribute query / fault helpers.
     void TopoTraceConnect();
@@ -282,28 +292,32 @@ public:
     static void CbfcStateNotify(uint32_t nodeId,
                                 uint32_t portId,
                                 const std::string& action,
-                                uint32_t priority,
+                                uint32_t vl,
                                 int32_t availableCredits,
-                                uint32_t nextPacketBytes);
+                                uint32_t nextPacketBytes,
+                                uint32_t creditCellBytes);
 
     static void CbfcCreditRestoreTraceNotify(uint32_t nodeId,
                                              uint32_t portId,
-                                             const std::vector<uint8_t>& credits);
+                                             const std::vector<int32_t>& creditCells,
+                                             uint32_t creditCellBytes);
 
     static void CbfcCreditLevelNotify(uint32_t nodeId,
                                       uint32_t portId,
                                       const std::string& reason,
-                                      uint32_t priority,
+                                      uint32_t vl,
                                       int32_t availableCredits,
-                                      int32_t deltaCredits);
+                                      int32_t deltaCredits,
+                                      uint32_t creditCellBytes);
 
     static void CbfcControlSendNotify(uint32_t nodeId,
                                       uint32_t portId,
                                       const std::string& reason,
                                       int32_t triggerThresholdCells,
                                       int32_t emitMinPendingCells,
-                                      const std::vector<int32_t>& pendingCredits,
-                                      const std::vector<uint8_t>& sendCredits);
+                                      const std::vector<int32_t>& pendingCreditCells,
+                                      const std::vector<int32_t>& sendCreditCells,
+                                      uint32_t creditCellBytes);
 
     static void DcqcnMarkNotify(uint32_t nodeId,
                                 uint32_t outPort,
@@ -353,6 +367,23 @@ public:
     static bool IsQueueTraceEnabled();
 
     static bool IsTpDebugEnabledFor(uint32_t nodeId, uint32_t tpn);
+
+    static void TpgPhaseCreateNotify(uint32_t srcNode,
+                                     uint32_t dstNode,
+                                     uint32_t taskId,
+                                     uint32_t memberCount,
+                                     uint32_t initialIndex,
+                                     uint16_t initialPort,
+                                     const std::vector<uint16_t>& memberPorts,
+                                     const std::string& strategy);
+
+    /**
+     * @brief Trace sink for reliable-rerouting events.
+     *
+     * Writes `output/reliable_rerouting.csv` through the existing buffered trace writer when the
+     * packet-trace category is enabled. Correctness and counters never depend on this sink.
+     */
+    static void ReliableReroutingNotify(const UbReliableReroutingEvent& record);
 
     static void TpDebugStateNotify(uint32_t nodeId,
                                    uint32_t tpn,
@@ -407,6 +438,9 @@ private:
         std::mutex mutex;
         uint64_t lastUse{0};
         uint32_t activeWrites{0};
+        bool headerWritten{false};
+        bool headerCommitted{false};
+        std::string csvHeader;
         bool open{false};
     };
 
@@ -507,6 +541,48 @@ private:
                                                        "Master switch for all traces",
                                                        ns3::BooleanValue(true),
                                                        ns3::MakeBooleanChecker());
+
+    ns3::GlobalValue g_tpg_phase_hash_enable =
+        ns3::GlobalValue("UB_TPG_PHASE_HASH_ENABLE",
+                         "Use a seeded hash for the initial RTP TPG TP cursor.",
+                         ns3::BooleanValue(false),
+                         ns3::MakeBooleanChecker());
+
+    ns3::GlobalValue g_tpg_phase_seed =
+        ns3::GlobalValue("UB_TPG_PHASE_SEED",
+                         "Seed for the initial RTP TPG TP cursor hash.",
+                         ns3::UintegerValue(0),
+                         ns3::MakeUintegerChecker<uint32_t>());
+
+    ns3::GlobalValue g_tpg_phase_trace_enable =
+        ns3::GlobalValue("UB_TPG_PHASE_TRACE_ENABLE",
+                         "Enable initialization-only RTP TPG phase traces.",
+                         ns3::BooleanValue(false),
+                         ns3::MakeBooleanChecker());
+
+    ns3::GlobalValue g_routing_rr_phase_hash_enable =
+        ns3::GlobalValue("UB_ROUTING_RR_PHASE_HASH_ENABLE",
+                         "Use a seeded hash for the initial routing RR candidate index.",
+                         ns3::BooleanValue(false),
+                         ns3::MakeBooleanChecker());
+
+    ns3::GlobalValue g_routing_rr_phase_seed =
+        ns3::GlobalValue("UB_ROUTING_RR_PHASE_SEED",
+                         "Seed for the initial routing RR candidate index hash.",
+                         ns3::UintegerValue(0),
+                         ns3::MakeUintegerChecker<uint32_t>());
+
+    ns3::GlobalValue g_allocator_rr_phase_hash_enable =
+        ns3::GlobalValue("UB_ALLOCATOR_RR_PHASE_HASH_ENABLE",
+                         "Use a seeded hash for the initial allocator RR ingress index.",
+                         ns3::BooleanValue(false),
+                         ns3::MakeBooleanChecker());
+
+    ns3::GlobalValue g_allocator_rr_phase_seed =
+        ns3::GlobalValue("UB_ALLOCATOR_RR_PHASE_SEED",
+                         "Seed for the initial allocator RR ingress index hash.",
+                         ns3::UintegerValue(0),
+                         ns3::MakeUintegerChecker<uint32_t>());
 
     ns3::GlobalValue g_task_trace_enable = ns3::GlobalValue("UB_TASK_TRACE_ENABLE",
                                                             "Enable task and WQE level traces",
@@ -669,6 +745,10 @@ private:
 
     static void AppendTraceLine(const TraceSinkHandle& sink, std::string line);
 
+    static void AppendCsvRow(const std::string& fileName,
+                             const std::string& header,
+                             const std::string& row);
+
     static void CommitTraceChunk(TraceFileState& fileState, std::string& chunk);
 
     static void FlushTraceOwner(TraceOwnerState& owner);
@@ -739,6 +819,12 @@ private:
     static void DagMemTaskStartsNotify(uint32_t nodeId, uint32_t taskId);
 
     static void DagMemTaskCompletesNotify(uint32_t nodeId, uint32_t taskId);
+
+    static void DagComputeTaskQueuedNotify(uint32_t nodeId, uint32_t taskId);
+
+    static void DagComputeTaskStartsNotify(uint32_t nodeId, uint32_t taskId);
+
+    static void DagComputeTaskCompletesNotify(uint32_t nodeId, uint32_t taskId);
 
     static void DagWqeTaskStartsNotify(uint32_t nodeId, uint32_t jettyNum, uint32_t taskId);
 

@@ -1,5 +1,0 @@
-WARNING: Legacy routing attributes are deprecated and may stop working in a future release. Replace them with:
-  /Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260717-next-lifecycle-ctp-rtp-complex-differential/cases/rtp-gbn-double-drop/next/case-input/network_attribute.txt:7,8 -> default ns3::UbApp::RoutingType "PER_FLOW_SHORTEST_PATHS"
-  /Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260717-next-lifecycle-ctp-rtp-complex-differential/cases/rtp-gbn-double-drop/next/case-input/network_attribute.txt:94,95 -> default ns3::UbTransportChannel::RoutingType "PER_FLOW_SHORTEST_PATHS"
-  /Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260717-next-lifecycle-ctp-rtp-complex-differential/cases/rtp-gbn-double-drop/next/case-input/network_attribute.txt:46,47 -> default ns3::UbLdstApi::RoutingType "PER_FLOW_SHORTEST_PATHS"
-  /Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260717-next-lifecycle-ctp-rtp-complex-differential/cases/rtp-gbn-double-drop/next/case-input/network_attribute.txt:73 -> default ns3::UbRoutingProcess::MultipathSelector "HASH64"

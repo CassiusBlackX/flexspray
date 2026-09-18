@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "ub-traffic-gen.h"
 
+#include "protocol/ub-transaction-rules.h"
 #include "ub-app.h"
 #include "ub-utils.h"
 
@@ -13,6 +14,8 @@
 #include "ns3/uinteger.h"
 
 #include <algorithm>
+#include <array>
+#include <charconv>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -349,7 +352,7 @@ UbTrafficGen::ConvertToRuntimeTask(const TrafficRecord& record)
     task.phaseId = static_cast<uint32_t>(record.phaseId);
     task.priority = static_cast<uint8_t>(record.priority);
     task.delay = ParseDelayLocked(record.delay);
-    task.op = ParseOpLocked(record.opType);
+    ParseTaskOperation(task, record.opType, record.atomicSubOperation, record.requestPayloadBytes);
     task.srcPortId = record.srcPortId;
     task.dstPortId = record.dstPortId;
     task.hasSrcPortId = record.hasSrcPortId;
@@ -374,7 +377,7 @@ UbTrafficGen::ConvertToRuntimeTask(const TrafficRecordView& record)
     task.phaseId = record.phaseId;
     task.priority = record.priority;
     task.delay = ParseDelayLocked(record.delay);
-    task.op = ParseOpLocked(record.opType);
+    ParseTaskOperation(task, record.opType, record.atomicSubOperation, record.requestPayloadBytes);
     task.srcPortId = record.srcPortId;
     task.dstPortId = record.dstPortId;
     task.hasSrcPortId = record.hasSrcPortId;
@@ -382,6 +385,113 @@ UbTrafficGen::ConvertToRuntimeTask(const TrafficRecordView& record)
     task.hasPhaseDependencies = !record.dependOnPhases.empty();
 
     return task;
+}
+
+bool
+UbTrafficGen::IsAtomicTask(RuntimeTaskOp op)
+{
+    return op >= RuntimeTaskOp::URMA_ATOMIC_COMPARE_SWAP &&
+           op <= RuntimeTaskOp::URMA_ATOMIC_FETCH_XOR;
+}
+
+bool
+UbTrafficGen::IsUrmaTask(RuntimeTaskOp op)
+{
+    return op == RuntimeTaskOp::URMA_WRITE || op == RuntimeTaskOp::URMA_READ ||
+           IsAtomicTask(op) || op >= RuntimeTaskOp::URMA_SEND;
+}
+
+UbTransactionOpcode
+UbTrafficGen::GetUrmaTaskOpcode(RuntimeTaskOp op)
+{
+    if (IsAtomicTask(op))
+    {
+        return static_cast<UbTransactionOpcode>(static_cast<uint8_t>(UbTransactionOpcode::ATOMIC_COMPARE_SWAP) +
+                                     static_cast<uint8_t>(op) -
+                                     static_cast<uint8_t>(RuntimeTaskOp::URMA_ATOMIC_COMPARE_SWAP));
+    }
+    switch (op)
+    {
+    case RuntimeTaskOp::URMA_WRITE: return UbTransactionOpcode::WRITE;
+    case RuntimeTaskOp::URMA_READ: return UbTransactionOpcode::READ;
+    case RuntimeTaskOp::URMA_SEND: return UbTransactionOpcode::SEND;
+    case RuntimeTaskOp::URMA_SEND_WITH_IMMEDIATE: return UbTransactionOpcode::SEND_WITH_IMMEDIATE;
+    case RuntimeTaskOp::URMA_WRITE_WITH_IMMEDIATE: return UbTransactionOpcode::WRITE_WITH_IMMEDIATE;
+    case RuntimeTaskOp::URMA_WRITE_WITH_NOTIFY: return UbTransactionOpcode::WRITE_WITH_NOTIFY;
+    case RuntimeTaskOp::URMA_PREFETCH_TGT: return UbTransactionOpcode::PREFETCH_TGT;
+    case RuntimeTaskOp::URMA_WRITEBACK: return UbTransactionOpcode::WRITEBACK;
+    case RuntimeTaskOp::URMA_MANAGEMENT: return UbTransactionOpcode::MANAGEMENT;
+    case RuntimeTaskOp::URMA_WRITE_WITH_ATOMIC_STORE_ADD: return UbTransactionOpcode::WRITE_WITH_ATOMIC_STORE_ADD;
+    case RuntimeTaskOp::URMA_WRITE_WITH_REMOTE_SYNC: return UbTransactionOpcode::WRITE_WITH_REMOTE_SYNC;
+    case RuntimeTaskOp::URMA_WRITE_WITH_REMOTE_SYNC_WITH_BE: return UbTransactionOpcode::WRITE_WITH_REMOTE_SYNC_WITH_BE;
+    case RuntimeTaskOp::URMA_ATOMIC_STORE_WITH_RETURN_STATUS: return UbTransactionOpcode::ATOMIC_STORE_WITH_RETURN_STATUS;
+    case RuntimeTaskOp::URMA_ATOMIC_SYNC: return UbTransactionOpcode::ATOMIC_SYNC;
+    case RuntimeTaskOp::URMA_WRITE_WITH_BE: return UbTransactionOpcode::WRITE_WITH_BE;
+    case RuntimeTaskOp::URMA_WRITEBACK_WITH_BE: return UbTransactionOpcode::WRITEBACK_WITH_BE;
+    default: break;
+    }
+    NS_ABORT_MSG("Runtime task is not an URMA operation");
+    return UbTransactionOpcode::MAX_OPCODE;
+}
+
+void
+UbTrafficGen::ParseTaskOperation(RuntimeTask& task,
+                                 std::string_view opType,
+                                 std::string_view subOperation,
+                                 std::string_view requestPayloadBytes)
+{
+    task.op = ParseOpLocked(opType);
+    task.atomicOptions.reset();
+    NS_ABORT_MSG_IF(task.op == RuntimeTaskOp::UNKNOWN,
+                    "traffic.csv taskId=" << task.taskId << " opType: unknown value " << opType);
+    if (!IsAtomicTask(task.op))
+    {
+        NS_ABORT_MSG_IF(
+            !subOperation.empty() || !requestPayloadBytes.empty(),
+            "traffic.csv taskId="
+                << task.taskId
+                << " atomicSubOperation/requestPayloadBytes: forbidden on non-atomic tasks");
+        return;
+    }
+    UbAtomicOptions options;
+    if (!subOperation.empty())
+    {
+        static constexpr std::array<std::string_view, 8> names =
+            {"ADD", "CLR", "EOR", "SET", "SMAX", "SMIN", "UMAX", "UMIN"};
+        const auto found = std::find(names.begin(), names.end(), subOperation);
+        NS_ABORT_MSG_IF(found == names.end(),
+                        "traffic.csv taskId="
+                            << task.taskId
+                            << " atomicSubOperation: expected ADD/CLR/EOR/SET/SMAX/SMIN/UMAX/UMIN");
+        options.subOperation =
+            static_cast<UbAtomicSubOperation>(std::distance(names.begin(), found));
+    }
+    if (!requestPayloadBytes.empty())
+    {
+        uint32_t payload = 0;
+        const auto parsed = std::from_chars(requestPayloadBytes.data(),
+                                            requestPayloadBytes.data() + requestPayloadBytes.size(),
+                                            payload);
+        NS_ABORT_MSG_IF(parsed.ec != std::errc{} ||
+                            parsed.ptr != requestPayloadBytes.data() + requestPayloadBytes.size(),
+                        "traffic.csv taskId=" << task.taskId
+                                              << " requestPayloadBytes: expected uint32 decimal");
+        options.requestPayloadBytes = payload;
+    }
+    // Reuse the single transaction validation entry so CSV input obeys exactly the constraints a
+    // local WQE submission will enforce later.
+    UbTransactionRequestInput request;
+    request.opcode = GetUrmaTaskOpcode(task.op);
+    request.logicalBytes = task.dataSize;
+    request.payloadBytes = options.requestPayloadBytes.value_or(task.dataSize);
+    request.fields.memoryAccess = UbMemoryAccessFields{0, 0, task.dataSize};
+    request.atomicOptions = options;
+    request.maxPayloadBytes = UB_MTU_BYTE;
+    request.origin = UbTransactionRequestOrigin::LOCAL_SUBMISSION;
+    const auto validation = ValidateTransactionRequest(request);
+    NS_ABORT_MSG_IF(!validation.IsValid(),
+                    "traffic.csv taskId=" << task.taskId << ": " << validation.message);
+    task.atomicOptions = options;
 }
 
 UbTrafficGen::RuntimeTaskOp
@@ -396,6 +506,15 @@ UbTrafficGen::ParseOpLocked(std::string_view opType)
     if (opType == "URMA_WRITE") {
         return RuntimeTaskOp::URMA_WRITE;
     }
+    static constexpr std::pair<std::string_view, RuntimeTaskOp> extra[] = {
+        {"URMA_SEND", RuntimeTaskOp::URMA_SEND}, {"URMA_SEND_WITH_IMMEDIATE", RuntimeTaskOp::URMA_SEND_WITH_IMMEDIATE},
+        {"URMA_WRITE_WITH_IMMEDIATE", RuntimeTaskOp::URMA_WRITE_WITH_IMMEDIATE}, {"URMA_WRITE_WITH_NOTIFY", RuntimeTaskOp::URMA_WRITE_WITH_NOTIFY},
+        {"URMA_PREFETCH_TGT", RuntimeTaskOp::URMA_PREFETCH_TGT}, {"URMA_WRITEBACK", RuntimeTaskOp::URMA_WRITEBACK},
+        {"URMA_MANAGEMENT", RuntimeTaskOp::URMA_MANAGEMENT}, {"URMA_WRITE_WITH_ATOMIC_STORE_ADD", RuntimeTaskOp::URMA_WRITE_WITH_ATOMIC_STORE_ADD},
+        {"URMA_WRITE_WITH_REMOTE_SYNC", RuntimeTaskOp::URMA_WRITE_WITH_REMOTE_SYNC}, {"URMA_WRITE_WITH_REMOTE_SYNC_WITH_BE", RuntimeTaskOp::URMA_WRITE_WITH_REMOTE_SYNC_WITH_BE},
+        {"URMA_ATOMIC_STORE_WITH_RETURN_STATUS", RuntimeTaskOp::URMA_ATOMIC_STORE_WITH_RETURN_STATUS}, {"URMA_ATOMIC_SYNC", RuntimeTaskOp::URMA_ATOMIC_SYNC},
+        {"URMA_WRITE_WITH_BE", RuntimeTaskOp::URMA_WRITE_WITH_BE}, {"URMA_WRITEBACK_WITH_BE", RuntimeTaskOp::URMA_WRITEBACK_WITH_BE}};
+    for (const auto& [name, value] : extra) if (opType == name) return value;
     if (opType == "URMA_READ") {
         return RuntimeTaskOp::URMA_READ;
     }
@@ -404,6 +523,28 @@ UbTrafficGen::ParseOpLocked(std::string_view opType)
     }
     if (opType == "MEM_LOAD") {
         return RuntimeTaskOp::MEM_LOAD;
+    }
+    if (opType == "COMPUTE") {
+        return RuntimeTaskOp::COMPUTE;
+    }
+    if (opType == "LOCAL_READY") {
+        return RuntimeTaskOp::LOCAL_READY;
+    }
+    static constexpr std::array<std::string_view, 9> atomicNames = {"URMA_ATOMIC_COMPARE_SWAP",
+                                                                    "URMA_ATOMIC_SWAP",
+                                                                    "URMA_ATOMIC_STORE",
+                                                                    "URMA_ATOMIC_LOAD",
+                                                                    "URMA_ATOMIC_FETCH_ADD",
+                                                                    "URMA_ATOMIC_FETCH_SUB",
+                                                                    "URMA_ATOMIC_FETCH_AND",
+                                                                    "URMA_ATOMIC_FETCH_OR",
+                                                                    "URMA_ATOMIC_FETCH_XOR"};
+    const auto found = std::find(atomicNames.begin(), atomicNames.end(), opType);
+    if (found != atomicNames.end())
+    {
+        return static_cast<RuntimeTaskOp>(
+            static_cast<uint8_t>(RuntimeTaskOp::URMA_ATOMIC_COMPARE_SWAP) +
+            std::distance(atomicNames.begin(), found));
     }
     return RuntimeTaskOp::UNKNOWN;
 }
@@ -1223,7 +1364,13 @@ UbTrafficGen::CollectReadyTaskBatchLocked()
                     continue;
                 }
 
-                *state = TaskState::RUNNING;
+                // COMPUTE acquires its UBPU only when its scheduled start event fires. Keep it
+                // READY during a non-zero task delay so resource ownership starts at execution,
+                // while communication retains the existing scheduled RUNNING transition.
+                if (task->op != RuntimeTaskOp::COMPUTE)
+                {
+                    *state = TaskState::RUNNING;
+                }
                 batch.tasks.push_back(*task);
                 batch.sourceApps.push_back(GetSourceAppLocked(task->sourceNode));
             }
@@ -1393,12 +1540,139 @@ void UbTrafficGen::ScheduleTasks(const ReadyTaskBatch& batch)
 void
 UbTrafficGen::StartTask(Ptr<UbApp> app, RuntimeTask task)
 {
+    if (task.op == RuntimeTaskOp::LOCAL_READY)
+    {
+        RecordCanonicalEvent("START", task);
+        MarkTaskCompleted(task.taskId);
+        return;
+    }
+    if (task.op == RuntimeTaskOp::COMPUTE)
+    {
+        SubmitComputeTask(app, task);
+        return;
+    }
+
+    RecordCanonicalEvent("START", task);
+    app->SendTraffic(task);
+}
+
+void
+UbTrafficGen::SubmitComputeTask(Ptr<UbApp> app, RuntimeTask task)
+{
+    NS_ABORT_MSG_IF(app == nullptr, "COMPUTE task requires a source application");
+
+    bool queued = false;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        TaskState* state = FindTaskStateLocked(task.taskId);
+        NS_ABORT_MSG_IF(state == nullptr || *state != TaskState::READY,
+                        "COMPUTE task must be READY before it can acquire or queue: "
+                            << task.taskId);
+        const auto running = m_computeRunningTasks.find(task.sourceNode);
+        if (running == m_computeRunningTasks.end())
+        {
+            m_computeRunningTasks.emplace(task.sourceNode, task.taskId);
+            m_computeRunningApps.emplace(task.sourceNode, app);
+            *state = TaskState::RUNNING;
+        }
+        else
+        {
+            m_computeQueues[task.sourceNode].push_back(ComputeTaskRequest{app, task});
+            *state = TaskState::QUEUED;
+            queued = true;
+        }
+    }
+
+    if (queued)
+    {
+        app->ComputeTaskQueuedNotify(task.sourceNode, task.taskId);
+        NS_LOG_DEBUG("Queued COMPUTE task " << task.taskId << " on UBPU " << task.sourceNode);
+        return;
+    }
+
+    app->ComputeTaskStartsNotify(task.sourceNode, task.taskId);
     RecordCanonicalEvent("START", task);
     app->SendTraffic(task);
 }
 
 void UbTrafficGen::OnTaskCompleted(uint32_t taskId)
 {
+    bool isCompute = false;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        const RuntimeTask* task = FindTaskLocked(taskId);
+        isCompute = task != nullptr && task->op == RuntimeTaskOp::COMPUTE;
+    }
+    if (isCompute)
+    {
+        OnComputeTaskCompleted(taskId);
+        return;
+    }
+    MarkTaskCompleted(taskId);
+}
+
+void
+UbTrafficGen::OnComputeTaskCompleted(uint32_t taskId)
+{
+    RuntimeTask completedTask;
+    Ptr<UbApp> completedApp;
+    std::optional<ComputeTaskRequest> nextTask;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        const RuntimeTask* task = FindTaskLocked(taskId);
+        if (task == nullptr || task->op != RuntimeTaskOp::COMPUTE)
+        {
+            return;
+        }
+
+        const auto running = m_computeRunningTasks.find(task->sourceNode);
+        if (running == m_computeRunningTasks.end() || running->second != taskId)
+        {
+            return;
+        }
+
+        completedTask = *task;
+        const auto appIt = m_computeRunningApps.find(task->sourceNode);
+        if (appIt != m_computeRunningApps.end())
+        {
+            completedApp = appIt->second;
+            m_computeRunningApps.erase(appIt);
+        }
+        m_computeRunningTasks.erase(running);
+
+        auto queueIt = m_computeQueues.find(task->sourceNode);
+        if (queueIt != m_computeQueues.end() && !queueIt->second.empty())
+        {
+            nextTask = std::move(queueIt->second.front());
+            queueIt->second.pop_front();
+            TaskState* nextState = FindTaskStateLocked(nextTask->task.taskId);
+            NS_ABORT_MSG_IF(nextState == nullptr || *nextState != TaskState::QUEUED,
+                            "COMPUTE queue state is not QUEUED for task "
+                                << nextTask->task.taskId);
+            *nextState = TaskState::RUNNING;
+            m_computeRunningTasks.emplace(task->sourceNode, nextTask->task.taskId);
+            m_computeRunningApps.emplace(task->sourceNode, nextTask->app);
+            if (queueIt->second.empty())
+            {
+                m_computeQueues.erase(queueIt);
+            }
+        }
+    }
+
+    if (completedApp != nullptr)
+    {
+        completedApp->ComputeTaskCompletesNotify(completedTask.sourceNode, completedTask.taskId);
+    }
+
+    if (nextTask.has_value())
+    {
+        nextTask->app->ComputeTaskStartsNotify(nextTask->task.sourceNode,
+                                               nextTask->task.taskId);
+        RecordCanonicalEvent("START", nextTask->task);
+        nextTask->app->SendTraffic(nextTask->task);
+    }
+
+    // Release the local compute slot before entering the existing visibility path.
     MarkTaskCompleted(taskId);
 }
 

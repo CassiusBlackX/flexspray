@@ -47,27 +47,31 @@ UbRoutingTable::GetOrCreatePortSet(const std::vector<uint16_t>& ports)
 void
 UbRoutingTable::AddShortestRoute(uint32_t destIp, const std::vector<uint16_t>& outPorts)
 {
-    std::vector<uint16_t> target;
+    std::vector<uint16_t> mergedOutPorts;
     const auto existing = m_shortest.find(destIp);
     if (existing != m_shortest.end())
     {
-        target.insert(target.end(), existing->second->begin(), existing->second->end());
+        mergedOutPorts.insert(mergedOutPorts.end(),
+                              existing->second->begin(),
+                              existing->second->end());
     }
-    target.insert(target.end(), outPorts.begin(), outPorts.end());
-    m_shortest[destIp] = GetOrCreatePortSet(target);
+    mergedOutPorts.insert(mergedOutPorts.end(), outPorts.begin(), outPorts.end());
+    m_shortest[destIp] = GetOrCreatePortSet(mergedOutPorts);
 }
 
 void
 UbRoutingTable::AddOtherRoute(uint32_t destIp, const std::vector<uint16_t>& outPorts)
 {
-    std::vector<uint16_t> target;
+    std::vector<uint16_t> mergedOutPorts;
     const auto existing = m_other.find(destIp);
     if (existing != m_other.end())
     {
-        target.insert(target.end(), existing->second->begin(), existing->second->end());
+        mergedOutPorts.insert(mergedOutPorts.end(),
+                              existing->second->begin(),
+                              existing->second->end());
     }
-    target.insert(target.end(), outPorts.begin(), outPorts.end());
-    m_other[destIp] = GetOrCreatePortSet(target);
+    mergedOutPorts.insert(mergedOutPorts.end(), outPorts.begin(), outPorts.end());
+    m_other[destIp] = GetOrCreatePortSet(mergedOutPorts);
 }
 
 void
@@ -114,13 +118,13 @@ UbRoutingTable::AddRouteRangeToMap(RouteRangeMap& routeRanges,
          it != routeRanges.end() && it->first <= endNodeId;
          ++it)
     {
-        std::vector<uint16_t> target;
+        std::vector<uint16_t> mergedOutPorts;
         if (it->second != nullptr)
         {
-            target.insert(target.end(), it->second->begin(), it->second->end());
+            mergedOutPorts.insert(mergedOutPorts.end(), it->second->begin(), it->second->end());
         }
-        target.insert(target.end(), outPorts.begin(), outPorts.end());
-        it->second = GetOrCreatePortSet(target);
+        mergedOutPorts.insert(mergedOutPorts.end(), outPorts.begin(), outPorts.end());
+        it->second = GetOrCreatePortSet(mergedOutPorts);
     }
 }
 

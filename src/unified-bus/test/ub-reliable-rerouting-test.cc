@@ -1,0 +1,2252 @@
+// SPDX-License-Identifier: GPL-2.0-only
+//
+// Focused suite for UB 2.1 packet-level reliable rerouting
+// (.scratch/ub21-reliable-rerouting/design.md). Link-only checks stay at the opaque-byte
+// boundary; forwarding checks go through the production switch parsers, routing keys, and the
+// recovery admission path.
+#include "ns3/test.h"
+#include "ns3/ub-app.h"
+#include "ns3/ub-congestion-control.h"
+#include "ns3/ub-controller.h"
+#include "ns3/ub-datalink.h"
+#include "ns3/ub-header.h"
+#include "ns3/ub-link.h"
+#include "ns3/ub-network-address.h"
+#include "ns3/ub-next-hop-index.h"
+#include "ns3/ub-port.h"
+#include "ns3/ub-reliable-rerouting.h"
+#include "ns3/ub-switch.h"
+#include "ns3/ub-transport.h"
+#include "ns3/ub-utils.h"
+
+#include <algorithm>
+#include <csignal>
+#include <functional>
+#include <iomanip>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#ifndef _WIN32
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
+using namespace ns3;
+
+namespace {
+
+constexpr uint8_t kPriority = 7;
+constexpr uint32_t kTpSource = 100;
+constexpr uint32_t kTpDestination = 200;
+
+// ---------------------------------------------------------------------------------------------
+// Small helpers
+// ---------------------------------------------------------------------------------------------
+
+Ptr<UbPort>
+CreateTestPort(Ptr<Node> node)
+{
+    Ptr<UbPort> port = CreateObject<UbPort>();
+    port->SetAddress(Mac48Address::Allocate());
+    node->AddDevice(port);
+    return port;
+}
+
+/**
+ * @brief Node builder that keeps reliable rerouting on NONE flow control.
+ *
+ * Mirrors the repository node fixture with an explicit flow-control attribute set before
+ * `UbSwitch::Init()`, so this slice cannot depend on credit behaviour.
+ */
+void
+InitReroutingNode(Ptr<Node> node,
+                  UbNodeType_t nodeType,
+                  uint32_t portCount,
+                  FcType flowControl = FcType::NONE)
+{
+    Ptr<UbSwitch> sw = CreateObject<UbSwitch>();
+    node->AggregateObject(sw);
+    sw->SetNodeType(nodeType);
+
+    if (nodeType == UB_DEVICE)
+    {
+        Ptr<UbController> controller = CreateObject<UbController>();
+        node->AggregateObject(controller);
+        controller->CreateUbFunction();
+        controller->CreateUbTransaction();
+    }
+
+    for (uint32_t index = 0; index < portCount; ++index)
+    {
+        CreateTestPort(node);
+    }
+
+    sw->SetAttribute("FlowControl", EnumValue(flowControl));
+    sw->Init();
+    Ptr<UbCongestionControl> congestionCtrl = UbCongestionControl::Create(UB_SWITCH);
+    congestionCtrl->OnSwitchAttached(sw);
+}
+
+Ptr<UbLink>
+ConnectPorts(Ptr<UbPort> left,
+             Ptr<UbPort> right,
+             bool enableRerouting,
+             Time delay,
+             Time detectionDelay = NanoSeconds(0),
+             Time lastAckDelay = NanoSeconds(0))
+{
+    Ptr<UbLink> link = CreateObject<UbLink>();
+    link->SetAttribute("Delay", TimeValue(delay));
+    link->SetAttribute("EnableReliableRerouting", BooleanValue(enableRerouting));
+    // Arming captures the immutable configuration when the link completes, so every recovery
+    // attribute must be in place before the second endpoint attaches.
+    link->SetAttribute("FailureDetectionDelay", TimeValue(detectionDelay));
+    link->SetAttribute("LastAckDelay", TimeValue(lastAckDelay));
+    left->Attach(link);
+    right->Attach(link);
+    return link;
+}
+
+/** Adds the plain destination-node route used by the production IPv4 path. */
+void
+AddRoute(Ptr<Node> node, uint32_t destNodeId, const std::vector<uint16_t>& outPorts)
+{
+    node->GetObject<UbSwitch>()->GetRoutingProcess()->GetRoutingTable().AddShortestRoute(
+        utils::NodeIdToIp(destNodeId).Get(),
+        outPorts);
+}
+
+std::vector<uint8_t>
+PacketBytes(Ptr<const Packet> packet)
+{
+    std::vector<uint8_t> bytes(packet->GetSize());
+    if (!bytes.empty())
+    {
+        packet->CopyData(bytes.data(), bytes.size());
+    }
+    return bytes;
+}
+
+std::string
+HexOf(const std::vector<uint8_t>& bytes)
+{
+    std::ostringstream out;
+    out << std::hex << std::setfill('0');
+    for (uint8_t byte : bytes)
+    {
+        out << std::setw(2) << static_cast<unsigned>(byte);
+    }
+    return out.str();
+}
+
+/** Ordered-independent view of a packet set (recovery may legitimately reorder traffic). */
+std::vector<std::string>
+SortedHex(const std::vector<std::vector<uint8_t>>& packets)
+{
+    std::vector<std::string> hex;
+    hex.reserve(packets.size());
+    for (const auto& packet : packets)
+    {
+        hex.push_back(HexOf(packet));
+    }
+    std::sort(hex.begin(), hex.end());
+    return hex;
+}
+
+/** @brief Production URMA packet builder: the header stack the switch decoder consumes. */
+Ptr<Packet>
+BuildUrmaPacket(uint32_t payloadBytes,
+                uint32_t sourceNodeId,
+                uint32_t destinationNodeId,
+                uint8_t priority,
+                RoutingType routingType,
+                uint32_t psn = 0)
+{
+    Ptr<Packet> packet = Create<Packet>(payloadBytes);
+    packet->AddPacketTag(UbFlowTag(1, payloadBytes));
+
+    UbMAExtTah maHeader;
+    maHeader.SetLength(payloadBytes);
+    packet->AddHeader(maHeader);
+
+    UbTransactionHeader transactionHeader;
+    transactionHeader.SetUbTransactionOpcode(UbTransactionOpcode::WRITE);
+    transactionHeader.SetIniTaSsn(0);
+    transactionHeader.SetIniRcId(0);
+    packet->AddHeader(transactionHeader);
+
+    UbTransportHeader transportHeader;
+    transportHeader.SetTPOpcode(TpOpcode::TP_OPCODE_RELIABLE_TA);
+    transportHeader.SetSrcTpn(kTpSource);
+    transportHeader.SetDestTpn(kTpDestination);
+    transportHeader.SetPsn(psn);
+    transportHeader.SetTpMsn(psn);
+    transportHeader.SetLastPacket(true);
+    packet->AddHeader(transportHeader);
+
+    UbPort::AddUdpHeader(packet, 0, 1);
+    UbPort::AddIpv4Header(packet,
+                          utils::NodeIdToIp(sourceNodeId),
+                          utils::NodeIdToIp(destinationNodeId));
+
+    UbIpBasedNetworkHeader networkHeader;
+    packet->AddHeader(networkHeader);
+    UbDataLink::AddPacketHeader(packet,
+                                false,
+                                false,
+                                priority,
+                                priority,
+                                routingType,
+                                UbDatalinkHeaderConfig::PACKET_IPV4);
+    return packet;
+}
+
+/**
+ * @brief Production routed RTP control packet (ACK/NAK/SACK/CNP family).
+ *
+ * Uses the transport/transaction header stack the switch and transport decoder consume, so a routed
+ * acknowledgement travels the ordinary forwarding path instead of a test-only shortcut.
+ */
+Ptr<Packet>
+BuildRoutedTpAckPacket(uint32_t payloadBytes,
+                       uint32_t sourceNodeId,
+                       uint32_t destinationNodeId,
+                       TpOpcode opcode,
+                       uint8_t priority,
+                       RoutingType routingType)
+{
+    Ptr<Packet> packet = Create<Packet>(payloadBytes);
+
+    UbAckTransactionHeader ackHeader;
+    ackHeader.SetUbTransactionOpcode(UbTransactionOpcode::TAACK);
+    packet->AddHeader(ackHeader);
+
+    if (opcode == TpOpcode::TP_OPCODE_SACK_WITHOUT_CETPH ||
+        opcode == TpOpcode::TP_OPCODE_SACK_WITH_CETPH)
+    {
+        if (opcode == TpOpcode::TP_OPCODE_SACK_WITH_CETPH)
+        {
+            UbCongestionExtTph cetph;
+            cetph.SetAckSequence(0);
+            packet->AddHeader(cetph);
+        }
+        UbSelectiveAckExtTph saetph;
+        saetph.SetBitmapBitCount(64);
+        saetph.SetMaxRcvPsn(0);
+        saetph.SetBitmapBit(0, true);
+        packet->AddHeader(saetph);
+    }
+    else if (opcode == TpOpcode::TP_OPCODE_ACK_WITH_CETPH)
+    {
+        UbCongestionExtTph cetph;
+        cetph.SetAckSequence(0);
+        packet->AddHeader(cetph);
+    }
+
+    UbTransportHeader transportHeader;
+    transportHeader.SetTPOpcode(opcode);
+    transportHeader.SetSrcTpn(kTpDestination);
+    transportHeader.SetDestTpn(kTpSource);
+    transportHeader.SetPsn(0);
+    transportHeader.SetTpMsn(0);
+    transportHeader.SetLastPacket(true);
+    packet->AddHeader(transportHeader);
+
+    UbPort::AddUdpHeader(packet, 1, 0);
+    UbPort::AddIpv4Header(packet,
+                          utils::NodeIdToIp(sourceNodeId),
+                          utils::NodeIdToIp(destinationNodeId));
+    UbIpBasedNetworkHeader networkHeader;
+    packet->AddHeader(networkHeader);
+    UbDataLink::AddPacketHeader(packet,
+                                false,
+                                false,
+                                priority,
+                                priority,
+                                routingType,
+                                UbDatalinkHeaderConfig::PACKET_IPV4);
+    return packet;
+}
+
+/** @brief Production compact-transport packet (request or response role by TA opcode). */
+Ptr<Packet>
+BuildCompactTransportPacket(uint32_t payloadBytes,
+                            uint32_t sourceNodeId,
+                            uint32_t destinationNodeId,
+                            UbTransactionOpcode opcode,
+                            uint8_t priority,
+                            RoutingType routingType)
+{
+    Ptr<Packet> packet = Create<Packet>(payloadBytes);
+
+    UbDummyTransactionHeader taHeader;
+    taHeader.SetUbTransactionOpcode(opcode);
+    packet->AddHeader(taHeader);
+
+    UbCtpHeader ctpHeader;
+    ctpHeader.SetNlp(UB_CTPH_NLP_COMPACT_TAH);
+    packet->AddHeader(ctpHeader);
+
+    UbCna16NetworkHeader cnaHeader;
+    cnaHeader.SetScna(utils::NodeIdToCna16(sourceNodeId));
+    cnaHeader.SetDcna(utils::NodeIdToCna16(destinationNodeId));
+    cnaHeader.SetNlp(UB_CNA_NLP_CTPH);
+    packet->AddHeader(cnaHeader);
+    UbDataLink::AddPacketHeader(packet,
+                                false,
+                                false,
+                                priority,
+                                priority,
+                                routingType,
+                                UbDatalinkHeaderConfig::PACKET_CNA16);
+    return packet;
+}
+
+/** @brief Production LDST memory packet (request or response role by TA opcode). */
+Ptr<Packet>
+BuildLdstMemoryPacket(uint32_t payloadBytes,
+                      uint32_t sourceNodeId,
+                      uint32_t destinationNodeId,
+                      UbTransactionOpcode opcode,
+                      uint8_t priority,
+                      RoutingType routingType)
+{
+    Ptr<Packet> packet = Create<Packet>(payloadBytes);
+
+    UbDummyTransactionHeader taHeader;
+    taHeader.SetUbTransactionOpcode(opcode);
+    packet->AddHeader(taHeader);
+
+    UbLdstNetworkFields fields;
+    fields.source.nodeId = sourceNodeId;
+    fields.destination.nodeId = destinationNodeId;
+    AddLdstNetworkHeader(packet,
+                                            fields,
+                                            UbDatalinkHeaderConfig::PACKET_UB_MEM);
+    UbDataLink::AddPacketHeader(packet,
+                                false,
+                                false,
+                                priority,
+                                priority,
+                                routingType,
+                                UbDatalinkHeaderConfig::PACKET_UB_MEM);
+    return packet;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Topology fixture
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * @brief Two hosts and two parallel switch-to-switch links.
+ *
+ *   hostA(0) --0-- swB(1) --1==1-- swC(2) --0-- hostD(3)
+ *                       \--2==2--/
+ *
+ * Both switches route to the remote host over equal-cost candidates {1, 2} with
+ * PER_FLOW_SHORTEST_PATHS + INGRESS_PORT_STRIPE, so the host-facing ingress port 0 always picks
+ * candidate 1 until the detected failed output is excluded.
+ */
+struct ReroutingTopology
+{
+    Ptr<Node> hostA;
+    Ptr<Node> swB;
+    Ptr<Node> swC;
+    Ptr<Node> hostD;
+    Ptr<UbPort> a0;
+    Ptr<UbPort> b0;
+    Ptr<UbPort> b1;
+    Ptr<UbPort> b2;
+    Ptr<UbPort> c0;
+    Ptr<UbPort> c1;
+    Ptr<UbPort> c2;
+    Ptr<UbPort> d0;
+    Ptr<UbLink> failedLink;
+    Ptr<UbLink> alternateLink;
+
+    ReroutingTopology(bool enableRerouting = true,
+                      Time failedLinkDelay = NanoSeconds(20),
+                      Time detectionDelay = NanoSeconds(0),
+                      Time lastAckDelay = NanoSeconds(0),
+                      FcType flowControl = FcType::NONE)
+    {
+        hostA = CreateObject<Node>(0);
+        swB = CreateObject<Node>(1);
+        swC = CreateObject<Node>(2);
+        hostD = CreateObject<Node>(3);
+        InitReroutingNode(hostA, UB_DEVICE, 1, flowControl);
+        InitReroutingNode(swB, UB_SWITCH, 3, flowControl);
+        InitReroutingNode(swC, UB_SWITCH, 3, flowControl);
+        InitReroutingNode(hostD, UB_DEVICE, 1, flowControl);
+
+        a0 = DynamicCast<UbPort>(hostA->GetDevice(0));
+        b0 = DynamicCast<UbPort>(swB->GetDevice(0));
+        b1 = DynamicCast<UbPort>(swB->GetDevice(1));
+        b2 = DynamicCast<UbPort>(swB->GetDevice(2));
+        c0 = DynamicCast<UbPort>(swC->GetDevice(0));
+        c1 = DynamicCast<UbPort>(swC->GetDevice(1));
+        c2 = DynamicCast<UbPort>(swC->GetDevice(2));
+        d0 = DynamicCast<UbPort>(hostD->GetDevice(0));
+
+        ConnectPorts(a0, b0, enableRerouting, NanoSeconds(20));
+        failedLink = ConnectPorts(b1,
+                                  c1,
+                                  enableRerouting,
+                                  failedLinkDelay,
+                                  detectionDelay,
+                                  lastAckDelay);
+        alternateLink = ConnectPorts(b2, c2, enableRerouting, NanoSeconds(20));
+        ConnectPorts(c0, d0, enableRerouting, NanoSeconds(20));
+
+        AddRoute(swB, hostD->GetId(), {1, 2});
+        AddRoute(swC, hostA->GetId(), {1, 2});
+        AddRoute(swB, hostA->GetId(), {0});
+        AddRoute(swC, hostD->GetId(), {0});
+        AddRoute(hostA, hostD->GetId(), {0});
+        AddRoute(hostD, hostA->GetId(), {0});
+
+        swB->GetObject<UbSwitch>()->GetRoutingProcess()->SetAttribute(
+            "MultipathSelector",
+            EnumValue(MultipathSelector::INGRESS_PORT_STRIPE));
+        swC->GetObject<UbSwitch>()->GetRoutingProcess()->SetAttribute(
+            "MultipathSelector",
+            EnumValue(MultipathSelector::INGRESS_PORT_STRIPE));
+    }
+
+    Ptr<UbSwitch> Switch(Ptr<Node> node) const { return node->GetObject<UbSwitch>(); }
+
+    UbReliableRerouting::State State(uint32_t portId) const
+    {
+        Ptr<UbPort> port = DynamicCast<UbPort>(swB->GetDevice(portId));
+        return port->GetReliableRerouting()->GetState();
+    }
+
+    UbReliableRerouting* Rerouting(uint32_t portId) const
+    {
+        return PeekPointer(DynamicCast<UbPort>(swB->GetDevice(portId))->GetReliableRerouting());
+    }
+};
+
+// ---------------------------------------------------------------------------------------------
+// Trace/callback adapters (ns-3 MakeCallback accepts function pointers, not lambdas)
+// ---------------------------------------------------------------------------------------------
+
+struct PacketSink
+{
+    std::vector<std::vector<uint8_t>> packets;
+    /** Packets that leaked a switch-local recovery marker into a later hop. */
+    uint32_t taggedPackets{0};
+};
+
+struct ControlFrameCounter
+{
+    uint32_t count{0};
+};
+
+void
+CountControlFrame(ControlFrameCounter* counter, Ptr<UbPort>, Ptr<Packet> packet)
+{
+    UbDatalinkPacketHeader header;
+    packet->PeekHeader(header);
+    if (header.IsUbDatalinkControlCreditHeader())
+    {
+        ++counter->count;
+    }
+}
+
+void
+CaptureDeliveredPacket(PacketSink* sink, Ptr<UbPort>, Ptr<Packet> packet)
+{
+    UbRecoveredCreditTag leakedTag;
+    if (packet->PeekPacketTag(leakedTag))
+    {
+        ++sink->taggedPackets;
+    }
+    sink->packets.push_back(PacketBytes(packet));
+}
+
+/** @brief Coordinates a single failure action that must cover both link directions. */
+struct BilateralArm
+{
+    bool afterInjection{false};
+    bool forwardSeen{false};
+    bool reverseSeen{false};
+    bool armed{false};
+    Time offset{NanoSeconds(40)};
+    Ptr<UbLink> link;
+};
+
+struct SendWatcher
+{
+    uint32_t nodeId{0};
+    uint32_t portId{0};
+    Ptr<UbLink> link;
+    Ptr<UbPort> port;
+    Time failOffset;
+    bool armed{false};
+    bool failOnSend{false};
+    Time observedStart;
+    bool* startedFlag{nullptr};
+    // Optional post-delivery probe: records what the sender still retained one nanosecond after
+    // the delivery instant.
+    PacketSink* probeSink{nullptr};
+    UbReliableRerouting* probeRerouting{nullptr};
+    uint64_t retryAtDelivery{0};
+    BilateralArm* bilateral{nullptr};
+    bool bilateralIsForward{false};
+};
+
+void
+WatchSendStart(SendWatcher* watcher, uint32_t nodeId, uint32_t portId, uint32_t packetBytes)
+{
+    if (nodeId != watcher->nodeId || portId != watcher->portId)
+    {
+        return;
+    }
+    if (watcher->observedStart.IsZero())
+    {
+        watcher->observedStart = Simulator::Now();
+    }
+    if (watcher->startedFlag != nullptr)
+    {
+        *watcher->startedFlag = true;
+    }
+    if (watcher->bilateral != nullptr && watcher->bilateral->afterInjection)
+    {
+        BilateralArm* arm = watcher->bilateral;
+        if (watcher->bilateralIsForward)
+        {
+            arm->forwardSeen = true;
+        }
+        else
+        {
+            arm->reverseSeen = true;
+        }
+        if (arm->forwardSeen && arm->reverseSeen && !arm->armed)
+        {
+            arm->armed = true;
+            Simulator::Schedule(arm->offset, &UbLink::Fail, PeekPointer(arm->link));
+        }
+    }
+    if (watcher->link == nullptr)
+    {
+        // Start-only watcher used to coordinate a failure across both directions.
+        return;
+    }
+    const Time txTime = watcher->port != nullptr
+                            ? watcher->port->GetDataRate().CalculateBytesTxTime(packetBytes)
+                            : Time(0);
+    // Simulator::Schedule takes a delay, so the delivery instant is expressed relative to now.
+    const Time deliveryDelay = txTime + watcher->link->GetDelay();
+    const Time deliveryTime = watcher->observedStart + deliveryDelay;
+    if (watcher->probeSink != nullptr)
+    {
+        SendWatcher* watcherPtr = watcher;
+        const Time probeTime = deliveryDelay + NanoSeconds(1);
+        Simulator::Schedule(probeTime, [watcherPtr]() {
+            if (watcherPtr->probeRerouting != nullptr)
+            {
+                watcherPtr->retryAtDelivery = watcherPtr->probeRerouting->GetRetryPacketCount();
+            }
+        });
+    }
+    if (watcher->failOnSend && !watcher->armed)
+    {
+        watcher->armed = true;
+        const Time failTime = watcher->failOffset.IsZero()
+                                  ? deliveryDelay
+                                  : watcher->failOffset;
+        Simulator::Schedule(failTime, &UbLink::Fail, PeekPointer(watcher->link));
+    }
+}
+
+/** Same-timestamp ordering helper: schedule the failure once a packet is fully serialized. */
+void
+WatchPacketSerialized(SendWatcher* watcher, Ptr<Packet>, Time txCompleteTime)
+{
+    if (watcher->failOnSend || watcher->armed)
+    {
+        return;
+    }
+    watcher->armed = true;
+    Simulator::Schedule(txCompleteTime + watcher->link->GetDelay(),
+                        &UbLink::Fail,
+                        PeekPointer(watcher->link));
+}
+
+struct TransferWatcher
+{
+    Time transferTime;
+    bool sawDrain{false};
+    bool sawLastAckWait{false};
+    bool sawControlFrameDiscard{false};
+    Ptr<UbSwitch> newcomerSwitch;
+    Ptr<UbPort> newcomerIngress;
+    Ptr<Packet> newcomer;
+};
+
+void
+WatchReroutingEvent(TransferWatcher* watcher, const UbReliableReroutingEvent& record)
+{
+    if (record.event == "state:WAIT_LAST_ACK" && !watcher->sawLastAckWait)
+    {
+        watcher->sawLastAckWait = true;
+        if (watcher->newcomer != nullptr)
+        {
+            // New traffic offered after detection must use the healthy alternate immediately.
+            Simulator::ScheduleNow(&UbSwitch::SwitchHandlePacket,
+                                   watcher->newcomerSwitch,
+                                   watcher->newcomerIngress,
+                                   watcher->newcomer);
+        }
+    }
+    if (record.event == "transfer" && watcher->transferTime.IsZero())
+    {
+        watcher->transferTime = Simulator::Now();
+    }
+    if (record.event == "control_frame_discarded")
+    {
+        watcher->sawControlFrameDiscard = true;
+    }
+    if (record.event == "state:DRAINED")
+    {
+        watcher->sawDrain = true;
+    }
+}
+
+struct ReceiveWatcher
+{
+    std::vector<uint8_t> expected;
+    Time arrivalTime;
+};
+
+/** Records the local transmit-attempt identity of every recovery transfer. */
+void
+WatchAttemptTokens(std::vector<uint64_t>* tokens, const UbReliableReroutingEvent& record)
+{
+    if (record.event == "transfer")
+    {
+        tokens->push_back(record.attemptId);
+    }
+}
+
+void
+WatchReceive(ReceiveWatcher* watcher, Ptr<Packet> packet)
+{
+    if (watcher->arrivalTime.IsZero() && PacketBytes(packet) == watcher->expected)
+    {
+        watcher->arrivalTime = Simulator::Now();
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------------------------
+
+#ifndef _WIN32
+void
+ExitOnAbortSignal(int)
+{
+    std::_Exit(42);
+}
+
+struct ChildOutcome
+{
+    bool collected{false};
+    bool exited{false};
+    int exitCode{0};
+    bool signalled{false};
+    int signalNumber{0};
+};
+
+/**
+ * @brief Runs `body` in a child process and reports how that child terminated.
+ *
+ * The child turns SIGABRT into exit code 42, so a fatal-error abort is observable without
+ * killing the test runner.
+ */
+ChildOutcome
+RunInChild(const std::function<void()>& body)
+{
+    ChildOutcome outcome;
+    pid_t child = fork();
+    if (child == -1)
+    {
+        return outcome;
+    }
+    if (child == 0)
+    {
+        std::signal(SIGABRT, ExitOnAbortSignal);
+        body();
+        std::_Exit(1);
+    }
+    int status = 0;
+    outcome.collected = (waitpid(child, &status, 0) == child);
+    outcome.exited = WIFEXITED(status);
+    outcome.exitCode = outcome.exited ? WEXITSTATUS(status) : 0;
+    outcome.signalled = WIFSIGNALED(status);
+    outcome.signalNumber = outcome.signalled ? WTERMSIG(status) : 0;
+    return outcome;
+}
+#endif
+
+/** @brief Scope and configuration rules for `UbLink::Fail()` and the arming attributes. */
+class UbReroutingScopeTest : public TestCase
+{
+  public:
+    UbReroutingScopeTest()
+        : TestCase("Reliable rerouting - arming scope, idempotence, and rejected failures")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        {
+            ReroutingTopology topo;
+            NS_TEST_ASSERT_MSG_EQ(topo.failedLink->IsReliableReroutingArmed(), true, "armed");
+            NS_TEST_ASSERT_MSG_EQ(topo.alternateLink->IsReliableReroutingArmed(), true, "armed");
+            NS_TEST_ASSERT_MSG_EQ(topo.State(1), UbReliableRerouting::State::HEALTHY,
+                                  "healthy before failure");
+
+            // A host access link shares the same global enable value but must stay ordinary.
+            Ptr<UbLink> hostLink = DynamicCast<UbLink>(topo.a0->GetChannel());
+            NS_TEST_ASSERT_MSG_NE(hostLink, nullptr, "host link exists");
+            NS_TEST_ASSERT_MSG_EQ(hostLink->IsReliableReroutingArmed(),
+                                  false,
+                                  "host access link is not armed");
+            NS_TEST_ASSERT_MSG_EQ(
+                topo.hostA->GetDevice(0)->GetObject<UbPort>()->GetReliableRerouting()->GetState(),
+                UbReliableRerouting::State::DISABLED,
+                "host port keeps its recovery component disarmed");
+
+            topo.failedLink->Fail();
+            NS_TEST_ASSERT_MSG_EQ(topo.failedLink->IsFailed(), true, "failed");
+            const auto stateAfterFail = topo.State(1);
+            topo.failedLink->Fail();
+            NS_TEST_ASSERT_MSG_EQ(topo.State(1), stateAfterFail,
+                                  "repeat failure restarts no timer");
+            Simulator::Destroy();
+        }
+
+#ifndef _WIN32
+        {
+            // A second distinct link is rejected before mutating that link.
+            ReroutingTopology topo;
+            topo.failedLink->Fail();
+            Ptr<UbLink> alternate = topo.alternateLink;
+            const auto outcome = RunInChild([alternate]() { alternate->Fail(); });
+            NS_TEST_ASSERT_MSG_EQ(outcome.collected, true, "child collected");
+            NS_TEST_ASSERT_MSG_EQ(outcome.exited, true, "second distinct link failure aborts");
+            NS_TEST_ASSERT_MSG_EQ(outcome.exitCode, 42, "second distinct link failure aborts");
+            NS_TEST_ASSERT_MSG_EQ(topo.alternateLink->IsFailed(), false,
+                                  "rejected link stays unchanged");
+            Simulator::Destroy();
+        }
+        {
+            // A link that never armed (feature disabled) rejects Fail() before mutating.
+            ReroutingTopology topo(false);
+            NS_TEST_ASSERT_MSG_EQ(topo.failedLink->IsReliableReroutingArmed(),
+                                  false,
+                                  "disabled link is not armed");
+            Ptr<UbLink> link = topo.failedLink;
+            const auto outcome = RunInChild([link]() { link->Fail(); });
+            NS_TEST_ASSERT_MSG_EQ(outcome.collected, true, "child collected");
+            NS_TEST_ASSERT_MSG_EQ(outcome.exited, true, "failure of a disabled link aborts");
+            NS_TEST_ASSERT_MSG_EQ(outcome.exitCode, 42, "failure of a disabled link aborts");
+            NS_TEST_ASSERT_MSG_EQ(topo.failedLink->IsFailed(), false, "disabled link unchanged");
+            Simulator::Destroy();
+        }
+        {
+            // A host access link rejects Fail() before mutating.
+            ReroutingTopology topo;
+            Ptr<UbLink> hostLink = DynamicCast<UbLink>(topo.a0->GetChannel());
+            const auto outcome = RunInChild([hostLink]() { hostLink->Fail(); });
+            NS_TEST_ASSERT_MSG_EQ(outcome.collected, true, "child collected");
+            NS_TEST_ASSERT_MSG_EQ(outcome.exited, true, "failure of a host link aborts");
+            NS_TEST_ASSERT_MSG_EQ(outcome.exitCode, 42, "failure of a host link aborts");
+            NS_TEST_ASSERT_MSG_EQ(hostLink->IsFailed(), false, "host link unchanged");
+            Simulator::Destroy();
+        }
+        {
+            // Recovery configuration is armed before traffic and cannot change later.
+            ReroutingTopology topo;
+            topo.failedLink->SetAttribute("LastAckDelay", TimeValue(MicroSeconds(7)));
+            Ptr<UbLink> link = topo.failedLink;
+            const auto outcome = RunInChild([link]() { link->Fail(); });
+            NS_TEST_ASSERT_MSG_EQ(outcome.collected, true, "child collected");
+            NS_TEST_ASSERT_MSG_EQ(outcome.exited, true, "changed configuration aborts");
+            NS_TEST_ASSERT_MSG_EQ(outcome.exitCode, 42, "changed configuration aborts");
+            NS_TEST_ASSERT_MSG_EQ(topo.failedLink->IsFailed(), false,
+                                  "rejected configuration leaves the link unchanged");
+            Simulator::Destroy();
+        }
+#endif
+
+        {
+            // The one-link guard is scoped to a simulation and resets at Destroy().
+            ReroutingTopology first;
+            first.failedLink->Fail();
+            Simulator::Destroy();
+
+            ReroutingTopology second;
+            second.failedLink->Fail();
+            NS_TEST_ASSERT_MSG_EQ(second.failedLink->IsFailed(), true,
+                                  "a fresh simulation may fail its own link");
+            Simulator::Destroy();
+        }
+    }
+};
+
+/** @brief Same-timestamp ordering: the event that runs first decides, per ns-3 event order. */
+class UbReroutingSameTimestampOrderTest : public TestCase
+{
+  public:
+    explicit UbReroutingSameTimestampOrderTest(bool receiveFirst)
+        : TestCase(std::string("Reliable rerouting - ") +
+                   (receiveFirst ? "complete receipt before failure delivers"
+                                 : "failure before complete receipt suppresses delivery")),
+          m_receiveFirst(receiveFirst)
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        // Long recovery delays keep the modeled LastAck out of the observation window, so the probe
+        // one nanosecond after the delivery instant sees only the receipt outcome.
+        ReroutingTopology topo(true,
+                               NanoSeconds(20),
+                               MilliSeconds(1),
+                               MilliSeconds(1));
+        PacketSink sink;
+        topo.d0->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sink));
+
+        Ptr<Packet> packet = BuildUrmaPacket(4096,
+                                             topo.hostA->GetId(),
+                                             topo.hostD->GetId(),
+                                             kPriority,
+                                             RoutingType::PER_FLOW_SHORTEST_PATHS);
+
+        SendWatcher watcher;
+        watcher.nodeId = topo.swB->GetId();
+        watcher.portId = 1;
+        watcher.link = topo.failedLink;
+        watcher.port = topo.b1;
+        watcher.probeSink = &sink;
+        watcher.probeRerouting = topo.Rerouting(1);
+        watcher.failOnSend = !m_receiveFirst;
+
+        // "PortTxNotify" fires before the link schedules the delivery event, so a failure scheduled
+        // from it sorts ahead of the delivery. "TraComEventNotify" fires after the delivery event
+        // exists, so the same timestamp runs the receipt first. Both orderings come from ns-3's
+        // ordinary same-timestamp event order.
+        topo.b1->TraceConnectWithoutContext("PortTxNotify",
+                                            MakeBoundCallback(&WatchSendStart, &watcher));
+        topo.b1->TraceConnectWithoutContext("TraComEventNotify",
+                                            MakeBoundCallback(&WatchPacketSerialized, &watcher));
+
+        Simulator::Schedule(NanoSeconds(10),
+                            &UbSwitch::SwitchHandlePacket,
+                            topo.Switch(topo.swB),
+                            topo.b0,
+                            packet);
+        // Long enough for the modeled detection + LastAck + recovery transfer to complete.
+        Simulator::Stop(MilliSeconds(5));
+        Simulator::Run();
+        Simulator::Destroy();
+
+        NS_TEST_ASSERT_MSG_GT(watcher.observedStart.GetNanoSeconds(), 0, "send instant observed");
+        NS_TEST_ASSERT_MSG_EQ(topo.failedLink->IsFailed(), true, "failure action ran");
+        if (m_receiveFirst)
+        {
+            NS_TEST_ASSERT_MSG_EQ(watcher.retryAtDelivery, 0,
+                                  "peer receipt completed before the failure releases the backup");
+        }
+        else
+        {
+            NS_TEST_ASSERT_MSG_EQ(watcher.retryAtDelivery, 1,
+                                  "receipt not complete when the link failed stays retained");
+        }
+        // Either way the local recovery path eventually delivers the packet to its destination.
+        NS_TEST_ASSERT_MSG_EQ(sink.packets.size(), 1, "packet reaches the destination once");
+    }
+
+    bool m_receiveFirst;
+};
+
+/** @brief Bidirectional in-flight recovery through the healthy alternate. */
+class UbReroutingBidirectionalRecoveryTest : public TestCase
+{
+  public:
+    explicit UbReroutingBidirectionalRecoveryTest(bool positiveDelays)
+        : TestCase(positiveDelays
+                       ? "Reliable rerouting - in-flight recovery with positive delays"
+                       : "Reliable rerouting - bilateral in-flight recovery after LastAck"),
+          m_positiveDelays(positiveDelays)
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const Time detectionDelay = m_positiveDelays ? MicroSeconds(3) : NanoSeconds(0);
+        const Time lastAckDelay = m_positiveDelays ? MicroSeconds(5) : NanoSeconds(0);
+        ReroutingTopology topo(true, NanoSeconds(20), detectionDelay, lastAckDelay);
+
+        PacketSink sinkD;
+        PacketSink sinkA;
+        topo.d0->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sinkD));
+        topo.a0->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sinkA));
+
+        // Packet 0 completes before the failure and must never replay.
+        Ptr<Packet> early = BuildUrmaPacket(512,
+                                            topo.hostA->GetId(),
+                                            topo.hostD->GetId(),
+                                            kPriority,
+                                            RoutingType::PER_FLOW_SHORTEST_PATHS,
+                                            0);
+        const auto earlyBytes = PacketBytes(early);
+
+        // The two later packets stay in flight when the link fails.
+        Ptr<Packet> forwardPacket = BuildUrmaPacket(4096,
+                                                    topo.hostA->GetId(),
+                                                    topo.hostD->GetId(),
+                                                    kPriority,
+                                                    RoutingType::PER_FLOW_SHORTEST_PATHS,
+                                                    1);
+        Ptr<Packet> reversePacket = BuildUrmaPacket(4096,
+                                                    topo.hostD->GetId(),
+                                                    topo.hostA->GetId(),
+                                                    kPriority,
+                                                    RoutingType::PER_FLOW_SHORTEST_PATHS,
+                                                    2);
+        const auto forwardBytes = PacketBytes(forwardPacket);
+        const auto reverseBytes = PacketBytes(reversePacket);
+
+        BilateralArm armState;
+        armState.link = topo.failedLink;
+        SendWatcher forwardWatcher;
+        forwardWatcher.nodeId = topo.swB->GetId();
+        forwardWatcher.portId = 1;
+        forwardWatcher.bilateral = &armState;
+        forwardWatcher.bilateralIsForward = true;
+        SendWatcher reverseWatcher;
+        reverseWatcher.nodeId = topo.swC->GetId();
+        reverseWatcher.portId = 1;
+        reverseWatcher.bilateral = &armState;
+        reverseWatcher.bilateralIsForward = false;
+
+        topo.b1->TraceConnectWithoutContext("PortTxNotify",
+                                            MakeBoundCallback(&WatchSendStart, &forwardWatcher));
+        topo.c1->TraceConnectWithoutContext("PortTxNotify",
+                                            MakeBoundCallback(&WatchSendStart, &reverseWatcher));
+
+        Simulator::Schedule(NanoSeconds(10),
+                            &UbSwitch::SwitchHandlePacket,
+                            topo.Switch(topo.swB),
+                            topo.b0,
+                            early);
+        Simulator::Schedule(MicroSeconds(1), [&]() {
+            NS_TEST_ASSERT_MSG_EQ(sinkD.packets.size(), 1,
+                                  "early packet completed before the failure");
+            // 4096 bytes at 400 Gbps serializes in 81.92 ns, so a 40 ns offset keeps both attempts
+            // strictly in flight while still inside their serialization window.
+            armState.afterInjection = true;
+            Simulator::ScheduleNow(&UbSwitch::SwitchHandlePacket,
+                                   topo.Switch(topo.swB),
+                                   topo.b0,
+                                   forwardPacket);
+            Simulator::ScheduleNow(&UbSwitch::SwitchHandlePacket,
+                                   topo.Switch(topo.swC),
+                                   topo.c0,
+                                   reversePacket);
+        });
+
+        Simulator::Stop(MicroSeconds(200));
+        Simulator::Run();
+
+        const auto retryB = topo.Rerouting(1)->GetRetryPacketCount();
+        const auto stateB = topo.State(1);
+        const auto runtimeDrops = UbUtils::Get()->GetRuntimePacketDropCount();
+        const auto dropReason = UbUtils::Get()->GetRuntimePacketDropReason();
+        const auto retryC =
+            PeekPointer(topo.c1->GetReliableRerouting())->GetRetryPacketCount();
+        const auto stateC =
+            DynamicCast<UbPort>(topo.swC->GetDevice(1))->GetReliableRerouting()->GetState();
+        Simulator::Destroy();
+
+        NS_TEST_ASSERT_MSG_EQ(topo.failedLink->IsFailed(), true, "link failed during the run");
+        NS_TEST_ASSERT_MSG_EQ(runtimeDrops, 0u,
+                              "suppressed delivery is retained work, not a runtime packet drop: " +
+                                  dropReason);
+        NS_TEST_ASSERT_MSG_EQ(sinkD.packets.size(), 2, "forward direction receives two packets");
+        NS_TEST_ASSERT_MSG_EQ(HexOf(sinkD.packets[0]), HexOf(earlyBytes),
+                                  "pre-failure packet arrives once");
+        NS_TEST_ASSERT_MSG_EQ(HexOf(sinkD.packets[1]), HexOf(forwardBytes),
+                                  "in-flight packet recovered byte-identically");
+        NS_TEST_ASSERT_MSG_EQ(sinkA.packets.size(), 1, "reverse direction receives its packet");
+        NS_TEST_ASSERT_MSG_EQ(HexOf(sinkA.packets[0]), HexOf(reverseBytes),
+                                  "reverse in-flight packet recovered byte-identically");
+
+        NS_TEST_ASSERT_MSG_EQ(retryB, 0, "forward retry storage released after recovery");
+        NS_TEST_ASSERT_MSG_EQ(retryC, 0, "reverse retry storage released after recovery");
+        NS_TEST_ASSERT_MSG_EQ(stateB, UbReliableRerouting::State::DRAINED, "forward local drain");
+        NS_TEST_ASSERT_MSG_EQ(stateC, UbReliableRerouting::State::DRAINED, "reverse local drain");
+    }
+
+    bool m_positiveDelays;
+};
+
+/** @brief No-fault behaviour: healthy backups always return to zero. */
+class UbReroutingHealthyBackupTest : public TestCase
+{
+  public:
+    explicit UbReroutingHealthyBackupTest(bool enabled)
+        : TestCase(std::string("Reliable rerouting - healthy traffic with feature ") +
+                   (enabled ? "enabled" : "disabled")),
+          m_enabled(enabled)
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        ReroutingTopology topo(m_enabled);
+        PacketSink sink;
+        topo.d0->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sink));
+
+        std::vector<std::vector<uint8_t>> sent;
+        for (uint32_t index = 0; index < 4; ++index)
+        {
+            Ptr<Packet> packet = BuildUrmaPacket(1024,
+                                                 topo.hostA->GetId(),
+                                                 topo.hostD->GetId(),
+                                                 kPriority,
+                                                 RoutingType::PER_FLOW_SHORTEST_PATHS,
+                                                 index);
+            sent.push_back(PacketBytes(packet));
+            Simulator::Schedule(NanoSeconds(10) + MicroSeconds(index) * 20,
+                                &UbSwitch::SwitchHandlePacket,
+                                topo.Switch(topo.swB),
+                                topo.b0,
+                                packet);
+        }
+
+        Simulator::Stop(MicroSeconds(200));
+        Simulator::Run();
+        const auto peakRetryB = topo.Rerouting(1)->GetPeakRetryPacketCount();
+        const auto retryB = topo.Rerouting(1)->GetRetryPacketCount();
+        Simulator::Destroy();
+
+        NS_TEST_ASSERT_MSG_EQ(sink.packets.size(), sent.size(), "all packets delivered");
+        for (size_t index = 0; index < sink.packets.size(); ++index)
+        {
+            NS_TEST_ASSERT_MSG_EQ(HexOf(sink.packets[index]), HexOf(sent[index]),
+                                  "packet bytes and receive order preserved");
+        }
+        NS_TEST_ASSERT_MSG_EQ(retryB, 0, "healthy backups return to zero");
+        if (m_enabled)
+        {
+            NS_TEST_ASSERT_MSG_GT(peakRetryB, 0, "enabled run retained and released backups");
+        }
+    }
+
+    bool m_enabled;
+};
+
+/**
+ * @brief Detected failure freezes the retained attempt until LastAck while new traffic proceeds.
+ */
+
+/**
+ * @brief A detected failed output cannot silently fall back to the ordinary drop branch.
+ *
+ * The scenario keeps a single legal candidate, so after detection no legal output remains and the
+ * switch must abort with the failed-output diagnostic instead of dropping the packet.
+ */
+class UbReroutingNoLegalOutputTest : public TestCase
+{
+  public:
+    UbReroutingNoLegalOutputTest()
+        : TestCase("Reliable rerouting - no legal candidate after detection is fatal")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+#ifndef _WIN32
+        const auto outcome = RunInChild([]() {
+            ReroutingTopology topo(true, NanoSeconds(20), NanoSeconds(0), MicroSeconds(50));
+            // Only the failed output is legal towards the destination host.
+            Ptr<UbRoutingProcess> routing =
+                topo.swB->GetObject<UbSwitch>()->GetRoutingProcess();
+            routing->GetRoutingTable().AddShortestRoute(
+                utils::NodeIdToIp(topo.hostD->GetId()).Get(),
+                std::vector<uint16_t>{1});
+
+            Ptr<Packet> packet = BuildUrmaPacket(512,
+                                                 topo.hostA->GetId(),
+                                                 topo.hostD->GetId(),
+                                                 kPriority,
+                                                 RoutingType::PER_FLOW_SHORTEST_PATHS);
+            topo.failedLink->Fail();
+            Simulator::ScheduleNow(&UbSwitch::SwitchHandlePacket,
+                                   topo.Switch(topo.swB),
+                                   topo.b0,
+                                   packet);
+            Simulator::Stop(MicroSeconds(10));
+            Simulator::Run();
+            Simulator::Destroy();
+        });
+        NS_TEST_ASSERT_MSG_EQ(outcome.collected, true, "child collected");
+        NS_TEST_ASSERT_MSG_EQ(outcome.exited, true,
+                              "no legal candidate after detection aborts the simulation");
+        NS_TEST_ASSERT_MSG_EQ(outcome.exitCode, 42,
+                              "no legal candidate after detection aborts the simulation");
+#endif
+    }
+};
+
+class UbReroutingLastAckGateTest : public TestCase
+{
+  public:
+    UbReroutingLastAckGateTest()
+        : TestCase("Reliable rerouting - backlog waits for LastAck, new traffic uses the alternate")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const Time detectionDelay = MicroSeconds(4);
+        const Time lastAckDelay = MicroSeconds(4);
+        ReroutingTopology topo(true, NanoSeconds(20), detectionDelay, lastAckDelay);
+
+        PacketSink sink;
+        topo.d0->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sink));
+
+        Ptr<Packet> retained = BuildUrmaPacket(4096,
+                                              topo.hostA->GetId(),
+                                              topo.hostD->GetId(),
+                                              kPriority,
+                                              RoutingType::PER_FLOW_SHORTEST_PATHS,
+                                              0);
+        Ptr<Packet> newcomer = BuildUrmaPacket(1024,
+                                              topo.hostA->GetId(),
+                                              topo.hostD->GetId(),
+                                              kPriority,
+                                              RoutingType::PER_FLOW_SHORTEST_PATHS,
+                                              1);
+        const auto retainedBytes = PacketBytes(retained);
+        const auto newcomerBytes = PacketBytes(newcomer);
+
+        TransferWatcher transfers;
+        transfers.newcomerSwitch = topo.Switch(topo.swB);
+        transfers.newcomerIngress = topo.b0;
+        transfers.newcomer = newcomer;
+        topo.Rerouting(1)->TraceConnectWithoutContext(
+            "Rerouting",
+            MakeBoundCallback(&WatchReroutingEvent, &transfers));
+        ReceiveWatcher newcomerArrival;
+        newcomerArrival.expected = newcomerBytes;
+        topo.d0->TraceConnectWithoutContext("PktRcvNotify",
+                                            MakeBoundCallback(&WatchReceive, &newcomerArrival));
+
+        SendWatcher watcher;
+        watcher.nodeId = topo.swB->GetId();
+        watcher.portId = 1;
+        watcher.link = topo.failedLink;
+        watcher.failOffset = NanoSeconds(40);
+        watcher.failOnSend = true;
+        topo.b1->TraceConnectWithoutContext("PortTxNotify",
+                                            MakeBoundCallback(&WatchSendStart, &watcher));
+
+        Simulator::Schedule(NanoSeconds(10),
+                            &UbSwitch::SwitchHandlePacket,
+                            topo.Switch(topo.swB),
+                            topo.b0,
+                            retained);
+
+        Simulator::Stop(MicroSeconds(200));
+        Simulator::Run();
+        const auto stateB = topo.State(1);
+        Simulator::Destroy();
+
+        NS_TEST_ASSERT_MSG_EQ(transfers.sawLastAckWait, true,
+                              "detection happened before the new packet is offered");
+        const Time expectedTransfer =
+            watcher.observedStart + watcher.failOffset + detectionDelay + lastAckDelay;
+        NS_TEST_ASSERT_MSG_GT(transfers.transferTime.GetNanoSeconds(), 0,
+                              "retained attempt transferred");
+        NS_TEST_ASSERT_MSG_EQ(transfers.transferTime, expectedTransfer,
+                              "transfer happens at failure plus detection plus LastAck");
+        NS_TEST_ASSERT_MSG_GT(newcomerArrival.arrivalTime.GetNanoSeconds(), 0,
+                              "new traffic delivered");
+        NS_TEST_ASSERT_MSG_LT(newcomerArrival.arrivalTime, transfers.transferTime,
+                              "new traffic overtakes retained work during the LastAck wait");
+        NS_TEST_ASSERT_MSG_EQ(sink.packets.size(), 2, "both packets delivered exactly once");
+        NS_TEST_ASSERT_MSG_EQ(HexOf(sink.packets[0]), HexOf(newcomerBytes),
+                              "new traffic arrives first");
+        NS_TEST_ASSERT_MSG_EQ(HexOf(sink.packets[1]), HexOf(retainedBytes),
+                              "retained packet arrives after recovery");
+        NS_TEST_ASSERT_MSG_EQ(stateB, UbReliableRerouting::State::DRAINED, "local drain reached");
+    }
+};
+
+/** @brief Disposal releases owned timers and storage, and never reports a successful drain. */
+class UbReroutingDisposalTest : public TestCase
+{
+  public:
+    UbReroutingDisposalTest()
+        : TestCase("Reliable rerouting - disposal cancels recovery without a false drain")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        ReroutingTopology topo(true, NanoSeconds(20), MicroSeconds(5), MicroSeconds(5));
+        Ptr<Packet> retained = BuildUrmaPacket(4096,
+                                              topo.hostA->GetId(),
+                                              topo.hostD->GetId(),
+                                              kPriority,
+                                              RoutingType::PER_FLOW_SHORTEST_PATHS);
+
+        TransferWatcher transfers;
+        topo.Rerouting(1)->TraceConnectWithoutContext(
+            "Rerouting",
+            MakeBoundCallback(&WatchReroutingEvent, &transfers));
+
+        SendWatcher watcher;
+        watcher.nodeId = topo.swB->GetId();
+        watcher.portId = 1;
+        watcher.link = topo.failedLink;
+        watcher.failOffset = NanoSeconds(40);
+        watcher.failOnSend = true;
+        topo.b1->TraceConnectWithoutContext("PortTxNotify",
+                                            MakeBoundCallback(&WatchSendStart, &watcher));
+
+        Simulator::Schedule(NanoSeconds(10),
+                            &UbSwitch::SwitchHandlePacket,
+                            topo.Switch(topo.swB),
+                            topo.b0,
+                            retained);
+
+        // Stop inside the LastAck wait: retained work must never look drained.
+        Simulator::Stop(MicroSeconds(7));
+        Simulator::Run();
+        const auto stateBefore = topo.State(1);
+        const auto retryBefore = topo.Rerouting(1)->GetRetryPacketCount();
+        Simulator::Destroy();
+
+        NS_TEST_ASSERT_MSG_EQ(transfers.sawDrain, false, "unfinished recovery is not drained");
+        NS_TEST_ASSERT_MSG_EQ(stateBefore,
+                              UbReliableRerouting::State::WAIT_LAST_ACK,
+                              "stopped during the LastAck wait");
+        NS_TEST_ASSERT_MSG_EQ(retryBefore, 1, "retained attempt still owned at the early stop");
+    }
+};
+
+/**
+ * @brief The suite registers ticket-01 reliable-rerouting behaviour.
+ */
+
+/**
+ * @brief VOQ backlog with an outstanding allocator grant at detection.
+ *
+ * A long allocation time keeps a forwarded packet in the failed output's VOQ when the link fails.
+ * Detection cancels its pending grant; LastAck migrates the packet to the healthy alternate while
+ * its original ingress ownership and VL are preserved.
+ */
+class UbReroutingVoqGrantCancellationTest : public TestCase
+{
+  public:
+    UbReroutingVoqGrantCancellationTest()
+        : TestCase("Reliable rerouting - VOQ backlog recovers after a cancelled grant")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const Time detectionDelay = MicroSeconds(1);
+        const Time lastAckDelay = MicroSeconds(2);
+        ReroutingTopology topo(true, NanoSeconds(20), detectionDelay, lastAckDelay);
+        // Keep the packet invisible to the allocator long enough to fail before it is granted.
+        topo.Switch(topo.swB)->GetAllocator()->SetAttribute("AllocationTime",
+                                                             TimeValue(MicroSeconds(50)));
+
+        PacketSink sink;
+        topo.d0->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sink));
+        Ptr<Packet> packet = BuildUrmaPacket(4096,
+                                             topo.hostA->GetId(),
+                                             topo.hostD->GetId(),
+                                             kPriority,
+                                             RoutingType::PER_FLOW_SHORTEST_PATHS);
+        const auto bytes = PacketBytes(packet);
+
+        TransferWatcher transfers;
+        topo.Rerouting(1)->TraceConnectWithoutContext(
+            "Rerouting",
+            MakeBoundCallback(&WatchReroutingEvent, &transfers));
+
+        Simulator::Schedule(NanoSeconds(10),
+                            &UbSwitch::SwitchHandlePacket,
+                            topo.Switch(topo.swB),
+                            topo.b0,
+                            packet);
+        Simulator::Schedule(MicroSeconds(1),
+                            &UbLink::Fail,
+                            PeekPointer(topo.failedLink));
+
+        Simulator::Stop(MicroSeconds(60));
+        Simulator::Run();
+
+        const auto failedVoq = topo.Switch(topo.swB)->GetVoqPacketCountForTest(1, kPriority, 0);
+        const auto egressBytes = topo.b1->GetUbQueue()->GetCurrentBytes();
+        const auto pendingBytes = topo.Switch(topo.swB)->GetPendingRecoveryByteCount(1);
+        const auto stateB = topo.State(1);
+        const auto retry = topo.Rerouting(1)->GetRetryPacketCount();
+        Simulator::Destroy();
+
+        NS_TEST_ASSERT_MSG_EQ(sink.packets.size(), 1, "VOQ backlog reaches the destination once");
+        NS_TEST_ASSERT_MSG_EQ(HexOf(sink.packets[0]), HexOf(bytes),
+                              "migrated packet keeps its bytes");
+        NS_TEST_ASSERT_MSG_EQ(transfers.transferTime,
+                              MicroSeconds(1) + detectionDelay + lastAckDelay,
+                              "migration waits for the modeled LastAck");
+        NS_TEST_ASSERT_MSG_EQ(failedVoq, 0u, "failed output VOQ drained by migration");
+        NS_TEST_ASSERT_MSG_EQ(egressBytes, 0u, "failed output egress never took the packet");
+        NS_TEST_ASSERT_MSG_EQ(pendingBytes, 0u, "recovery storage released after transfer");
+        NS_TEST_ASSERT_MSG_EQ(retry, 0u, "no retry attempt was retained for a queued packet");
+        NS_TEST_ASSERT_MSG_EQ(stateB, UbReliableRerouting::State::DRAINED, "local drain reached");
+    }
+};
+
+/**
+ * @brief Egress backlog of the failed output migrates after LastAck without duplication.
+ */
+class UbReroutingEgressBacklogTest : public TestCase
+{
+  public:
+    UbReroutingEgressBacklogTest()
+        : TestCase("Reliable rerouting - egress backlog migrates after LastAck")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const Time detectionDelay = MicroSeconds(1);
+        const Time lastAckDelay = MicroSeconds(2);
+        ReroutingTopology topo(true, NanoSeconds(20), detectionDelay, lastAckDelay);
+        // A long interframe gap keeps later packets in the egress queue while the first is in flight.
+        for (Ptr<UbPort> port : {topo.b1, topo.c1})
+        {
+            port->SetAttribute("UbInterframeGap", TimeValue(MicroSeconds(5)));
+        }
+
+        PacketSink sinkD;
+        PacketSink sinkA;
+        topo.d0->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sinkD));
+        topo.a0->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sinkA));
+
+        std::vector<std::vector<uint8_t>> sentForward;
+        SendWatcher watcher;
+        watcher.nodeId = topo.swB->GetId();
+        watcher.portId = 1;
+        watcher.link = topo.failedLink;
+        watcher.port = topo.b1;
+        watcher.failOffset = NanoSeconds(40);
+        watcher.failOnSend = true;
+        topo.b1->TraceConnectWithoutContext("PortTxNotify",
+                                            MakeBoundCallback(&WatchSendStart, &watcher));
+
+        for (uint32_t index = 0; index < 3; ++index)
+        {
+            Ptr<Packet> packet = BuildUrmaPacket(4096,
+                                                 topo.hostA->GetId(),
+                                                 topo.hostD->GetId(),
+                                                 kPriority,
+                                                 RoutingType::PER_FLOW_SHORTEST_PATHS,
+                                                 index);
+            sentForward.push_back(PacketBytes(packet));
+            Simulator::Schedule(NanoSeconds(10),
+                                &UbSwitch::SwitchHandlePacket,
+                                topo.Switch(topo.swB),
+                                topo.b0,
+                                packet);
+        }
+
+        Simulator::Stop(MicroSeconds(400));
+        Simulator::Run();
+        const auto stateB = topo.State(1);
+        const auto egressBytes = topo.b1->GetUbQueue()->GetCurrentBytes();
+        Simulator::Destroy();
+
+        NS_TEST_ASSERT_MSG_EQ(sinkD.packets.size(), sentForward.size(),
+                              "every egress-queued packet reaches the destination exactly once");
+        // Recovered packets may overtake each other; exactly-once delivery is the invariant.
+        const auto receivedSet = SortedHex(sinkD.packets);
+        const auto sentSet = SortedHex(sentForward);
+        for (size_t index = 0; index < sentSet.size(); ++index)
+        {
+            NS_TEST_ASSERT_MSG_EQ(receivedSet[index], sentSet[index],
+                                  "egress-migrated packet keeps its bytes");
+        }
+        NS_TEST_ASSERT_MSG_EQ(sinkA.packets.size(), 0, "no packet leaks into the reverse host");
+        NS_TEST_ASSERT_MSG_EQ(sinkD.taggedPackets, 0u,
+                              "recovery-local accounting marker never reaches a later hop");
+        NS_TEST_ASSERT_MSG_EQ(egressBytes, 0u, "failed output egress backlog drained");
+        NS_TEST_ASSERT_MSG_EQ(stateB, UbReliableRerouting::State::DRAINED, "local drain reached");
+    }
+};
+
+/**
+ * @brief Delayed in-port processing keeps its ready time and reservation across recovery.
+ */
+class UbReroutingDelayedProcessingTest : public TestCase
+{
+  public:
+    explicit UbReroutingDelayedProcessingTest(bool readyBeforeLastAck)
+        : TestCase(std::string("Reliable rerouting - delayed processing ready ") +
+                   (readyBeforeLastAck ? "before LastAck" : "after LastAck")),
+          m_readyBeforeLastAck(readyBeforeLastAck)
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const Time detectionDelay = MicroSeconds(1);
+        const Time lastAckDelay = MicroSeconds(2);
+        const Time processingDelay = m_readyBeforeLastAck ? MicroSeconds(1) : MicroSeconds(10);
+        ReroutingTopology topo(true, NanoSeconds(20), detectionDelay, lastAckDelay);
+        topo.Switch(topo.swB)->SetAttribute("InPortProcessingDelay", TimeValue(processingDelay));
+
+        PacketSink sink;
+        topo.d0->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sink));
+        Ptr<Packet> packet = BuildUrmaPacket(4096,
+                                             topo.hostA->GetId(),
+                                             topo.hostD->GetId(),
+                                             kPriority,
+                                             RoutingType::PER_FLOW_SHORTEST_PATHS);
+
+        TransferWatcher transfers;
+        topo.Rerouting(1)->TraceConnectWithoutContext(
+            "Rerouting",
+            MakeBoundCallback(&WatchReroutingEvent, &transfers));
+
+        Simulator::Schedule(NanoSeconds(10),
+                            &UbSwitch::SwitchHandlePacket,
+                            topo.Switch(topo.swB),
+                            topo.b0,
+                            packet);
+        Simulator::Schedule(MicroSeconds(1), &UbLink::Fail, PeekPointer(topo.failedLink));
+
+        Simulator::Stop(MicroSeconds(80));
+        Simulator::Run();
+        const auto stateB = topo.State(1);
+        Simulator::Destroy();
+
+        const Time failure = MicroSeconds(1);
+        const Time lastAck = failure + detectionDelay + lastAckDelay;
+        const Time ready = NanoSeconds(10) + processingDelay;
+        const Time expected = std::max(lastAck, ready);
+        NS_TEST_ASSERT_MSG_EQ(transfers.transferTime, expected,
+                              "admission waits for both readiness and LastAck");
+        NS_TEST_ASSERT_MSG_EQ(sink.packets.size(), 1, "delayed packet arrives once");
+        NS_TEST_ASSERT_MSG_EQ(stateB, UbReliableRerouting::State::DRAINED, "local drain reached");
+    }
+
+    bool m_readyBeforeLastAck;
+};
+
+/**
+ * @brief Blocked admission keeps the retained packet and resumes on a coalesced capacity wakeup.
+ */
+class UbReroutingBlockedAdmissionTest : public TestCase
+{
+  public:
+    UbReroutingBlockedAdmissionTest()
+        : TestCase("Reliable rerouting - blocked admission resumes without drop or busy loop")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        const Time detectionDelay = NanoSeconds(0);
+        const Time lastAckDelay = MicroSeconds(2);
+        ReroutingTopology topo(true, NanoSeconds(20), detectionDelay, lastAckDelay);
+
+        PacketSink sink;
+        topo.d0->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sink));
+        Ptr<Packet> packet = BuildUrmaPacket(4096,
+                                             topo.hostA->GetId(),
+                                             topo.hostD->GetId(),
+                                             kPriority,
+                                             RoutingType::PER_FLOW_SHORTEST_PATHS);
+        const auto bytes = PacketBytes(packet);
+
+        UbQueueManager* queueManager = PeekPointer(topo.Switch(topo.swB)->GetQueueManager());
+
+        TransferWatcher transfers;
+        topo.Rerouting(1)->TraceConnectWithoutContext(
+            "Rerouting",
+            MakeBoundCallback(&WatchReroutingEvent, &transfers));
+
+        SendWatcher watcher;
+        watcher.nodeId = topo.swB->GetId();
+        watcher.portId = 1;
+        watcher.link = topo.failedLink;
+        watcher.port = topo.b1;
+        // Small acknowledgement packets serialize in a few nanoseconds, so fail just after the send
+        // boundary while the attempt is still in flight on the link.
+        watcher.failOffset = NanoSeconds(1);
+        watcher.failOnSend = true;
+        topo.b1->TraceConnectWithoutContext("PortTxNotify",
+                                            MakeBoundCallback(&WatchSendStart, &watcher));
+
+        Simulator::Schedule(NanoSeconds(10),
+                            &UbSwitch::SwitchHandlePacket,
+                            topo.Switch(topo.swB),
+                            topo.b0,
+                            packet);
+
+        // Occupy the only ingress admission slot for the whole blocked window, then release it well
+        // after LastAck. Real occupancy release is the single wakeup source.
+        const Time blockStart = MicroSeconds(3);
+        const Time release = MicroSeconds(20);
+        Simulator::Schedule(blockStart, [queueManager]() {
+            queueManager->PushToVoq(0, 2, kPriority, 4096);
+        });
+        Time blockedPendingProbe;
+        Simulator::Schedule(release - MicroSeconds(1), [&]() {
+            blockedPendingProbe = Simulator::Now();
+        });
+        Simulator::Schedule(release, [queueManager]() {
+            queueManager->PopFromVoq(0, 2, kPriority, 4096);
+        });
+
+        const uint64_t eventsBeforeRun = Simulator::GetEventCount();
+        Simulator::Stop(MicroSeconds(60));
+        Simulator::Run();
+        const uint64_t eventsAfterRun = Simulator::GetEventCount();
+
+        const auto stateB = topo.State(1);
+        const auto dropCount = UbUtils::Get()->GetRuntimePacketDropCount();
+        const auto resolutions = topo.Switch(topo.swB)->GetRecoveryResolutionCountForTest();
+        const auto transferCount = topo.Switch(topo.swB)->GetRecoveryTransferCountForTest();
+        Simulator::Destroy();
+
+        NS_TEST_ASSERT_MSG_GT(blockedPendingProbe.GetNanoSeconds(), 0,
+                              "blocked window observed");
+        NS_TEST_ASSERT_MSG_EQ(sink.packets.size(), 1,
+                              "retained packet arrives after capacity is released");
+        NS_TEST_ASSERT_MSG_EQ(HexOf(sink.packets[0]), HexOf(bytes),
+                              "blocked recovery keeps its bytes");
+        NS_TEST_ASSERT_MSG_EQ(dropCount, 0u, "blocked admission never drops the packet");
+        NS_TEST_ASSERT_MSG_EQ(stateB, UbReliableRerouting::State::DRAINED, "local drain reached");
+        NS_TEST_ASSERT_MSG_EQ(resolutions, 1u,
+                              "a blocked transfer resolves its alternate output only once");
+        NS_TEST_ASSERT_MSG_EQ(transferCount, 1u, "exactly one recovery transfer happened");
+        // No polling: the whole run stays far below the event count a busy loop would produce.
+        NS_TEST_ASSERT_MSG_LT(eventsAfterRun - eventsBeforeRun, 200u,
+                              "blocked admission does not schedule a zero-time polling loop");
+    }
+};
+
+/**
+ * @brief CBFC must not return the original upstream credit twice for a recovered packet.
+ */
+class UbReroutingCbfcCreditTest : public TestCase
+{
+  public:
+    UbReroutingCbfcCreditTest()
+        : TestCase("Reliable rerouting - upstream credit is returned at most once")
+    {
+    }
+
+  private:
+    uint32_t CreditToReturn(bool failLink)
+    {
+        ReroutingTopology topo(true,
+                               NanoSeconds(20),
+                               NanoSeconds(0),
+                               MicroSeconds(2),
+                               FcType::CBFC);
+        Ptr<Packet> packet = BuildUrmaPacket(4096,
+                                             topo.hostA->GetId(),
+                                             topo.hostD->GetId(),
+                                             kPriority,
+                                             RoutingType::PER_FLOW_SHORTEST_PATHS);
+        // Sink the packet at the destination port so the test observes the credit state only.
+        PacketSink sink;
+        topo.d0->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sink));
+        SendWatcher watcher;
+        watcher.nodeId = topo.swB->GetId();
+        watcher.portId = 1;
+        watcher.link = topo.failedLink;
+        watcher.port = topo.b1;
+        watcher.failOffset = NanoSeconds(40);
+        watcher.failOnSend = failLink;
+        topo.b1->TraceConnectWithoutContext("PortTxNotify",
+                                            MakeBoundCallback(&WatchSendStart, &watcher));
+
+        Simulator::Schedule(NanoSeconds(10),
+                            &UbSwitch::SwitchHandlePacket,
+                            topo.Switch(topo.swB),
+                            topo.b0,
+                            packet);
+        Simulator::Stop(MicroSeconds(60));
+        Simulator::Run();
+
+        Ptr<UbCbfc> ingressCbfc = DynamicCast<UbCbfc>(topo.b0->GetFlowControl());
+        const uint32_t credits = ingressCbfc == nullptr
+                                     ? 0u
+                                     : static_cast<uint32_t>(ingressCbfc->GetCrdToReturn(kPriority));
+        Simulator::Destroy();
+        return credits;
+    }
+
+    void DoRun() override
+    {
+        const uint32_t healthy = CreditToReturn(false);
+        const uint32_t recovered = CreditToReturn(true);
+        NS_TEST_ASSERT_MSG_GT(healthy, 0u, "a forwarded packet returns upstream credit once");
+        NS_TEST_ASSERT_MSG_EQ(recovered, healthy,
+                              "recovery does not return the original upstream credit twice");
+    }
+};
+
+/**
+ * @brief Link-local control frames are disposed instead of being rerouted to a healthy neighbour.
+ */
+class UbReroutingControlFrameDisposalTest : public TestCase
+{
+  public:
+    UbReroutingControlFrameDisposalTest()
+        : TestCase("Reliable rerouting - retained control frame is disposed, not rerouted")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        ReroutingTopology topo(true, NanoSeconds(20), NanoSeconds(0), MicroSeconds(2));
+
+        PacketSink sinkC;
+        topo.c1->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sinkC));
+
+        TransferWatcher transfers;
+        topo.Rerouting(1)->TraceConnectWithoutContext(
+            "Rerouting",
+            MakeBoundCallback(&WatchReroutingEvent, &transfers));
+
+        SendWatcher watcher;
+        watcher.nodeId = topo.swB->GetId();
+        watcher.portId = 1;
+        watcher.link = topo.failedLink;
+        watcher.port = topo.b1;
+        // A control frame serializes in under a nanosecond, so fail right after the send boundary.
+        watcher.failOffset = NanoSeconds(1);
+        watcher.failOnSend = true;
+        topo.b1->TraceConnectWithoutContext("PortTxNotify",
+                                            MakeBoundCallback(&WatchSendStart, &watcher));
+
+        const uint8_t credits[16] = {0};
+        Ptr<Packet> controlFrame = UbDataLink::BuildControlCreditPacket(credits);
+        Simulator::Schedule(NanoSeconds(10),
+                            &UbSwitch::SendControlFrame,
+                            topo.Switch(topo.swB),
+                            controlFrame,
+                            static_cast<uint32_t>(1));
+
+        Simulator::Stop(MicroSeconds(20));
+        Simulator::Run();
+        const auto stateB = topo.State(1);
+        const auto retry = topo.Rerouting(1)->GetRetryPacketCount();
+        Simulator::Destroy();
+
+        NS_TEST_ASSERT_MSG_EQ(sinkC.packets.size(), 0,
+                              "control frame never reaches the alternate neighbour");
+        NS_TEST_ASSERT_MSG_EQ(retry, 0u, "disposed control frame releases its retry storage");
+        NS_TEST_ASSERT_MSG_EQ(transfers.sawControlFrameDiscard, true,
+                              "control-frame disposal is visible in the evidence stream");
+        NS_TEST_ASSERT_MSG_EQ(stateB, UbReliableRerouting::State::DRAINED,
+                              "control-frame disposal completes local recovery");
+    }
+};
+
+/**
+ * @brief The suite registers ticket-01 reliable-rerouting behaviour.
+ */
+/**
+ * @brief PFC must still observe real occupancy release across a recovery transfer.
+ */
+class UbReroutingPfcReleaseTest : public TestCase
+{
+  public:
+    UbReroutingPfcReleaseTest()
+        : TestCase("Reliable rerouting - PFC observes the recovered packet's occupancy release")
+    {
+    }
+
+  private:
+    uint32_t ControlFramesSeenByUpstream(bool failLink)
+    {
+        ReroutingTopology topo(true,
+                               NanoSeconds(20),
+                               NanoSeconds(0),
+                               MicroSeconds(2),
+                               FcType::PFC_FIXED);
+        // Make the host-facing ingress port pause on any occupancy and resume when it drains.
+        topo.b0->SetAttribute("PfcUpThld", IntegerValue(1));
+        topo.b0->SetAttribute("PfcLowThld", IntegerValue(0));
+        topo.b0->CreateAndInitFc(FcType::PFC_FIXED);
+
+        ControlFrameCounter upstreamFrames;
+        topo.a0->SetReceiveHandler(MakeBoundCallback(&CountControlFrame, &upstreamFrames));
+        PacketSink sink;
+        topo.d0->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sink));
+
+        Ptr<Packet> packet = BuildUrmaPacket(4096,
+                                             topo.hostA->GetId(),
+                                             topo.hostD->GetId(),
+                                             kPriority,
+                                             RoutingType::PER_FLOW_SHORTEST_PATHS);
+        SendWatcher watcher;
+        watcher.nodeId = topo.swB->GetId();
+        watcher.portId = 1;
+        watcher.link = topo.failedLink;
+        watcher.port = topo.b1;
+        watcher.failOffset = NanoSeconds(40);
+        watcher.failOnSend = failLink;
+        topo.b1->TraceConnectWithoutContext("PortTxNotify",
+                                            MakeBoundCallback(&WatchSendStart, &watcher));
+
+        Simulator::Schedule(NanoSeconds(10),
+                            &UbSwitch::SwitchHandlePacket,
+                            topo.Switch(topo.swB),
+                            topo.b0,
+                            packet);
+        Simulator::Stop(MicroSeconds(60));
+        Simulator::Run();
+        const uint32_t count = upstreamFrames.count;
+        Simulator::Destroy();
+        return count;
+    }
+
+    void DoRun() override
+    {
+        const uint32_t healthy = ControlFramesSeenByUpstream(false);
+        const uint32_t recovered = ControlFramesSeenByUpstream(true);
+        NS_TEST_ASSERT_MSG_GT(healthy, 0u,
+                              "PFC threshold crossing produces upstream flow-control frames");
+        NS_TEST_ASSERT_MSG_EQ(recovered, healthy,
+                              "recovery releases real occupancy without changing PFC observation");
+    }
+};
+
+/** @brief One protocol family member for the recovery matrix. */
+struct ReroutingProtocolCase
+{
+    std::string name;
+    std::function<Ptr<Packet>()> build;
+};
+
+/**
+ * @brief Every supported routable packet family recovers through the same failed-link path.
+ *
+ * The matrix uses production builders/parsers: routed RTP data plus routed ACK/SACK/CNP
+ * acknowledgements, compact-transport requests, and LDST memory requests/responses. Each packet must
+ * arrive byte-identically exactly once after the modeled LastAck, with exactly one recovery transfer
+ * and no terminal drop report.
+ */
+class UbReroutingProtocolMatrixTest : public TestCase
+{
+  public:
+    UbReroutingProtocolMatrixTest()
+        : TestCase("Reliable rerouting - routed protocol families recover byte-identically")
+    {
+    }
+
+  private:
+    void RunCase(const ReroutingProtocolCase& protocolCase)
+    {
+        ReroutingTopology topo(true, NanoSeconds(20), NanoSeconds(0), MicroSeconds(2));
+        PacketSink sink;
+        topo.d0->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sink));
+
+        Ptr<Packet> packet = protocolCase.build();
+        const auto bytes = PacketBytes(packet);
+        const int classified =
+            static_cast<int>(topo.Switch(topo.swB)->GetPacketTypeForTest(packet));
+        NS_TEST_ASSERT_MSG_NE(classified,
+                              static_cast<int>(UNKOWN_TYPE),
+                              protocolCase.name + ": production classification succeeds");
+
+        SendWatcher watcher;
+        watcher.nodeId = topo.swB->GetId();
+        watcher.portId = 1;
+        watcher.link = topo.failedLink;
+        watcher.port = topo.b1;
+        // Small acknowledgement packets serialize in a few nanoseconds, so fail just after the send
+        // boundary while the attempt is still in flight on the link.
+        watcher.failOffset = NanoSeconds(1);
+        watcher.failOnSend = true;
+        topo.b1->TraceConnectWithoutContext("PortTxNotify",
+                                            MakeBoundCallback(&WatchSendStart, &watcher));
+
+        Simulator::Schedule(NanoSeconds(10),
+                            &UbSwitch::SwitchHandlePacket,
+                            topo.Switch(topo.swB),
+                            topo.b0,
+                            packet);
+        Simulator::Stop(MicroSeconds(40));
+        Simulator::Run();
+
+        const auto stateB = topo.State(1);
+        const auto retry = topo.Rerouting(1)->GetRetryPacketCount();
+        const auto transfers = topo.Switch(topo.swB)->GetRecoveryTransferCountForTest();
+        const auto drops = UbUtils::Get()->GetRuntimePacketDropCount();
+        Simulator::Destroy();
+
+        NS_TEST_ASSERT_MSG_EQ(sink.packets.size(), static_cast<size_t>(1),
+                              protocolCase.name + ": delivered exactly once");
+        NS_TEST_ASSERT_MSG_EQ(HexOf(sink.packets.front()), HexOf(bytes),
+                              protocolCase.name + ": header/payload preserved");
+        NS_TEST_ASSERT_MSG_EQ(retry, 0u, protocolCase.name + ": retry storage released");
+        NS_TEST_ASSERT_MSG_EQ(transfers, 1u, protocolCase.name + ": one recovery transfer only");
+        NS_TEST_ASSERT_MSG_EQ(drops, 0u, protocolCase.name + ": no terminal packet drop");
+        NS_TEST_ASSERT_MSG_EQ(stateB, UbReliableRerouting::State::DRAINED,
+                              protocolCase.name + ": local drain reached");
+    }
+
+    void DoRun() override
+    {
+        const uint32_t src = 1;
+        const uint32_t dst = 3;
+        const std::vector<ReroutingProtocolCase> matrix = {
+            {"RTP data",
+             [src, dst]() {
+                 return BuildUrmaPacket(2048,
+                                        src,
+                                        dst,
+                                        kPriority,
+                                        RoutingType::PER_FLOW_SHORTEST_PATHS);
+             }},
+            {"RTP ACK without CETPH",
+             [src, dst]() {
+                 return BuildRoutedTpAckPacket(0,
+                                               src,
+                                               dst,
+                                               TpOpcode::TP_OPCODE_ACK_WITHOUT_CETPH,
+                                               kPriority,
+                                               RoutingType::PER_FLOW_SHORTEST_PATHS);
+             }},
+            {"RTP ACK with CETPH",
+             [src, dst]() {
+                 return BuildRoutedTpAckPacket(0,
+                                               src,
+                                               dst,
+                                               TpOpcode::TP_OPCODE_ACK_WITH_CETPH,
+                                               kPriority,
+                                               RoutingType::PER_FLOW_SHORTEST_PATHS);
+             }},
+            {"RTP SACK without CETPH",
+             [src, dst]() {
+                 return BuildRoutedTpAckPacket(0,
+                                               src,
+                                               dst,
+                                               TpOpcode::TP_OPCODE_SACK_WITHOUT_CETPH,
+                                               kPriority,
+                                               RoutingType::PER_FLOW_SHORTEST_PATHS);
+             }},
+            {"RTP SACK with CETPH",
+             [src, dst]() {
+                 return BuildRoutedTpAckPacket(0,
+                                               src,
+                                               dst,
+                                               TpOpcode::TP_OPCODE_SACK_WITH_CETPH,
+                                               kPriority,
+                                               RoutingType::PER_FLOW_SHORTEST_PATHS);
+             }},
+            {"CTP request",
+             [src, dst]() {
+                 return BuildCompactTransportPacket(512,
+                                                    src,
+                                                    dst,
+                                                    UbTransactionOpcode::WRITE,
+                                                    kPriority,
+                                                    RoutingType::PER_FLOW_SHORTEST_PATHS);
+             }},
+            {"LDST request",
+             [src, dst]() {
+                 return BuildLdstMemoryPacket(256,
+                                              src,
+                                              dst,
+                                              UbTransactionOpcode::WRITE,
+                                              kPriority,
+                                              RoutingType::PER_FLOW_SHORTEST_PATHS);
+             }},
+            {"LDST response",
+             [src, dst]() {
+                 return BuildLdstMemoryPacket(256,
+                                              src,
+                                              dst,
+                                              UbTransactionOpcode::TAACK,
+                                              kPriority,
+                                              RoutingType::PER_FLOW_SHORTEST_PATHS);
+             }},
+        };
+
+        for (const auto& protocolCase : matrix)
+        {
+            RunCase(protocolCase);
+        }
+    }
+};
+
+/**
+ * @brief Every routing representation and selection entry point excludes the failed output.
+ *
+ * Tested representations: materialized routing table, compact next-hop index, explicit candidate
+ * lists (the seam structured/index candidates flow through), restricted candidate sets, and the
+ * endpoint lookup. Only removed candidates change; everything else keeps working.
+ */
+class UbReroutingRoutingRepresentationTest : public TestCase
+{
+  public:
+    UbReroutingRoutingRepresentationTest()
+        : TestCase("Reliable rerouting - table, index, restricted and selector candidates filter")
+    {
+    }
+
+  private:
+    RoutingKey MakeKey()
+    {
+        RoutingKey key;
+        key.sip = utils::NodeIdToIp(1).Get();
+        key.dip = utils::NodeIdToIp(3).Get();
+        key.sport = 1;
+        key.dport = 1;
+        key.priority = kPriority;
+        key.routingType = RoutingType::PER_FLOW_SHORTEST_PATHS;
+        return key;
+    }
+
+  public:
+    static MultipathSelector StringToSelector(const std::string& name)
+    {
+        if (name == "HASH64") return MultipathSelector::HASH64;
+        if (name == "CRC32") return MultipathSelector::CRC32;
+        if (name == "TOEPLITZ") return MultipathSelector::TOEPLITZ;
+        if (name == "ROUND_ROBIN") return MultipathSelector::ROUND_ROBIN;
+        if (name == "ADAPTIVE") return MultipathSelector::ADAPTIVE;
+        return MultipathSelector::INGRESS_PORT_STRIPE;
+    }
+
+  private:
+    void DoRun() override
+    {
+        // Materialized table representation.
+        {
+            Ptr<UbRoutingProcess> routing = CreateObject<UbRoutingProcess>();
+            routing->SetNodeId(1);
+            routing->GetRoutingTable().AddShortestRoute(utils::NodeIdToIp(3).Get(), {1, 2});
+            for (const std::string selector : {"HASH64", "CRC32", "TOEPLITZ", "INGRESS_PORT_STRIPE"})
+            {
+                routing->SetAttribute("MultipathSelector", EnumValue(StringToSelector(selector)));
+                bool selectedShortestPath = false;
+                RoutingKey key = MakeKey();
+                const int healthy = routing->GetOutPort(key, selectedShortestPath, 0);
+                const bool healthyInsideCandidates = (healthy == 1 || healthy == 2);
+                NS_TEST_ASSERT_MSG_EQ(
+                    healthyInsideCandidates,
+                    true,
+                    selector + ": healthy selection stays inside the candidates");
+                if (selector == "INGRESS_PORT_STRIPE")
+                {
+                    NS_TEST_ASSERT_MSG_EQ(healthy,
+                                          1,
+                                          selector + ": ingress stripe picks the first candidate");
+                }
+                routing->SetOutputUnavailable(1);
+                RoutingKey filteredKey = MakeKey();
+                const int filtered = routing->GetOutPort(filteredKey, selectedShortestPath, 0);
+                NS_TEST_ASSERT_MSG_EQ(filtered, 2, selector + ": failed output excluded");
+                NS_TEST_ASSERT_MSG_EQ(routing->LastFailureExcludedAllCandidates(), false,
+                                      selector + ": a legal candidate remained");
+                routing->ClearOutputUnavailable(1);
+            }
+        }
+
+        // Compact next-hop index representation.
+        {
+            UbNextHopIndexBuilder builder(4);
+            builder.AddRoute({1, 3, 0, {1, 2}, {}});
+            builder.AddPrimaryRoute(1, 3, {1, 2}, {});
+            std::shared_ptr<const UbNextHopIndex> index = builder.Build();
+            Ptr<UbRoutingProcess> routing = CreateObject<UbRoutingProcess>();
+            routing->SetNodeId(1);
+            routing->SetNextHopIndex(index);
+            routing->SetAttribute("MultipathSelector",
+                                  EnumValue(MultipathSelector::INGRESS_PORT_STRIPE));
+            bool selectedShortestPath = false;
+            RoutingKey key = MakeKey();
+            const int healthy = routing->GetOutPort(key, selectedShortestPath, 0);
+            NS_TEST_ASSERT_MSG_EQ(healthy, 1, "index: healthy candidate selected");
+            routing->SetOutputUnavailable(1);
+            RoutingKey filteredKey = MakeKey();
+            const int filtered = routing->GetOutPort(filteredKey, selectedShortestPath, 0);
+            NS_TEST_ASSERT_MSG_EQ(filtered, 2, "index: failed output excluded");
+        }
+
+        // Explicit candidate lists (the structured-rule / precomputed candidate seam).
+        {
+            Ptr<UbRoutingProcess> routing = CreateObject<UbRoutingProcess>();
+            routing->SetNodeId(1);
+            routing->SetAttribute("MultipathSelector",
+                                  EnumValue(MultipathSelector::INGRESS_PORT_STRIPE));
+            bool selectedShortestPath = false;
+            RoutingKey key = MakeKey();
+            NS_TEST_ASSERT_MSG_EQ(routing->SelectOutPort(key,
+                                                         {1, 2},
+                                                         {},
+                                                         selectedShortestPath,
+                                                         0),
+                                  1,
+                                  "explicit candidates: healthy selection");
+            routing->SetOutputUnavailable(1);
+            RoutingKey filteredKey = MakeKey();
+            NS_TEST_ASSERT_MSG_EQ(routing->SelectOutPort(filteredKey,
+                                                         {1, 2},
+                                                         {},
+                                                         selectedShortestPath,
+                                                         0),
+                                  2,
+                                  "explicit candidates: failed output excluded");
+            // A candidate set that contains only the failed output is a failure-aware no-route.
+            RoutingKey onlyFailed = MakeKey();
+            NS_TEST_ASSERT_MSG_EQ(routing->SelectOutPort(onlyFailed,
+                                                         {1},
+                                                         {},
+                                                         selectedShortestPath,
+                                                         0),
+                                  -1,
+                                  "explicit candidates: no legal output");
+            NS_TEST_ASSERT_MSG_EQ(routing->LastFailureExcludedAllCandidates(), true,
+                                  "failure-aware diagnostic is armed");
+        }
+
+        // Restricted candidates and endpoint lookups keep their own constraints.
+        {
+            Ptr<UbRoutingProcess> routing = CreateObject<UbRoutingProcess>();
+            routing->SetNodeId(1);
+            routing->GetRoutingTable().AddShortestRoute(utils::NodeIdToIp(3).Get(), {1, 2});
+            routing->GetRoutingTable().AddShortestRoute(utils::NodeIdToIp(3, 0).Get(), {1, 2});
+            routing->SetAttribute("MultipathSelector",
+                                  EnumValue(MultipathSelector::INGRESS_PORT_STRIPE));
+            bool selectedShortestPath = false;
+            RoutingKey restricted = MakeKey();
+            NS_TEST_ASSERT_MSG_EQ(routing->GetOutPortRestricted(restricted,
+                                                                {1},
+                                                                selectedShortestPath,
+                                                                0),
+                                  1,
+                                  "restricted candidates: allowed healthy output");
+            routing->SetOutputUnavailable(1);
+            RoutingKey restrictedFiltered = MakeKey();
+            NS_TEST_ASSERT_MSG_EQ(routing->GetOutPortRestricted(restrictedFiltered,
+                                                                {1},
+                                                                selectedShortestPath,
+                                                                0),
+                                  -1,
+                                  "restricted candidates: failed output stays excluded");
+            NS_TEST_ASSERT_MSG_EQ(routing->LastFailureExcludedAllCandidates(), true,
+                                  "restricted candidates: failure-aware diagnostic");
+            RoutingKey endpoint = MakeKey();
+            endpoint.dip = utils::NodeIdToIp(3, 0).Get();
+            NS_TEST_ASSERT_MSG_EQ(routing->GetOutPortForEndpointRestricted(endpoint,
+                                                                           {1, 2},
+                                                                           selectedShortestPath,
+                                                                           0),
+                                  2,
+                                  "endpoint candidates: failed output excluded");
+        }
+
+        // A physically connected detour outside the allowed candidate set is not a fallback.
+        {
+            Ptr<UbRoutingProcess> routing = CreateObject<UbRoutingProcess>();
+            routing->SetNodeId(1);
+            routing->GetRoutingTable().AddShortestRoute(utils::NodeIdToIp(3).Get(), {1});
+            routing->GetRoutingTable().AddOtherRoute(utils::NodeIdToIp(3).Get(), {2});
+            routing->SetAttribute("MultipathSelector", EnumValue(MultipathSelector::HASH64));
+            routing->SetOutputUnavailable(1);
+            bool selectedShortestPath = false;
+            RoutingKey key = MakeKey();
+            // PER_FLOW_SHORTEST_PATHS forbids the detour, so no legal candidate remains.
+            NS_TEST_ASSERT_MSG_EQ(routing->GetOutPort(key, selectedShortestPath, 0),
+                                  -1,
+                                  "a disallowed detour is not used as a fallback");
+            NS_TEST_ASSERT_MSG_EQ(routing->LastFailureExcludedAllCandidates(), true,
+                                  "disallowed-detour case is failure-aware");
+            // With an all-paths routing type the same detour is legal again.
+            RoutingKey allPathsKey = MakeKey();
+            allPathsKey.routingType = RoutingType::PER_FLOW_ALL_PATHS;
+            NS_TEST_ASSERT_MSG_EQ(routing->GetOutPort(allPathsKey, selectedShortestPath, 0),
+                                  2,
+                                  "the detour stays legal for an all-paths routing type");
+        }
+
+        // Original-ingress exclusion still applies on top of the failure filter.
+        {
+            Ptr<UbRoutingProcess> routing = CreateObject<UbRoutingProcess>();
+            routing->SetNodeId(1);
+            routing->GetRoutingTable().AddShortestRoute(utils::NodeIdToIp(3).Get(), {1, 2});
+            routing->SetAttribute("MultipathSelector", EnumValue(MultipathSelector::HASH64));
+            routing->SetOutputUnavailable(1);
+            bool selectedShortestPath = false;
+            // Exclusive original-ingress routing plus the detected failed output leaves no legal
+            // candidate, which must be reported as a failure-aware no-route.
+            RoutingKey ingressOnly = MakeKey();
+            NS_TEST_ASSERT_MSG_EQ(routing->GetOutPort(ingressOnly, selectedShortestPath, 2),
+                                  -1,
+                                  "original-ingress-only candidates cannot use the failed output");
+            NS_TEST_ASSERT_MSG_EQ(routing->LastFailureExcludedAllCandidates(), true,
+                                  "original-ingress-only case is failure-aware");
+            // A different ingress port can still use the healthy alternate.
+            RoutingKey alternateIngress = MakeKey();
+            NS_TEST_ASSERT_MSG_EQ(routing->GetOutPort(alternateIngress, selectedShortestPath, 0),
+                                  2,
+                                  "healthy candidate remains reachable from another ingress");
+        }
+    }
+};
+
+/**
+ * @brief Local attempt identities stay distinct when a transport resend repeats the same PSN.
+ *
+ * Two transmit attempts that carry identical transport bytes (the original and its transport
+ * resend) each get their own local token, each transfer exactly once, and are both delivered. Local
+ * recovery must not collapse them, because transport retransmission remains an independent
+ * mechanism.
+ */
+class UbReroutingAttemptIdentityTest : public TestCase
+{
+  public:
+    UbReroutingAttemptIdentityTest()
+        : TestCase("Reliable rerouting - original and transport resend are distinct attempts")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        // A positive detection interval lets both transmit attempts happen before the output is
+        // blocked, exactly like an original packet and its transport resend during detection.
+        ReroutingTopology topo(true, NanoSeconds(20), MicroSeconds(1), MicroSeconds(2));
+        PacketSink sink;
+        topo.d0->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sink));
+
+        // Same PSN and identical bytes on both attempts, exactly like a transport resend.
+        Ptr<Packet> original = BuildUrmaPacket(1024,
+                                               topo.hostA->GetId(),
+                                               topo.hostD->GetId(),
+                                               kPriority,
+                                               RoutingType::PER_FLOW_SHORTEST_PATHS,
+                                               7);
+        Ptr<Packet> resend = original->Copy();
+        const auto bytes = PacketBytes(original);
+
+        std::vector<uint64_t> attemptTokens;
+        topo.Rerouting(1)->TraceConnectWithoutContext(
+            "Rerouting",
+            MakeBoundCallback(&WatchAttemptTokens, &attemptTokens));
+
+        // Both attempts are sent while the link is failing, so both stay in retry storage.
+        SendWatcher watcher;
+        watcher.nodeId = topo.swB->GetId();
+        watcher.portId = 1;
+        watcher.link = topo.failedLink;
+        watcher.port = topo.b1;
+        watcher.failOffset = NanoSeconds(1);
+        watcher.failOnSend = true;
+        topo.b1->TraceConnectWithoutContext("PortTxNotify",
+                                            MakeBoundCallback(&WatchSendStart, &watcher));
+
+        Simulator::Schedule(NanoSeconds(10),
+                            &UbSwitch::SwitchHandlePacket,
+                            topo.Switch(topo.swB),
+                            topo.b0,
+                            original);
+        // The resend follows the original inside the detection window.
+        Simulator::Schedule(NanoSeconds(300),
+                            &UbSwitch::SwitchHandlePacket,
+                            topo.Switch(topo.swB),
+                            topo.b0,
+                            resend);
+
+        Simulator::Stop(MicroSeconds(20));
+        Simulator::Run();
+        const auto transfers = topo.Switch(topo.swB)->GetRecoveryTransferCountForTest();
+        const auto retry = topo.Rerouting(1)->GetRetryPacketCount();
+        const auto stateB = topo.State(1);
+        Simulator::Destroy();
+
+        NS_TEST_ASSERT_MSG_EQ(transfers, 2u, "each local attempt transfers exactly once");
+        NS_TEST_ASSERT_MSG_EQ(attemptTokens.size(), 2u, "two local attempts were transferred");
+        if (attemptTokens.size() == 2)
+        {
+            NS_TEST_ASSERT_MSG_NE(attemptTokens[0], 0u, "original has a local attempt token");
+            NS_TEST_ASSERT_MSG_NE(attemptTokens[1], 0u, "resend has a local attempt token");
+            NS_TEST_ASSERT_MSG_NE(attemptTokens[0],
+                                  attemptTokens[1],
+                                  "original and resend keep distinct local identities");
+        }
+        NS_TEST_ASSERT_MSG_EQ(retry, 0u, "retry storage released for both attempts");
+        NS_TEST_ASSERT_MSG_EQ(sink.packets.size(), 2u, "both attempts reach the destination");
+        NS_TEST_ASSERT_MSG_EQ(HexOf(sink.packets[0]), HexOf(bytes), "attempt bytes preserved");
+        NS_TEST_ASSERT_MSG_EQ(HexOf(sink.packets[1]), HexOf(bytes), "resend bytes preserved");
+        NS_TEST_ASSERT_MSG_EQ(stateB, UbReliableRerouting::State::DRAINED, "local drain reached");
+    }
+};
+
+class UbReliableReroutingSuite : public TestSuite
+{
+  public:
+    UbReliableReroutingSuite()
+        : TestSuite("unified-bus-reliable-rerouting", Type::UNIT)
+    {
+        AddTestCase(new UbReroutingScopeTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingSameTimestampOrderTest(true), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingSameTimestampOrderTest(false), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingBidirectionalRecoveryTest(false), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingBidirectionalRecoveryTest(true), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingHealthyBackupTest(false), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingHealthyBackupTest(true), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingNoLegalOutputTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingLastAckGateTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingDisposalTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingVoqGrantCancellationTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingEgressBacklogTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingDelayedProcessingTest(true), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingDelayedProcessingTest(false), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingBlockedAdmissionTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingCbfcCreditTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingControlFrameDisposalTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingPfcReleaseTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingProtocolMatrixTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingRoutingRepresentationTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingAttemptIdentityTest(), TestCase::Duration::QUICK);
+    }
+};
+
+UbReliableReroutingSuite g_reliableReroutingSuite;
+
+} // namespace

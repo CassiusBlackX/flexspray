@@ -1,24 +1,0 @@
-[INFO] MTP enabled with 16 threads. (local mode).
-[INFO] Parallel runs preserve causal ordering and deterministic task completion ordering, but events with the same simulation time may be processed in a different order than single-thread runs. Compare task or workload metrics using predefined acceptance criteria.
-[17:15:10] [case] Run case: /Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260723-t55-mtp-owner-cleanup/results/t55-before/case
-[17:15:10] [case] node.csv delay fields: allocationDelay -> AllocationTime; forwardDelay -> InPortProcessingDelay; legacy 4-column forwardDelay -> AllocationTime.
-[17:15:10] [setup] Load network_attribute.txt
-[17:15:10] [setup] Prepare runlog directory: /Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260723-t55-mtp-owner-cleanup/results/t55-before/case/runlog
-[17:15:10] [setup] Load node.csv
-[17:15:10] [setup] Load topology.csv
-[17:15:10] [setup] Load routing_table.csv
-[17:15:10] [setup] Skip transport_channel.csv (not found; traffic will reserve TP connections before endpoints materialize on demand).
-[INFO] Link delay offset is off (default). Enable the deterministic positive-link workaround with --link-delay-offset-window=<Time> and record --timing-offset-seed.
-[INFO] Initial task start offset enabled: window=32ps, seed=1.
-[17:15:10] [traffic] Index phase dependencies from traffic.csv
-[17:15:10] [traffic] Activate clients and enqueue tasks.
-[17:15:10] [traffic] Load traffic.csv
-[17:15:10] [traffic] Scheduled local tasks: 64
-[17:15:10] Simulation time progress: 0 us[17:15:11] Simulation time progress: 100 us
-[17:15:11] [run] Simulation finished.
-[17:15:11] [summary] Program finished.
-[17:15:11] [summary] Wall-clock:
-[17:15:11] [summary]   config : 416 us
-[17:15:11] [summary]   run    : 677.940 ms
-[17:15:11] [summary]   trace  : 0 us
-[17:15:11] [summary]   total  : 680.225 ms

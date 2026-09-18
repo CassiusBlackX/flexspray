@@ -2,8 +2,16 @@ name: Per Commit (Ubuntu)
 
 on:
   push:
+    branches:
+      - next
   pull_request:
+    branches:
+      - next
   workflow_dispatch:
+
+concurrency:
+  group: per-commit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -12,7 +20,7 @@ jobs:
   ubuntu-linux:
     name: Build and Smoke Test on Ubuntu
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 75
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -48,7 +56,8 @@ jobs:
       - name: Configure and build (Quick Start)
         run: |
           ./ns3 configure --enable-asserts --enable-examples --enable-tests --disable-werror -d release -G Ninja
-          ./ns3 build
+          BUILD_JOBS="${BUILD_JOBS:-2}"
+          ./ns3 build -j "$BUILD_JOBS"
 
       - name: Run smoke scenario (Quick Start)
         run: |

@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-only
+#include "ub-function.h"
+
+#include "ub-transaction-rules.h"
+#include "ub-ctp.h"
+#include "ub-transaction.h"
+
 #include "ns3/log.h"
 #include "ns3/simulator.h"
-
-#include "ns3/ub-datatype.h"
 #include "ns3/ub-controller.h"
-#include "ns3/ub-ctp.h"
-#include "ns3/ub-transaction.h"
-#include "ns3/ub-function.h"
+#include "ns3/ub-datatype.h"
 
 namespace ns3 {
 
@@ -112,7 +114,7 @@ Ptr<UbWqe> UbFunction::CreateWqe(uint32_t src,
                                  uint32_t dest,
                                  uint32_t size,
                                  uint32_t wqeId,
-                                 TaOpcode type)
+                                 UbTransactionOpcode type)
 {
     NS_LOG_DEBUG(this);
     // 创建新的 WQE
@@ -127,19 +129,19 @@ Ptr<UbWqe> UbFunction::CreateWqe(uint32_t src,
     ubWqe->SetOriginJettyNum(UINT32_MAX);
     ubWqe->SetRequestTassn(UINT32_MAX);
     ubWqe->SetRequestOpcode(type);
-    ubWqe->SetResponseBytes(type == TaOpcode::TA_OPCODE_READ ? size : 0);
+    ubWqe->SetResponseBytes(type == UbTransactionOpcode::READ ? size : 0);
     ubWqe->SetRemoteAddress(0);
-    ubWqe->SetNeedsTransactionResponse(type == TaOpcode::TA_OPCODE_WRITE ||
-                                       type == TaOpcode::TA_OPCODE_READ);
+    const auto* rule = FindTransactionRule(type);
+    ubWqe->SetNeedsTransactionResponse(rule != nullptr && rule->requiresResponse);
     ubWqe->SetResLenBytes(size);
-    ubWqe->SetPayloadBytes(type == TaOpcode::TA_OPCODE_READ ? 0 : size);
-    ubWqe->SetCarrierBytes(type == TaOpcode::TA_OPCODE_READ ? ubWqe->GetTaSsnSize() : size);
+    ubWqe->SetPayloadBytes(type == UbTransactionOpcode::READ ? 0 : size);
+    ubWqe->SetCarrierBytes(type == UbTransactionOpcode::READ ? ubWqe->GetTaSsnSize() : size);
     return ubWqe;
 }
 
 Ptr<UbWqe> UbFunction::CreateWqe(uint32_t src, uint32_t dest, uint32_t size, uint32_t wqeId)
 {
-    return CreateWqe(src, dest, size, wqeId, TaOpcode::TA_OPCODE_WRITE);
+    return CreateWqe(src, dest, size, wqeId, UbTransactionOpcode::WRITE);
 }
 
 void UbFunction::PushWqeToJetty(Ptr<UbWqe> wqe, uint32_t jettyNum)
@@ -162,6 +164,40 @@ UbWqeSubmissionResult UbFunction::SubmitWqe(Ptr<UbWqe> wqe, uint32_t jettyNum)
     }
     if (!ubJetty->CanAcceptWqe(wqe)) {
         return {UbWqeSubmissionStatus::JETTY_BINDING_MISMATCH, {}};
+    }
+    UbTransactionFields fields = wqe->GetTransactionFields();
+    if (wqe->GetType() == UbTransactionOpcode::ATOMIC_SYNC && !fields.taskId)
+        fields.taskId = static_cast<uint16_t>(wqe->GetWqeId() & 0xffffu);
+    if (!fields.memoryAccess && wqe->GetType() != UbTransactionOpcode::SEND &&
+        wqe->GetType() != UbTransactionOpcode::SEND_WITH_IMMEDIATE &&
+        wqe->GetType() != UbTransactionOpcode::MANAGEMENT)
+    {
+        fields.memoryAccess = UbMemoryAccessFields{wqe->GetRemoteAddress(), wqe->GetRemoteTokenId(), wqe->GetSize()};
+    }
+    const uint32_t validationPayload =
+        (wqe->GetPayloadBytes() == 0 && wqe->GetType() != UbTransactionOpcode::READ)
+            ? wqe->GetSize() : wqe->GetPayloadBytes();
+    UbTransactionRequestInput request;
+    request.opcode = wqe->GetType();
+    request.logicalBytes = wqe->GetSize();
+    request.payloadBytes = validationPayload;
+    request.fields = fields;
+    request.atomicOptions = wqe->GetAtomicOptions();
+    request.maxPayloadBytes =
+        IsAtomicTransaction(wqe->GetType()) ? UB_MTU_BYTE : UINT32_MAX;
+    request.origin = UbTransactionRequestOrigin::LOCAL_SUBMISSION;
+    const auto ruleResult = ValidateTransactionRequest(request);
+    if (!ruleResult.IsValid())
+    {
+        NS_LOG_WARN("WQE transaction validation failed: " << ruleResult.message);
+        return {(IsAtomicTransaction(wqe->GetType()) || wqe->GetAtomicOptions().has_value()) ? UbWqeSubmissionStatus::INVALID_ATOMIC_REQUEST
+                                     : UbWqeSubmissionStatus::INVALID_TRANSACTION_REQUEST, {}, ruleResult};
+    }
+    wqe->SetTransactionFields(ruleResult.fields);
+    wqe->SetTransactionResolved(ruleResult.resolved);
+    if (!ValidateAtomicWqe(wqe, jettyNum, ruleResult.resolved))
+    {
+        return {UbWqeSubmissionStatus::INVALID_ATOMIC_REQUEST, {}};
     }
     const UbRtpTransportReference* transportReference =
         GetTransaction()->FindRtpTransportReference(jettyNum);
@@ -187,8 +223,10 @@ UbWqeSubmissionResult UbFunction::SubmitWqe(Ptr<UbWqe> wqe, uint32_t jettyNum)
 
     Ptr<UbLifecycleCoordinator> coordinator =
         UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId));
+    const uint64_t lifecycleLocalId =
+        m_jettyManager->ResolveWqeLifecycleLocalId(jettyNum, wqe->GetWqeId());
     const UbLifecycleResourceIdentity wqeIdentity =
-        coordinator->OpenResource(UbLifecycleResourceKind::WQE, wqe->GetWqeId());
+        coordinator->OpenResource(UbLifecycleResourceKind::WQE, lifecycleLocalId);
     NS_ABORT_MSG_IF(!GetTransaction()->TryAdmitRtpWqe(jettyNum,
                                                       wqe,
                                                       wqeIdentity,
@@ -221,6 +259,41 @@ UbFunction::SubmitCtpWqe(Ptr<UbWqe> wqe,
     {
         return {UbWqeSubmissionStatus::JETTY_BINDING_MISMATCH, {}};
     }
+    UbTransactionFields fields = wqe->GetTransactionFields();
+    if (wqe->GetType() == UbTransactionOpcode::ATOMIC_SYNC && !fields.taskId)
+        fields.taskId = static_cast<uint16_t>(wqe->GetWqeId() & 0xffffu);
+    if (!fields.memoryAccess && wqe->GetType() != UbTransactionOpcode::SEND &&
+        wqe->GetType() != UbTransactionOpcode::SEND_WITH_IMMEDIATE &&
+        wqe->GetType() != UbTransactionOpcode::MANAGEMENT)
+    {
+        fields.memoryAccess = UbMemoryAccessFields{wqe->GetRemoteAddress(), wqe->GetRemoteTokenId(), wqe->GetSize()};
+    }
+    const uint32_t validationPayload =
+        (wqe->GetPayloadBytes() == 0 && wqe->GetType() != UbTransactionOpcode::READ)
+            ? wqe->GetSize() : wqe->GetPayloadBytes();
+    UbTransactionRequestInput request;
+    request.opcode = wqe->GetType();
+    request.logicalBytes = wqe->GetSize();
+    request.payloadBytes = validationPayload;
+    request.fields = fields;
+    request.atomicOptions = wqe->GetAtomicOptions();
+    request.maxPayloadBytes =
+        IsAtomicTransaction(wqe->GetType()) ? UbCtpTransportConstraints{}.maxSegmentBytes
+                                            : UINT32_MAX;
+    request.origin = UbTransactionRequestOrigin::LOCAL_SUBMISSION;
+    const auto ruleResult = ValidateTransactionRequest(request);
+    if (!ruleResult.IsValid())
+    {
+        NS_LOG_WARN("WQE transaction validation failed: " << ruleResult.message);
+        return {(IsAtomicTransaction(wqe->GetType()) || wqe->GetAtomicOptions().has_value()) ? UbWqeSubmissionStatus::INVALID_ATOMIC_REQUEST
+                                     : UbWqeSubmissionStatus::INVALID_TRANSACTION_REQUEST, {}, ruleResult};
+    }
+    wqe->SetTransactionFields(ruleResult.fields);
+    wqe->SetTransactionResolved(ruleResult.resolved);
+    if (!ValidateAtomicWqe(wqe, jettyNum, ruleResult.resolved))
+    {
+        return {UbWqeSubmissionStatus::INVALID_ATOMIC_REQUEST, {}};
+    }
     if (GetTransaction()->HasWqeOperation(jettyNum, wqe->GetWqeId()))
     {
         return {UbWqeSubmissionStatus::DUPLICATE_OPERATION, {}};
@@ -228,8 +301,10 @@ UbFunction::SubmitCtpWqe(Ptr<UbWqe> wqe,
 
     Ptr<UbLifecycleCoordinator> coordinator =
         UbLifecycleCoordinator::GetOrCreate(NodeList::GetNode(m_nodeId));
+    const uint64_t lifecycleLocalId =
+        m_jettyManager->ResolveWqeLifecycleLocalId(jettyNum, wqe->GetWqeId());
     const UbLifecycleResourceIdentity wqeIdentity =
-        coordinator->OpenResource(UbLifecycleResourceKind::WQE, wqe->GetWqeId());
+        coordinator->OpenResource(UbLifecycleResourceKind::WQE, lifecycleLocalId);
     NS_ABORT_MSG_IF(!GetTransaction()->TryAdmitCtpWqe(jettyNum,
                                                       wqe,
                                                       wqeIdentity,
@@ -240,7 +315,39 @@ UbFunction::SubmitCtpWqe(Ptr<UbWqe> wqe,
     jetty->PushWqe(wqe, UbCtpTransportConstraints{}.maxSegmentBytes);
     m_jettyManager->RegisterWqe(jettyNum, wqe->GetWqeId(), wqeIdentity);
     GetTransaction()->AddWqe(jettyNum, wqe);
+    GetTransaction()->TriggerScheduleCtpWqe(jettyNum, wqe->GetWqeId());
     return {UbWqeSubmissionStatus::ACCEPTED, wqeIdentity};
+}
+
+bool
+UbFunction::ValidateAtomicWqe(Ptr<UbWqe> wqe,
+                              uint32_t jettyNum,
+                              const UbTransactionResolved& resolved)
+{
+    if (!IsAtomicTransaction(wqe->GetType()))
+    {
+        return true;
+    }
+    if (GetTransaction()->GetTransactionServiceMode(jettyNum) != TransactionServiceMode::ROI)
+    {
+        std::cerr << "Invalid atomic WQE taskId=" << wqe->GetWqeId()
+                  << ": atomic serviceMode must be ROI" << '\n';
+        return false;
+    }
+    if (wqe->HasExplicitPayload() &&
+        wqe->GetExplicitPayload()->GetSize() != resolved.requestPayloadBytes)
+    {
+        std::cerr << "Invalid atomic WQE taskId=" << wqe->GetWqeId()
+                  << ": explicit payload size must equal requestPayloadBytes" << '\n';
+        return false;
+    }
+    wqe->SetLogicalBytes(wqe->GetSize());
+    wqe->SetPayloadBytes(resolved.requestPayloadBytes);
+    wqe->SetResponseBytes(resolved.responsePayloadBytes);
+    wqe->SetNeedsTransactionResponse(resolved.requiresResponse);
+    // WQE admission advances N once; its transport segment advances P.
+    wqe->SetCarrierBytes(wqe->GetSize());
+    return true;
 }
 
 void
@@ -256,7 +363,7 @@ UbFunction::ApplyWqeOutcomeFromTransaction(
 void
 UbFunction::NotifyJettyProgress(uint32_t jettyNum)
 {
-    m_jettyManager->NotifyProgress(jettyNum);
+    m_jettyManager->TryFinalizeJettyDestroy(jettyNum);
 }
 
 bool
@@ -357,6 +464,13 @@ UbFunction::RegisterJettyCtpBinding(uint32_t jettyNum,
     m_jettyManager->RegisterCtpBinding(jettyNum, service);
 }
 
+bool
+UbFunction::UnregisterJettyCtpBinding(uint32_t jettyNum,
+                                      Ptr<UbCtpTransportService> service)
+{
+    return m_jettyManager->UnregisterCtpBinding(jettyNum, service);
+}
+
 void UbFunction::DoDispose()
 {
     NS_LOG_FUNCTION(this);
@@ -388,7 +502,7 @@ UbJettyManager::Init(uint32_t nodeId, Ptr<UbLifecycleCoordinator> coordinator)
 {
     m_nodeId = nodeId;
     m_coordinator = coordinator;
-    m_trackedEvents.Init(coordinator);
+    m_jettyEvents.Init(coordinator);
 }
 
 void
@@ -410,7 +524,7 @@ UbJettyManager::RegisterJetty(Ptr<UbJetty> jetty, UbJettyLifetime lifetime)
 {
     NS_ABORT_MSG_IF(jetty == nullptr, "Cannot register a null Jetty");
     const uint32_t jettyNum = jetty->GetJettyNum();
-    NS_ABORT_MSG_IF(m_records.find(jettyNum) != m_records.end(),
+    NS_ABORT_MSG_IF(m_jettyRecordsByNum.find(jettyNum) != m_jettyRecordsByNum.end(),
                     "Cannot replace an active Jetty collection entry");
     Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
     NS_ABORT_MSG_IF(coordinator == nullptr, "Jetty manager has no lifecycle coordinator");
@@ -418,34 +532,34 @@ UbJettyManager::RegisterJetty(Ptr<UbJetty> jetty, UbJettyLifetime lifetime)
     record.jetty = jetty;
     record.identity = coordinator->OpenResource(UbLifecycleResourceKind::JETTY, jettyNum);
     record.lifetime = lifetime;
-    m_records.emplace(jettyNum, std::move(record));
+    m_jettyRecordsByNum.emplace(jettyNum, std::move(record));
 }
 
 bool
 UbJettyManager::IsJettyExists(uint32_t jettyNum) const
 {
-    return m_records.find(jettyNum) != m_records.end();
+    return m_jettyRecordsByNum.find(jettyNum) != m_jettyRecordsByNum.end();
 }
 
 Ptr<UbJetty>
 UbJettyManager::GetJetty(uint32_t jettyNum) const
 {
-    const auto it = m_records.find(jettyNum);
-    return it == m_records.end() ? nullptr : it->second.jetty;
+    const auto it = m_jettyRecordsByNum.find(jettyNum);
+    return it == m_jettyRecordsByNum.end() ? nullptr : it->second.jetty;
 }
 
 bool
 UbJettyManager::IsAcceptingWqes(uint32_t jettyNum) const
 {
-    const auto it = m_records.find(jettyNum);
-    return it != m_records.end() && it->second.state == UbJettyLifecycleState::ACTIVE;
+    const auto it = m_jettyRecordsByNum.find(jettyNum);
+    return it != m_jettyRecordsByNum.end() && it->second.state == UbJettyLifecycleState::ACTIVE;
 }
 
 bool
 UbJettyManager::ShouldContinueAcceptedWqes(uint32_t jettyNum) const
 {
-    const auto it = m_records.find(jettyNum);
-    if (it == m_records.end())
+    const auto it = m_jettyRecordsByNum.find(jettyNum);
+    if (it == m_jettyRecordsByNum.end())
     {
         return false;
     }
@@ -457,8 +571,8 @@ UbJettyManager::ShouldContinueAcceptedWqes(uint32_t jettyNum) const
 bool
 UbJettyManager::ShouldForceDrainAcceptedWqes(uint32_t jettyNum) const
 {
-    const auto it = m_records.find(jettyNum);
-    return it != m_records.end() && it->second.state == UbJettyLifecycleState::DRAINING &&
+    const auto it = m_jettyRecordsByNum.find(jettyNum);
+    return it != m_jettyRecordsByNum.end() && it->second.state == UbJettyLifecycleState::DRAINING &&
            it->second.cleanupMode == CleanupMode::FORCE;
 }
 
@@ -481,8 +595,8 @@ UbJettyManager::GetCleanupMode(UbDestroyReason reason)
 bool
 UbJettyManager::TryGetState(uint32_t jettyNum, UbJettyLifecycleState& state) const
 {
-    const auto it = m_records.find(jettyNum);
-    if (it == m_records.end())
+    const auto it = m_jettyRecordsByNum.find(jettyNum);
+    if (it == m_jettyRecordsByNum.end())
     {
         return false;
     }
@@ -493,8 +607,8 @@ UbJettyManager::TryGetState(uint32_t jettyNum, UbJettyLifecycleState& state) con
 bool
 UbJettyManager::TryGetLifetime(uint32_t jettyNum, UbJettyLifetime& lifetime) const
 {
-    const auto it = m_records.find(jettyNum);
-    if (it == m_records.end())
+    const auto it = m_jettyRecordsByNum.find(jettyNum);
+    if (it == m_jettyRecordsByNum.end())
     {
         return false;
     }
@@ -506,8 +620,8 @@ bool
 UbJettyManager::TryGetIdentity(uint32_t jettyNum,
                                UbLifecycleResourceIdentity& identity) const
 {
-    const auto it = m_records.find(jettyNum);
-    if (it == m_records.end())
+    const auto it = m_jettyRecordsByNum.find(jettyNum);
+    if (it == m_jettyRecordsByNum.end())
     {
         return false;
     }
@@ -520,8 +634,9 @@ UbJettyManager::ReplaceRtpBinding(
     uint32_t jettyNum,
     const UbLifecycleResourceIdentity& transportIdentity)
 {
-    auto it = m_records.find(jettyNum);
-    NS_ABORT_MSG_IF(it == m_records.end() || it->second.state != UbJettyLifecycleState::ACTIVE,
+    auto it = m_jettyRecordsByNum.find(jettyNum);
+    NS_ABORT_MSG_IF(it == m_jettyRecordsByNum.end() ||
+                        it->second.state != UbJettyLifecycleState::ACTIVE,
                     "Cannot bind RTP transport to a missing or draining Jetty");
     it->second.hasCtpBinding = false;
     NS_ABORT_MSG_IF(transportIdentity.generation == 0,
@@ -532,8 +647,9 @@ void
 UbJettyManager::RegisterCtpBinding(uint32_t jettyNum,
                                    Ptr<UbCtpTransportService> service)
 {
-    auto it = m_records.find(jettyNum);
-    NS_ABORT_MSG_IF(it == m_records.end() || it->second.state != UbJettyLifecycleState::ACTIVE,
+    auto it = m_jettyRecordsByNum.find(jettyNum);
+    NS_ABORT_MSG_IF(it == m_jettyRecordsByNum.end() ||
+                        it->second.state != UbJettyLifecycleState::ACTIVE,
                     "Cannot bind CTP service to a missing or draining Jetty");
     if (it->second.hasCtpBinding)
     {
@@ -549,16 +665,73 @@ UbJettyManager::RegisterCtpBinding(uint32_t jettyNum,
     it->second.hasCtpBinding = true;
 }
 
+bool
+UbJettyManager::UnregisterCtpBinding(uint32_t jettyNum,
+                                     Ptr<UbCtpTransportService> service)
+{
+    auto it = m_jettyRecordsByNum.find(jettyNum);
+    if (it == m_jettyRecordsByNum.end() ||
+        it->second.state != UbJettyLifecycleState::ACTIVE ||
+        !it->second.hasCtpBinding || m_ctpService != service)
+    {
+        return false;
+    }
+    it->second.hasCtpBinding = false;
+    return true;
+}
+
 void
 UbJettyManager::RegisterWqe(uint32_t jettyNum,
                             uint32_t wqeId,
                             const UbLifecycleResourceIdentity& identity)
 {
-    auto it = m_records.find(jettyNum);
-    NS_ABORT_MSG_IF(it == m_records.end() || it->second.state != UbJettyLifecycleState::ACTIVE,
+    auto it = m_jettyRecordsByNum.find(jettyNum);
+    NS_ABORT_MSG_IF(it == m_jettyRecordsByNum.end() ||
+                        it->second.state != UbJettyLifecycleState::ACTIVE,
                     "Cannot register WQE on a missing or draining Jetty");
     NS_ABORT_MSG_IF(!it->second.wqes.emplace(wqeId, identity).second,
                     "Duplicate manager-owned WQE record");
+}
+
+uint64_t
+UbJettyManager::ResolveWqeLifecycleLocalId(uint32_t jettyNum, uint32_t wqeId) const
+{
+    const auto isInUse = [this](uint64_t localId) {
+        for (const auto& [candidateJettyNum, record] : m_jettyRecordsByNum)
+        {
+            (void)candidateJettyNum;
+            if (std::any_of(record.wqes.begin(),
+                            record.wqes.end(),
+                            [localId](const auto& entry) {
+                                return entry.second.localId == localId;
+                            }))
+            {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    if (!isInUse(wqeId))
+    {
+        return wqeId;
+    }
+
+    uint64_t scope = static_cast<uint64_t>(jettyNum) + 1;
+    for (uint64_t attempts = 0; attempts < UINT32_MAX; ++attempts)
+    {
+        if (scope > UINT32_MAX)
+        {
+            scope = 1;
+        }
+        const uint64_t candidate = (scope << 32) | wqeId;
+        if (!isInUse(candidate))
+        {
+            return candidate;
+        }
+        ++scope;
+    }
+    NS_ABORT_MSG("Exhausted scoped WQE lifecycle identities");
 }
 
 void
@@ -567,8 +740,8 @@ UbJettyManager::ApplyWqeOutcome(uint32_t jettyNum,
                                 const UbLifecycleResourceIdentity& identity,
                                 UbWorkOutcome outcome)
 {
-    auto record = m_records.find(jettyNum);
-    NS_ABORT_MSG_IF(record == m_records.end(),
+    auto record = m_jettyRecordsByNum.find(jettyNum);
+    NS_ABORT_MSG_IF(record == m_jettyRecordsByNum.end(),
                     "Transaction outcome references a stale Jetty generation");
     const auto wqe = record->second.wqes.find(wqeId);
     NS_ABORT_MSG_IF(wqe == record->second.wqes.end() || wqe->second != identity,
@@ -576,29 +749,29 @@ UbJettyManager::ApplyWqeOutcome(uint32_t jettyNum,
     record->second.wqes.erase(wqe);
     Ptr<UbJetty> jetty = record->second.jetty;
     jetty->ApplyWqeTerminal(wqeId, outcome);
-    NotifyProgress(jettyNum);
+    TryFinalizeJettyDestroy(jettyNum);
 }
 
 bool
 UbJettyManager::IsDrainReady(const JettyRecord& record) const
 {
     return record.wqes.empty() && record.jetty->GetActiveWqeCount() == 0 &&
-           !m_trackedEvents.HasEvents(record.identity) &&
+           !m_jettyEvents.HasEvents(record.identity) &&
            !GetTransaction()->HasLifecycleOperationForJetty(record.jetty->GetJettyNum());
 }
 
 bool
 UbJettyManager::IsDrainReady(uint32_t jettyNum) const
 {
-    const auto it = m_records.find(jettyNum);
-    return it != m_records.end() && IsDrainReady(it->second);
+    const auto it = m_jettyRecordsByNum.find(jettyNum);
+    return it != m_jettyRecordsByNum.end() && IsDrainReady(it->second);
 }
 
 uint64_t
 UbJettyManager::GetResidentWqeCount() const
 {
     uint64_t count = 0;
-    for (const auto& [jettyNum, record] : m_records)
+    for (const auto& [jettyNum, record] : m_jettyRecordsByNum)
     {
         (void)jettyNum;
         count += record.wqes.size();
@@ -610,7 +783,7 @@ UbJettyStorageSnapshot
 UbJettyManager::GetStorageSnapshot() const
 {
     UbJettyStorageSnapshot snapshot;
-    for (const auto& [jettyNum, record] : m_records)
+    for (const auto& [jettyNum, record] : m_jettyRecordsByNum)
     {
         (void)jettyNum;
         if (record.lifetime == UbJettyLifetime::TASK_SCOPED)
@@ -628,9 +801,9 @@ UbJettyManager::GetStorageSnapshot() const
 uint64_t
 UbJettyManager::TrackEvent(uint32_t jettyNum)
 {
-    auto it = m_records.find(jettyNum);
-    NS_ABORT_MSG_IF(it == m_records.end(), "Cannot track work for a missing Jetty");
-    return m_trackedEvents.Track(it->second.identity);
+    auto it = m_jettyRecordsByNum.find(jettyNum);
+    NS_ABORT_MSG_IF(it == m_jettyRecordsByNum.end(), "Cannot track work for a missing Jetty");
+    return m_jettyEvents.Track(it->second.identity);
 }
 
 void
@@ -639,29 +812,29 @@ UbJettyManager::AttachEvent(uint32_t jettyNum,
                             EventId event,
                             Callback<void> cancelCleanup)
 {
-    auto it = m_records.find(jettyNum);
-    NS_ABORT_MSG_IF(it == m_records.end(), "Cannot attach work for a missing Jetty");
-    m_trackedEvents.Attach(it->second.identity, token, event, cancelCleanup);
+    auto it = m_jettyRecordsByNum.find(jettyNum);
+    NS_ABORT_MSG_IF(it == m_jettyRecordsByNum.end(), "Cannot attach work for a missing Jetty");
+    m_jettyEvents.Attach(it->second.identity, token, event, cancelCleanup);
 }
 
 bool
 UbJettyManager::BeginEvent(uint32_t jettyNum, uint64_t token)
 {
-    auto it = m_records.find(jettyNum);
-    if (it == m_records.end())
+    auto it = m_jettyRecordsByNum.find(jettyNum);
+    if (it == m_jettyRecordsByNum.end())
     {
         return false;
     }
-    return m_trackedEvents.Begin(it->second.identity, token);
+    return m_jettyEvents.Begin(it->second.identity, token);
 }
 
 void
 UbJettyManager::ResolveEvent(uint32_t jettyNum, uint64_t token)
 {
-    auto it = m_records.find(jettyNum);
-    NS_ABORT_MSG_IF(it == m_records.end(), "Tracked event references a retired Jetty");
-    m_trackedEvents.Resolve(it->second.identity, token);
-    NotifyProgress(jettyNum);
+    auto it = m_jettyRecordsByNum.find(jettyNum);
+    NS_ABORT_MSG_IF(it == m_jettyRecordsByNum.end(), "Tracked event references a retired Jetty");
+    m_jettyEvents.Resolve(it->second.identity, token);
+    TryFinalizeJettyDestroy(jettyNum);
 }
 
 UbDestroyStatus
@@ -669,18 +842,18 @@ UbJettyManager::DestroyJetty(uint32_t jettyNum,
                              UbDestroyReason reason,
                              UbDestroyCallback callback)
 {
-    auto it = m_records.find(jettyNum);
-    if (it == m_records.end())
+    auto it = m_jettyRecordsByNum.find(jettyNum);
+    if (it == m_jettyRecordsByNum.end())
     {
         return UbDestroyStatus::NOT_FOUND;
     }
     const UbLifecycleResourceIdentity identity = it->second.identity;
     const CleanupMode requestedMode = GetCleanupMode(reason);
     const auto findOriginalRecord = [this, jettyNum, identity]() {
-        auto current = m_records.find(jettyNum);
-        if (current == m_records.end() || current->second.identity != identity)
+        auto current = m_jettyRecordsByNum.find(jettyNum);
+        if (current == m_jettyRecordsByNum.end() || current->second.identity != identity)
         {
-            return m_records.end();
+            return m_jettyRecordsByNum.end();
         }
         return current;
     };
@@ -708,7 +881,7 @@ UbJettyManager::DestroyJetty(uint32_t jettyNum,
             const uint32_t wqeId = it->second.wqes.begin()->first;
             const UbTransaction::WqeTerminalMode terminalMode =
                 it->second.cleanupMode == CleanupMode::FORCE
-                    ? UbTransaction::WqeTerminalMode::FORCE_DRAIN
+                    ? UbTransaction::WqeTerminalMode::SIMULATION_STOP
                     : UbTransaction::WqeTerminalMode::STOP_ACCEPTED;
             GetTransaction()->CompleteWqeOperationForDrain(
                 jettyNum,
@@ -716,20 +889,20 @@ UbJettyManager::DestroyJetty(uint32_t jettyNum,
                 outcome,
                 terminalMode);
             it = findOriginalRecord();
-            if (it == m_records.end())
+            if (it == m_jettyRecordsByNum.end())
             {
                 return UbDestroyStatus::COMPLETED;
             }
         }
         if (it->second.cleanupMode == CleanupMode::FORCE)
         {
-            GetTransaction()->ForceDrainTerminalPendingOperations(jettyNum);
+            GetTransaction()->DiscardJettyRetainedWqeSegmentsForSimulationStop(jettyNum);
             if (it->second.jetty->GetActiveWqeCount() != 0)
             {
                 Ptr<UbJetty> keepAlive = it->second.jetty;
                 keepAlive->FlushLegacyWqesForDisposal();
                 it = findOriginalRecord();
-                if (it == m_records.end())
+                if (it == m_jettyRecordsByNum.end())
                 {
                     return UbDestroyStatus::COMPLETED;
                 }
@@ -739,13 +912,13 @@ UbJettyManager::DestroyJetty(uint32_t jettyNum,
     if (it->second.cleanupMode == CleanupMode::FORCE)
     {
         std::vector<Callback<void>> cancelCleanups =
-            m_trackedEvents.CancelPending(it->second.identity);
+            m_jettyEvents.CancelPending(it->second.identity);
         for (const Callback<void>& cancelCleanup : cancelCleanups)
         {
             cancelCleanup();
         }
         it = findOriginalRecord();
-        if (it == m_records.end())
+        if (it == m_jettyRecordsByNum.end())
         {
             return UbDestroyStatus::COMPLETED;
         }
@@ -763,10 +936,10 @@ UbJettyManager::DestroyJetty(uint32_t jettyNum,
 }
 
 void
-UbJettyManager::NotifyProgress(uint32_t jettyNum)
+UbJettyManager::TryFinalizeJettyDestroy(uint32_t jettyNum)
 {
-    const auto it = m_records.find(jettyNum);
-    if (it != m_records.end() && it->second.state == UbJettyLifecycleState::DRAINING &&
+    const auto it = m_jettyRecordsByNum.find(jettyNum);
+    if (it != m_jettyRecordsByNum.end() && it->second.state == UbJettyLifecycleState::DRAINING &&
         IsDrainReady(it->second))
     {
         FinalizeDestroy(jettyNum);
@@ -776,8 +949,8 @@ UbJettyManager::NotifyProgress(uint32_t jettyNum)
 void
 UbJettyManager::FinalizeDestroy(uint32_t jettyNum)
 {
-    auto it = m_records.find(jettyNum);
-    NS_ABORT_MSG_IF(it == m_records.end() || !IsDrainReady(it->second),
+    auto it = m_jettyRecordsByNum.find(jettyNum);
+    NS_ABORT_MSG_IF(it == m_jettyRecordsByNum.end() || !IsDrainReady(it->second),
                     "Jetty finalize requires a drained manager record");
     Ptr<UbJetty> keepAlive = it->second.jetty;
     const UbLifecycleResourceIdentity identity = it->second.identity;
@@ -790,7 +963,7 @@ UbJettyManager::FinalizeDestroy(uint32_t jettyNum)
     Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
     coordinator->RecordSuccessfulTerminal(identity);
     coordinator->RetireResource(identity);
-    m_records.erase(it);
+    m_jettyRecordsByNum.erase(it);
     for (const UbDestroyCallback& callback : callbacks)
     {
         callback(identity, UbDestroyStatus::COMPLETED);
@@ -801,8 +974,8 @@ void
 UbJettyManager::DisposeAll()
 {
     std::vector<uint32_t> jettyNums;
-    jettyNums.reserve(m_records.size());
-    for (const auto& [jettyNum, record] : m_records)
+    jettyNums.reserve(m_jettyRecordsByNum.size());
+    for (const auto& [jettyNum, record] : m_jettyRecordsByNum)
     {
         (void)record;
         jettyNums.push_back(jettyNum);
@@ -814,10 +987,10 @@ UbJettyManager::DisposeAll()
         NS_ABORT_MSG_IF(status != UbDestroyStatus::COMPLETED,
                         "Forced Jetty manager disposal left active residue");
     }
-    NS_ABORT_MSG_IF(!m_records.empty(), "Forced Jetty manager disposal did not erase all records");
-    NS_ABORT_MSG_IF(!m_trackedEvents.IsEmpty(),
-                    "Forced Jetty manager disposal left tracked events");
-    m_trackedEvents.Clear();
+    NS_ABORT_MSG_IF(!m_jettyRecordsByNum.empty(),
+                    "Forced Jetty manager disposal did not erase all records");
+    NS_ABORT_MSG_IF(!m_jettyEvents.IsEmpty(), "Forced Jetty manager disposal left tracked events");
+    m_jettyEvents.Clear();
     m_ctpService = nullptr;
     m_transaction = nullptr;
     m_coordinator = nullptr;
@@ -826,11 +999,11 @@ UbJettyManager::DisposeAll()
 void
 UbJettyManager::DoDispose()
 {
-    NS_ABORT_MSG_IF(!m_records.empty(),
+    NS_ABORT_MSG_IF(!m_jettyRecordsByNum.empty(),
                     "UbJettyManager disposal requires explicit forced record disposal");
-    NS_ABORT_MSG_IF(!m_trackedEvents.IsEmpty(),
+    NS_ABORT_MSG_IF(!m_jettyEvents.IsEmpty(),
                     "UbJettyManager disposal requires resolved tracked events");
-    m_records.clear();
+    m_jettyRecordsByNum.clear();
     m_ctpService = nullptr;
     m_transaction = nullptr;
     m_coordinator = nullptr;
@@ -1000,7 +1173,8 @@ Ptr<UbWqeSegment> UbJetty::PrepareNextWqeSegment(Ptr<UbWqe> expectedWqe,
 
     uint64_t segmentSize = currentWqe->GetBytesLeft();
     const uint32_t segmentLimit = std::min(m_taSegmentBytes, maxSegmentBytes);
-    if (segmentSize > segmentLimit) {
+    if (segmentSize > segmentLimit && !IsAtomicTransaction(currentWqe->GetType()))
+    {
         segmentSize = segmentLimit;
     }
 
@@ -1062,7 +1236,7 @@ void UbJetty::CommitWqeSegmentAdmission(Ptr<UbWqeSegment> segment)
 }
 
 void
-UbJetty::ApplyWqeSegmentTerminalProgress(const std::vector<uint32_t>& taSsns)
+UbJetty::AdvanceTaSsnForWqeCleanup(const std::vector<uint32_t>& taSsns)
 {
     if (taSsns.empty())
     {
@@ -1089,6 +1263,10 @@ UbJetty::ApplyWqeSegmentTerminalProgress(const std::vector<uint32_t>& taSsns)
     m_taSsnSndUna += m_ssnAckWindow.AdvanceContiguous();
     NS_ABORT_MSG_IF(m_ssnAckWindow.GetBase() != m_taSsnSndUna,
                     "Jetty terminal progress advanced ACK-window state inconsistently");
+    if (m_transaction != nullptr)
+    {
+        m_transaction->TryContinueJettyTransmission(m_jettyNum);
+    }
 }
 
 Ptr<UbWqeSegment> UbJetty::GenWqeSegment(Ptr<UbWqe> wqe, uint32_t segmentSize)
@@ -1140,10 +1318,53 @@ Ptr<UbWqeSegment> UbJetty::GenWqeSegment(Ptr<UbWqe> wqe, uint32_t segmentSize)
     segment->SetRequestOpcode(wqe->GetRequestOpcode());
     segment->SetResponseBytes(wqe->GetResponseBytes());
     segment->SetRemoteAddress(wqe->GetRemoteAddress());
+    if (wqe->GetType() == UbTransactionOpcode::WRITE_WITH_REMOTE_SYNC ||
+        wqe->GetType() == UbTransactionOpcode::WRITE_WITH_ATOMIC_STORE_ADD ||
+        wqe->GetType() == UbTransactionOpcode::WRITE_WITH_REMOTE_SYNC_WITH_BE)
+    {
+        const uint32_t offset = static_cast<uint32_t>(wqe->GetSize() - wqe->GetBytesLeft());
+        segment->SetRemoteAddress(wqe->GetRemoteAddress() + offset);
+    }
+    segment->SetRemoteTokenId(wqe->GetRemoteTokenId());
     segment->SetNeedsTransactionResponse(wqe->NeedsTransactionResponse());
+    segment->SetTransactionFields(wqe->GetTransactionFields());
     segment->SetResLenBytes(segmentSize);
-    segment->SetPayloadBytes(wqe->GetType() == TaOpcode::TA_OPCODE_READ ? 0 : segmentSize);
-    segment->SetCarrierBytes(wqe->GetType() == TaOpcode::TA_OPCODE_READ ? 1 : segmentSize);
+    segment->SetPayloadBytes(wqe->GetType() == UbTransactionOpcode::READ ? 0 : segmentSize);
+    segment->SetCarrierBytes(wqe->GetType() == UbTransactionOpcode::READ ? 1 : segmentSize);
+    const bool atomic = IsAtomicTransaction(wqe->GetType());
+    if (atomic)
+    {
+        segment->SetPayloadBytes(wqe->GetPayloadBytes());
+        segment->SetCarrierBytes(wqe->GetPayloadBytes());
+    }
+    if (wqe->HasTransactionResolved())
+    {
+        auto resolved = wqe->GetTransactionResolved();
+        if (!atomic)
+        {
+            resolved.logicalBytes = segmentSize;
+            resolved.requestPayloadBytes = segment->GetPayloadBytes();
+            resolved.responsePayloadBytes = std::min(resolved.responsePayloadBytes, segmentSize);
+        }
+        segment->SetTransactionResolved(resolved);
+        segment->SetResponseBytes(resolved.responsePayloadBytes);
+    }
+    if (wqe->HasExplicitPayload())
+    {
+        Ptr<const Packet> payload = wqe->GetExplicitPayload();
+        const uint32_t segmentOffset =
+            static_cast<uint32_t>(wqe->GetSize() - wqe->GetBytesLeft());
+        NS_ABORT_MSG_IF(payload->GetSize() != (atomic ? wqe->GetPayloadBytes() : wqe->GetSize()),
+                        "Explicit WQE payload must match the WQE transfer size");
+        if (atomic)
+        {
+            segment->SetExplicitPayload(payload);
+        }
+        else
+        {
+            segment->SetExplicitPayload(payload->CreateFragment(segmentOffset, segmentSize));
+        }
+    }
 
     // TP layer information will be set during subsequent TP layer scheduling
 
@@ -1171,21 +1392,25 @@ void UbJetty::PushWqe(Ptr<UbWqe> ubWqe, uint32_t maxSegmentBytes)
     ubWqe->SetTaMsn(m_taMsnCnt);
     ubWqe->SetTaSsnStart(m_taSsnCnt);
     const uint32_t segmentLimit = std::min(m_taSegmentBytes, maxSegmentBytes);
-    uint64_t ssnSize = (ubWqe->GetSize() + segmentLimit - 1) / segmentLimit;
+    const bool atomic = IsAtomicTransaction(ubWqe->GetType());
+    uint64_t ssnSize = atomic ? 1 : (ubWqe->GetSize() + segmentLimit - 1) / segmentLimit;
     ubWqe->SetTaSsnSize(ssnSize);
     // Assign request identity only after Jetty binding is known.
     ubWqe->SetSegmentKind(UbTransactionSegmentKind::REQUEST);
     ubWqe->SetOriginJettyNum(m_jettyNum);
     ubWqe->SetRequestTassn(ubWqe->GetTaSsnStart());
     ubWqe->SetRequestOpcode(ubWqe->GetType());
-    ubWqe->SetResponseBytes(ubWqe->GetType() == TaOpcode::TA_OPCODE_READ ? ubWqe->GetSize() : 0);
-    ubWqe->SetRemoteAddress(0);
-    ubWqe->SetNeedsTransactionResponse(ubWqe->GetType() == TaOpcode::TA_OPCODE_WRITE ||
-                                       ubWqe->GetType() == TaOpcode::TA_OPCODE_READ);
-    ubWqe->SetResLenBytes(ubWqe->GetSize());
-    ubWqe->SetPayloadBytes(ubWqe->GetType() == TaOpcode::TA_OPCODE_READ ? 0 : ubWqe->GetSize());
-    ubWqe->SetCarrierBytes(ubWqe->GetType() == TaOpcode::TA_OPCODE_READ ? ssnSize
-                                                                         : ubWqe->GetSize());
+    if (!atomic)
+    {
+        ubWqe->SetResponseBytes(ubWqe->GetType() == UbTransactionOpcode::READ ? ubWqe->GetSize()
+                                                                             : 0);
+        // The response requirement comes from the static rule and its cached normalized result; it
+        // is never rewritten from the opcode here and never cleared when a response arrives.
+        ubWqe->SetResLenBytes(ubWqe->GetSize());
+        ubWqe->SetPayloadBytes(ubWqe->GetType() == UbTransactionOpcode::READ ? 0 : ubWqe->GetSize());
+        ubWqe->SetCarrierBytes(ubWqe->GetType() == UbTransactionOpcode::READ ? ssnSize
+                                                                            : ubWqe->GetSize());
+    }
 
     // 更新 Jetty 的 MSN 和 SSN 计数器
     m_taMsnCnt++;
@@ -1207,6 +1432,12 @@ bool UbJetty::IsReadyToSend()
     return true;
 }
 
+bool
+UbJetty::IsIdle() const
+{
+    return m_wqeVector.empty() && m_taSsnSndUna == m_taSsnSndNxt;
+}
+
 /*
  * TP调用这个方法，传入taSsnFin。
  */
@@ -1226,10 +1457,6 @@ bool UbJetty::ProcessWqeSegmentComplete(uint32_t taSsnAck)
                                                    << ", current m_taSsnSndNxt is "
                                                    << std::to_string(m_taSsnSndNxt));
         return false;
-    }
-
-    if (IsLimited()) {
-        GetTransaction()->TriggerTpTransmit(m_jettyNum);
     }
 
     // 计算在 bitset 中的相对位置
@@ -1273,6 +1500,10 @@ bool UbJetty::ProcessWqeSegmentComplete(uint32_t taSsnAck)
         // 检查并移除已完成的 WQE
         CheckAndRemoveCompletedWqe();
     }
+    if (m_transaction != nullptr)
+    {
+        m_transaction->TryContinueJettyTransmission(m_jettyNum);
+    }
     return true;
 }
 
@@ -1309,8 +1540,6 @@ void UbJetty::CheckAndRemoveCompletedWqe()
             if (!FinishCallback.IsNull()) {
                 FinishCallback(wqeId, m_jettyNum); // 调用应用层的回调
             }
-            // trigger tp
-            ubTa->TriggerTpTransmit(m_jettyNum);
             NodeList::GetNode(m_nodeId)
                 ->GetObject<UbController>()
                 ->GetUbFunction()
@@ -1344,7 +1573,10 @@ UbJetty::ApplyWqeTerminal(uint32_t wqeId, UbWorkOutcome outcome)
                     "Transaction outcome references an unknown or terminal WQE");
     Ptr<UbJetty> keepAlive(this);
     m_wqeVector.erase(it);
-    GetTransaction()->TriggerTpTransmit(m_jettyNum);
+    if (m_transaction != nullptr)
+    {
+        m_transaction->TryContinueJettyTransmission(m_jettyNum);
+    }
     if (!m_wqeCompletionCallback.IsNull())
     {
         m_wqeCompletionCallback({m_jettyNum, wqeId, outcome});

@@ -6,6 +6,7 @@
 #include <set>
 #include "protocol/ub-transport.h"
 #include "protocol/ub-transaction.h"
+#include "ns3/ub-ldst-endpoint.h"
 #include "ns3/ub-network-address.h"
 #include "ns3/ub-utils.h"
 
@@ -17,26 +18,41 @@ NS_OBJECT_ENSURE_REGISTERED(UbController);
 
 TypeId UbController::GetTypeId()
 {
-    static TypeId tid = TypeId("ns3::UbController")
-        .SetParent<Object>()
-        .SetGroupName("UnifiedBus")
-        .AddConstructor<UbController>();
+    static TypeId tid =
+        TypeId("ns3::UbController")
+            .SetParent<Object>()
+            .SetGroupName("UnifiedBus")
+            .AddConstructor<UbController>()
+            .AddAttribute(
+                "InitiatorProtocolDispatchDelay",
+                "Delay between synchronous WQE admission and the first transport dispatch.",
+                TimeValue(NanoSeconds(0)),
+                MakeTimeAccessor(&UbController::m_initiatorProtocolDispatchDelay),
+                MakeTimeChecker(TimeStep(0)))
+            .AddAttribute(
+                "InitiatorProtocolCompletionVisibilityDelay",
+                "Delay between protocol completion and initiator application visibility.",
+                TimeValue(NanoSeconds(0)),
+                MakeTimeAccessor(&UbController::m_initiatorProtocolCompletionVisibilityDelay),
+                MakeTimeChecker(TimeStep(0)));
     return tid;
 }
 
 UbController::UbController()
 {
     NS_LOG_FUNCTION(this);
-    m_tpnConn = CreateObject<TpConnectionManager>();
+    m_tpConnectionManager = CreateObject<TpConnectionManager>();
     m_transportChannelManager = CreateObject<UbTransportChannelManager>();
     m_transportChannelManager->Init(this);
+    m_ldstEndpoint = CreateObject<UbLdstEndpoint>();
 }
 
 void UbController::CreateUbFunction()
 {
-    m_tpnConn->SetOwnerNodeId(GetObject<Node>()->GetId());
+    m_tpConnectionManager->SetOwnerNodeId(GetObject<Node>()->GetId());
     m_function = CreateObject<UbFunction>();
     m_function->Init(GetObject<Node>()->GetId());
+    m_ldstEndpoint->Init(GetObject<Node>()->GetId());
 }
 
 void UbController::CreateUbTransaction()
@@ -59,7 +75,8 @@ UbController::~UbController()
                   "UbController must force-clean canonical TPs in DoDispose");
     m_rtpTpGroups.clear();
     m_rtpTpGroupByTpn.clear();
-    m_destinationToPortsMap.clear();
+    m_portsByDestination.clear();
+    m_ctpEntityPorts.clear();
 }
 
 void
@@ -103,9 +120,11 @@ UbController::DoDispose()
     }
     m_transaction = nullptr;
     m_function = nullptr;
+    m_ldstEndpoint = nullptr;
     m_transportChannelManager = nullptr;
-    m_destinationToPortsMap.clear();
-    m_tpnConn = nullptr;
+    m_portsByDestination.clear();
+    m_ctpEntityPorts.clear();
+    m_tpConnectionManager = nullptr;
     Object::DoDispose();
 }
 
@@ -363,11 +382,11 @@ UbController::RemoveRtpTpGroupMember(
             group->FreezeNewOperations();
             if (m_transaction != nullptr)
             {
-                const bool forceDrain = reason == UbDestroyReason::SIMULATION_STOP;
+                const bool discardRetainedSegments = reason == UbDestroyReason::SIMULATION_STOP;
                 m_transaction->TerminateRtpTpGroupOperations(
                     groupIdentity,
-                    forceDrain ? UbWorkOutcome::FLUSHED : UbWorkOutcome::FAILED,
-                    forceDrain);
+                    discardRetainedSegments ? UbWorkOutcome::FLUSHED : UbWorkOutcome::FAILED,
+                    discardRetainedSegments);
             }
             const auto canonical = m_rtpTpGroups.find(groupIdentity.localId);
             if (canonical == m_rtpTpGroups.end() || canonical->second != group ||
@@ -407,7 +426,7 @@ UbController::FinalizeRtpTpGroupDestroy(Ptr<UbTransportGroup> group)
                     "TPG destroy finalize requires drained group work");
     if (m_transaction != nullptr)
     {
-        m_transaction->RetireRtpAdmissionDomain(identity);
+        m_transaction->RetireRtpTxQueue(identity);
         m_transaction->EraseRtpTpGroupBindings(identity);
     }
     while (group->GetMemberCount() != 0)
@@ -452,11 +471,11 @@ UbController::DestroyRtpTpGroup(const UbLifecycleResourceIdentity& groupIdentity
     group->FreezeNewOperations();
     if (group->GetCleanupMode() != UbTpgCleanupMode::GRACEFUL && m_transaction != nullptr)
     {
-        const bool forceDrain = group->GetCleanupMode() == UbTpgCleanupMode::FORCE;
-        m_transaction->TerminateRtpTpGroupOperations(groupIdentity,
-                                                     forceDrain ? UbWorkOutcome::FLUSHED
-                                                                : UbWorkOutcome::FAILED,
-                                                     forceDrain);
+        const bool discardRetainedSegments = group->GetCleanupMode() == UbTpgCleanupMode::FORCE;
+        m_transaction->TerminateRtpTpGroupOperations(
+            groupIdentity,
+            discardRetainedSegments ? UbWorkOutcome::FLUSHED : UbWorkOutcome::FAILED,
+            discardRetainedSegments);
         const auto canonical = m_rtpTpGroups.find(groupIdentity.localId);
         if (canonical == m_rtpTpGroups.end() || canonical->second != group)
         {
@@ -507,7 +526,7 @@ void UbController::AddPortDestination(Ptr<UbPort> port, uint32_t destination)
         return;
     }
 
-    m_destinationToPortsMap[destination].push_back(port);
+    m_portsByDestination[destination].push_back(port);
     NS_LOG_DEBUG("Added port to destination " << destination);
 }
 
@@ -519,13 +538,14 @@ void UbController::RemovePortDestination(Ptr<UbPort> port, uint32_t destination)
         return;
     }
 
-    auto it = m_destinationToPortsMap.find(destination);
-    if (it != m_destinationToPortsMap.end()) {
+    auto it = m_portsByDestination.find(destination);
+    if (it != m_portsByDestination.end())
+    {
         std::vector<Ptr<UbPort>>& ports = it->second;
         ports.erase(std::remove(ports.begin(), ports.end(), port), ports.end());
 
         if (ports.empty()) {
-            m_destinationToPortsMap.erase(it);
+            m_portsByDestination.erase(it);
         }
         NS_LOG_DEBUG("Removed port from destination " << destination);
     }
@@ -535,8 +555,9 @@ std::vector<Ptr<UbPort>> UbController::GetAvailablePorts(uint32_t destination) c
 {
     NS_LOG_FUNCTION(this << destination);
 
-    auto it = m_destinationToPortsMap.find(destination);
-    if (it != m_destinationToPortsMap.end()) {
+    auto it = m_portsByDestination.find(destination);
+    if (it != m_portsByDestination.end())
+    {
         return it->second;
     }
 
@@ -551,6 +572,174 @@ Ptr<UbFunction> UbController::GetUbFunction()
 Ptr<UbTransaction> UbController::GetUbTransaction()
 {
     return m_transaction;
+}
+
+bool
+UbController::SubmitUrmaWqe(uint32_t jettyNum,
+                            Ptr<UbWqe> wqe,
+                            Callback<void, uint32_t, uint32_t> completionObserver)
+{
+    if (wqe == nullptr || m_function == nullptr || m_transaction == nullptr)
+    {
+        return false;
+    }
+    Ptr<UbJetty> jetty = m_function->GetJetty(jettyNum);
+    if (jetty == nullptr)
+    {
+        return false;
+    }
+
+    const bool hasRtpBinding = m_transaction->HasJettyTpBinding(jettyNum);
+    const bool hasCtpPreparation =
+        m_ctpTransportService != nullptr && m_ctpTransportService->HasJettyPreparation(jettyNum);
+    if (hasRtpBinding == hasCtpPreparation)
+    {
+        return false;
+    }
+    bool accepted = false;
+    if (hasRtpBinding)
+    {
+        accepted = m_function->SubmitWqe(wqe, jettyNum).status ==
+                   UbWqeSubmissionStatus::ACCEPTED;
+    }
+    else
+    {
+        accepted = m_ctpTransportService->SubmitPreparedWqe(jettyNum, wqe);
+    }
+    if (!accepted)
+    {
+        return false;
+    }
+    if (!completionObserver.IsNull())
+    {
+        jetty->SetCompletionObserver(completionObserver);
+    }
+    return true;
+}
+
+Ptr<UbLdstEndpoint> UbController::GetLdstEndpoint()
+{
+    return m_ldstEndpoint;
+}
+
+void
+UbController::CreateCtpEntity(uint32_t entityId, const std::vector<uint32_t>& memberPorts)
+{
+    std::vector<uint16_t> ports = ValidateCtpEntityDefinition(entityId, memberPorts);
+    m_ctpEntityPorts.emplace(entityId, std::move(ports));
+}
+
+std::vector<uint16_t>
+UbController::ValidateCtpEntityDefinition(uint32_t entityId,
+                                          const std::vector<uint32_t>& memberPorts) const
+{
+    NS_ABORT_MSG_IF(m_ctpEntitiesFrozen, "Cannot create a CTP Entity after the registry is frozen");
+    NS_ABORT_MSG_IF(entityId == 0 || entityId > UB_COMPACT_EID_MAX,
+                    "CTP Entity ID must be in the non-zero compact EID range: " << entityId);
+    NS_ABORT_MSG_IF(memberPorts.empty(), "Cannot create an empty CTP Entity " << entityId);
+    NS_ABORT_MSG_IF(m_ctpEntityPorts.contains(entityId), "Duplicate CTP Entity ID " << entityId);
+    Ptr<Node> node = GetObject<Node>();
+    NS_ABORT_MSG_IF(node == nullptr, "CTP Entity registry requires an owning node");
+    Ptr<UbSwitch> sw = node->GetObject<UbSwitch>();
+    NS_ABORT_MSG_IF(sw == nullptr || sw->GetNodeType() != UB_DEVICE,
+                    "CTP Entity registry can only be installed on a UB_DEVICE host");
+    std::vector<uint16_t> ports;
+    ports.reserve(memberPorts.size());
+    for (uint32_t portId : memberPorts)
+    {
+        NS_ABORT_MSG_IF(portId > CTP_MAX_CNA16_PORT_ID,
+                        "CTP Entity " << entityId << " port " << portId
+                                      << " cannot be encoded as CNA16");
+        Ptr<UbPort> port = nullptr;
+        for (uint32_t deviceIndex = 0; deviceIndex < node->GetNDevices(); ++deviceIndex)
+        {
+            Ptr<UbPort> candidate = DynamicCast<UbPort>(node->GetDevice(deviceIndex));
+            if (candidate != nullptr && candidate->GetIfIndex() == portId)
+            {
+                port = candidate;
+                break;
+            }
+        }
+        NS_ABORT_MSG_IF(port == nullptr,
+                        "CTP Entity " << entityId << " port " << portId
+                                      << " is not a UB port on node " << node->GetId());
+        ports.push_back(static_cast<uint16_t>(portId));
+    }
+    std::sort(ports.begin(), ports.end());
+    ports.erase(std::unique(ports.begin(), ports.end()), ports.end());
+    NS_ABORT_MSG_IF(ports.empty(), "CTP Entity " << entityId << " has no unique ports");
+    return ports;
+}
+
+bool
+UbController::HasCtpEntity(uint32_t entityId) const
+{
+    return m_ctpEntityPorts.contains(entityId);
+}
+
+bool
+UbController::IsCtpEntityPortMember(uint32_t entityId, uint32_t portId) const
+{
+    const auto entity = m_ctpEntityPorts.find(entityId);
+    return entity != m_ctpEntityPorts.end() &&
+           std::binary_search(entity->second.begin(), entity->second.end(), portId);
+}
+
+const std::vector<uint16_t>&
+UbController::GetCtpEntityPorts(uint32_t entityId) const
+{
+    const auto entity = m_ctpEntityPorts.find(entityId);
+    NS_ABORT_MSG_IF(entity == m_ctpEntityPorts.end(), "Unknown CTP Entity ID " << entityId);
+    return entity->second;
+}
+
+uint16_t
+UbController::SelectCtpEntityMemberPort(uint32_t entityId, uint8_t loadBalanceField) const
+{
+    NS_ABORT_MSG_IF(!m_ctpEntitiesFrozen,
+                    "Cannot select a CTP Entity member before the registry is frozen");
+    const std::vector<uint16_t>& ports = GetCtpEntityPorts(entityId);
+    return ports[loadBalanceField % ports.size()];
+}
+
+std::vector<uint32_t>
+UbController::CollectDefaultCtpEntityPorts() const
+{
+    Ptr<Node> node = GetObject<Node>();
+    NS_ABORT_MSG_IF(node == nullptr, "Default CTP Entity requires a host node");
+    Ptr<UbSwitch> sw = node->GetObject<UbSwitch>();
+    NS_ABORT_MSG_IF(sw == nullptr || sw->GetNodeType() != UB_DEVICE,
+                    "Default CTP Entity requires a UB_DEVICE host");
+
+    std::vector<uint32_t> memberPorts;
+    for (uint32_t deviceIndex = 0; deviceIndex < node->GetNDevices(); ++deviceIndex)
+    {
+        Ptr<UbPort> port = DynamicCast<UbPort>(node->GetDevice(deviceIndex));
+        if (port != nullptr)
+        {
+            memberPorts.push_back(port->GetIfIndex());
+        }
+    }
+    return memberPorts;
+}
+
+void
+UbController::CreateDefaultCtpEntity(uint32_t entityId)
+{
+    NS_ABORT_MSG_IF(HasCtpEntity(entityId), "Default CTP Entity " << entityId << " already exists");
+    CreateCtpEntity(entityId, CollectDefaultCtpEntityPorts());
+}
+
+void
+UbController::FreezeCtpEntities()
+{
+    m_ctpEntitiesFrozen = true;
+}
+
+bool
+UbController::AreCtpEntitiesFrozen() const
+{
+    return m_ctpEntitiesFrozen;
 }
 
 Ptr<UbCtpTransportService> UbController::GetCtpTransportService()

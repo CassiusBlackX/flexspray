@@ -9,14 +9,14 @@
   <a href="https://gitcode.com/open-usim/ns-3-ub">GitCode</a> ·
   <a href="QUICK_START_en.md">Quick Start</a> ·
   <a href="scratch/README.md">Case Guide</a> ·
-  <a href="RELEASE_NOTES_UB_en.md#release-200">Release Notes</a> ·
+  <a href="RELEASE_NOTES_UB_en.md#release-210">Release Notes</a> ·
   <a href="README.md">中文</a>
 </p>
 
 <p align="center">
   <a href="https://gitcode.com/open-usim/ns-3-ub"><img src="https://img.shields.io/static/v1?label=GitCode&message=open-usim%2Fns-3-ub&color=C71D23&logo=git&logoColor=white" alt="GitCode repository"></a>
   <a href="https://www.unifiedbus.com"><img src="https://img.shields.io/static/v1?label=spec&message=UnifiedBus&color=111827" alt="UnifiedBus specification"></a>
-  <a href="RELEASE_NOTES_UB_en.md#release-200"><img src="https://img.shields.io/static/v1?label=release&message=2.0.0&color=6F42C1" alt="Release 2.0.0"></a>
+  <a href="RELEASE_NOTES_UB_en.md#release-210"><img src="https://img.shields.io/static/v1?label=release&message=2.1.0&color=6F42C1" alt="Release 2.1.0"></a>
   <a href="LICENSE"><img src="https://img.shields.io/static/v1?label=license&message=GPL-2.0&color=97CA00" alt="GPL-2.0 license"></a>
   <br>
   <a href="src/unified-bus"><img src="https://img.shields.io/static/v1?label=language&message=C%2B%2B20&color=00599C&logo=cplusplus&logoColor=white" alt="C++20"></a>
@@ -27,9 +27,9 @@
 </p>
 
 <p align="center">
-  <strong>Release 2.0.0</strong> · September 2026<br>
-  Structured topology and routing · Explicit resource lifecycle · Port-level traffic config · Collective communication<br>
-  <a href="RELEASE_NOTES_UB_en.md#release-200">Full release notes →</a>
+  <strong>Release 2.1.0</strong> · September 2026<br>
+  UB Base Specification 2.1 · Richer transaction types, more transport layer modes, reliable rerouting at the network layer<br>
+  <a href="RELEASE_NOTES_UB_en.md#release-210">Full release notes →</a>
 </p>
 
 ---
@@ -38,9 +38,9 @@
 
 ## Project Overview
 
-`ns-3-UB` is an ns-3 simulation module based on the [UnifiedBus (UB) Base Specification](https://www.unifiedbus.com/zh). It implements the protocol stack including the function, transaction, transport, network, and data link layers defined in the specification, and can be used for protocol research, network architecture exploration, and simulation of congestion control, flow control, load balancing, and routing algorithms.
+`ns-3-UB` is an ns-3 simulation module based on the [UnifiedBus (UB) Base Specification 2.1](https://www.unifiedbus.com/zh). It implements the protocol stack including the function, transaction, transport, network, and data link layers defined in the specification, and can be used for protocol research, network architecture exploration, and simulation of congestion control, flow control, load balancing, and routing algorithms.
 
-> **Note**: The English version of the UB specification is currently in "Coming Soon" status. Every effort has been made to align with the UB Base Specification, but differences may still exist. Please refer to the UB Base Specification as the authoritative guide.
+> **Note**: The English version of the UB specification is currently in "Coming Soon" status. This project is implemented with reference to the UB Base Specification; differences from the specification may still exist. Please refer to the UB Base Specification as the authoritative guide.
 
 `ns-3-UB` can be used to study:
 
@@ -90,14 +90,14 @@
     </tr>
     <tr>
       <td>Transaction Types</td>
-      <td>Write, Read, Send</td>
-      <td>Atomic, Write_with_notify, etc.</td>
+      <td>Write, Read, Send, Writeback; <a href="src/unified-bus/doc/atomic-support.md">Atomic (network behavior model)</a>; Queue transactions</td>
+      <td>Write_with_BE, Write_with_remote_sync, etc.</td>
     </tr>
     <tr>
       <td align="center" rowspan="4">Transport Layer</td>
       <td>Service Modes</td>
-      <td>RTP</td>
-      <td>UTP, CTP</td>
+      <td>RTP, CTP</td>
+      <td>UTP</td>
     </tr>
     <tr>
       <td>Reliability</td>
@@ -117,7 +117,7 @@
     <tr>
       <td align="center" rowspan="5">Network Layer</td>
       <td>Packet Format</td>
-      <td>Support for IPv4 address format-based headers, 16-bit CNA address format-based headers</td>
+      <td>IPv4 / 16-bit CNA / 24-bit CNA address format-based headers, TP bypass (CFG7)</td>
       <td>Other header formats</td>
     </tr>
     <tr>
@@ -127,7 +127,7 @@
     </tr>
     <tr>
       <td>Routing</td>
-      <td>Basic routing strategy based on destination address + header RT field, routing strategy based on path Cost, Hash-based ECMP, per-flow / per-packet Hash based on load balancing factors, load-aware adaptive routing</td>
+      <td>Basic routing strategy based on destination address + header RT field, routing strategy based on path Cost, Hash-based ECMP, per-flow / per-packet Hash based on load balancing factors, load-aware adaptive routing, reliable rerouting</td>
       <td>User-customizable routing strategies</td>
     </tr>
     <tr>
@@ -141,7 +141,12 @@
       <td>FECN_RTT marking mode</td>
     </tr>
     <tr>
-      <td align="center" rowspan="3">Data Link Layer</td>
+      <td align="center" rowspan="5">Data Link Layer</td>
+      <td>Datalink Header Configuration</td>
+      <td>CFG9 (16-bit CNA addressing), CFG7 (24-bit CNA addressing)</td>
+      <td>—</td>
+    </tr>
+    <tr>
       <td>Packet Transmission</td>
       <td>Packet-level modeling</td>
       <td>Cell / Flit level modeling</td>
@@ -155,6 +160,11 @@
       <td>Credit Flow Control</td>
       <td>CBFC (exclusive / shared-credit), PFC (fixed / dynamic thresholds)</td>
       <td>Control plane credit initialization behavior, user-customizable credit sharing policies</td>
+    </tr>
+    <tr>
+      <td>Packet Rate Control</td>
+      <td>Static and dynamic packet rate control</td>
+      <td>—</td>
     </tr>
   </tbody>
 </table>
@@ -214,7 +224,7 @@ The UB module is a simulation component implemented based on the UB Base Specifi
 - **Queue Manager** (`ub-queue-manager.*`) - Buffer management module, affecting load balancing, flow control, queuing, packet dropping, and other behaviors
 - **Routing Process** (`ub-routing-process.*`) - Routing module, implementing routing table management and query functionality
 - **Congestion Control** (`ub-congestion-control.*`) - Framework module for congestion control algorithms
-- **Congestion Control Algorithms** (`ub-caqm.*`, `ub-dcqcn.*`) - C-AQM and DCQCN congestion control algorithm implementations
+- **Congestion Control Algorithms** (`ub-caqm.*`, `ub-dcqcn.*`) - CAQM and DCQCN congestion control algorithm implementations
 - **Flow Control** (`ub-flow-control.*`) - Flow control framework module
 - **Fault Injection Module** (`ub-fault.*`) - Applies fault-related parameters (e.g., packet loss rate, high latency, congestion levels, packet errors, transient disconnections, lane reduction) to specific traffic flows
 
@@ -242,7 +252,7 @@ The UB module is a simulation component implemented based on the UB Base Specifi
 #### Protocol Algorithm Support
 
 - **Flow Control**: Implements credit-based flow control (CBFC exclusive / shared-credit) and priority-based flow control (PFC fixed / dynamic thresholds)
-- **Congestion Control**: Implements the framework of the well-known congestion control loop, including network-side marking, receiver response, sender response, and congestion control algorithms; supports C-AQM and DCQCN
+- **Congestion Control**: Implements the framework of the well-known congestion control loop, including network-side marking, receiver response, sender response, and congestion control algorithms; supports CAQM and DCQCN
 - **Routing Policies**: Supports shortest-path routing and bypass strategies; supports packet spraying, ECMP, and other load balancing mechanisms
 - **QoS Support**: Provides end-to-end QoS support, currently supporting SP and DWRR scheduling policies
 - **Switch Arbitration**: Modular implementation of the UB Switch arbitration mechanism, currently supporting SP and DWRR scheduling
@@ -283,7 +293,7 @@ This project follows the ns-3 license agreement, GPL v2. See the [`LICENSE`](LIC
   month = {9},
   title = {{ns-3-UB: UnifiedBus Network Simulation Framework}},
   url = {https://gitcode.com/open-usim/ns-3-ub},
-  version = {2.0.0},
+  version = {2.1.0},
   year = {2026}
 }
 ```

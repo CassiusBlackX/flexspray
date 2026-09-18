@@ -8,6 +8,9 @@ or a prepared structured topology compiled from Python/NetworkX or JSON/YAML.
 Use `ns-3-ub-tools` to prepare topology, routing, and traffic, then start the simulation with a scratch
 runner. The tools do not start ns-3, and the runner does not import Python or NetworkX at runtime.
 
+See the [Unified Bus trace runlog format](../doc/trace-runlog-format.md) for the `runlog/` CSV
+categories, fields, and units.
+
 ---
 
 ## Build once before running cases
@@ -109,9 +112,8 @@ with `--export-csv`, but the runner never reads that export back. Add `--verify-
 exhaustive comparison against the complete route baseline is wanted.
 
 See the [ns-3-ub-tools README](https://gitcode.com/open-usim/ns-3-ub-tools/blob/main/README_en.md) for Python and JSON/YAML input details,
-supported structures, cache behavior, routing modes, and diagnostic export. See the
-[structured topology optimization overview](../.scratch/structured-topology-routing/README.md) for
-correctness evidence and 1024-NPU generation, memory, startup, and lookup results.
+supported structures, cache behavior, routing modes, and diagnostic export. Correctness evidence and
+1024-NPU generation, memory, startup, and lookup results are maintained outside the released tree.
 
 ## Migrating existing cases
 
@@ -180,7 +182,8 @@ The entry program (`scratch/ub-quick-example`, or `src/unified-bus/examples/ub-q
 3) `topology.csv` → `UbUtils::CreateTopo`
 4) `routing_table.csv` → `UbUtils::AddRoutingTable`
 5) optional `transport_channel.csv` → `UbUtils::CreateTp`
-6) `traffic.csv` → reserve missing RTP connection records on every process → schedule tasks
+6) internal default CTP Entity provisioning → create and freeze Entity 1 on every Host
+7) `traffic.csv` → reserve missing RTP connection records on every process → schedule tasks
 
 ---
 
@@ -480,9 +483,12 @@ In `CTP` mode, CTP traffic does not use RTP TP mappings from `transport_channel.
 The file may still be present and loaded during setup, but CTP does not create RTP TP
 channels and does not use TPN, PSN, TPACK, TPNAK, TPSACK, or end-to-end RTP retransmission.
 Optional `traffic.csv` fields `srcPortId` and `dstPortId` constrain the source and destination
-endpoint ports independently; an empty field leaves that endpoint unconstrained. In CTP mode,
-the application derives internal Entity identifiers from these endpoint constraints, so Entity
-IDs are not part of the traffic-file interface.
+endpoint ports independently. An empty field is a wildcard, while an explicit `0` selects port 0.
+The selected port must belong to the application's Entity. The standard runner internally creates
+and freezes Entity ID 1 on every `UB_DEVICE` Host, binding all local CNA16-encodable `UbPort`s;
+there is no Entity CSV input in a case directory. Multiple Entities and overlapping membership
+remain available through the controller and separate `UbApp`/Jetty configurations for
+programmatic callers. Entity IDs are not exposed in `traffic.csv`.
 
 ### TPN in the code (what it does and how to set it)
 
@@ -503,16 +509,22 @@ Schema:
 ```
 taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases
 taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,srcPortId,dstPortId
+taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,atomicSubOperation,requestPayloadBytes
+taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,srcPortId,dstPortId,atomicSubOperation,requestPayloadBytes
 ```
 
-Use the nine-column form when no endpoint-port constraint is needed. Use the eleven-column form
-when either endpoint port is constrained.
+Use nine columns without options, eleven with either named pair, or thirteen with ports followed
+by atomic options. Names/order and row widths must match exactly. Entity-bearing headers remain
+invalid. For the nine ROI atomic operations over RTP/CTP, see the
+[atomic API, CSV contract and reference cases](../src/unified-bus/doc/atomic-support.md).
 
 Recommendation: Generate `traffic.csv` (e.g., all-to-all, RDMA-like patterns, collective-like workloads) via `scratch/ns-3-ub-tools/traffic_maker/`. See `traffic_maker/README.md` in the `open-usim/ns-3-ub-tools` submodule repository.
 - `taskId` — integer ID (unique per file).
 - `sourceNode` / `destNode` — end-host node IDs.
-- `dataSize(Byte)` — payload size in bytes.
-- `opType` — e.g., `URMA_WRITE`, `URMA_READ`, `MEM_STORE`, … (supported by `UbApp`/API LDST layer).
+- `dataSize(Byte)` — transfer size; for atomic it is operand width N, not request Payload P.
+- `opType` — e.g., `URMA_WRITE`, `URMA_READ`, `MEM_STORE`, …; the URMA CSV surface accepts the
+  nine `URMA_ATOMIC_*` names plus 16 other URMA request names (see
+  [transaction-extension references](./2nodes_transaction_extensions/README.md)).
 - `priority` — 0..(UB_PRIORITY_NUM-1).
 - `delay` — schedule offset relative to simulation start (Time).
 - `phaseId` — integer phase tag; tasks with the same phase can run concurrently.
@@ -520,6 +532,28 @@ Recommendation: Generate `traffic.csv` (e.g., all-to-all, RDMA-like patterns, co
 - `srcPortId` / `dstPortId` — optional trailing endpoint-port constraints. Add both columns when
   using them; each cell may be empty independently. An explicit `0` means port 0, while an empty
   cell means any endpoint port.
+
+Atomic fields: `atomicSubOperation` is required for Load/Store (ADD/CLR/EOR/SET/SMAX/SMIN/UMAX/UMIN)
+and forbidden for other operations. `requestPayloadBytes` is optional P in 1..4096; empty means
+CAS=2N, other atomic=N. N is 1/2/4/8/16/32/64; Store responds with zero Payload, others with N.
+Both cells must be empty for non-atomic rows. Suboperations stay local; no actual values or address
+contention are modeled. CTP requires existing FlowTag metadata and preserves its compact format.
+
+`scratch/2nodes_transaction_extensions/` provides six two-node references that split the coverage
+by transport and operation family: `*-queue` covers the 0x1C/0x1D queue operations over
+N=1/2/4/8/16/32/64, `*-writes` covers 0x19/0x1A plus the three BE writes at
+64/128/256/512/1024 bytes, and `*-existing` covers the seven older request names plus the nine
+atomics. Each directory has its own inputs, `experiment-spec.md`, and full runtime parameter
+snapshot. Run them serially from the repository root:
+
+```bash
+python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_transaction_extensions/rtp-queue'
+python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_transaction_extensions/ctp-queue'
+python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_transaction_extensions/rtp-writes'
+python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_transaction_extensions/ctp-writes'
+python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_transaction_extensions/rtp-existing'
+python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_transaction_extensions/ctp-existing'
+```
 
 Numeric field rules:
 - `taskId`, `sourceNode`, `destNode`, `dataSize(Byte)`, `priority`, `phaseId`, and each `dependOnPhases` token are parsed as unsigned decimal integers.
@@ -536,11 +570,13 @@ Examples:
 
 Current URMA read/write constraints in `traffic.csv`:
 - `URMA_WRITE` and `URMA_READ` do not require extra CSV columns for remote address, token, local address, or read offset in this iteration.
-- In `CTP` mode, `URMA_WRITE` and `URMA_READ` may use optional trailing `srcPortId,dstPortId` columns. Entity IDs remain an internal CTP detail and are derived from the endpoint constraints.
+- In `CTP` mode, `URMA_WRITE` and `URMA_READ` may use optional trailing
+  `srcPortId,dstPortId` columns. Each field may be empty independently; an empty cell is a wildcard
+  and an explicit `0` is port 0. Entity selection remains an application/control-plane decision.
 - `URMA_WRITE` and `URMA_READ` complete on transaction responses (`TAACK` / `READ_RESPONSE`), not when the request's TP ACK arrives.
 - Only the ROI success path is modeled for URMA read/write at the transaction layer right now; other service modes are rejected explicitly.
 - `URMA_READ` is sliced at the TA layer. Each read request slice sends exactly one TP request packet with zero wire payload; the logical slice length is carried in `MAETAH.Length`.
-- Each `URMA_READ` request slice generates exactly one `READ_RESPONSE`. The response is queued through `m_tpRelatedRemoteRequests` and may be split into multiple TP packets, but it is not transaction-sliced again.
+- Each `URMA_READ` request slice generates exactly one `READ_RESPONSE`. The response is queued through the per-TPN remote RTP response queue and may be split into multiple TP packets, but it is not transaction-sliced again.
 - A multi-slice `URMA_READ` WQE still completes only once, after all slice responses arrive back at the initiator.
 
 UB’s runner (`UbTrafficGen`) uses these to enqueue WQEs, connect to the proper `TpConnectionManager`, and drive sending/ACK tracking. The post-processing script `trace_analysis/task_statistics.py` merges Task and Packet traces back into this CSV, adding columns:

@@ -1,1 +1,0 @@
-[WARNING] Initial task start offsets mapped 32 unique sources to 20 distinct offsets: offset-reuses=12, max-sources-per-offset=4; some initial tasks still share a timestamp

@@ -1,0 +1,24 @@
+{
+  "path": "scratch/2nodes_atomic_ctp/network_attribute.txt",
+  "resolution_mode": "full-catalog-snapshot",
+  "parameter_catalog_source": "/home/luosichen/workspace/ns-3-ub/.worktrees/ub2.1-atomic/.openusim/project/parameter-catalog.json",
+  "required_project_pins": {
+    "UB_PYTHON_SCRIPT_PATH": "scratch/ns-3-ub-tools/trace_analysis/parse_trace.py"
+  },
+  "resolved_entry_count": 130,
+  "applied_overrides": {
+    "UB_TRACE_PRESET": "detailed",
+    "UB_LIFECYCLE_TRACE_LEVEL": "EVENT",
+    "UB_TRACE_ENABLE": "true",
+    "UB_TASK_TRACE_ENABLE": "true",
+    "UB_PACKET_TRACE_ENABLE": "true",
+    "UB_PORT_TRACE_ENABLE": "true",
+    "UB_QUEUE_TRACE_ENABLE": "true",
+    "UB_RECORD_PKT_TRACE": "true",
+    "UB_PARSE_TRACE_ENABLE": "false",
+    "ns3::UbApp::TransportMode": "CTP",
+    "UB_CC_ENABLED": "false",
+    "UB_FAULT_ENABLE": "false"
+  },
+  "validation_mode": "runtime-addattribute-and-global-catalog"
+}

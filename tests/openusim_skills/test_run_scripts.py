@@ -7,6 +7,20 @@ from openusim_run_experiment import case_checker, network_attribute_writer
 
 
 class OpenUSimRunScriptsTest(unittest.TestCase):
+    def test_empty_runtime_default_keeps_the_following_parameter(self):
+        output = (
+            "Global: UB_LIFECYCLE_TRACE_LEVEL\nDescription: Optional override\n"
+            "DataType: ns3::StringValue\nDefault: \n"
+            "Global: UB_PACKET_TRACE_ENABLE\nDescription: Packet traces\n"
+            "DataType: ns3::BooleanValue\nDefault: true\n"
+        )
+        with mock.patch.object(network_attribute_writer, "_run_query", return_value=output):
+            entries = network_attribute_writer._runtime_global_entries()
+        self.assertEqual(
+            [(entry["parameter_key"], entry["default_value"]) for entry in entries],
+            [("UB_LIFECYCLE_TRACE_LEVEL", ""), ("UB_PACKET_TRACE_ENABLE", "true")],
+        )
+
     def fake_parameter_catalog(self):
         return {
             "source_root": "scratch/ub-quick-example",
@@ -105,6 +119,22 @@ class OpenUSimRunScriptsTest(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(RuntimeError, "returned no entries"):
                     network_attribute_writer.load_or_build_parameter_catalog()
+
+    def test_empty_defaults_do_not_consume_the_next_runtime_entry(self):
+        for prefix, pattern in [
+            ("Attribute", network_attribute_writer.ATTRIBUTE_BLOCK_PATTERN),
+            ("Global", network_attribute_writer.GLOBAL_ENTRY_PATTERN),
+        ]:
+            text = (
+                f"{prefix}: UB_EMPTY\nDescription: empty string\n"
+                "DataType: ns3::StringValue\nDefault: \n"
+                f"{prefix}: UB_NEXT\nDescription: next flag\n"
+                "DataType: ns3::BooleanValue\nDefault: true\n"
+            )
+            entries = list(pattern.finditer(text))
+            self.assertEqual(len(entries), 2)
+            self.assertEqual(entries[0].group("default_value"), "")
+            self.assertEqual(entries[1].group("default_value"), "true")
 
     def test_observability_preset_returns_valid_tiers(self):
         for tier in ("minimal", "balanced", "detailed"):

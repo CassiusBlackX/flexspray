@@ -2,6 +2,112 @@
 
 **语言**: [English](RELEASE_NOTES_UB_en.md) | [中文](RELEASE_NOTES_UB.md)
 
+## Release 2.1.0
+
+**发布日期**: 2026 年 9 月
+
+### 各协议层支持的特性
+
+| 标记 | 含义 |
+| :---: | --- |
+| \* | 灵衢基础规范 2.1 版本引入，本版本新增支持 |
+| † | 更早版本的规范已定义，本版本新增支持 |
+
+#### 功能层
+
+- 编程模型：Load/Store 同步访问、URMA 异步访问
+- Jetty：Jetty、多对多与单对单通信模型
+- 内存语义：基于 Load/Store 的内存语义行为
+- 消息语义：基于 URMA 的消息语义行为
+
+#### 事务层
+
+- 事务服务模式：ROI、ROL、UNO
+- 事务保序：NO / RO / SO
+- 事务类型：
+
+| 语义 | Opcode |
+| --- | --- |
+| Memory Write | `WRITE` (0x03) |
+| Memory Read | `READ` (0x06) |
+| † Atomic Compare And Swap | `ATOMIC_COMPARE_SWAP` (0x07) |
+| † Atomic Swap | `ATOMIC_SWAP` (0x08) |
+| † Atomic Store | `ATOMIC_STORE` (0x09) |
+| † Atomic Load | `ATOMIC_LOAD` (0x0A) |
+| † Atomic Fetch Add | `ATOMIC_FETCH_ADD` (0x0B) |
+| † Atomic Fetch Sub | `ATOMIC_FETCH_SUB` (0x0C) |
+| † Atomic Fetch And | `ATOMIC_FETCH_AND` (0x0D) |
+| † Atomic Fetch Or | `ATOMIC_FETCH_OR` (0x0E) |
+| † Atomic Fetch Xor | `ATOMIC_FETCH_XOR` (0x0F) |
+| † Writeback | `WRITEBACK` (0x17) |
+| \* Atomic Store With Return Status | `ATOMIC_STORE_WITH_RETURN_STATUS` (0x1C) |
+| \* Atomic Sync | `ATOMIC_SYNC` (0x1D) |
+
+- † 原子操作数长度：1、2、4、8、16、32、64 Bytes
+- 事务扩展语义，由 `MTETAH`、`TVETAH`、`MAETAH`、`IMMETAH`、`NTFETAH`、`MGMTETAH` 承载：
+
+| 语义 | Opcode |
+| --- | --- |
+| † Send | `SEND` (0x00) |
+| † Send With Immediate | `SEND_WITH_IMMEDIATE` (0x01) |
+| † Write With Immediate | `WRITE_WITH_IMMEDIATE` (0x04) |
+| † Write With Notify | `WRITE_WITH_NOTIFY` (0x05) |
+| † Management | `MANAGEMENT` (0x10) |
+| † Prefetch Target | `PREFETCH_TGT` (0x15) |
+
+- 响应语义：
+
+| 语义 | Opcode |
+| --- | --- |
+| Transaction ACK | `TAACK` (0x11) |
+| Read Response | `READ_RESPONSE` (0x12) |
+| † Atomic Response | `ATOMIC_RESPONSE` (0x13) |
+
+- 事务包头格式：完整 BTAH、精简 BTAH
+- \* **CFG7 下的事务层精简包格式**
+
+#### 传输层
+
+- 传输模式：RTP、† CTP
+- 可靠传输机制：PSN、超时重传、Go-Back-N、选择性重传、快速选择性重传
+- 拥塞控制：RTP 拥塞控制机制、CAQM、DCQCN
+- 多路径负载均衡：TPG 机制、逐 TP 与逐包负载均衡、乱序接收
+
+#### 网络层
+
+- 包头格式：基于 IP 地址格式的包头、基于 16-bit CNA 地址格式的包头、基于 24-bit CNA 地址格式的包头
+- 网络地址管理：CNA 与 IP 地址转换、Primary / Port CNA
+- 路由：基于目的地址与包头 RT 域段的路由、基于路径 Cost 的路由、基于 Hash 的 ECMP、基于负载均衡因子的逐流与逐包 Hash、基于端口负载的自适应路由
+- 服务质量：SL-VL 映射
+- 拥塞标记：基于包头 CC 域段的 CAQM 标记模式、DCQCN FECN 标记模式
+- \* **基于 24-bit CNA 地址的 TP Bypass 包格式（CFG7，`NTH.NLP = 3'b100`）**
+- \* **可靠重路由**：链路故障时通过备用路径保证数据包可靠传输，从 Retry Buffer 起始位置恢复
+
+#### 数据链路层
+
+- 数据链路层包头配置：CFG9（16-bit CNA 地址）、\* **CFG7（24-bit CNA 地址）**
+- 报文收发：报文粒度建模
+- 虚拟通道：每个链路提供最多 16 个 VL、基于 SP / DWRR 的 VL 间调度
+- 信用流控：CBFC（独占信用 / 共享信用）、PFC（固定阈值 / 动态阈值）
+- 包率控制：† 静态包率控制、\* **动态包率控制**
+
+### 规范一致性
+
+上述事务语义的网络行为与灵衢基础规范 2.1 版本一致。
+
+所有事务请求包均包含基本事务包头（BTAH）。精简 BTAH 格式的适用条件为 (CFG=7&NTH.NLP=4) 或 (CFG=9)。当前协议的 TAver 置为 0。
+
+### 支持的内存 Load/Store 寻址格式
+
+| 格式 | 数据链路层 CFG | 网络层包头 | 寻址范围 | 扩展 |
+| --- | --- | --- | --- | --- |
+| CNA16 | 9 | `UbCna16NetworkHeader` | node 12 bit, port 4 bit | — |
+| CNA24 | 7 | `UbCna24NetworkHeader` | node 16 bit, port 8 bit | `NLP4` TP Bypass |
+
+CFG9 是 `UbLdstApi` 与 `UbLdstEndpoint` 上 `HeaderConfig` 属性的默认值；该属性仅接受 7 与 9。
+
+---
+
 ## Release 2.0.0
 
 **发布日期**: 2026 年 9 月
@@ -164,7 +270,7 @@
 
 ### 新特性与行为变化
 
-- 完成拥塞控制、流量控制统一 hook 架构重构。拥塞控制算法通过 `OnSender*`、`OnSwitch*`、`OnReceiver*`、`OnTpAttached` 等 hook 接入发送端、交换机和接收端事件；流量控制算法通过 `OnIngress*`、`OnEgress*`、`OnControlFrameReceived`、`OnDataPacketReceived` 等 hook 接入口入队、出队、控制帧和数据信用事件。用户新增算法时，可复用现有拓扑、队列、trace 与配置文件路径，把算法逻辑集中在对应算法类和必要枚举/配置项里，减少对交换机、传输层和 case 模板的侵入式修改。当前内置支持 DCQCN 与 C-AQM 拥塞控制算法，以及 CBFC 与 PFC 流量控制算法。
+- 完成拥塞控制、流量控制统一 hook 架构重构。拥塞控制算法通过 `OnSender*`、`OnSwitch*`、`OnReceiver*`、`OnTpAttached` 等 hook 接入发送端、交换机和接收端事件；流量控制算法通过 `OnIngress*`、`OnEgress*`、`OnControlFrameReceived`、`OnDataPacketReceived` 等 hook 接入口入队、出队、控制帧和数据信用事件。用户新增算法时，可复用现有拓扑、队列、trace 与配置文件路径，把算法逻辑集中在对应算法类和必要枚举/配置项里，减少对交换机、传输层和 case 模板的侵入式修改。当前内置支持 DCQCN 与 CAQM 拥塞控制算法，以及 CBFC 与 PFC 流量控制算法。
 - 新增 RTP 侧 DCQCN 支持，并新增 `PFC_DYNAMIC_PAPER` 作为 DCQCN 论文 **"Congestion Control for Large-Scale RDMA Deployments"** (SIGCOMM 2015) 的 paper-style dynamic PFC 阈值复现模式。
 - `ub-quick-example` 在 `EnableRetrans=false` 且发生丢包时会提前停止，并提示检查路由、缓冲区和流控配置，避免无恢复能力的运行继续产生不可解释结果。
 

@@ -75,6 +75,7 @@ void UbQueueManager::Init()
     m_outPortBuffer.assign(m_portsNum, std::vector<uint64_t>(m_vlNum, 0));
     m_inPortProcessingBytes.assign(m_portsNum, std::vector<uint64_t>(m_vlNum, 0));
     m_outPortProcessingBytes.assign(m_portsNum, std::vector<uint64_t>(m_vlNum, 0));
+    m_pendingRecoveryBytes.assign(m_portsNum, std::vector<uint64_t>(m_vlNum, 0));
     m_totalOutPortVoqBufferedBytes.assign(m_portsNum, 0);
     m_hdrmBytes.assign(m_portsNum, std::vector<uint64_t>(m_vlNum, 0));
     m_ingressControlBytes.assign(m_portsNum, std::vector<uint64_t>(m_vlNum, 0));
@@ -84,6 +85,7 @@ void UbQueueManager::Init()
     m_totalVoqBufferedBytes = 0;
     m_totalEgressBufferedBytes = 0;
     m_totalProcessingBytes = 0;
+    m_totalPendingRecoveryBytes = 0;
     m_totalHeadroomBytes = static_cast<uint64_t>(m_headroomPerPortBytes) * m_portsNum;
     m_totalReservedBytes = static_cast<uint64_t>(m_reservePerQueueBytes) * m_vlNum * m_portsNum;
 
@@ -259,6 +261,119 @@ UbQueueManager::MoveInPortProcessingToVoq(uint32_t inPort,
     m_traceOutPortBufferBytes(outPort, GetTotalOutPortBufferUsed(outPort));
 }
 
+// ========== Detected-failure recovery transfer ==========
+
+void
+UbQueueManager::MoveVoqOutputAssociation(uint32_t inPort,
+                                         uint32_t oldOutPort,
+                                         uint32_t newOutPort,
+                                         uint32_t priority,
+                                         uint32_t pSize)
+{
+    NS_ASSERT_MSG(m_outPortBuffer[oldOutPort][priority] >= pSize,
+                  "VOQ output association underflow");
+    NS_ASSERT_MSG(m_totalOutPortVoqBufferedBytes[oldOutPort] >= pSize,
+                  "Out-port VOQ total underflow while moving output association");
+    m_outPortBuffer[oldOutPort][priority] -= pSize;
+    m_totalOutPortVoqBufferedBytes[oldOutPort] -= pSize;
+    m_outPortBuffer[newOutPort][priority] += pSize;
+    m_totalOutPortVoqBufferedBytes[newOutPort] += pSize;
+    // The ingress reservation and the switch-wide VOQ total are unchanged: the same packet keeps
+    // its input ownership and simply becomes visible on another output.
+    m_traceOutPortBufferBytes(oldOutPort, GetTotalOutPortBufferUsed(oldOutPort));
+    m_traceOutPortBufferBytes(newOutPort, GetTotalOutPortBufferUsed(newOutPort));
+    NS_LOG_DEBUG("MoveVoqOutputAssociation: inPort=" << inPort << " oldOutPort=" << oldOutPort
+                                                    << " newOutPort=" << newOutPort
+                                                    << " pri=" << priority << " size=" << pSize);
+}
+
+void
+UbQueueManager::MoveProcessingToPendingRecovery(uint32_t inPort,
+                                                uint32_t outPort,
+                                                uint32_t priority,
+                                                uint32_t pSize)
+{
+    NS_ASSERT_MSG(m_inPortProcessingBytes[inPort][priority] >= pSize,
+                  "In-port processing accounting underflow");
+    NS_ASSERT_MSG(m_outPortProcessingBytes[outPort][priority] >= pSize,
+                  "Out-port processing accounting underflow");
+    NS_ASSERT_MSG(m_totalProcessingBytes >= pSize, "Total processing accounting underflow");
+    m_inPortProcessingBytes[inPort][priority] -= pSize;
+    m_outPortProcessingBytes[outPort][priority] -= pSize;
+    m_totalProcessingBytes -= pSize;
+    m_pendingRecoveryBytes[inPort][priority] += pSize;
+    m_totalPendingRecoveryBytes += pSize;
+    m_traceOutPortBufferBytes(outPort, GetTotalOutPortBufferUsed(outPort));
+}
+
+void
+UbQueueManager::MoveVoqToPendingRecovery(uint32_t inPort,
+                                         uint32_t outPort,
+                                         uint32_t priority,
+                                         uint32_t pSize)
+{
+    NS_ASSERT_MSG(m_outPortBuffer[outPort][priority] >= pSize, "VOQ output accounting underflow");
+    NS_ASSERT_MSG(m_totalVoqBufferedBytes >= pSize, "VOQ total accounting underflow");
+    NS_ASSERT_MSG(m_totalOutPortVoqBufferedBytes[outPort] >= pSize,
+                  "Out-port VOQ total accounting underflow");
+    m_outPortBuffer[outPort][priority] -= pSize;
+    m_totalVoqBufferedBytes -= pSize;
+    m_totalOutPortVoqBufferedBytes[outPort] -= pSize;
+    m_pendingRecoveryBytes[inPort][priority] += pSize;
+    m_totalPendingRecoveryBytes += pSize;
+    m_traceOutPortBufferBytes(outPort, GetTotalOutPortBufferUsed(outPort));
+}
+
+void
+UbQueueManager::AddPendingRecoveryBytes(uint32_t inPort, uint32_t priority, uint32_t pSize)
+{
+    // Egress/retry packets hold no ingress reservation while they wait; they reacquire bounded
+    // ingress admission only when they enter a healthy VOQ.
+    m_pendingRecoveryBytes[inPort][priority] += pSize;
+    m_totalPendingRecoveryBytes += pSize;
+}
+
+void
+UbQueueManager::AdmitPendingRecoveryToVoq(uint32_t inPort,
+                                          uint32_t newOutPort,
+                                          uint32_t priority,
+                                          uint32_t pSize,
+                                          bool ingressHeld)
+{
+    NS_ASSERT_MSG(m_pendingRecoveryBytes[inPort][priority] >= pSize,
+                  "Pending recovery accounting underflow");
+    NS_ASSERT_MSG(m_totalPendingRecoveryBytes >= pSize, "Pending recovery total underflow");
+    m_pendingRecoveryBytes[inPort][priority] -= pSize;
+    m_totalPendingRecoveryBytes -= pSize;
+
+    if (ingressHeld)
+    {
+        // The packet already owns its ingress reservation: only the output view is added.
+        m_outPortBuffer[newOutPort][priority] += pSize;
+        m_totalVoqBufferedBytes += pSize;
+        m_totalOutPortVoqBufferedBytes[newOutPort] += pSize;
+        m_traceOutPortBufferBytes(newOutPort, GetTotalOutPortBufferUsed(newOutPort));
+        return;
+    }
+    PushToVoq(inPort, newOutPort, priority, pSize);
+}
+
+void
+UbQueueManager::RemovePendingRecoveryBytes(uint32_t inPort, uint32_t priority, uint32_t pSize)
+{
+    NS_ASSERT_MSG(m_pendingRecoveryBytes[inPort][priority] >= pSize,
+                  "Pending recovery accounting underflow");
+    NS_ASSERT_MSG(m_totalPendingRecoveryBytes >= pSize, "Pending recovery total underflow");
+    m_pendingRecoveryBytes[inPort][priority] -= pSize;
+    m_totalPendingRecoveryBytes -= pSize;
+}
+
+uint64_t
+UbQueueManager::GetQueuePendingRecoveryBytes(uint32_t inPort, uint32_t priority) const
+{
+    return m_pendingRecoveryBytes[inPort][priority];
+}
+
 // ========== 查询接口：InPort视图 ==========
 
 uint64_t UbQueueManager::GetQueueIngressNonHeadroomBytes(uint32_t inPort, uint32_t priority) const
@@ -398,6 +513,13 @@ void UbQueueManager::RemoveFromIngressAdmission(uint32_t inPort, uint32_t priori
     uint64_t curShared = GetQueueIngressSharedBytes(inPort, priority);
     uint64_t freedShared = prevShared > curShared ? prevShared - curShared : 0;
     m_sharedUsedBytes -= std::min(freedShared, m_sharedUsedBytes);
+
+    // Real ingress occupancy was released for this (inPort, priority). Recovery consumers use this
+    // as a coalesced wakeup source instead of polling.
+    if (!m_ingressSpaceReleaseCallback.IsNull())
+    {
+        m_ingressSpaceReleaseCallback(inPort, priority);
+    }
 }
 
 

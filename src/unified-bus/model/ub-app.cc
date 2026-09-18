@@ -1,36 +1,30 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "ub-app.h"
+
+#include "ub-traffic-gen.h"
+
+#include "ns3/callback.h"
 #include "ns3/enum.h"
 #include "ns3/log.h"
 #include "ns3/simulator.h"
-#include "ns3/uinteger.h"
-#include "ns3/callback.h"
-#include "ns3/ub-datatype.h"
 #include "ns3/ub-ctp.h"
+#include "ns3/ub-datatype.h"
 #include "ns3/ub-function.h"
-#include "ns3/ub-transaction.h"
-#include "ub-traffic-gen.h"
-#include "ns3/ub-routing-process.h"
 #include "ns3/ub-port.h"
+#include "ns3/ub-routing-process.h"
+#include "ns3/ub-transaction.h"
 #include "ns3/ub-utils.h"
+#include "ns3/uinteger.h"
 
-namespace ns3 {
+namespace ns3
+{
 
 NS_LOG_COMPONENT_DEFINE("UbApp");
 
-namespace
-{
-uint32_t
-DeriveCtpEntityId(bool hasPort, uint32_t port)
-{
-    NS_ABORT_MSG_IF(hasPort && port == UINT32_MAX,
-                    "CTP endpoint port cannot be represented by an internal Entity id");
-    return hasPort ? port + 1 : 0;
-}
-} // namespace
-
 NS_OBJECT_ENSURE_REGISTERED(UbApp);
-TypeId UbApp::GetTypeId(void)
+
+TypeId
+UbApp::GetTypeId(void)
 {
     static TypeId tid =
         TypeId("ns3::UbApp")
@@ -38,7 +32,8 @@ TypeId UbApp::GetTypeId(void)
             .SetGroupName("UnifiedBus")
             .AddConstructor<UbApp>()
             .AddAttribute("EnableMultiPath",
-                          "Enable multi-path transport: create TPs on multiple source ports toward the same destination.",
+                          "Enable multi-path transport: create TPs on multiple source ports toward "
+                          "the same destination.",
                           BooleanValue(false),
                           MakeBooleanAccessor(&UbApp::m_multiPathEnable),
                           MakeBooleanChecker())
@@ -69,15 +64,23 @@ TypeId UbApp::GetTypeId(void)
                           "Transport mode used for URMA traffic.",
                           EnumValue(TransportMode::RTP),
                           MakeEnumAccessor<TransportMode>(&UbApp::m_transportMode),
-                          MakeEnumChecker(TransportMode::RTP,
-                                          "RTP",
-                                          TransportMode::CTP,
-                                          "CTP"))
-            .AddAttribute("CtpUseUnboundSourceJetty",
-                          "When true, CTP reuses one unbound source Jetty per source entity and VL.",
-                          BooleanValue(false),
-                          MakeBooleanAccessor(&UbApp::m_ctpUseUnboundSourceJetty),
-                          MakeBooleanChecker())
+                          MakeEnumChecker(TransportMode::RTP, "RTP", TransportMode::CTP, "CTP"))
+            .AddAttribute("LocalEntityId",
+                          "Default local entity id used for CTP URMA traffic.",
+                          UintegerValue(1),
+                          MakeUintegerAccessor(&UbApp::m_localEntityId),
+                          MakeUintegerChecker<uint32_t>())
+            .AddAttribute("PeerEntityId",
+                          "Default peer entity id used for CTP URMA traffic.",
+                          UintegerValue(1),
+                          MakeUintegerAccessor(&UbApp::m_peerEntityId),
+                          MakeUintegerChecker<uint32_t>())
+            .AddAttribute(
+                "CtpUseUnboundSourceJetty",
+                "When true, CTP reuses one unbound source Jetty per source entity and VL.",
+                BooleanValue(false),
+                MakeBooleanAccessor(&UbApp::m_ctpUseUnboundSourceJetty),
+                MakeBooleanChecker())
             .AddTraceSource("MemTaskStartsNotify",
                             "MEM Task Starts, taskId",
                             MakeTraceSourceAccessor(&UbApp::m_traceMemTaskStartsNotify),
@@ -86,6 +89,18 @@ TypeId UbApp::GetTypeId(void)
                             "MEM Task Completes, taskId",
                             MakeTraceSourceAccessor(&UbApp::m_traceMemTaskCompletesNotify),
                             "ns3::UbApp::MemTaskCompletesNotify")
+            .AddTraceSource("ComputeTaskQueuedNotify",
+                            "COMPUTE Task Queued, taskId",
+                            MakeTraceSourceAccessor(&UbApp::m_traceComputeTaskQueuedNotify),
+                            "ns3::UbApp::ComputeTaskQueuedNotify")
+            .AddTraceSource("ComputeTaskStartsNotify",
+                            "COMPUTE Task Starts, taskId",
+                            MakeTraceSourceAccessor(&UbApp::m_traceComputeTaskStartsNotify),
+                            "ns3::UbApp::ComputeTaskStartsNotify")
+            .AddTraceSource("ComputeTaskCompletesNotify",
+                            "COMPUTE Task Completes, taskId",
+                            MakeTraceSourceAccessor(&UbApp::m_traceComputeTaskCompletesNotify),
+                            "ns3::UbApp::ComputeTaskCompletesNotify")
             .AddTraceSource("WqeTaskStartsNotify",
                             "WQE Task Starts, taskId",
                             MakeTraceSourceAccessor(&UbApp::m_traceWqeTaskStartsNotify),
@@ -105,18 +120,26 @@ UbApp::~UbApp()
 {
 }
 
-void UbApp::SetFinishCallback(Callback<void, uint32_t, uint32_t> cb, Ptr<UbJetty> jetty)
+void
+UbApp::SetFinishCallback(Callback<void, uint32_t, uint32_t> cb, Ptr<UbJetty> jetty)
 {
     jetty->SetClientCallback(cb);
 }
 
-void UbApp::SetFinishCallback(Callback<void, uint32_t> cb, Ptr<UbLdstInstance> ubLdstInstance)
+void
+UbApp::SetFinishCallback(Callback<void, uint32_t> cb, Ptr<UbLdstInstance> ubLdstInstance)
 {
     ubLdstInstance->SetClientCallback(cb);
 }
 
-void UbApp::DoDispose(void)
+void
+UbApp::DoDispose(void)
 {
+    for (auto& entry : m_completionVisibilityEvents)
+    {
+        Simulator::Cancel(entry.second);
+    }
+    m_completionVisibilityEvents.clear();
     Application::DoDispose();
 }
 
@@ -126,10 +149,22 @@ UbApp::SetTransportMode(TransportMode mode)
     m_transportMode = mode;
 }
 
-void UbApp::SendTraffic(TrafficRecord record)
+void
+UbApp::SetLocalEntityId(uint32_t localEntityId)
 {
-    NS_ABORT_MSG_IF(record.priority < 0 ||
-                        static_cast<uint32_t>(record.priority) > UB_PRIORITY_MAX,
+    m_localEntityId = localEntityId;
+}
+
+void
+UbApp::SetPeerEntityId(uint32_t peerEntityId)
+{
+    m_peerEntityId = peerEntityId;
+}
+
+void
+UbApp::SendTraffic(TrafficRecord record)
+{
+    NS_ABORT_MSG_IF(record.priority < 0 || static_cast<uint32_t>(record.priority) > UB_PRIORITY_MAX,
                     "Invalid priority field in traffic.csv; valid range is 0.."
                         << static_cast<uint32_t>(UB_PRIORITY_MAX));
 
@@ -144,25 +179,17 @@ void UbApp::SendTraffic(TrafficRecord record)
     task.dstPortId = record.dstPortId;
     task.hasSrcPortId = record.hasSrcPortId;
     task.hasDstPortId = record.hasDstPortId;
-    if (record.opType == "URMA_WRITE") {
-        task.op = UbTrafficGen::RuntimeTaskOp::URMA_WRITE;
-    } else if (record.opType == "URMA_READ") {
-        task.op = UbTrafficGen::RuntimeTaskOp::URMA_READ;
-    } else if (record.opType == "MEM_STORE") {
-        task.op = UbTrafficGen::RuntimeTaskOp::MEM_STORE;
-    } else if (record.opType == "MEM_LOAD") {
-        task.op = UbTrafficGen::RuntimeTaskOp::MEM_LOAD;
-    } else {
-        NS_ASSERT_MSG(0, "TaOpcode Not Exist");
-    }
+    UbTrafficGen::ParseTaskOperation(task,
+                                     record.opType,
+                                     record.atomicSubOperation,
+                                     record.requestPayloadBytes);
     SendTraffic(task);
 }
 
 void
 UbApp::SendCtpUrmaTraffic(TrafficRecord record)
 {
-    NS_ABORT_MSG_IF(record.priority < 0 ||
-                        static_cast<uint32_t>(record.priority) > UB_PRIORITY_MAX,
+    NS_ABORT_MSG_IF(record.priority < 0 || static_cast<uint32_t>(record.priority) > UB_PRIORITY_MAX,
                     "Invalid priority field in traffic.csv; valid range is 0.."
                         << static_cast<uint32_t>(UB_PRIORITY_MAX));
 
@@ -176,22 +203,18 @@ UbApp::SendCtpUrmaTraffic(TrafficRecord record)
     task.dstPortId = record.dstPortId;
     task.hasSrcPortId = record.hasSrcPortId;
     task.hasDstPortId = record.hasDstPortId;
-    if (record.opType == "URMA_WRITE") {
-        task.op = UbTrafficGen::RuntimeTaskOp::URMA_WRITE;
-    } else if (record.opType == "URMA_READ") {
-        task.op = UbTrafficGen::RuntimeTaskOp::URMA_READ;
-    } else {
-        NS_ASSERT_MSG(0, "CTP URMA traffic requires URMA read/write op");
-    }
+    UbTrafficGen::ParseTaskOperation(task,
+                                     record.opType,
+                                     record.atomicSubOperation,
+                                     record.requestPayloadBytes);
     SendCtpUrmaTraffic(task);
 }
 
 void
 UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
 {
-    NS_ABORT_MSG_IF(task.op != UbTrafficGen::RuntimeTaskOp::URMA_WRITE &&
-                        task.op != UbTrafficGen::RuntimeTaskOp::URMA_READ,
-                    "CTP URMA traffic requires URMA read/write op");
+    NS_ABORT_MSG_IF(!UbTrafficGen::IsUrmaTask(task.op),
+                    "CTP traffic requires an URMA Read/Write/atomic operation");
 
     Ptr<UbController> controller = GetNode()->GetObject<UbController>();
     NS_ABORT_MSG_IF(controller == nullptr, "CTP transport mode requires UbController");
@@ -203,8 +226,35 @@ UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
     Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
     service->SetRoutingType(m_routingType);
 
-    const uint32_t srcEntityId = DeriveCtpEntityId(task.hasSrcPortId, task.srcPortId);
-    const uint32_t dstEntityId = DeriveCtpEntityId(task.hasDstPortId, task.dstPortId);
+    const uint32_t srcEntityId = m_localEntityId;
+    const uint32_t dstEntityId = m_peerEntityId;
+    NS_ABORT_MSG_IF(task.hasSrcPortId && task.srcPortId > CTP_MAX_CNA16_PORT_ID,
+                    "CTP source port " << task.srcPortId << " cannot be encoded as CNA16");
+    NS_ABORT_MSG_IF(task.hasDstPortId && task.dstPortId > CTP_MAX_CNA16_PORT_ID,
+                    "CTP destination port " << task.dstPortId << " cannot be encoded as CNA16");
+    NS_ABORT_MSG_IF(!controller->AreCtpEntitiesFrozen(),
+                    "CTP source Entity registry must be frozen before traffic activation");
+    NS_ABORT_MSG_IF(!controller->HasCtpEntity(srcEntityId),
+                    "CTP source Entity " << srcEntityId << " is not configured on node "
+                                          << GetNode()->GetId());
+    NS_ABORT_MSG_IF(task.hasSrcPortId &&
+                        !controller->IsCtpEntityPortMember(srcEntityId, task.srcPortId),
+                    "CTP source port " << task.srcPortId << " is not a member of Entity "
+                                       << srcEntityId);
+
+    Ptr<Node> peerNode = NodeList::GetNode(task.destNode);
+    Ptr<UbController> peerController =
+        peerNode == nullptr ? nullptr : peerNode->GetObject<UbController>();
+    NS_ABORT_MSG_IF(peerController == nullptr, "CTP destination requires a peer UbController");
+    NS_ABORT_MSG_IF(!peerController->AreCtpEntitiesFrozen(),
+                    "CTP destination Entity registry must be frozen before traffic activation");
+    NS_ABORT_MSG_IF(!peerController->HasCtpEntity(dstEntityId),
+                    "CTP destination Entity " << dstEntityId << " is not configured on node "
+                                               << task.destNode);
+    NS_ABORT_MSG_IF(task.hasDstPortId &&
+                        !peerController->IsCtpEntityPortMember(dstEntityId, task.dstPortId),
+                    "CTP destination port " << task.dstPortId << " is not a member of Entity "
+                                            << dstEntityId);
     const uint8_t vl = task.priority;
     uint32_t jettyNum = m_jettyNum;
     Ptr<UbJetty> jetty;
@@ -223,8 +273,7 @@ UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
     }
     if (!ubFunc->IsJettyAcceptingWqes(jettyNum))
     {
-        NS_LOG_WARN("CTP WQE submission rejected because Jetty " << jettyNum
-                                                                  << " is draining");
+        NS_LOG_WARN("CTP WQE submission rejected because Jetty " << jettyNum << " is draining");
         return;
     }
     service->SetRoutingType(m_routingType);
@@ -233,29 +282,28 @@ UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
     NS_LOG_INFO("CTP WQE Starts, jettyNum: " << jettyNum << " taskId: " << task.taskId);
     WqeTaskStartsNotify(GetNode()->GetId(), jettyNum, task.taskId);
 
-    TaOpcode type = task.op == UbTrafficGen::RuntimeTaskOp::URMA_READ
-                        ? TaOpcode::TA_OPCODE_READ
-                        : TaOpcode::TA_OPCODE_WRITE;
+    UbTransactionOpcode type = UbTrafficGen::GetUrmaTaskOpcode(task.op);
     Ptr<UbWqe> wqe =
         ubFunc->CreateWqe(task.sourceNode, task.destNode, task.dataSize, task.taskId, type);
+    if (task.atomicOptions)
+    {
+        wqe->SetAtomicOptions(*task.atomicOptions);
+    }
     wqe->SetSrcEntityId(srcEntityId);
     wqe->SetDstEntityId(dstEntityId);
+    wqe->SetSport(task.hasSrcPortId ? static_cast<uint8_t>(task.srcPortId)
+                                    : CTP_WILDCARD_PORT);
+    wqe->SetDport(task.hasDstPortId ? static_cast<uint8_t>(task.dstPortId)
+                                    : CTP_WILDCARD_PORT);
     wqe->SetPriority(task.priority);
-    controller->GetUbTransaction()->SetTransactionServiceMode(jettyNum, TransactionServiceMode::ROI);
+    controller->GetUbTransaction()->SetTransactionServiceMode(jettyNum,
+                                                              TransactionServiceMode::ROI);
     jetty->SetNodeId(GetNode()->GetId());
 
     UbCtpEntityKey key{.srcEntityId = srcEntityId,
                        .dstNodeId = task.destNode,
                        .dstEntityId = dstEntityId,
                        .vl = vl};
-    if (task.hasSrcPortId)
-    {
-        service->SetSourcePortHint(key, task.srcPortId);
-    }
-    if (task.hasDstPortId)
-    {
-        service->SetDestinationPortHint(key, task.dstPortId);
-    }
     const UbCtpEntityKey jettyKey =
         m_ctpUseUnboundSourceJetty ? service->MakeSourceGroupKeyForRequest(key) : key;
     const UbWqeSubmissionResult submission = ubFunc->SubmitCtpWqe(wqe, jettyNum, jettyKey);
@@ -330,17 +378,36 @@ UbApp::GetOrCreateCtpUnboundJetty(uint32_t sourceNode,
     return jetty;
 }
 
-void UbApp::SendTraffic(UbTrafficGen::RuntimeTask task)
+void
+UbApp::SendTraffic(UbTrafficGen::RuntimeTask task)
 {
-    if (task.priority == 0) {
+    if (task.op == UbTrafficGen::RuntimeTaskOp::LOCAL_READY)
+    {
+        UbTrafficGen::Get()->MarkTaskCompleted(task.taskId);
+        return;
+    }
+    if (task.op == UbTrafficGen::RuntimeTaskOp::COMPUTE)
+    {
+        NS_LOG_INFO("COMPUTE task starts, taskId: " << task.taskId
+                                                    << ", duration(ns): " << task.dataSize);
+        Simulator::Schedule(NanoSeconds(task.dataSize),
+                            &UbApp::CompleteComputeTask,
+                            this,
+                            task.taskId);
+        return;
+    }
+    if (task.priority == 0)
+    {
         NS_LOG_DEBUG("Task uses the highest priority, not recommended.");
     }
 
     if (task.op == UbTrafficGen::RuntimeTaskOp::MEM_STORE ||
-        task.op == UbTrafficGen::RuntimeTaskOp::MEM_LOAD) {
+        task.op == UbTrafficGen::RuntimeTaskOp::MEM_LOAD)
+    {
         // 内存语义发送
         UbMemOperationType type = UbMemOperationType::STORE;
-        if (task.op == UbTrafficGen::RuntimeTaskOp::MEM_LOAD) {
+        if (task.op == UbTrafficGen::RuntimeTaskOp::MEM_LOAD)
+        {
             type = UbMemOperationType::LOAD;
         }
         auto ldstInstance = GetNode()->GetObject<UbLdstInstance>();
@@ -348,6 +415,12 @@ void UbApp::SendTraffic(UbTrafficGen::RuntimeTask task)
         NS_LOG_INFO("MEM Task Starts, taskId: " << task.taskId);
         MemTaskStartsNotify(GetNode()->GetId(), task.taskId);
         std::vector<uint32_t> threadIds = {0, 1};
+        UintegerValue threadNum;
+        ldstInstance->GetAttribute("ThreadNum", threadNum);
+        if (threadNum.Get() == 1)
+        {
+            threadIds.resize(1);
+        }
         ldstInstance->HandleLdstTask(task.sourceNode,
                                      task.destNode,
                                      task.dataSize,
@@ -360,8 +433,9 @@ void UbApp::SendTraffic(UbTrafficGen::RuntimeTask task)
                                      task.hasSrcPortId,
                                      task.dstPortId,
                                      task.hasDstPortId);
-    } else if (task.op == UbTrafficGen::RuntimeTaskOp::URMA_WRITE ||
-               task.op == UbTrafficGen::RuntimeTaskOp::URMA_READ) {
+    }
+    else if (UbTrafficGen::IsUrmaTask(task.op))
+    {
         if (m_transportMode == TransportMode::CTP)
         {
             SendCtpUrmaTraffic(task);
@@ -372,7 +446,8 @@ void UbApp::SendTraffic(UbTrafficGen::RuntimeTask task)
         Ptr<UbFunction> ubFunc = GetNode()->GetObject<UbController>()->GetUbFunction();
         Ptr<UbTransaction> ubTa = GetNode()->GetObject<UbController>()->GetUbTransaction();
         bool jettyExist = ubFunc->IsJettyExists(m_jettyNum);
-        if (jettyExist) {
+        if (jettyExist)
+        {
             NS_LOG_ERROR("Jetty already exists");
             return;
         }
@@ -381,76 +456,129 @@ void UbApp::SendTraffic(UbTrafficGen::RuntimeTask task)
                             m_jettyNum,
                             UbJettyLifetime::TASK_SCOPED);
         vector<uint32_t> tpns = GetNode()->GetObject<UbController>()->GetTpConnManager()->GetTpns(
-            m_getTpnRule, RoutingTypeUsesShortestPaths(m_routingType), m_multiPathEnable, task.sourceNode,
+            m_getTpnRule,
+            RoutingTypeUsesShortestPaths(m_routingType),
+            m_multiPathEnable,
+            task.sourceNode,
             task.destNode,
             task.hasSrcPortId ? task.srcPortId : UINT32_MAX,
             task.hasDstPortId ? task.dstPortId : UINT32_MAX,
             task.priority);
-        bool bindRst = ubTa->JettyBindTp(task.sourceNode, task.destNode, m_jettyNum, m_multiPathEnable, tpns);
-        if (bindRst) {
+        bool bindRst = ubTa->JettyBindTp(task.sourceNode,
+                                         task.destNode,
+                                         m_jettyNum,
+                                         m_multiPathEnable,
+                                         tpns,
+                                         task.taskId);
+        if (bindRst)
+        {
             Ptr<UbJetty> curr_jetty = ubFunc->GetJetty(m_jettyNum);
             SetFinishCallback(MakeCallback(&UbApp::OnTaskCompleted, this), curr_jetty);
             NS_LOG_INFO("WQE Starts, jettyNum: " << m_jettyNum << " taskId: " << task.taskId);
             NS_LOG_INFO("Src: " << task.sourceNode << " Dst: " << task.destNode);
             WqeTaskStartsNotify(GetNode()->GetId(), m_jettyNum, task.taskId);
-            NS_LOG_INFO("[APPLICATION INFO] taskId: " << task.taskId << ",start time:" <<
-                Simulator::Now().GetNanoSeconds() << "ns");
-            TaOpcode type = task.op == UbTrafficGen::RuntimeTaskOp::URMA_READ
-                                ? TaOpcode::TA_OPCODE_READ
-                                : TaOpcode::TA_OPCODE_WRITE;
+            NS_LOG_INFO("[APPLICATION INFO] taskId: " << task.taskId << ",start time:"
+                                                      << Simulator::Now().GetNanoSeconds() << "ns");
+            UbTransactionOpcode type = UbTrafficGen::GetUrmaTaskOpcode(task.op);
             Ptr<UbWqe> wqe =
                 ubFunc->CreateWqe(task.sourceNode, task.destNode, task.dataSize, task.taskId, type);
+            if (task.atomicOptions)
+            {
+                wqe->SetAtomicOptions(*task.atomicOptions);
+            }
             ubFunc->PushWqeToJetty(wqe, m_jettyNum);
         }
         m_jettyNum++; // m_jettyNum 在client里是唯一的，不重复的
-    } else {
-            NS_ASSERT_MSG(0, "TaOpcode Not Exist");
+    }
+    else
+    {
+        NS_ASSERT_MSG(0, "UbTransactionOpcode Not Exist");
     }
 }
 
-void UbApp::OnTaskCompleted(uint32_t taskId, uint32_t jettyNum)
+void
+UbApp::CompleteComputeTask(uint32_t taskId)
 {
+    UbTrafficGen::Get()->OnComputeTaskCompleted(taskId);
+}
+
+void
+UbApp::OnTaskCompleted(uint32_t taskId, uint32_t jettyNum)
+{
+    Ptr<UbController> controller =
+        GetNode() == nullptr ? nullptr : GetNode()->GetObject<UbController>();
+    const Time delay = controller == nullptr
+                           ? NanoSeconds(0)
+                           : controller->GetInitiatorProtocolCompletionVisibilityDelay();
+    if (delay.IsStrictlyPositive())
+    {
+        const auto key = std::make_pair(taskId, jettyNum);
+        auto it = m_completionVisibilityEvents.find(key);
+        if (it != m_completionVisibilityEvents.end())
+        {
+            Simulator::Cancel(it->second);
+        }
+        m_completionVisibilityEvents[key] =
+            Simulator::Schedule(delay, &UbApp::OnTaskCompletedVisible, this, taskId, jettyNum);
+        return;
+    }
+    OnTaskCompletedVisible(taskId, jettyNum);
+}
+
+void
+UbApp::OnTaskCompletedVisible(uint32_t taskId, uint32_t jettyNum)
+{
+    m_completionVisibilityEvents.erase(std::make_pair(taskId, jettyNum));
+    Ptr<Node> node = GetNode();
+    if (node == nullptr)
+    {
+        UbTrafficGen::Get()->OnTaskCompleted(taskId);
+        return;
+    }
     NS_LOG_FUNCTION(this << taskId);
     NS_LOG_INFO("WQE Completes, jettyNum: " << jettyNum << " taskId: " << taskId);
-    WqeTaskCompletesNotify(GetNode()->GetId(), jettyNum, taskId);
-    NS_LOG_INFO("[APPLICATION INFO] taskId: " << taskId << ",finish time:" << Simulator::Now().GetNanoSeconds() << "ns");
+    WqeTaskCompletesNotify(node->GetId(), jettyNum, taskId);
+    NS_LOG_INFO("[APPLICATION INFO] taskId: " << taskId << ",finish time:"
+                                              << Simulator::Now().GetNanoSeconds() << "ns");
     if (m_transportMode == TransportMode::RTP)
     {
-        Ptr<UbFunction> function = GetNode()->GetObject<UbController>()->GetUbFunction();
-        UbJettyLifetime lifetime = UbJettyLifetime::REUSABLE;
-        const bool destroyTaskScopedJetty =
-            m_enableTaskScopedJettyDestroy && function->TryGetJettyLifetime(jettyNum, lifetime) &&
-            lifetime == UbJettyLifetime::TASK_SCOPED;
-        if (destroyTaskScopedJetty || m_enablePlannedTpConnectionDestroy)
+        Ptr<UbController> controller = node->GetObject<UbController>();
+        if (controller != nullptr && !controller->IsDisposing() &&
+            controller->GetUbFunction() != nullptr)
         {
-            UbTrafficGen::Get()->OnTaskCompleted(taskId,
-                                                 this,
-                                                 jettyNum,
-                                                 destroyTaskScopedJetty,
-                                                 m_enablePlannedTpConnectionDestroy);
-            return;
+            Ptr<UbFunction> function = controller->GetUbFunction();
+            UbJettyLifetime lifetime = UbJettyLifetime::REUSABLE;
+            const bool destroyTaskScopedJetty = m_enableTaskScopedJettyDestroy &&
+                                                function->TryGetJettyLifetime(jettyNum, lifetime) &&
+                                                lifetime == UbJettyLifetime::TASK_SCOPED;
+            if (destroyTaskScopedJetty || m_enablePlannedTpConnectionDestroy)
+            {
+                UbTrafficGen::Get()->OnTaskCompleted(taskId,
+                                                     this,
+                                                     jettyNum,
+                                                     destroyTaskScopedJetty,
+                                                     m_enablePlannedTpConnectionDestroy);
+                return;
+            }
         }
     }
     UbTrafficGen::Get()->OnTaskCompleted(taskId);
 }
 
 void
-UbApp::CleanupCompletedTask(
-    uint32_t taskId,
-    uint32_t jettyNum,
-    bool destroyTaskScopedJetty,
-    bool releasePlannedTpBinding,
-    const std::vector<UbLifecycleResourceIdentity>& plannedTpConnections)
+UbApp::CleanupCompletedTask(uint32_t taskId,
+                            uint32_t jettyNum,
+                            bool destroyTaskScopedJetty,
+                            bool releasePlannedTpBinding,
+                            const std::vector<UbLifecycleResourceIdentity>& plannedTpConnections)
 {
     if (m_transportMode == TransportMode::RTP)
     {
-        Ptr<UbTransaction> transaction =
-            GetNode()->GetObject<UbController>()->GetUbTransaction();
+        Ptr<UbTransaction> transaction = GetNode()->GetObject<UbController>()->GetUbTransaction();
         if (releasePlannedTpBinding)
         {
-            transaction->ReleaseCompletedJettyTransportBinding(
-                jettyNum,
-                !plannedTpConnections.empty());
+            transaction->ReleaseCompletedJettyTransportBinding(jettyNum,
+                                                               !plannedTpConnections.empty());
         }
 
         Ptr<UbFunction> function = GetNode()->GetObject<UbController>()->GetUbFunction();
@@ -464,8 +592,7 @@ UbApp::CleanupCompletedTask(
                             "Task-scoped Jetty cleanup was rejected for task " << taskId);
         }
 
-        Ptr<TpConnectionManager> manager =
-            GetNode()->GetObject<UbController>()->GetTpConnManager();
+        Ptr<TpConnectionManager> manager = GetNode()->GetObject<UbController>()->GetTpConnManager();
         for (const auto& identity : plannedTpConnections)
         {
             const UbDestroyStatus status =
@@ -477,41 +604,67 @@ UbApp::CleanupCompletedTask(
     }
 }
 
-void UbApp::OnTestTaskCompleted(uint32_t taskId, uint32_t jettyNum)
+void
+UbApp::OnTestTaskCompleted(uint32_t taskId, uint32_t jettyNum)
 {
     NS_LOG_FUNCTION(this << taskId);
     NS_LOG_INFO("WQE Completes, jettyNum:" << jettyNum << " taskId:" << taskId);
     WqeTaskCompletesNotify(GetNode()->GetId(), jettyNum, taskId);
-    NS_LOG_INFO("[APPLICATION INFO] taskId:" << taskId << ",finish time:" << Simulator::Now().GetNanoSeconds() << "ns");
+    NS_LOG_INFO("[APPLICATION INFO] taskId:" << taskId << ",finish time:"
+                                             << Simulator::Now().GetNanoSeconds() << "ns");
     Ptr<UbFunction> ubFunc = GetNode()->GetObject<UbController>()->GetUbFunction();
     UbTrafficGen::Get()->OnTaskCompleted(taskId);
 }
 
-void UbApp::OnMemTaskCompleted(uint32_t taskId)
+void
+UbApp::OnMemTaskCompleted(uint32_t taskId)
 {
     NS_LOG_FUNCTION(this << taskId);
     NS_LOG_INFO("MEM Task Completes, taskId: " << taskId);
     MemTaskCompletesNotify(GetNode()->GetId(), taskId);
-    NS_LOG_INFO("[APPLICATION INFO] taskId: " << taskId << ",finish time:" << Simulator::Now().GetNanoSeconds() << "ns");
+    NS_LOG_INFO("[APPLICATION INFO] taskId: " << taskId << ",finish time:"
+                                              << Simulator::Now().GetNanoSeconds() << "ns");
     UbTrafficGen::Get()->OnTaskCompleted(taskId);
 }
 
-void UbApp::MemTaskStartsNotify(uint32_t nodeId, uint32_t taskId)
+void
+UbApp::MemTaskStartsNotify(uint32_t nodeId, uint32_t taskId)
 {
     m_traceMemTaskStartsNotify(nodeId, taskId);
 }
 
-void UbApp::MemTaskCompletesNotify(uint32_t nodeId, uint32_t taskId)
+void
+UbApp::MemTaskCompletesNotify(uint32_t nodeId, uint32_t taskId)
 {
     m_traceMemTaskCompletesNotify(nodeId, taskId);
 }
 
-void UbApp::WqeTaskStartsNotify(uint32_t nodeId, uint32_t jettyNum, uint32_t taskId)
+void
+UbApp::ComputeTaskQueuedNotify(uint32_t nodeId, uint32_t taskId)
+{
+    m_traceComputeTaskQueuedNotify(nodeId, taskId);
+}
+
+void
+UbApp::ComputeTaskStartsNotify(uint32_t nodeId, uint32_t taskId)
+{
+    m_traceComputeTaskStartsNotify(nodeId, taskId);
+}
+
+void
+UbApp::ComputeTaskCompletesNotify(uint32_t nodeId, uint32_t taskId)
+{
+    m_traceComputeTaskCompletesNotify(nodeId, taskId);
+}
+
+void
+UbApp::WqeTaskStartsNotify(uint32_t nodeId, uint32_t jettyNum, uint32_t taskId)
 {
     m_traceWqeTaskStartsNotify(nodeId, jettyNum, taskId);
 }
 
-void UbApp::WqeTaskCompletesNotify(uint32_t nodeId, uint32_t jettyNum, uint32_t taskId)
+void
+UbApp::WqeTaskCompletesNotify(uint32_t nodeId, uint32_t jettyNum, uint32_t taskId)
 {
     m_traceWqeTaskCompletesNotify(nodeId, jettyNum, taskId);
 }

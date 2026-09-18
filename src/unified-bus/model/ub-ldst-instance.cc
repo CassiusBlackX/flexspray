@@ -192,6 +192,16 @@ void UbLdstInstance::OnRecvAck(uint32_t taskSegmentId)
     ResolveAck(taskSegmentId);
 }
 
+bool UbLdstInstance::TryRecvAck(uint32_t taskSegmentId)
+{
+    if (m_taskSegmentsMap.find(taskSegmentId) == m_taskSegmentsMap.end())
+    {
+        return false;
+    }
+    ScheduleNow(&UbLdstInstance::OnRecvAck, this, taskSegmentId);
+    return true;
+}
+
 bool UbLdstInstance::OnRecvAckForTest(uint32_t taskSegmentId)
 {
     return ResolveAck(taskSegmentId);
