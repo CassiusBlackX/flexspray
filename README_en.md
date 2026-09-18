@@ -28,7 +28,7 @@
 
 <p align="center">
   <strong>Release 2.1.0</strong> · September 2026<br>
-  New in the UB Base Specification 2.1: richer queue and other transaction types · CTP transport mode · reliable rerouting at the network layer · 24-bit CNA addressing and CFG7 header configuration · dynamic packet rate control<br>
+  Simulation models based on the UB Base Specification 2.1: richer queue and other transaction types · more transport layer modes · reliable rerouting at the network layer · datalink header configuration and packet rate control<br>
   Engine optimizations: fewer simulation events · on-demand resource loading · topology structure recognition · fast route computation · lower memory footprint<br>
   <a href="RELEASE_NOTES_UB_en.md#release-210">Full release notes →</a>
 </p>
