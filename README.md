@@ -28,16 +28,23 @@
 
 <p align="center">
   <strong>Release 2.1.0</strong> · 2026 年 9 月<br>
-  基于灵衢基础规范 2.1 版本的仿真模型：丰富队列事务等事务类型 · 完善传输层模式 · 网络层可靠重路由 · 数据链路层包头配置与包率控制<br>
-  引擎优化：精简仿真事件 · 资源按需加载 · 拓扑结构识别 · 快速路由计算 · 降低内存占用<br>
+  基于灵衢基础规范 2.1 版本更新仿真模型 · 仿真引擎优化<br>
   <a href="RELEASE_NOTES_UB.md#release-210">完整发布说明 →</a>
 </p>
 
 ---
 
-> 本项目基于 ns-3.44 构建。详细的平台支持、安装步骤、系统要求及编译选项，请参阅 [ns-3.44 文档](https://www.nsnam.org/releases/ns-3-44/documentation/)、[安装指南](https://www.nsnam.org/docs/release/3.44/installation/singlehtml/) 及 [ns-3.44 源码](https://gitlab.com/nsnam/ns-3-dev/-/tree/ns-3.44?ref_type=tags)。
->
-> 本项目已集成 Unison for ns-3 多线程并行仿真能力（[EuroSys '24 paper](https://dl.acm.org/doi/10.1145/3627703.3629574)），更多信息与使用方法参阅 [UNISON_README.md](UNISON_README.md) 和 [QUICK_START.md](QUICK_START.md)。
+| 方向 | 本版本更新 |
+| --- | --- |
+| **仿真模型** | 丰富队列事务等事务类型 |
+| | 完善传输层模式 |
+| | 网络层可靠重路由 |
+| | 数据链路层包头配置与包率控制 |
+| **仿真引擎** | 精简仿真事件 |
+| | 资源按需加载 |
+| | 拓扑结构识别 |
+| | 快速路由计算 |
+| | 降低内存占用 |
 
 **目录**： [项目概述](#项目概述) · [项目架构](#项目架构) · [核心组件](#核心组件) · [OpenUSim Skills](#4-openusim-skills仓库内置) · [许可证](#许可证) · [Citation](#citation) · [答疑交流](#答疑交流)
 
@@ -173,6 +180,10 @@
     </tr>
   </tbody>
 </table>
+
+> 本项目基于 ns-3.44 构建。详细的平台支持、安装步骤、系统要求及编译选项，请参阅 [ns-3.44 文档](https://www.nsnam.org/releases/ns-3-44/documentation/)、[安装指南](https://www.nsnam.org/docs/release/3.44/installation/singlehtml/) 及 [ns-3.44 源码](https://gitlab.com/nsnam/ns-3-dev/-/tree/ns-3.44?ref_type=tags)。
+>
+> 本项目已集成 Unison for ns-3 多线程并行仿真能力（[EuroSys '24 paper](https://dl.acm.org/doi/10.1145/3627703.3629574)），更多信息与使用方法参阅 [UNISON_README.md](UNISON_README.md) 和 [QUICK_START.md](QUICK_START.md)。
 
 ## 项目架构
 
