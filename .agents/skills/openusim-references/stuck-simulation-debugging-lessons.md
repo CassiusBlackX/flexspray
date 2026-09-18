@@ -206,7 +206,7 @@ trace 代码不是透明空气，它也是会出 bug 的软件。
 
 ### Lesson C: “看起来卡了十几分钟”可能只是 observability 非常重
 
-对 `scratch/ub128-nht-only-standard-sim-team-package-20260327/inputs/current-to-simulator/` 的 fresh rerun 里：
+一次 UB128 规模 case 的 fresh rerun 里（原始 case 目录已不再归档在仓库中）：
 
 - 仿真时间最终推进到 `400 us`
 - 进程自然结束

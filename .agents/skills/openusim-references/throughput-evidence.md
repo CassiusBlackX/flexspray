@@ -16,8 +16,9 @@
 - `python3 scratch/ns-3-ub-tools/ub_tools.py trace parse CASE --output-dir DIR` calls the existing
   task and port parsers directly and writes `task_statistics.csv` plus `throughput.csv` to the
   explicit output directory. It does not start ns-3; existing outputs require `--overwrite`.
-- `lifecycle_trace.py` validates lifecycle identity, ordering, and terminal evidence. It does not
-  calculate throughput and must not be used as a throughput oracle.
+- Lifecycle evidence (identity, ordering, terminal records) lives in the lifecycle artifacts with
+  their C++-emitted schema metadata. It does not calculate throughput and must not be used as a
+  throughput oracle.
 
 ## Non-Implications
 
@@ -42,5 +43,3 @@
 
 - `code/doc fact`: `scratch/ns-3-ub-tools/trace_analysis/cal_throughput.py` writes per-port `Rx/Tx throughput(Gbps)`
 - `code/doc fact`: `scratch/ns-3-ub-tools/trace_analysis/task_statistics.py` writes per-task `taskThroughput(Gbps)`
-- `code/doc fact`: `scratch/ns-3-ub-tools/trace_analysis/lifecycle_trace.py` validates versioned
-  lifecycle records against `LifecycleTraceSchema*.json`

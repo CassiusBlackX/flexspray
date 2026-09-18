@@ -255,14 +255,14 @@ The generated `generate_topology.py` should use different bandwidth/delay values
 
 | Topology family | Recommended max hosts | Notes |
 |-----------------|----------------------|-------|
-| `ring` | ~1000 | Prefer generic compressed route generation; route search remains O(N²) |
-| `full-mesh` | ~100 | Link count is O(N²); route table and transport_channel.csv grow quickly |
+| `ring` | ~1000 | Recognized as a structure, so rule-based generation covers it; graph-derived route search would stay O(N²) |
+| `full-mesh` | ~100 | Link count is O(N²); route artifacts and `transport_channel.csv` grow quickly |
 | `nd-full-mesh` | ~256 (e.g. 16×16) | Same concern as full-mesh |
-| `clos-spine-leaf` | ~10000 | Default to generic compressed route generation; the specialized Clos generator is available as an explicit optimization |
+| `clos-spine-leaf` | ~10000 | Prefer rule-based generation; the specialized Clos generator stays available as an escape hatch |
 | `clos-fat-tree` | ~10000 | Same as clos-spine-leaf with derived parameters |
-| `custom-graph` | Depends on density | Sparse graphs should use generic compressed route generation; dense graphs still hit O(N²) routing |
+| `custom-graph` | Depends on density | Sparse graphs compile from verified structure; dense graphs still hit O(N²) routing |
 
-For topologies beyond ~1000 hosts, warn the user that route search may take minutes to tens of minutes. For new cases, use `gen_compressed_route_table(...)` and on-demand TP creation by default; it avoids storing all paths and avoids dense route matrices, but it cannot remove the inherent host-pair path-search cost. For very large regular two-layer Clos, `gen_2layer_clos_compressed_route_table(...)` can be selected explicitly when smaller generation cost matters more than using the generic path.
+For topologies beyond ~1000 hosts, warn the user that route generation may take minutes to tens of minutes when the structure is not fully recognized. The preferred path is the structured case format with `--route-generation structured`, which resolves route lookups from verified structure instead of enumerating host-pair paths; when it fails with `rule routing requires every route lookup to pass equivalence verification`, use `mixed`, and reserve `full` for a compatibility or verification baseline. Keep on-demand TP creation as well, so no host-pair `transport_channel.csv` is pre-generated. For very large regular two-layer Clos, `gen_2layer_clos_compressed_route_table(...)` avoids all host-pair path enumeration and is the fastest option when the graph is regular enough to use it.
 
 ### Parameter constraint validation
 
@@ -333,6 +333,13 @@ python3 scratch/ns-3-ub-tools/ub_tools.py topology build \
   --output-dir path/to/case
 ```
 
+Pass `--route-generation structured` for any topology the tool recognizes: it requires every route
+lookup to come from verified structure, so no graph-derived candidate generation is needed and
+compilation stays fast as the topology grows. When the build fails with `rule routing requires every
+route lookup to pass equivalence verification`, the structure does not cover the whole graph; use
+`mixed` instead. Keep `full` for compatibility and verification runs, since it derives every
+candidate from the physical graph.
+
 The default Python function is `build_topology()`; append `:function` to select another one. The same
 command accepts a JSON/YAML file or an existing CSV case directory. Use `--case-format csv` to
 generate the topology and full routing portion of a traditional CSV case, then add the shared runtime
@@ -386,8 +393,9 @@ CSV runner does not consume.
 - `build_graph_config_from_links(link_infos, port_counts=...)`: install links that already carry both endpoint port IDs. This is the low-level path used by the custom-case loader; normal generated graphs should keep using `build_graph_config()`.
 - `prepare_structured_case(case_path, route_generation="mixed", ...)`: compile and atomically write
   `structured_topology.txt`, `compressed_routing.bin`, and `structured_summary.json`. Offline
-  strategies are `full`, `structured`, and `mixed`. The default `mixed` uses verified structure where
-  possible and graph-derived routes for the rest. It never launches ns-3.
+  strategies are `full`, `structured`, and `mixed`. Prefer `structured`, which requires every lookup
+  to be verified structure and therefore skips graph-derived generation; `mixed` is the default and
+  uses verified structure where possible with graph-derived routes for the rest. It never launches ns-3.
 - `run_structured_topo_case.py --route-runtime-mode=...`: select `compressed-table-lookup` for direct
   indexed lookup or `structured-rule-compute` for runtime evaluation of verified rules. The latter
   requires usable structure rules; `full` supports only compressed-table lookup.
@@ -445,9 +453,8 @@ def all_shortest_paths(G, source, target):
     except nx.NetworkXNoPath:
         return []
 
-if __name__ == '__main__':
+def build_topology():
     graph = netsim.NetworkSimulationGraph()
-    graph.output_dir = str(Path(__file__).parent) + "/"
 
     # Parameters from experiment-spec.md
     host_num = 64  # substitute from spec
@@ -479,13 +486,12 @@ if __name__ == '__main__':
             spine_id = host_num + leaf_sw_num + spine_idx
             graph.add_netisim_edge(leaf_id, spine_id, bandwidth='400Gbps', delay='20ns')
 
-    # Generate config files
-    graph.build_graph_config()
-    graph.gen_compressed_route_table(path_finding_algo=all_shortest_paths, multiple_workers=4)
-    graph.write_config(include_transport=False)
+    return graph
 ```
 
-If the user explicitly requests the two-layer Clos specialized route generator, replace the route line with `graph.gen_2layer_clos_compressed_route_table(host_num, leaf_sw_num)`.
+Compile the case with `python3 scratch/ns-3-ub-tools/ub_tools.py topology build generate_topology.py --output-dir {case_dir} --route-generation structured`; the CLI owns route generation and file output, and a Clos is a recognized family, so rule-based generation applies. If it fails with `rule routing requires every route lookup to pass equivalence verification`, drop the flag and keep the `mixed` default. `all_shortest_paths` may be passed as `--path-finder generate_topology.py:all_shortest_paths`.
+
+For very large two-layer Clos graphs where CLI route generation is too slow, call `graph.gen_2layer_clos_compressed_route_table(host_num, leaf_sw_num)` inside `build_topology()` just before `return graph` to use the specialized generator.
 
 ### Pattern: `nd-full-mesh`
 
@@ -503,9 +509,8 @@ def all_shortest_paths(G, source, target):
     except nx.NetworkXNoPath:
         return []
 
-if __name__ == '__main__':
+def build_topology():
     graph = netsim.NetworkSimulationGraph()
-    graph.output_dir = str(Path(__file__).parent) + "/"
 
     # Parameters from experiment-spec.md
     row_num = 4  # substitute from spec
@@ -532,10 +537,7 @@ if __name__ == '__main__':
                 graph.add_netisim_edge(host_in_col[i], host_in_col[j],
                                       bandwidth='400Gbps', delay='10ns')
 
-    # Generate config files
-    graph.build_graph_config()
-    graph.gen_compressed_route_table(path_finding_algo=all_shortest_paths, multiple_workers=4)
-    graph.write_config(include_transport=False)
+    return graph
 ```
 
 ### Pattern: `ring`
@@ -554,9 +556,8 @@ def all_shortest_paths(G, source, target):
     except nx.NetworkXNoPath:
         return []
 
-if __name__ == '__main__':
+def build_topology():
     graph = netsim.NetworkSimulationGraph()
-    graph.output_dir = str(Path(__file__).parent) + "/"
 
     # Parameters from experiment-spec.md
     host_num = 8  # substitute from spec
@@ -570,10 +571,7 @@ if __name__ == '__main__':
         next_host = (host_id + 1) % host_num
         graph.add_netisim_edge(host_id, next_host, bandwidth='400Gbps', delay='20ns')
 
-    # Generate config files
-    graph.build_graph_config()
-    graph.gen_compressed_route_table(path_finding_algo=all_shortest_paths, multiple_workers=4)
-    graph.write_config(include_transport=False)
+    return graph
 ```
 
 ### Pattern: `full-mesh`
@@ -592,9 +590,8 @@ def all_shortest_paths(G, source, target):
     except nx.NetworkXNoPath:
         return []
 
-if __name__ == '__main__':
+def build_topology():
     graph = netsim.NetworkSimulationGraph()
-    graph.output_dir = str(Path(__file__).parent) + "/"
 
     # Parameters from experiment-spec.md
     host_num = 8  # substitute from spec
@@ -608,10 +605,7 @@ if __name__ == '__main__':
         for j in range(i + 1, host_num):
             graph.add_netisim_edge(i, j, bandwidth='400Gbps', delay='20ns')
 
-    # Generate config files
-    graph.build_graph_config()
-    graph.gen_compressed_route_table(path_finding_algo=all_shortest_paths, multiple_workers=4)
-    graph.write_config(include_transport=False)
+    return graph
 ```
 
 ### Pattern: `clos-fat-tree`
@@ -648,9 +642,8 @@ def bounded_paths(G, source, target):
         return []
 
 
-if __name__ == '__main__':
+def build_topology():
     graph = netsim.NetworkSimulationGraph()
-    graph.output_dir = str(Path(__file__).parent) + "/"
 
     # Replace these groups with the user-confirmed custom graph facts.
     for host_id in range(8):
@@ -669,7 +662,7 @@ if __name__ == '__main__':
     for u, v, bandwidth, delay, edge_count in custom_links:
         graph.add_netisim_edge(u, v, bandwidth=bandwidth, delay=delay, edge_count=edge_count)
 
-    graph.build_graph_config()
-    graph.gen_compressed_route_table(path_finding_algo=bounded_paths, multiple_workers=1)
-    graph.write_config(include_transport=False)
+    return graph
 ```
+
+For custom graphs, pass the bounded path finder explicitly so the CLI does not enumerate explosive path sets: `ub_tools.py topology build generate_topology.py --output-dir {case_dir} --path-finder generate_topology.py:bounded_paths`. A hand-built graph is usually not a recognized structure, so keep the `mixed` default here: a custom path finder also disables the structure-rule fast path, and `--route-generation full` would build the complete baseline for every lookup.

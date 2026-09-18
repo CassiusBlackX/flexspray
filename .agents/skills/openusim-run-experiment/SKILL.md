@@ -8,7 +8,7 @@ description: Use when an approved OpenUSim experiment specification needs case g
 ## Overview
 
 Use repo-native tools to turn an approved OpenUSim package into runnable case files and concrete runs.
-For `single-case`, this means one stable `experiment-spec.md`. For `experiment-group`, this means executing the planned matrix and command manifest without inventing new cases, predictions, or output directories. Keep generated Python bounded and explicit: topology scripts must write CSVs directly into each case directory, parameter validation must happen before run, and transport-channel expectations must follow the chosen `transport_channel_mode` (default `on-demand` unless the user explicitly wants precomputed TP mappings).
+For `single-case`, this means one stable `experiment-spec.md`. For `experiment-group`, this means executing the planned matrix and command manifest without inventing new cases, predictions, or output directories. Keep generated Python bounded and explicit: topology scripts must expose `build_topology()` returning the simulation graph, case artifacts are produced by `ub_tools.py topology build` (structured format preferred, with `--route-generation structured` when the topology is a recognized structure and `mixed` as the fallback; CSV only via `--case-format csv`), parameter validation must happen before run, and transport-channel expectations must follow the chosen `transport_channel_mode` (default `on-demand` unless the user explicitly wants precomputed TP mappings).
 
 ## When to Use
 
@@ -30,7 +30,7 @@ All generation and execution happen within `{package_root}/` or explicitly liste
 
 ## The Process
 
-Completion criterion: every planned case has generated case-directory CSVs and `network_attribute.txt`, the case-file gate matches each chosen `transport_channel_mode`, and the run result or explicit failure is recorded in `experiment-spec.md` for `single-case` or `run-ledger.md` for `experiment-group`.
+Completion criterion: every planned case has generated the artifacts for its chosen case format (structured: `structured_topology.txt`, `compressed_routing.bin`, `structured_summary.json`; CSV: `node.csv`, `topology.csv`, `routing_table.csv`) plus `network_attribute.txt`, the case-file gate matches each chosen `transport_channel_mode`, and the run result or explicit failure is recorded in `experiment-spec.md` for `single-case` or `run-ledger.md` for `experiment-group`.
 
 1. **Verify prerequisites:**
    a. **Accept `{planning_mode}` and `{package_root}` from plan stage**
@@ -44,9 +44,9 @@ Completion criterion: every planned case has generated case-directory CSVs and `
 4. **Generate topology script in each case directory:**
    a. Read topology family and parameters from spec
    b. Select code template from `../openusim-references/topology-options.md` Generation Patterns
-   c. Generate `generate_topology.py` by substituting parameters and set `graph.output_dir` to that case directory
-   d. Run the generated script
-   e. Verify outputs: `node.csv`, `topology.csv`, `routing_table.csv`, and `transport_channel.csv` only when `transport_channel_mode = precomputed`; otherwise keep the default `on-demand` path
+   c. Generate `generate_topology.py` by substituting parameters; the script must expose `build_topology()` returning the simulation graph
+   d. Run `ub_tools.py topology build` with `--output-dir` pointing at that case directory, and prefer `--route-generation structured` so route lookups compile from verified structure rather than graph-derived path search; if it fails with `rule routing requires every route lookup to pass equivalence verification`, rerun with the `mixed` default instead of `full`
+   e. Verify outputs for the chosen case format: structured cases need `structured_topology.txt`, `compressed_routing.bin`, and `structured_summary.json`; CSV cases need `node.csv`, `topology.csv`, `routing_table.csv`, and `transport_channel.csv` only when `transport_channel_mode = precomputed`; otherwise keep the default `on-demand` path. When `structured_summary.json` exists, read its `routeGeneration`, `effectiveRoutingMode`, and `ruleCoverage` fields into the run record as the routing provenance for the case
 5. Generate `traffic.csv` through `scratch/ns-3-ub-tools/traffic_maker/build_traffic.py` when the workload is not a reference file.
 6. Validate explicit overrides against the runtime parameter catalog before writing `network_attribute.txt`; stop early on unsupported keys.
 7. Write a full `network_attribute.txt` snapshot through the thin query-based writer.
@@ -128,7 +128,7 @@ Return to `openusim-plan-experiment` when:
 ## Common Mistakes
 
 - Copying or modifying `user_topo_*.py` scripts instead of generating new scripts from code templates.
-- Forgetting to set `graph.output_dir` to the case directory, which leaves generated CSVs under a timestamped subdirectory instead of `{case_dir}/`.
+- Forgetting to point `ub_tools.py topology build --output-dir` at the case directory, which leaves generated artifacts outside `{case_dir}/`. (The legacy v1 form of this mistake was forgetting to set `graph.output_dir`, which left generated CSVs under a timestamped subdirectory.)
 - Treating `custom-graph` as unsupported just because it is not a named topology family.
 - Writing unvalidated override keys into `network_attribute.txt` and discovering the mistake only at run time.
 - Writing legacy override keys such as `ns3::UbQueueManager::ResumeOffset`, `ns3::UbSwitch::EnableCBFC`, `ns3::UbSwitch::EnablePFC`, or `ns3::UbApiThread::*`; use the migration table in `spec-to-toolchain.md`.

@@ -49,16 +49,22 @@ In experiment-group mode, Plan owns the matrix. Run executes only the planned ma
 
 Shared knowledge cards in `openusim-references/`:
 
+- `cbfc-force-control-threshold.md` - CBFC forced credit return, control-frame grain, and pending-credit retention tuning
+- `congestion-control-and-pfc-lessons.md` - DCQCN/ECN/CNP/PFC first-principles and practical experiment rules
 - `controlled-experiment-method.md` - Controlled-variable design, experiment-group package contract, checkpoint policy, run ledger, and prediction-vs-actual analysis
+- `count-based-round-robin-work-imbalance.md` - Why count-based round robin balances assignment counts, not work
+- `mtp-task-start-determinism.md` - MTP vs single-thread determinism for synchronized traffic DAGs and collectives
+- `queue-backpressure-vs-topology.md` - Queue backpressure concepts
+- `routing-strategy-selection.md` - Per-flow/per-packet routing strategy and path-scope selection
+- `spec-rules.md` - Experiment spec format rules
+- `spec-to-toolchain.md` - Spec-to-toolchain mapping
+- `stuck-simulation-debugging-lessons.md` - Separating stuck, slow, and dependency-blocked simulations
+- `switch-allocator-arbitration-fidelity.md` - Per-output arbitration fidelity boundary and the measured iSLIP upgrade path
+- `throughput-evidence.md` - Throughput and line-rate interpretation
+- `topology-options.md` - Supported topology families and bounded `custom-graph` flow
 - `trace-observability.md` - Trace/debug semantics
 - `transport-channel-modes.md` - Transport channel semantics
-- `throughput-evidence.md` - Throughput and line-rate interpretation
-- `routing-strategy-selection.md` - Per-flow/per-packet routing strategy and path-scope selection
-- `spec-to-toolchain.md` - Spec-to-toolchain mapping
-- `topology-options.md` - Supported topology families and bounded `custom-graph` flow
 - `workload-options.md` - Workload modes
-- `spec-rules.md` - Experiment spec format rules
-- `queue-backpressure-vs-topology.md` - Queue backpressure concepts
 
 Each knowledge card exposes a structured `<reference-hint>` block near the top so skills can route by `<use-when>`, `<focus>`, and `<keywords>` before reading the full card.
 

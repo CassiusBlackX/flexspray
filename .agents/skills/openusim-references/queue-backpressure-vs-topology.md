@@ -22,9 +22,9 @@ A fabric can satisfy `1` and still fail at `2` to `4`.
 - `non-oversubscribed` or `full-bisection` only constrains long-term graph capacity. It does not guarantee zero queue buildup at every instant.
 - Switch forwarding drops at ingress admission time when local buffer space is insufficient:
   - `src/unified-bus/model/ub-switch.cc`: `CheckInPortSpace(...)` failure logs `buffer full. Packet Dropped!`
-- `ns3::UbSwitch::FlowControl` default is `NONE`:
+- `ns3::UbSwitch::FlowControl` default is `CBFC`:
   - `src/unified-bus/model/ub-switch.cc`
-- With `FlowControl = NONE`, there is no upstream credit-based throttling before enqueue.
+- Only an explicit `FlowControl = NONE` removes upstream credit-based throttling before enqueue.
 - The switch allocator consults `IsFcLimited(...)` before selecting a queue to send:
   - `src/unified-bus/model/ub-switch-allocator.cc`
 - `CBFC` implements credit consume/restore and can block sending before downstream space is overrun:

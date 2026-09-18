@@ -169,7 +169,7 @@ See `src/unified-bus/doc/atomic-support.md` for API and runner examples.
 
 ### MegaMoE local phase markers
 
-`scratch/dsv4-megamoe/generate_traffic.py` emits routing-derived variable-size
+The MegaMoE workload generator emits routing-derived variable-size
 Dispatch/Combine rows and local block/wave compute tasks. A local owner does not
 need a network transfer, so the generator emits `LOCAL_READY` in the phase to
 preserve the all-of DAG without charging the UBPU compute resource. Its local

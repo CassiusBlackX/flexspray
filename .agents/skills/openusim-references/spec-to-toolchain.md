@@ -48,8 +48,13 @@ its topology input or needs a manual route table.
    - Adjust bandwidth/delay if specified in Network Overrides
    - Adjust priority_list if specified in Network Overrides
 4. **For prepared structured routing**, record two commands in the manifest. First prepare:
-   `python3 scratch/ns-3-ub-tools/ub_tools.py topology build {case_dir}/generate_topology.py --output-dir {case_dir} --route-generation mixed`.
-   Then run: `python3 scratch/run_structured_topo_case.py --case-path {case_dir} --route-runtime-mode compressed-table-lookup`.
+   `python3 scratch/ns-3-ub-tools/ub_tools.py topology build {case_dir}/generate_topology.py --output-dir {case_dir} --route-generation structured`.
+   Prefer `structured` for any topology the tool can recognize: it derives every route lookup from
+   verified structure instead of enumerating host-pair paths, which is what keeps large cases
+   compiling in reasonable time. When the build fails with
+   `rule routing requires every route lookup to pass equivalence verification`, rerun with `mixed`
+   (the CLI default) rather than `full`. Then run:
+   `python3 scratch/run_structured_topo_case.py --case-path {case_dir} --route-runtime-mode compressed-table-lookup`.
 5. **For CSV output**, use the same generated builder with
    `python3 scratch/ns-3-ub-tools/ub_tools.py topology build {case_dir}/generate_topology.py --output-dir {case_dir} --case-format csv`.
    This defaults to full route generation; structured and mixed route generation require the
@@ -61,6 +66,11 @@ its topology input or needs a manual route table.
 
 ### Important Rules
 
+- **Prefer** the structured case format and rule-based route generation for every new case. Reach for
+  `--case-format csv` only when the experiment explicitly needs CSV topology input or a manual route
+  table, and for `--route-generation full` only as a compatibility or verification baseline. `full`
+  enumerates candidates from the physical graph for the whole topology, so its cost grows with the
+  host-pair count; `structured` and `mixed` avoid most of that work.
 - **Do NOT** copy or modify `scratch/ns-3-ub-tools/user_topo_*.py` scripts
 - **Do NOT** run `net_sim_builder.py` directly (it's a library, not a CLI)
 - **Do NOT** reuse scripts across cases (each case gets its own generated script)
@@ -424,15 +434,11 @@ write_network_attributes(
 
 Refer to `trace-observability.md` for tier semantics and safe wording constraints.
 
-Validate lifecycle artifacts independently after a run:
-
-```bash
-python3 scratch/ns-3-ub-tools/trace_analysis/lifecycle_trace.py {case_dir}
-```
-
-The lifecycle parser requires the C++-emitted schema metadata and rejects missing metadata,
-unsupported versions or enum values, and inconsistent MPI-rank registries. It does not replace the
-existing task or throughput parsers.
+Lifecycle artifacts carry C++-emitted schema metadata (`LifecycleTraceSchema*.json`). There is
+currently no standalone Python lifecycle validator in `scratch/ns-3-ub-tools/`; the legacy
+`trace_analysis/lifecycle_trace.py` entry point was removed with the tools v2 CLI migration. Validate
+lifecycle evidence through `ub_tools.py trace parse` outputs and the schema metadata files until a
+dedicated validator is restored.
 
 ## Execution
 
