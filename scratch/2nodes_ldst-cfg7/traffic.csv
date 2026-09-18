@@ -1,0 +1,5 @@
+taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,srcPortId,dstPortId
+0,0,1,4096,MEM_STORE,7,10ns,0,,,
+1,1,0,4096,MEM_LOAD,7,10ns,0,,,
+2,1,0,4096,MEM_STORE,7,10ns,0,,0,0
+3,0,1,4096,MEM_LOAD,7,10ns,0,,0,0

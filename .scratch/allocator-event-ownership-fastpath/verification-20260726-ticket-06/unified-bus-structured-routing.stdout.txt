@@ -1,4 +1,0 @@
-[13:14:34] [setup] Load node.csv
-[13:14:34] [setup] Load routing_table.csv
-[13:14:34] [setup] Install structured topology and routing
-[13:14:34] [setup] Install structured topology and routing

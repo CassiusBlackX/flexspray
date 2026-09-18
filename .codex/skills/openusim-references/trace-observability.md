@@ -12,7 +12,7 @@
 |------|--------|----------------------|
 | minimal | 只要任务级统计，最快跑完 | `task_statistics.csv`（仅任务起止，无首包/末ACK）；lifecycle `OFF` |
 | balanced | 任务 + 包 + 端口，够用的排查能力 | `task_statistics.csv`（含首包/末ACK）+ `throughput.csv` + lifecycle `SUMMARY` |
-| detailed | 全开，含逐包逐跳路径证据 | 同 balanced + `AllPacketTrace_*.tr` + lifecycle `EVENT` |
+| detailed | 全开，含逐包逐跳路径证据 | 同 balanced + `AllPacketTrace_*.csv` + lifecycle `EVENT` |
 | custom | 用户自选开关组合 | 可显式选择 lifecycle `DETAIL`，其余取决于所选开关 |
 
 Use `observability_preset(tier)` from `network_attribute_writer` to get the concrete overrides dict.
@@ -27,8 +27,11 @@ Do not hardcode switch names in experiment specs or agent logic.
 - `trace/debug` mode is an attribute overlay on `network_attribute.txt`, not a separate simulation result.
 - `UB_QUEUE_TRACE_ENABLE` gates queue trace files such as `QueueTrace_*` from queue events and periodic sampling.
 - `QueueTrace` includes processing residency in output-port occupancy; DCQCN/CAQM Queue Backlog includes only VOQ and egress queued bytes.
-- `UB_PACKET_TRACE_ENABLE` gates packet timing files such as `PacketTrace_node_*.tr`,
+- `UB_PACKET_TRACE_ENABLE` gates packet timing files such as `PacketTrace_node_*.csv`,
   including CTP first-send and last-ACK rows.
+- New trace producers use fixed-header CSV files and integer `time_ps` columns so the
+  sub-nanosecond precision of the old timestamp rendering is retained without prose parsing.
+  The task and throughput parsers still accept legacy `.tr` fixtures for migration and replay.
 - `QueueTrace_*` can include ingress queue occupancy rows with the `ingress` marker when `UB_QUEUE_TRACE_ENABLE` is enabled.
 - `UB_FLOW_CONTROL_TRACE_ENABLE` gates algorithm-emitted flow-control trace files such as `PfcTrace_*`, `PfcDynamicTrace_*`, and `CbfcTrace_*`.
 - `UB_CONGESTION_CONTROL_TRACE_ENABLE` gates algorithm-emitted congestion-control trace files such as `DcqcnMarkTrace_*`, `DcqcnCnpTrace_*`, `DcqcnSenderTrace_*`, `CaqmAckTrace_*`, and `CaqmSenderTrace_*`.

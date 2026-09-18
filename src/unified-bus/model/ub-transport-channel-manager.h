@@ -135,7 +135,10 @@ class UbTransportChannelManager : public Object
         const UbLifecycleResourceIdentity& expectedIdentity);
     UbDestroyStatus DestroyTp(uint32_t tpn,
                               UbDestroyReason reason = UbDestroyReason::EXPLICIT,
-                              UbDestroyCallback callback = {});
+                              UbDestroyCallback callback = {},
+                              bool releaseConnectionDrainHold = false);
+    /** Freeze an endpoint for a paired connection destroy without deleting its transport state. */
+    void FreezeTp(uint32_t tpn);
     void NotifyStateChanged(uint32_t tpn);
     void ForceDispose();
 
@@ -157,6 +160,7 @@ class UbTransportChannelManager : public Object
         EndpointState state{EndpointState::LIVE};
         UbDestroyReason reason{UbDestroyReason::EXPLICIT};
         std::vector<UbDestroyCallback> callbacks;
+        bool connectionDrainHold{false};
     };
 
     Ptr<UbTransportChannel> CreateReservedTpEndpointLocked(uint32_t tpn, bool drainOnly = false);

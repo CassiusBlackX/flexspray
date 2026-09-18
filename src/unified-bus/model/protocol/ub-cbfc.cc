@@ -109,7 +109,7 @@ void UbCbfc::DoDispose()
 bool UbCbfc::IsFcLimited(Ptr<UbIngressQueue> ingressQ)
 {
     uint32_t nextPktSize = 0;
-    const uint32_t priority = ingressQ->GetIngressPriority();
+    const uint32_t vl = ingressQ->GetIngressPriority();
     if (ingressQ->GetIngressQueueType() == IngressQueueType::VOQ && ingressQ->IsControlFrame()) {
         NS_LOG_DEBUG("is crd pkt");
         return false;
@@ -119,24 +119,26 @@ bool UbCbfc::IsFcLimited(Ptr<UbIngressQueue> ingressQ)
     NS_LOG_DEBUG("nextPktSize:" << nextPktSize);
 
     int32_t consumeCellNum = ceil((float)nextPktSize / (m_cbfcCfg.m_flitLen * m_cbfcCfg.m_nFlitPerCell));
-    const bool blocked = m_crdTxfree[priority] < consumeCellNum;
-    if (m_creditBlockedLast[priority] != blocked) {
+    const bool blocked = m_crdTxfree[vl] < consumeCellNum;
+    if (m_creditBlockedLast[vl] != blocked) {
         utils::UbUtils::CbfcStateNotify(m_nodeId,
                                         m_portId,
                                         blocked ? "BLOCK" : "RESUME",
-                                        priority,
-                                        m_crdTxfree[priority],
-                                        nextPktSize);
-        m_creditBlockedLast[priority] = blocked;
+                                        vl,
+                                        m_crdTxfree[vl],
+                                        nextPktSize,
+                                        static_cast<uint32_t>(m_cbfcCfg.m_flitLen) *
+                                            m_cbfcCfg.m_nFlitPerCell);
+        m_creditBlockedLast[vl] = blocked;
     }
     if (blocked) {
         NS_LOG_INFO("Flow Control Credit Limited,outPort:{" << ingressQ->GetOutPortId() << "} VL:{"
-                                                            << priority << "}");
-        NS_LOG_DEBUG("m_crdTxfree[ " << priority << " ]: " << m_crdTxfree[priority]
+                                                            << vl << "}");
+        NS_LOG_DEBUG("m_crdTxfree[ " << vl << " ]: " << m_crdTxfree[vl]
                                      << "is insufficient");
         return true;
     }
-    NS_LOG_DEBUG("m_crdTxfree[ " << priority << " ]: " << m_crdTxfree[priority]
+    NS_LOG_DEBUG("m_crdTxfree[ " << vl << " ]: " << m_crdTxfree[vl]
                                  << "is enough");
 
     return false;
@@ -145,7 +147,11 @@ bool UbCbfc::IsFcLimited(Ptr<UbIngressQueue> ingressQ)
 void UbCbfc::OnIngressReleased(const UbFlowControlEventContext& context)
 {
     if (context.inPortId != context.outPortId) { // 转发的报文
-        AccumulateReturnedCredit(context.packet, m_portId);
+        // A recovered packet whose upstream credit was already returned when it left the original
+        // ingress must release its new buffer occupancy without returning that credit twice.
+        if (!context.upstreamCreditAlreadyReturned) {
+            AccumulateReturnedCredit(context.packet, m_portId);
+        }
         MaybeQueueControlReturn(m_portId);
     }
 }
@@ -233,7 +239,9 @@ bool UbCbfc::CbfcConsumeCrd(Ptr<Packet> p)
                                               "CONSUME",
                                               vlId,
                                               m_crdTxfree[vlId],
-                                              -consumeCellNum);
+                                              -consumeCellNum,
+                                              static_cast<uint32_t>(m_cbfcCfg.m_flitLen) *
+                                                  m_cbfcCfg.m_nFlitPerCell);
         NS_LOG_DEBUG("left m_crdTxfree[ " << (uint32_t)vlId << " ]: " << m_crdTxfree[vlId]);
         return true;
     }
@@ -248,7 +256,8 @@ bool UbCbfc::CbfcRestoreCrd(Ptr<Packet> p)
 
     NS_LOG_DEBUG("NodeId: " << m_nodeId << " PortId: " << m_portId);
     port->ResetCredits();
-    UbDatalinkControlCreditHeader crdHeader = UbDataLink::ParseCreditHeader(p, port);
+    UbDatalinkControlCreditHeader crdHeader =
+        UbDataLink::ConsumeCreditHeaderAndRestoreCredits(p, port);
 
     uint32_t resumeCellGrainNum = 0;
     bool ret = false;
@@ -258,9 +267,13 @@ bool UbCbfc::CbfcRestoreCrd(Ptr<Packet> p)
 
     std::vector<uint8_t> restoredCredits;
     restoredCredits.reserve(ubVlNum);
+    std::vector<int32_t> restoredCreditCells;
+    restoredCreditCells.reserve(ubVlNum);
     for (int index = 0; index < ubVlNum; index++) {
         NS_LOG_DEBUG("port m_credits[ " << (uint32_t)index << " ]: " << (uint32_t)port->m_credits[index]);
         restoredCredits.push_back(port->m_credits[index]);
+        restoredCreditCells.push_back(static_cast<int32_t>(port->m_credits[index]) *
+                                      m_cbfcCfg.m_retCellGrainControlPacket);
     }
 
     for (int index = 0; index < ubVlNum; index++) {
@@ -273,7 +286,10 @@ bool UbCbfc::CbfcRestoreCrd(Ptr<Packet> p)
                                                   "RESTORE",
                                                   index,
                                                   m_crdTxfree[index],
-                                                  static_cast<int32_t>(resumeCellGrainNum * m_cbfcCfg.m_retCellGrainControlPacket));
+                                                  static_cast<int32_t>(resumeCellGrainNum *
+                                                                       m_cbfcCfg.m_retCellGrainControlPacket),
+                                                  static_cast<uint32_t>(m_cbfcCfg.m_flitLen) *
+                                                      m_cbfcCfg.m_nFlitPerCell);
             NS_LOG_DEBUG("left m_crdTxfree[ " << (uint32_t)index << " ]: " << m_crdTxfree[index]);
             ret = true;
         }
@@ -282,7 +298,11 @@ bool UbCbfc::CbfcRestoreCrd(Ptr<Packet> p)
     if (ret)
     {
         ControlCreditRestoreNotify(m_nodeId, m_portId, restoredCredits);
-        utils::UbUtils::CbfcCreditRestoreTraceNotify(m_nodeId, m_portId, restoredCredits);
+        utils::UbUtils::CbfcCreditRestoreTraceNotify(
+            m_nodeId,
+            m_portId,
+            restoredCreditCells,
+            static_cast<uint32_t>(m_cbfcCfg.m_flitLen) * m_cbfcCfg.m_nFlitPerCell);
     }
 
     Simulator::ScheduleNow(&UbPort::TriggerTransmit, port);
@@ -358,10 +378,11 @@ Ptr<Packet> UbCbfc::BuildControlReturnPacket(uint32_t targetPortId,
     if (!shouldReturnCredit) {
         return nullptr;
     }
-    std::vector<uint8_t> sendCredits;
-    sendCredits.reserve(ubVlNum);
+    std::vector<int32_t> sendCreditCells;
+    sendCreditCells.reserve(ubVlNum);
     for (int index = 0; index < ubVlNum; ++index) {
-        sendCredits.push_back(port->m_credits[index]);
+        sendCreditCells.push_back(static_cast<int32_t>(port->m_credits[index]) *
+                                  m_cbfcCfg.m_retCellGrainControlPacket);
     }
     utils::UbUtils::CbfcControlSendNotify(
         m_nodeId,
@@ -370,8 +391,9 @@ Ptr<Packet> UbCbfc::BuildControlReturnPacket(uint32_t targetPortId,
         m_cbfcCfg.m_ctrlCrdRtrThldCells,
         minPendingCells,
         pendingSnapshot,
-        sendCredits);
-    return UbDataLink::GenControlCreditPacket(port->m_credits);
+        sendCreditCells,
+        static_cast<uint32_t>(m_cbfcCfg.m_flitLen) * m_cbfcCfg.m_nFlitPerCell);
+    return UbDataLink::BuildControlCreditPacket(port->m_credits);
 }
 
 Ptr<Packet>
@@ -454,7 +476,9 @@ UbCbfc::RestoreDataPacketCredit(Ptr<Packet> p)
                                           "RESTORE",
                                           targetVl,
                                           m_crdTxfree[targetVl],
-                                          restoreCells);
+                                          restoreCells,
+                                          static_cast<uint32_t>(m_cbfcCfg.m_flitLen) *
+                                              m_cbfcCfg.m_nFlitPerCell);
 
     header.SetCredit(false);
     header.SetCreditTargetVL(0);
@@ -466,8 +490,10 @@ UbCbfc::RestoreDataPacketCredit(Ptr<Packet> p)
 bool
 UbCbfc::ShouldForceControlReturn() const
 {
-    for (int32_t pending : m_crdToReturn) {
-        if (pending >= m_cbfcCfg.m_ctrlCrdRtrThldCells) {
+    for (int32_t creditsToReturn : m_crdToReturn)
+    {
+        if (creditsToReturn >= m_cbfcCfg.m_ctrlCrdRtrThldCells)
+        {
             return true;
         }
     }
@@ -637,7 +663,8 @@ bool UbCbfcSharedCredit::CbfcSharedRestoreCrd(Ptr<Packet> p)
 
     NS_LOG_DEBUG("NodeId: " << m_nodeId << " PortId: " << m_portId);
     port->ResetCredits();
-    UbDatalinkControlCreditHeader crdHeader = UbDataLink::ParseCreditHeader(p, port);
+    UbDatalinkControlCreditHeader crdHeader =
+        UbDataLink::ConsumeCreditHeaderAndRestoreCredits(p, port);
 
     uint32_t resumeCellGrainNum = 0;
     bool ret = false;

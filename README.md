@@ -9,15 +9,14 @@
   <a href="https://gitcode.com/open-usim/ns-3-ub">GitCode</a> ·
   <a href="QUICK_START.md">快速开始</a> ·
   <a href="scratch/README.md">场景指南</a> ·
-  <a href="docs/experiments/main-next-controlled-comparison-20260802.md">next 验证报告</a> ·
-  <a href="RELEASE_NOTES_UB.md#release-200">发布说明</a> ·
+  <a href="RELEASE_NOTES_UB.md#release-210">发布说明</a> ·
   <a href="README_en.md">English</a>
 </p>
 
 <p align="center">
   <a href="https://gitcode.com/open-usim/ns-3-ub"><img src="https://img.shields.io/static/v1?label=GitCode&message=open-usim%2Fns-3-ub&color=C71D23&logo=git&logoColor=white" alt="GitCode repository"></a>
   <a href="https://www.unifiedbus.com"><img src="https://img.shields.io/static/v1?label=spec&message=UnifiedBus&color=111827" alt="UnifiedBus specification"></a>
-  <a href="RELEASE_NOTES_UB.md#release-200"><img src="https://img.shields.io/static/v1?label=release&message=2.0.0&color=6F42C1" alt="Release 2.0.0"></a>
+  <a href="RELEASE_NOTES_UB.md#release-210"><img src="https://img.shields.io/static/v1?label=release&message=2.1.0&color=6F42C1" alt="Release 2.1.0"></a>
   <a href="LICENSE"><img src="https://img.shields.io/static/v1?label=license&message=GPL-2.0&color=97CA00" alt="GPL-2.0 license"></a>
   <br>
   <a href="src/unified-bus"><img src="https://img.shields.io/static/v1?label=language&message=C%2B%2B20&color=00599C&logo=cplusplus&logoColor=white" alt="C++20"></a>
@@ -28,9 +27,9 @@
 </p>
 
 <p align="center">
-  <strong>Release 2.0.0</strong> · 2026 年 9 月<br>
-  结构化拓扑与路由 · 显式资源生命周期管理 · 端口级流量配置 · 集合通信调度<br>
-  <a href="RELEASE_NOTES_UB.md#release-200">完整发布说明 →</a>
+  <strong>Release 2.1.0</strong> · 2026 年 9 月<br>
+  灵衢基础规范 2.1 版本 · 丰富事务类型 完善传输层模式 支持网络层可靠重路由<br>
+  <a href="RELEASE_NOTES_UB.md#release-210">完整发布说明 →</a>
 </p>
 
 ---
@@ -43,9 +42,9 @@
 
 ## 项目概述
 
-`ns-3-UB` 是基于[灵衢基础规范](https://www.unifiedbus.com/zh)的 ns-3 仿真模块，实现了功能层、事务层、传输层、网络层和数据链路层的协议框架与配套算法，可用于协议研究、网络架构探索以及拥塞控制、流量控制、负载均衡、路由算法等方向的仿真验证。
+`ns-3-UB` 是基于[灵衢基础规范 2.1 版本](https://www.unifiedbus.com/zh)的 ns-3 仿真模块，实现了功能层、事务层、传输层、网络层和数据链路层的协议框架与配套算法，可用于协议研究、网络架构探索以及拥塞控制、流量控制、负载均衡、路由算法等方向的仿真验证。
 
-> 本项目力求与灵衢基础规范保持一致，但仿真实现与规范之间仍可能存在差异。请以灵衢基础规范为权威参考。
+> 本项目参考灵衢基础规范实现，仿真行为与规范之间可能存在差异。请以灵衢基础规范为权威参考。
 
 `ns-3-UB` 可用于研究：
 
@@ -84,55 +83,55 @@
     </tr>
     <tr>
       <td align="center" rowspan="3">事务层</td>
-      <td>服务模式</td>
+      <td>事务服务模式</td>
       <td>ROI、ROL、UNO</td>
       <td>ROT</td>
     </tr>
     <tr>
-      <td>事务序</td>
+      <td>事务保序</td>
       <td>NO / RO / SO</td>
       <td>—</td>
     </tr>
     <tr>
       <td>事务类型</td>
-      <td>Write、Read、Send</td>
-      <td>Atomic、Write_with_notify 等</td>
+      <td>Write、Read、Send、Writeback；<a href="src/unified-bus/doc/atomic-support.md">Atomic（网络行为模型）</a>；队列事务</td>
+      <td>Write_with_BE、Write_with_remote_sync 等</td>
     </tr>
     <tr>
       <td align="center" rowspan="4">传输层</td>
-      <td>服务模式</td>
-      <td>RTP</td>
-      <td>UTP、CTP</td>
+      <td>传输模式</td>
+      <td>RTP、CTP</td>
+      <td>UTP</td>
     </tr>
     <tr>
-      <td>可靠性</td>
+      <td>可靠传输机制</td>
       <td>PSN、超时重传、Go-Back-N、选择性重传、快速选择性重传</td>
       <td>更多用户自定义可靠传输策略</td>
     </tr>
     <tr>
       <td>拥塞控制</td>
-      <td>RTP 拥塞控制机制、C-AQM、DCQCN</td>
+      <td>RTP 拥塞控制机制、CAQM、DCQCN</td>
       <td>LDCP、CTP 拥塞控制机制</td>
     </tr>
     <tr>
-      <td>负载均衡</td>
+      <td>多路径负载均衡</td>
       <td>RTP 负载均衡：TPG 机制、逐 TP / 逐包负载均衡、乱序接收</td>
       <td>CTP 负载均衡</td>
     </tr>
     <tr>
       <td align="center" rowspan="5">网络层</td>
       <td>报文格式</td>
-      <td>支持基于 IPv4 地址格式的包头、基于 16-bit CNA 地址格式的包头</td>
+      <td>基于 IP / 16-bit CNA / 24-bit CNA 地址格式的包头、TP Bypass（CFG7）</td>
       <td>其余包头格式</td>
     </tr>
     <tr>
-      <td>地址管理</td>
+      <td>网络地址管理</td>
       <td>CNA 与 IP 地址转换、Primary / Port CNA</td>
       <td>用户可自定义的地址分配与转换策略</td>
     </tr>
     <tr>
       <td>路由查找</td>
-      <td>基于目的地址 + 包头 RT 域段的基础路由策略、基于路径 Cost 的路由策略、基于 Hash 的 ECMP、基于负载均衡因子的逐流/逐包 Hash、基于端口负载的自适应路由</td>
+      <td>基于目的地址 + 包头 RT 域段的基础路由策略、基于路径 Cost 的路由策略、基于 Hash 的 ECMP、基于负载均衡因子的逐流/逐包 Hash、基于端口负载的自适应路由、可靠重路由</td>
       <td>用户可自定义路由策略</td>
     </tr>
     <tr>
@@ -142,17 +141,22 @@
     </tr>
     <tr>
       <td>拥塞标记</td>
-      <td>基于包头 CC 域段的 C-AQM 标记模式、DCQCN FECN 标记模式</td>
+      <td>基于包头 CC 域段的 CAQM 标记模式、DCQCN FECN 标记模式</td>
       <td>FECN_RTT 标记模式</td>
     </tr>
     <tr>
-      <td align="center" rowspan="3">数据链路层</td>
+      <td align="center" rowspan="5">数据链路层</td>
+      <td>数据链路层包头配置</td>
+      <td>CFG9（16-bit CNA 地址）、CFG7（24-bit CNA 地址）</td>
+      <td>—</td>
+    </tr>
+    <tr>
       <td>报文收发</td>
       <td>报文粒度建模</td>
       <td>Cell / Flit 粒度建模</td>
     </tr>
     <tr>
-      <td>虚通道</td>
+      <td>虚拟通道</td>
       <td>点到点链路最多支持 16 个 VL、基于 SP/DWRR 的 VL 间调度</td>
       <td>用户可自定义的 VL 间调度策略</td>
     </tr>
@@ -160,6 +164,11 @@
       <td>信用流控</td>
       <td>CBFC（独占信用 / 共享信用）、PFC（固定阈值 / 动态阈值）</td>
       <td>控制面的信用初始化行为、用户自定义信用共享策略</td>
+    </tr>
+    <tr>
+      <td>包率控制</td>
+      <td>静态、动态包率控制</td>
+      <td>—</td>
     </tr>
   </tbody>
 </table>
@@ -219,7 +228,7 @@ UB 模块是基于灵衢基础规范实现的仿真组件：
 - **Queue Manager** (`ub-queue-manager.*`) - 缓冲区管理模块，影响负载均衡、流量控制、排队、丢包等行为
 - **Routing Process** (`ub-routing-process.*`) - 路由表模块，实现了路由表的管理与查询功能
 - **Congestion Control** (`ub-congestion-control.*`) - 拥塞控制算法框架模块
-- **拥塞控制算法** (`ub-caqm.*`, `ub-dcqcn.*`) - C-AQM 与 DCQCN 拥塞控制算法实现
+- **拥塞控制算法** (`ub-caqm.*`, `ub-dcqcn.*`) - CAQM 与 DCQCN 拥塞控制算法实现
 - **Flow Control** (`ub-flow-control.*`) - 流量控制框架模块
 - **故障注入模块** (`ub-fault.*`) - 用于在特定流量过程中注入丢包率、高时延、拥塞程度、错包、闪断、降 lane 等故障参数
 
@@ -247,7 +256,7 @@ UB 模块是基于灵衢基础规范实现的仿真组件：
 #### 协议算法支持
 
 - **流量控制**：实现基于信用的流量控制（CBFC 独占/共享信用）和基于优先级的流量控制（PFC 固定阈值/动态阈值）
-- **拥塞控制**：实现拥塞控制算法常用的网侧标记、接收端回复、发送端响应框架，支持 C-AQM 与 DCQCN 算法
+- **拥塞控制**：实现拥塞控制算法常用的网侧标记、接收端回复、发送端响应框架，支持 CAQM 与 DCQCN 算法
 - **路由策略**：支持最短路由、绕路策略，以及逐流/逐包的 Hash、Round Robin、自适应和入端口条带选择
 - **QoS 支持**：提供端到端 QoS 支持，当前支持 SP 与 DWRR 调度策略
 - **交换仲裁**：模块化实现 UB Switch 的交换仲裁机制建模，当前支持 SP 与 DWRR 调度
@@ -283,6 +292,13 @@ UB 模块是基于灵衢基础规范实现的仿真组件：
 
 上述 Skills 与主仓代码及 `ns-3-ub-tools` 子模块紧密耦合，随仓库统一维护。
 
+### Unified Bus 事务规范范围
+
+当前实现符合 UB-DOC 2.0 的已实现子集：RTP/CTP 的 BTAH 请求与 ATAH/compact 响应、规则驱动
+的 Read/Atomic Payload、outstanding request 响应匹配、Atomic Load/Store 子操作输入校验和
+Management 状态字段。BE request、ROT/ROL/UNO、LDST、真实原子值语义、Management 命令效果及
+完整 CTP 公共格式迁移明确属于未实现/范围外；因此项目不声称完整 UB-DOC 合规。
+
 ## 许可证
 
 本项目遵循 ns-3 许可证协议，GPL v2。详见 [`LICENSE`](LICENSE) 文件。
@@ -294,7 +310,7 @@ UB 模块是基于灵衢基础规范实现的仿真组件：
   month = {9},
   title = {{ns-3-UB: UnifiedBus Network Simulation Framework}},
   url = {https://gitcode.com/open-usim/ns-3-ub},
-  version = {2.0.0},
+  version = {2.1.0},
   year = {2026}
 }
 ```

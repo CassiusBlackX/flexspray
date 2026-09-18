@@ -59,9 +59,14 @@ struct UbGbnPacketDescriptor
     uint32_t progressBytes{0};
     uint32_t payloadBytes{0};
     uint32_t wireLengthBytes{0};
+    uint64_t remoteAddress{0};
+    uint32_t remoteTokenId{0};
+    UbTransactionFields transactionFields;
+    Ptr<const Packet> explicitPayload;
     uint32_t taskId{0};
     uint32_t wqeSize{0};
-    TaOpcode taOpcode{TaOpcode::TA_OPCODE_SEND};
+    UbTransactionOpcode taOpcode{UbTransactionOpcode::SEND};
+    UbTransactionOpcode requestOpcode{UbTransactionOpcode::SEND};
     UbTransactionSegmentKind segmentKind{UbTransactionSegmentKind::REQUEST};
     uint32_t taSsn{0};
     uint32_t requestTaSsn{0};
@@ -102,6 +107,8 @@ public:
     uint32_t GetNextRetransmissionSize() const;
     uint32_t GetNextRetransmissionProgressBytes() const;
     uint32_t GetNextRetransmissionPayloadBytes() const;
+    /** Descriptor of the packet the next GBN retransmission will rebuild, or nullptr. */
+    const UbGbnPacketDescriptor* GetNextRetransmissionDescriptor() const;
     uint32_t GetRetransmissionPayloadBytesFrom(uint64_t psn) const;
     bool HasOutstandingDescriptors() const;
     void AcknowledgePrefix(uint64_t newSndUna);
@@ -260,6 +267,8 @@ public:
     uint32_t GetNextGbnRetransmissionSize() const;
     uint32_t GetNextGbnRetransmissionProgressBytes() const;
     uint32_t GetNextGbnRetransmissionPayloadBytes() const;
+    /** Descriptor of the packet the next GBN retransmission will rebuild, or nullptr. */
+    const UbGbnPacketDescriptor* GetNextGbnRetransmissionDescriptor() const;
     void RetireGbnSegment(const UbTransactionCorrelationIdentity& correlation,
                           uint64_t psnStart,
                           uint64_t psnEnd);

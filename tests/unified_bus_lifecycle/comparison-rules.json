@@ -4,11 +4,11 @@
     "medium-cross-owner-runtime-hybrid": {
       "artifacts": [
         {
-          "path": "canonical-events.rank0.txt",
+          "path": "canonical.rank0.txt",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "canonical-events.rank1.txt",
+          "path": "canonical.rank1.txt",
           "comparison": "raw-byte-equality"
         },
         {
@@ -32,43 +32,43 @@
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/AllPacketTrace_ACK_node_0.tr",
+          "path": "runlog/AllPacketTrace_ACK_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/AllPacketTrace_ACK_node_1.tr",
+          "path": "runlog/AllPacketTrace_ACK_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/AllPacketTrace_PKT_node_0.tr",
+          "path": "runlog/AllPacketTrace_PKT_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/AllPacketTrace_PKT_node_1.tr",
+          "path": "runlog/AllPacketTrace_PKT_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PacketTrace_node_0.tr",
+          "path": "runlog/PacketTrace_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PacketTrace_node_1.tr",
+          "path": "runlog/PacketTrace_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_0_port_0.tr",
+          "path": "runlog/PortTrace_node_0_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_1_port_0.tr",
+          "path": "runlog/PortTrace_node_1_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/TaskTrace_node_0.tr",
+          "path": "runlog/TaskTrace_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/TaskTrace_node_1.tr",
+          "path": "runlog/TaskTrace_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
@@ -89,11 +89,11 @@
     "medium-cross-owner-runtime-mpi": {
       "artifacts": [
         {
-          "path": "canonical-events.rank0.txt",
+          "path": "canonical.rank0.txt",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "canonical-events.rank1.txt",
+          "path": "canonical.rank1.txt",
           "comparison": "raw-byte-equality"
         },
         {
@@ -117,43 +117,43 @@
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/AllPacketTrace_ACK_node_0.tr",
+          "path": "runlog/AllPacketTrace_ACK_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/AllPacketTrace_ACK_node_1.tr",
+          "path": "runlog/AllPacketTrace_ACK_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/AllPacketTrace_PKT_node_0.tr",
+          "path": "runlog/AllPacketTrace_PKT_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/AllPacketTrace_PKT_node_1.tr",
+          "path": "runlog/AllPacketTrace_PKT_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PacketTrace_node_0.tr",
+          "path": "runlog/PacketTrace_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PacketTrace_node_1.tr",
+          "path": "runlog/PacketTrace_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_0_port_0.tr",
+          "path": "runlog/PortTrace_node_0_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_1_port_0.tr",
+          "path": "runlog/PortTrace_node_1_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/TaskTrace_node_0.tr",
+          "path": "runlog/TaskTrace_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/TaskTrace_node_1.tr",
+          "path": "runlog/TaskTrace_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
@@ -174,7 +174,7 @@
     "medium-cross-owner-runtime-local": {
       "artifacts": [
         {
-          "path": "canonical-events.rank0.txt",
+          "path": "canonical.rank0.txt",
           "comparison": "raw-byte-equality"
         },
         {
@@ -198,43 +198,43 @@
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/AllPacketTrace_ACK_node_0.tr",
+          "path": "runlog/AllPacketTrace_ACK_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/AllPacketTrace_ACK_node_1.tr",
+          "path": "runlog/AllPacketTrace_ACK_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/AllPacketTrace_PKT_node_0.tr",
+          "path": "runlog/AllPacketTrace_PKT_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/AllPacketTrace_PKT_node_1.tr",
+          "path": "runlog/AllPacketTrace_PKT_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PacketTrace_node_0.tr",
+          "path": "runlog/PacketTrace_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PacketTrace_node_1.tr",
+          "path": "runlog/PacketTrace_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_0_port_0.tr",
+          "path": "runlog/PortTrace_node_0_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_1_port_0.tr",
+          "path": "runlog/PortTrace_node_1_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/TaskTrace_node_0.tr",
+          "path": "runlog/TaskTrace_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/TaskTrace_node_1.tr",
+          "path": "runlog/TaskTrace_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
@@ -255,7 +255,7 @@
     "medium-ctp-entity-vl-pressure": {
       "artifacts": [
         {
-          "path": "canonical-events.rank0.txt",
+          "path": "canonical.rank0.txt",
           "comparison": "raw-byte-equality"
         },
         {
@@ -279,147 +279,147 @@
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PacketTrace_node_0.tr",
+          "path": "runlog/PacketTrace_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PacketTrace_node_1.tr",
+          "path": "runlog/PacketTrace_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_0_port_0.tr",
+          "path": "runlog/PortTrace_node_0_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_1_port_0.tr",
+          "path": "runlog/PortTrace_node_1_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_2_port_0.tr",
+          "path": "runlog/PortTrace_node_2_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_2_port_1.tr",
+          "path": "runlog/PortTrace_node_2_port_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_2_port_2.tr",
+          "path": "runlog/PortTrace_node_2_port_2.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_2_port_3.tr",
+          "path": "runlog/PortTrace_node_2_port_3.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_3_port_0.tr",
+          "path": "runlog/PortTrace_node_3_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_3_port_1.tr",
+          "path": "runlog/PortTrace_node_3_port_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_3_port_2.tr",
+          "path": "runlog/PortTrace_node_3_port_2.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_3_port_3.tr",
+          "path": "runlog/PortTrace_node_3_port_3.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_4_port_0.tr",
+          "path": "runlog/PortTrace_node_4_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_4_port_1.tr",
+          "path": "runlog/PortTrace_node_4_port_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_5_port_0.tr",
+          "path": "runlog/PortTrace_node_5_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_5_port_1.tr",
+          "path": "runlog/PortTrace_node_5_port_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_6_port_0.tr",
+          "path": "runlog/PortTrace_node_6_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_6_port_1.tr",
+          "path": "runlog/PortTrace_node_6_port_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/QueueTrace_node_0_port_0.tr",
+          "path": "runlog/QueueTrace_node_0_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/QueueTrace_node_1_port_0.tr",
+          "path": "runlog/QueueTrace_node_1_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/QueueTrace_node_2_port_0.tr",
+          "path": "runlog/QueueTrace_node_2_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/QueueTrace_node_2_port_1.tr",
+          "path": "runlog/QueueTrace_node_2_port_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/QueueTrace_node_2_port_2.tr",
+          "path": "runlog/QueueTrace_node_2_port_2.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/QueueTrace_node_2_port_3.tr",
+          "path": "runlog/QueueTrace_node_2_port_3.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/QueueTrace_node_3_port_0.tr",
+          "path": "runlog/QueueTrace_node_3_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/QueueTrace_node_3_port_1.tr",
+          "path": "runlog/QueueTrace_node_3_port_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/QueueTrace_node_3_port_2.tr",
+          "path": "runlog/QueueTrace_node_3_port_2.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/QueueTrace_node_3_port_3.tr",
+          "path": "runlog/QueueTrace_node_3_port_3.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/QueueTrace_node_4_port_0.tr",
+          "path": "runlog/QueueTrace_node_4_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/QueueTrace_node_4_port_1.tr",
+          "path": "runlog/QueueTrace_node_4_port_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/QueueTrace_node_5_port_0.tr",
+          "path": "runlog/QueueTrace_node_5_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/QueueTrace_node_5_port_1.tr",
+          "path": "runlog/QueueTrace_node_5_port_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/QueueTrace_node_6_port_0.tr",
+          "path": "runlog/QueueTrace_node_6_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/QueueTrace_node_6_port_1.tr",
+          "path": "runlog/QueueTrace_node_6_port_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/TaskTrace_node_0.tr",
+          "path": "runlog/TaskTrace_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/TaskTrace_node_1.tr",
+          "path": "runlog/TaskTrace_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
@@ -440,7 +440,7 @@
     "medium-multi-tp-retransmission": {
       "artifacts": [
         {
-          "path": "canonical-events.rank0.txt",
+          "path": "canonical.rank0.txt",
           "comparison": "raw-byte-equality"
         },
         {
@@ -472,95 +472,95 @@
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/AllPacketTrace_ACK_node_0.tr",
+          "path": "runlog/AllPacketTrace_ACK_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/AllPacketTrace_ACK_node_1.tr",
+          "path": "runlog/AllPacketTrace_ACK_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/AllPacketTrace_PKT_node_0.tr",
+          "path": "runlog/AllPacketTrace_PKT_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/AllPacketTrace_PKT_node_1.tr",
+          "path": "runlog/AllPacketTrace_PKT_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PacketTrace_node_0.tr",
+          "path": "runlog/PacketTrace_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PacketTrace_node_1.tr",
+          "path": "runlog/PacketTrace_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PacketTrace_node_2.tr",
+          "path": "runlog/PacketTrace_node_2.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PacketTrace_node_3.tr",
+          "path": "runlog/PacketTrace_node_3.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PacketTrace_node_4.tr",
+          "path": "runlog/PacketTrace_node_4.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_0_port_0.tr",
+          "path": "runlog/PortTrace_node_0_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_0_port_1.tr",
+          "path": "runlog/PortTrace_node_0_port_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_0_port_2.tr",
+          "path": "runlog/PortTrace_node_0_port_2.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_1_port_0.tr",
+          "path": "runlog/PortTrace_node_1_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_1_port_1.tr",
+          "path": "runlog/PortTrace_node_1_port_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_1_port_2.tr",
+          "path": "runlog/PortTrace_node_1_port_2.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_2_port_0.tr",
+          "path": "runlog/PortTrace_node_2_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_2_port_1.tr",
+          "path": "runlog/PortTrace_node_2_port_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_3_port_0.tr",
+          "path": "runlog/PortTrace_node_3_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_3_port_1.tr",
+          "path": "runlog/PortTrace_node_3_port_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_4_port_0.tr",
+          "path": "runlog/PortTrace_node_4_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_4_port_1.tr",
+          "path": "runlog/PortTrace_node_4_port_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/TaskTrace_node_0.tr",
+          "path": "runlog/TaskTrace_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/TaskTrace_node_1.tr",
+          "path": "runlog/TaskTrace_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
@@ -585,7 +585,7 @@
     "medium-shared-tp-concurrency": {
       "artifacts": [
         {
-          "path": "canonical-events.rank0.txt",
+          "path": "canonical.rank0.txt",
           "comparison": "raw-byte-equality"
         },
         {
@@ -609,67 +609,67 @@
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/AllPacketTrace_ACK_node_0.tr",
+          "path": "runlog/AllPacketTrace_ACK_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/AllPacketTrace_ACK_node_1.tr",
+          "path": "runlog/AllPacketTrace_ACK_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/AllPacketTrace_PKT_node_0.tr",
+          "path": "runlog/AllPacketTrace_PKT_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/AllPacketTrace_PKT_node_1.tr",
+          "path": "runlog/AllPacketTrace_PKT_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PacketTrace_node_0.tr",
+          "path": "runlog/PacketTrace_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PacketTrace_node_1.tr",
+          "path": "runlog/PacketTrace_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PacketTrace_node_2.tr",
+          "path": "runlog/PacketTrace_node_2.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PacketTrace_node_3.tr",
+          "path": "runlog/PacketTrace_node_3.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_0_port_0.tr",
+          "path": "runlog/PortTrace_node_0_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_1_port_0.tr",
+          "path": "runlog/PortTrace_node_1_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_2_port_0.tr",
+          "path": "runlog/PortTrace_node_2_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_2_port_1.tr",
+          "path": "runlog/PortTrace_node_2_port_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_3_port_0.tr",
+          "path": "runlog/PortTrace_node_3_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_3_port_1.tr",
+          "path": "runlog/PortTrace_node_3_port_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/TaskTrace_node_0.tr",
+          "path": "runlog/TaskTrace_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/TaskTrace_node_1.tr",
+          "path": "runlog/TaskTrace_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
@@ -694,7 +694,7 @@
     "minimal-single-rtp-write": {
       "artifacts": [
         {
-          "path": "canonical-events.rank0.txt",
+          "path": "canonical.rank0.txt",
           "comparison": "raw-byte-equality"
         },
         {
@@ -718,43 +718,43 @@
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/AllPacketTrace_ACK_node_0.tr",
+          "path": "runlog/AllPacketTrace_ACK_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/AllPacketTrace_ACK_node_1.tr",
+          "path": "runlog/AllPacketTrace_ACK_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/AllPacketTrace_PKT_node_0.tr",
+          "path": "runlog/AllPacketTrace_PKT_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/AllPacketTrace_PKT_node_1.tr",
+          "path": "runlog/AllPacketTrace_PKT_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PacketTrace_node_0.tr",
+          "path": "runlog/PacketTrace_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PacketTrace_node_1.tr",
+          "path": "runlog/PacketTrace_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_0_port_0.tr",
+          "path": "runlog/PortTrace_node_0_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/PortTrace_node_1_port_0.tr",
+          "path": "runlog/PortTrace_node_1_port_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/TaskTrace_node_0.tr",
+          "path": "runlog/TaskTrace_node_0.csv",
           "comparison": "raw-byte-equality"
         },
         {
-          "path": "runlog/TaskTrace_node_1.tr",
+          "path": "runlog/TaskTrace_node_1.csv",
           "comparison": "raw-byte-equality"
         },
         {

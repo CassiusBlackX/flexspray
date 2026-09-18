@@ -1,24 +1,0 @@
-[INFO] MTP enabled with 8 threads. (local mode).
-[INFO] Parallel runs preserve causal ordering and deterministic task completion ordering, but events with the same simulation time may be processed in a different order than single-thread runs. Compare task or workload metrics using predefined acceptance criteria.
-[16:27:13] [case] Run case: /Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S10-default-mtp8/case
-[16:27:13] [case] node.csv delay fields: allocationDelay -> AllocationTime; forwardDelay -> InPortProcessingDelay; legacy 4-column forwardDelay -> AllocationTime.
-[16:27:13] [setup] Load network_attribute.txt
-[16:27:13] [setup] Prepare runlog directory: /Users/ytxing/workspace/ns-3-ub-gitcode/scratch/20260802-default-lifecycle-cleanup-compatibility/evidence/runs/S10-default-mtp8/case/runlog
-[16:27:13] [setup] Load node.csv
-[16:27:13] [setup] Load topology.csv
-[16:27:13] [setup] Load routing_table.csv
-[16:27:13] [setup] Skip transport_channel.csv (not found; traffic will reserve TP connections before endpoints materialize on demand).
-[INFO] Link delay offset is off (default). Enable the deterministic positive-link workaround with --link-delay-offset-window=<Time> and record --timing-offset-seed.
-[INFO] Initial task start offset is off (default). Enable it with --initial-task-start-offset-window=<Time> and record --timing-offset-seed.
-[16:27:13] [traffic] Index phase dependencies from traffic.csv
-[16:27:13] [traffic] Activate clients and enqueue tasks.
-[16:27:13] [traffic] Load traffic.csv
-[16:27:13] Simulation time progress: 0 us[16:27:13] [traffic] Scheduled local tasks: 4032
-[16:27:17] Simulation time progress: 100 us[16:27:20] Simulation time progress: 200 us[16:27:23] Simulation time progress: 300 us[16:27:26] Simulation time progress: 400 us[16:27:29] Simulation time progress: 500 us[16:27:33] Simulation time progress: 600 us
-[16:27:34] [run] Simulation finished.
-[16:27:34] [summary] Program finished.
-[16:27:34] [summary] Wall-clock:
-[16:27:34] [summary]   config : 199 us
-[16:27:34] [summary]   run    : 20.433960 s
-[16:27:34] [summary]   trace  : 1 us
-[16:27:34] [summary]   total  : 20.651741 s

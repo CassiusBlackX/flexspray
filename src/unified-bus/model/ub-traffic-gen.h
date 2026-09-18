@@ -15,6 +15,7 @@
 #include "ns3/ub-ldst-api.h"
 
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -65,7 +66,32 @@ public:
         URMA_WRITE,
         URMA_READ,
         MEM_STORE,
-        MEM_LOAD
+        MEM_LOAD,
+        COMPUTE,
+        LOCAL_READY,
+        URMA_ATOMIC_COMPARE_SWAP,
+        URMA_ATOMIC_SWAP,
+        URMA_ATOMIC_STORE,
+        URMA_ATOMIC_LOAD,
+        URMA_ATOMIC_FETCH_ADD,
+        URMA_ATOMIC_FETCH_SUB,
+        URMA_ATOMIC_FETCH_AND,
+        URMA_ATOMIC_FETCH_OR,
+        URMA_ATOMIC_FETCH_XOR,
+        URMA_SEND,
+        URMA_SEND_WITH_IMMEDIATE,
+        URMA_WRITE_WITH_IMMEDIATE,
+        URMA_WRITE_WITH_NOTIFY,
+        URMA_PREFETCH_TGT,
+        URMA_WRITEBACK,
+        URMA_MANAGEMENT,
+        URMA_WRITE_WITH_ATOMIC_STORE_ADD,
+        URMA_WRITE_WITH_REMOTE_SYNC,
+        URMA_WRITE_WITH_REMOTE_SYNC_WITH_BE,
+        URMA_ATOMIC_STORE_WITH_RETURN_STATUS,
+        URMA_ATOMIC_SYNC,
+        URMA_WRITE_WITH_BE,
+        URMA_WRITEBACK_WITH_BE
     };
 
     struct RuntimeTask
@@ -83,7 +109,17 @@ public:
         bool hasSrcPortId{false};
         bool hasDstPortId{false};
         bool hasPhaseDependencies{false};
+        std::optional<UbAtomicOptions> atomicOptions;
     };
+
+    // Shared operation conversion for CSV rows and direct UbApp record entry points.
+    static void ParseTaskOperation(RuntimeTask& task,
+                                   std::string_view opType,
+                                   std::string_view subOperation,
+                                   std::string_view requestPayloadBytes);
+    static bool IsAtomicTask(RuntimeTaskOp op);
+    static bool IsUrmaTask(RuntimeTaskOp op);
+    static UbTransactionOpcode GetUrmaTaskOpcode(RuntimeTaskOp op);
 
     struct TaskCleanupInfo
     {
@@ -162,6 +198,16 @@ public:
      */
     void OnTaskCompleted(uint32_t taskId);
 
+    /**
+     * @brief Submit a COMPUTE task to the source node's single UBPU compute slot.
+     */
+    void SubmitComputeTask(Ptr<UbApp> app, RuntimeTask task);
+
+    /**
+     * @brief Complete a locally running COMPUTE task and release its UBPU slot.
+     */
+    void OnComputeTaskCompleted(uint32_t taskId);
+
     void OnTaskCompleted(uint32_t taskId,
                          Ptr<UbApp> cleanupOwner,
                          uint32_t jettyNum,
@@ -188,6 +234,7 @@ public:
     enum class TaskState {
         PENDING,
         READY,
+        QUEUED,
         RUNNING,
         COMPLETED
     };
@@ -233,6 +280,12 @@ public:
 
     void StartTask(Ptr<UbApp> app, RuntimeTask task);
 
+    struct ComputeTaskRequest
+    {
+        Ptr<UbApp> app{};
+        RuntimeTask task{};
+    };
+
     struct ReadyTaskBatch
     {
         std::vector<RuntimeTask> tasks{};
@@ -252,6 +305,9 @@ public:
     std::vector<uint32_t> m_readyTasks{};
     bool m_readyTasksSorted{true};
     std::vector<Ptr<UbApp>> m_sourceApps{};
+    std::unordered_map<uint32_t, uint32_t> m_computeRunningTasks{};
+    std::unordered_map<uint32_t, Ptr<UbApp>> m_computeRunningApps{};
+    std::unordered_map<uint32_t, std::deque<ComputeTaskRequest>> m_computeQueues{};
     std::unordered_map<std::string, Time> m_delayParseCache{};
     Time m_dependencyVisibilityDelay{NanoSeconds(100)};
     bool m_canonicalOutputEnabled = false;
@@ -293,9 +349,9 @@ public:
 
     static bool TryParseIntegerDelay(std::string_view delay, Time* out);
 
-    RuntimeTaskOp ParseOpLocked(const std::string& opType);
+    static RuntimeTaskOp ParseOpLocked(const std::string& opType);
 
-    RuntimeTaskOp ParseOpLocked(std::string_view opType);
+    static RuntimeTaskOp ParseOpLocked(std::string_view opType);
 
     Ptr<UbApp> GetSourceAppLocked(uint32_t sourceNode) const;
 

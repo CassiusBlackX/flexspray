@@ -1,3 +1,0 @@
-aborted. cond="packet == nullptr", msg="Cannot enqueue null CTP packet", +0.000000000s -1 file=/Users/ytxing/workspace/ns-3-ub-architecture-integration/src/unified-bus/model/protocol/ub-ctp.cc, line=396
-NS_FATAL, terminating
-libc++abi: terminating

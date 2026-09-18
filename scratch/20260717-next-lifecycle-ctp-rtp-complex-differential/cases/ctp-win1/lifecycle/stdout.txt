@@ -1,27 +1,0 @@
-[11:18:26] [case] Run case: /Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260717-next-lifecycle-ctp-rtp-complex-differential/cases/ctp-win1/lifecycle/case-input
-[11:18:26] [case] node.csv delay fields: allocationDelay -> AllocationTime; forwardDelay -> InPortProcessingDelay; legacy 4-column forwardDelay -> AllocationTime.
-[11:18:26] [setup] Load network_attribute.txt
-[11:18:26] [setup] Adapt legacy network attributes: 1 line(s)
-[11:18:26] [setup] Prepare runlog directory: /Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260717-next-lifecycle-ctp-rtp-complex-differential/cases/ctp-win1/lifecycle/case-input/runlog
-[11:18:26] [setup] Load node.csv
-[11:18:26] [setup] Load topology.csv
-[11:18:26] [setup] Load routing_table.csv
-[11:18:26] [setup] Load transport_channel.csv
-[11:18:26] [traffic] Index phase dependencies from traffic.csv
-[11:18:26] [traffic] Activate clients and enqueue tasks.
-[11:18:26] [traffic] Load traffic.csv
-[11:18:26] [traffic] Scheduled local tasks: 4
-[11:18:26] Simulation time progress: 0 us[11:18:26] Simulation time progress: 100 us[11:18:26] Simulation time progress: 200 us[11:18:26] Simulation time progress: 300 us[11:18:26] Simulation time progress: 400 us[11:18:26] Simulation time progress: 500 us[11:18:26] Simulation time progress: 600 us[11:18:26] Simulation time progress: 700 us[11:18:26] Simulation time progress: 800 us[11:18:26] Simulation time progress: 900 us[11:18:26] Simulation time progress: 1.000 ms[11:18:26] Simulation time progress: 1.100 ms[11:18:26] Simulation time progress: 1.200 ms[11:18:26] Simulation time progress: 1.300 ms[11:18:26] Simulation time progress: 1.400 ms[11:18:26] Simulation time progress: 1.500 ms[11:18:26] Simulation time progress: 1.600 ms[11:18:26] Simulation time progress: 1.700 ms[11:18:26] Simulation time progress: 1.800 ms[11:18:26] Simulation time progress: 1.900 ms[11:18:26] Simulation time progress: 2.000 ms[11:18:26] Simulation time progress: 2.100 ms[11:18:26] Simulation time progress: 2.200 ms[11:18:26] Simulation time progress: 2.300 ms[11:18:26] Simulation time progress: 2.400 ms[11:18:26] Simulation time progress: 2.500 ms[11:18:26] Simulation time progress: 2.600 ms[11:18:26] Simulation time progress: 2.700 ms[11:18:26] Simulation time progress: 2.800 ms[11:18:26] Simulation time progress: 2.900 ms[11:18:26] Simulation time progress: 3.000 ms[11:18:26] Simulation time progress: 3.100 ms[11:18:26] Simulation time progress: 3.200 ms[11:18:26] Simulation time progress: 3.300 ms[11:18:26] Simulation time progress: 3.400 ms[11:18:26] Simulation time progress: 3.500 ms[11:18:26] Simulation time progress: 3.600 ms[11:18:26] Simulation time progress: 3.700 ms
-[11:18:26] [run] Simulation finished.
-[11:18:26] [trace] Parse runlog into output artifacts.
-Stats: Processed 4 tasks.
-Stats: All tasks have complete packet timestamp info.
-Saved traffic tasks throughput results to /Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260717-next-lifecycle-ctp-rtp-complex-differential/cases/ctp-win1/lifecycle/case-input/output/task_statistics.csv
-Stats: Generated throughput metrics for 24 port-directions.
-Saved per-port throughput results to /Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260717-next-lifecycle-ctp-rtp-complex-differential/cases/ctp-win1/lifecycle/case-input/output/throughput.csv
-[11:18:26] [summary] Program finished.
-[11:18:26] [summary] Wall-clock:
-[11:18:26] [summary]   config : 426 us
-[11:18:26] [summary]   run    : 25.091 ms
-[11:18:26] [summary]   trace  : 59.114 ms
-[11:18:26] [summary]   total  : 104.862 ms

@@ -174,7 +174,7 @@ BeginConnectionClose()
                                               g_receiver->GetId(),
                                               UB_MTU_BYTE,
                                               kTaskId + 1,
-                                              TaOpcode::TA_OPCODE_WRITE);
+                                              UbTransactionOpcode::WRITE);
     g_newWorkRejected =
         function->SubmitWqe(rejected, kJettyNum).status != UbWqeSubmissionStatus::ACCEPTED;
     const UbDestroyStatus jettyStatus = function->DestroyJetty(kJettyNum);
@@ -461,7 +461,7 @@ PrepareDestroyTpFlow(Ptr<Node> sender, uint32_t receiverId, uint32_t flowSize)
                                          receiverId,
                                          flowSize,
                                          kTaskId,
-                                         TaOpcode::TA_OPCODE_WRITE);
+                                         UbTransactionOpcode::WRITE);
     NS_ABORT_MSG_IF(function->SubmitWqe(wqe, kJettyNum).status !=
                         UbWqeSubmissionStatus::ACCEPTED,
                     "Failed to submit delayed-destroy WRITE");

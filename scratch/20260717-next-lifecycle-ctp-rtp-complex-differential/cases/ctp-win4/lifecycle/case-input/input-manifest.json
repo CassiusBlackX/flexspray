@@ -1,8 +1,0 @@
-{
-  "network_attribute.txt": "f41b93574a3c0546de78c3f824b496e4d2fe9d2f5999662c88bfe252851904d3",
-  "node.csv": "c85f64b24e32a31c6bcc24788678a94c0815081436aceb47a632e7e92a0ca2ac",
-  "routing_table.csv": "41bd31690a2fb9ad3c7b1025c2a6f82d1ac796c030ba12d58d70d93ccd8f8aba",
-  "topology.csv": "9668fbfd2ce2e73af84327832ccbfad4166c7dace3e5e935da96b6590dfeb284",
-  "traffic.csv": "2218488e558c4e83045c82f6a5101833078339595e0529d587a8093cf805af1e",
-  "transport_channel.csv": "170c1dfc4a28c59efc15eb235a751980674d7a3f3ed6d2789aaddd43e2d1735a"
-}

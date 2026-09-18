@@ -19,20 +19,20 @@ It is not a fifth stage in the normal experiment flow. Use it only after analysi
 
 ### Issue tracker
 
-Engineering specifications and tickets use the repository-local Markdown tracker. See `docs/agents/issue-tracker.md`.
+Engineering specifications and tickets use the repository-local Markdown tracker. See `doc/agents/issue-tracker.md`.
 
 ### Triage labels
 
-The tracker uses the default five-role triage vocabulary. See `docs/agents/triage-labels.md`.
+The tracker uses the default five-role triage vocabulary. See `doc/agents/triage-labels.md`.
 
 ### Domain docs
 
-This is a single-context repository with one root `CONTEXT.md` and root-level ADRs. See `docs/agents/domain.md`.
+This is a single-context repository with one root `CONTEXT.md` and root-level ADRs. See `doc/agents/domain.md`.
 
 ### Implementation workflow
 
 Engineering tickets use the repository-local
-[Matt implement extension](docs/agents/implementation-workflow.md).
+[Matt implement extension](doc/agents/implementation-workflow.md).
 
 ## Skill Routing
 

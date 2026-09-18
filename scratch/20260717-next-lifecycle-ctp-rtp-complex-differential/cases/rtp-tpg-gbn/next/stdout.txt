@@ -1,27 +1,0 @@
-[11:18:27] [case] Run case: /Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260717-next-lifecycle-ctp-rtp-complex-differential/cases/rtp-tpg-gbn/next/case-input
-[11:18:27] [case] node.csv delay fields: allocationDelay -> AllocationTime; forwardDelay -> InPortProcessingDelay; legacy 4-column forwardDelay -> AllocationTime.
-[11:18:27] [setup] Load network_attribute.txt
-[11:18:27] [setup] Adapt legacy network attributes: 1 line(s)
-[11:18:27] [setup] Prepare runlog directory: /Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260717-next-lifecycle-ctp-rtp-complex-differential/cases/rtp-tpg-gbn/next/case-input/runlog
-[11:18:27] [setup] Load node.csv
-[11:18:27] [setup] Load topology.csv
-[11:18:27] [setup] Load routing_table.csv
-[11:18:27] [setup] Load transport_channel.csv
-[11:18:27] [traffic] Index phase dependencies from traffic.csv
-[11:18:27] [traffic] Activate clients and enqueue tasks.
-[11:18:27] [traffic] Load traffic.csv
-[11:18:27] [traffic] Scheduled local tasks: 2
-[11:18:27] Simulation time progress: 0 us[11:18:27] Simulation time progress: 100 us
-[11:18:27] [run] Simulation finished.
-[11:18:27] [trace] Parse runlog into output artifacts.
-Stats: Processed 2 tasks.
-Stats: All tasks have complete packet timestamp info.
-Saved traffic tasks throughput results to /Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260717-next-lifecycle-ctp-rtp-complex-differential/cases/rtp-tpg-gbn/next/case-input/output/task_statistics.csv
-Stats: Generated throughput metrics for 24 port-directions.
-Saved per-port throughput results to /Users/ytxing/.codex/worktrees/73a0/ns-3-ub-gitcode/scratch/20260717-next-lifecycle-ctp-rtp-complex-differential/cases/rtp-tpg-gbn/next/case-input/output/throughput.csv
-[11:18:27] [summary] Program finished.
-[11:18:27] [summary] Wall-clock:
-[11:18:27] [summary]   config : 322 us
-[11:18:27] [summary]   run    : 12.962 ms
-[11:18:27] [summary]   trace  : 55.550 ms
-[11:18:27] [summary]   total  : 69.307 ms

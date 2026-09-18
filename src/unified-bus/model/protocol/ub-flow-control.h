@@ -46,6 +46,9 @@ class UbPort;
  * - inPortId: 该报文当前 ingress ownership 对应的端口。
  * - outPortId: 该报文当前关联的 egress 端口；本地 sink 路径通常等于 inPortId。
  * - priority: 报文所在 VL / priority。
+ * - upstreamCreditAlreadyReturned: 只有恢复重入路径会置位。报文离开原始 ingress
+ *   （进入 egress 或 retry 存储）时上游信用证已经归还；恢复后的重新入队必须继续释放真实
+ *   缓冲区占用，但不得再次归还同一份上游信用证。
  */
 struct UbFlowControlEventContext {
     Ptr<Packet> packet;
@@ -53,6 +56,7 @@ struct UbFlowControlEventContext {
     uint32_t inPortId {0};
     uint32_t outPortId {0};
     uint32_t priority {0};
+    bool upstreamCreditAlreadyReturned {false};
 };
 
 /**

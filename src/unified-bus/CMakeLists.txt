@@ -30,6 +30,7 @@ build_lib(
 	model/ub-app.cc
     model/ub-controller.cc
 	model/ub-transport-channel-manager.cc
+	model/ub-ldst-endpoint.cc
 	model/protocol/ub-datalink.cc
 	model/ub-datatype.cc
 	model/protocol/ub-header.cc
@@ -41,6 +42,8 @@ build_lib(
 	model/ub-tag.cc
 	model/ub-switch.cc
 	model/protocol/ub-transaction.cc
+	model/protocol/ub-transaction-rules.cc
+	model/protocol/ub-ta-codec.cc
 	model/protocol/ub-function.cc
 	model/protocol/ub-transport.cc
 	model/protocol/ub-retrans.cc
@@ -51,6 +54,7 @@ build_lib(
 	model/protocol/ub-routing-table.cc
 	model/ub-switch-allocator.cc
 	model/ub-utils.cc
+	model/protocol/ub-ldst-packet-utils.cc
 	model/protocol/ub-ldst-api.cc
 	model/ub-ldst-thread.cc
 	model/ub-ldst-instance.cc
@@ -60,9 +64,11 @@ build_lib(
 	model/protocol/ub-flow-control.cc
 	model/protocol/ub-cbfc.cc
 	model/protocol/ub-pfc.cc
+	model/protocol/ub-reliable-rerouting.cc
 	model/ub-ingress-queue.cc
 	model/ub-queue-manager.cc
 	model/ub-fault.cc
+	model/ub-link-fault-schedule.cc
 	model/ub-tp-connection-manager.cc
 	model/ub-tag.cc
   HEADER_FILES
@@ -71,6 +77,7 @@ build_lib(
 	model/ub-app.h
     model/ub-controller.h
 	model/ub-transport-channel-manager.h
+	model/ub-ldst-endpoint.h
 	model/protocol/ub-datalink.h
 	model/ub-datatype.h
 	model/protocol/ub-header.h
@@ -84,6 +91,8 @@ build_lib(
 	model/ub-sliding-bitmap-window.h
 	model/ub-switch.h
 	model/protocol/ub-transaction.h
+	model/protocol/ub-transaction-rules.h
+	model/protocol/ub-ta-codec.h
 	model/protocol/ub-function.h
 	model/protocol/ub-transport.h
 	model/protocol/ub-retrans.h
@@ -96,6 +105,7 @@ build_lib(
 	model/ub-utils.h
 	model/ub-network-address.h
 	model/ub-tp-connection-manager.h
+	model/protocol/ub-ldst-packet-utils.h
 	model/protocol/ub-ldst-api.h
 	model/ub-ldst-thread.h
 	model/ub-ldst-instance.h
@@ -105,10 +115,12 @@ build_lib(
 	model/protocol/ub-flow-control.h
 	model/protocol/ub-cbfc.h
 	model/protocol/ub-pfc.h
+	model/protocol/ub-reliable-rerouting.h
 	model/ub-ingress-queue.h
 	model/ub-queue-manager.h
 	model/ub-tag.h
 	model/ub-fault.h
+	model/ub-link-fault-schedule.h
   LIBRARIES_TO_LINK ${libnetwork}
                     ${libinternet}
                     ${libapplications}
@@ -118,5 +130,12 @@ build_lib(
                     ${mpi_libraries}
   TEST_SOURCES
     test/ub-test.cc
+    test/ub-transaction-rules-test.cc
+    test/ub-transaction-header-extension-test.cc
+    test/ub-target-execution-test.cc
+    test/ub-ldst-cfg-test.cc
+    test/ub-link-fault-input-test.cc
+    test/ub-reliable-rerouting-test.cc
     test/ub-structured-routing-test.cc
+    test/ub-packet-rate-control-test.cc
 )

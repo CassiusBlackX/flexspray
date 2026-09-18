@@ -333,6 +333,10 @@ private:
                               const UbLifecycleResourceIdentity& identity,
                               uint8_t slot,
                               UbDestroyReason reason);
+    void RequestFreezeNotice(const Connection& connection,
+                             const UbLifecycleResourceIdentity& identity,
+                             uint8_t slot,
+                             UbDestroyReason reason);
     void OnLocalEndpointDestroyed(UbLifecycleResourceIdentity connectionIdentity,
                                   uint8_t slot,
                                   UbLifecycleResourceIdentity endpointIdentity,
@@ -438,8 +442,8 @@ private:
     std::map<std::pair<uint32_t, uint32_t>, Connection> m_retiredLocalConnectionViews;
     std::set<std::pair<uint32_t, uint32_t>> m_destroyRequestedViews;
 
-    std::set<uint32_t> m_tpnList;
-    std::set<uint32_t> m_reservedTpnList;
+    std::set<uint32_t> m_allocatedTpns;
+    std::set<uint32_t> m_reservedTpns;
 
     uint32_t m_nextTpn = 0;
     bool m_tpnSpaceExhausted{false};

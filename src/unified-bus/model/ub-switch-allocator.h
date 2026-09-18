@@ -41,6 +41,16 @@ class UbSwitchAllocator : public Object {
     void RegisterEgressStauts(uint32_t portsNum);
     void SetEgressStatus(uint32_t portId, bool status);
     bool GetEgressStatus(uint32_t portId);
+
+    /**
+     * @brief Stop granting work to one output port.
+     *
+     * Cancels the pending allocation callback and pending port notifications for that output
+     * before they can commit a packet to it. Round-robin/DWRR service state is left untouched:
+     * a cancelled grant must not dequeue a packet, consume credit, or advance the selector.
+     */
+    void SuspendOutput(uint32_t portId);
+    bool IsOutputSuspended(uint32_t portId) const;
     void DoDispose() override;
     void CheckDeadlock();
     bool HasPendingOrActiveWork(Ptr<UbIngressQueue> ingressQueue) const;

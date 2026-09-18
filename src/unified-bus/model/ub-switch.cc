@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
-#include <iostream>
+
 #include <algorithm>
 #include <limits>
 #include "ns3/ipv4.h"
+#include "ns3/node-list.h"
 #include "ns3/packet.h"
 #include "ns3/flow-id-tag.h"
 #include "ns3/ub-switch-allocator.h"
@@ -12,6 +13,7 @@
 #include "ns3/ub-controller.h"
 #include "ns3/ub-function.h"
 #include "ns3/ub-ctp.h"
+#include "ns3/ub-reliable-rerouting.h"
 #include "ns3/ub-utils.h"
 
 namespace ns3 {
@@ -229,6 +231,9 @@ void UbSwitch::InitQueueManager(Ptr<Node> node)
     m_queueManager->SetPaperDynamicAdmissionEnabled(m_flowControlType == FcType::PFC_DYNAMIC_PAPER);
     ApplyLocalQueueManagerConfig();
     m_queueManager->Init();
+    // Real ingress releases wake blocked recovery through one coalesced event.
+    m_queueManager->SetIngressSpaceReleaseCallback(
+        MakeCallback(&UbSwitch::OnIngressSpaceReleased, this));
 }
 
 void UbSwitch::InitRoutingProcess(Ptr<Node> node)
@@ -267,6 +272,14 @@ void UbSwitch::Init()
 
 void UbSwitch::DoDispose()
 {
+    m_recoveryDisposed = true;
+    if (m_detectedFailedOutput != UINT32_MAX)
+    {
+        ClearRecoveryBacklogForOutput(m_detectedFailedOutput);
+    }
+    m_recoveryWakeup.Cancel();
+    m_recoveryWakeupPending = false;
+    m_blockedRetryOutput.clear();
     PruneResolvedInPortEvents();
     m_forcedInPortEventResidue = 0;
     m_forcedInPortByteResidue = 0;
@@ -296,6 +309,7 @@ void UbSwitch::DoDispose()
     m_congestionCtrl = nullptr;
     m_allocator = nullptr;
     m_voq.groups.clear();
+    m_pendingRecovery.clear();
     m_routingProcess = nullptr;
     Object::DoDispose();
 }
@@ -484,7 +498,8 @@ void
 UbSwitch::FinalizeForwardedPacketEnqueue(Ptr<Packet> packet,
                                          uint32_t inPort,
                                          uint32_t outPort,
-                                         uint32_t priority)
+                                         uint32_t priority,
+                                         bool recoveryTransfer)
 {
     if (packet == nullptr) {
         return;
@@ -497,7 +512,9 @@ UbSwitch::FinalizeForwardedPacketEnqueue(Ptr<Packet> packet,
     NS_ASSERT_MSG(recvPort != nullptr, "FinalizeForwardedPacketEnqueue requires a valid ingress port");
     NS_ASSERT_MSG(outDevice != nullptr, "FinalizeForwardedPacketEnqueue requires a valid out port");
 
-    if (m_congestionCtrl != nullptr)
+    // A recovery transfer re-enters an existing packet that already reported its arrival-time
+    // congestion effect; re-running the post-enqueue hook would double count it.
+    if (m_congestionCtrl != nullptr && !recoveryTransfer)
     {
         m_congestionCtrl->OnSwitchPostEnqueue(inPort, outPort, packet);
     }
@@ -521,6 +538,20 @@ UbSwitch::CompleteInPortProcessing(Ptr<Packet> packet,
                                    uint32_t priority)
 {
     PruneResolvedInPortEvents();
+
+    if (outPort == m_detectedFailedOutput)
+    {
+        // The packet keeps its original ready time and ingress reservation, but it may enter a
+        // healthy VOQ only after the modeled LastAck.
+        m_queueManager->MoveProcessingToPendingRecovery(inPort, outPort, priority, packet->GetSize());
+        ParkRecoveryPacket(packet, inPort, priority, /*ingressHeld=*/true);
+        PublishRecoveryBacklogCounters(outPort);
+        if (m_recoveryBacklogMigrated)
+        {
+            TryTransferPendingRecovery();
+        }
+        return;
+    }
 
     MoveInPortProcessingToVoq(packet, inPort, outPort, priority);
     FinalizeForwardedPacketEnqueue(packet, inPort, outPort, priority);
@@ -670,6 +701,9 @@ UbPacketType_t UbSwitch::GetPacketType(Ptr<Packet> packet)
         copy->RemoveHeader(cna24Header);
         if (cna24Header.GetNlp() == UB_CNA_NLP_CTPH) {
             return UB_CTP_DATA_PACKET;
+        }
+        if (cna24Header.GetNlp() == UB_CNA_NLP_LDST_BYPASS) {
+            return UB_LDST_DATA_PACKET;
         }
     }
     if (dlHeader.IsPacketUbMemHeader())
@@ -856,15 +890,14 @@ bool UbSwitch::SinkLdstDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Pa
     // Store/load request: DLH cNTH cTAH(0x03/0x06) [cMAETAH] Payload
     // Store/load response: DLH cNTH cATAH(0x11/0x12) Payload
     NS_LOG_DEBUG("[UbPort recv] ub ldst frame");
-    uint16_t dCna = headers.cna16NetworkHeader.GetDcna();
-    uint32_t dnode = utils::Cna16ToNodeId(dCna);
+    uint32_t dnode = headers.network.destination.nodeId;
     // Forward
     if (dnode != GetObject<Node>()->GetId()) {
         return false;
     }
-    if ((dCna & 0xF) != 0)
+    if (headers.network.destination.hasPort)
     {
-        NS_ABORT_MSG_IF(utils::Cna16ToPortId(dCna) != port->GetIfIndex(),
+        NS_ABORT_MSG_IF(headers.network.destination.portId != port->GetIfIndex(),
                         "LDST destination endpoint port does not match the receiving UB port");
     }
     // Sink Packet
@@ -880,12 +913,12 @@ bool UbSwitch::SinkLdstDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Pa
     auto ldstApi = GetObject<Node>()->GetObject<UbController>()->GetUbFunction()->GetUbLdstApi();
     NS_ASSERT_MSG(ldstApi != nullptr, "UbLdstApi can not be nullptr!");
 
-    uint8_t type = headers.dummyTransactionHeader.GetTaOpcode();
+    uint8_t type = headers.dummyTransactionHeader.GetUbTransactionOpcode();
     // 数据包
-    if (type == (uint8_t)TaOpcode::TA_OPCODE_WRITE || type == (uint8_t)TaOpcode::TA_OPCODE_READ) {
-        ldstApi->RecvDataPacket(packet);
-    } else if (type == (uint8_t)TaOpcode::TA_OPCODE_TRANSACTION_ACK ||
-               type == (uint8_t)TaOpcode::TA_OPCODE_READ_RESPONSE) {
+    if (type == (uint8_t)UbTransactionOpcode::WRITE || type == (uint8_t)UbTransactionOpcode::READ) {
+        ldstApi->RecvDataPacket(packet, port->GetIfIndex());
+    } else if (type == (uint8_t)UbTransactionOpcode::TAACK ||
+               type == (uint8_t)UbTransactionOpcode::READ_RESPONSE) {
         ldstApi->RecvResponse(packet);
         NS_LOG_DEBUG("ldst packet is ack!");
     } else {
@@ -944,26 +977,14 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
 
     // Get routing key from parsed headers
     RoutingKey rtKey;
-    GetURMARoutingKey(headers, rtKey);
 
     // Route
     bool selectedShortestPath = false;
-    const bool hasExplicitDestinationPort = (rtKey.dip & 0xff) != 0;
-    int outPort = hasExplicitDestinationPort
-                      ? m_routingProcess->GetOutPortForEndpoint(
-                            rtKey, selectedShortestPath, port->GetIfIndex())
-                      : m_routingProcess->GetOutPort(rtKey,
-                                                     selectedShortestPath,
-                                                     port->GetIfIndex());
+    int outPort =
+        ResolveURMAOutput(packet, headers, port->GetIfIndex(), rtKey, selectedShortestPath);
     if (outPort < 0) {
-        utils::UbUtils::RecordRuntimePacketDrop("route cannot be found");
-        NS_LOG_WARN("The route cannot be found. Packet Dropped!");
+        ReportForwardingRouteFailure(rtKey, port->GetIfIndex());
         return;
-    }
-
-    // If packet routed via non-shortest path, force subsequent hops to use shortest path
-    if (!selectedShortestPath) {
-        ForceShortestPathRouting(packet, headers.datalinkPacketHeader);
     }
 
     // Buffer management: check input port buffer space
@@ -991,27 +1012,14 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
 {
     // Get routing key from parsed headers
     RoutingKey rtKey;
-    GetLdstRoutingKey(headers, rtKey);
 
     // Route
     bool selectedShortestPath = false;
-    const bool hasExplicitDestinationPort =
-        (headers.cna16NetworkHeader.GetDcna() & 0xF) != 0;
-    int outPort = hasExplicitDestinationPort
-                      ? m_routingProcess->GetOutPortForEndpoint(
-                            rtKey, selectedShortestPath, port->GetIfIndex())
-                      : m_routingProcess->GetOutPort(rtKey,
-                                                     selectedShortestPath,
-                                                     port->GetIfIndex());
+    int outPort =
+        ResolveLdstOutput(packet, headers, port->GetIfIndex(), rtKey, selectedShortestPath);
     if (outPort < 0) {
-        utils::UbUtils::RecordRuntimePacketDrop("route cannot be found");
-        NS_LOG_WARN("The route cannot be found. Packet Dropped!");
+        ReportForwardingRouteFailure(rtKey, port->GetIfIndex());
         return;
-    }
-
-    // If packet routed via non-shortest path, force subsequent hops to use shortest path
-    if (!selectedShortestPath) {
-        ForceShortestPathRouting(packet, headers.datalinkPacketHeader);
     }
 
     // Buffer management: check input port buffer space
@@ -1038,26 +1046,13 @@ void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Par
 void UbSwitch::ForwardDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const ParsedCtpHeaders &headers)
 {
     RoutingKey rtKey;
-    GetCtpRoutingKey(headers, rtKey);
 
     bool selectedShortestPath = false;
-    const bool hasExplicitDestinationPort = headers.isCna24
-                                                ? (headers.cna24NetworkHeader.GetDcna() & 0xff) != 0
-                                                : (headers.cna16NetworkHeader.GetDcna() & 0xf) != 0;
-    int outPort = hasExplicitDestinationPort
-                      ? m_routingProcess->GetOutPortForEndpoint(
-                            rtKey, selectedShortestPath, port->GetIfIndex())
-                      : m_routingProcess->GetOutPort(rtKey,
-                                                     selectedShortestPath,
-                                                     port->GetIfIndex());
+    int outPort =
+        ResolveCtpOutput(packet, headers, port->GetIfIndex(), rtKey, selectedShortestPath);
     if (outPort < 0) {
-        utils::UbUtils::RecordRuntimePacketDrop("route cannot be found");
-        NS_LOG_WARN("The route cannot be found. Packet Dropped!");
+        ReportForwardingRouteFailure(rtKey, port->GetIfIndex());
         return;
-    }
-
-    if (!selectedShortestPath) {
-        ForceShortestPathRouting(packet, headers.datalinkPacketHeader);
     }
 
     uint32_t inPort = port->GetIfIndex();
@@ -1088,6 +1083,135 @@ void UbSwitch::ForceShortestPathRouting(Ptr<Packet> packet, const UbDatalinkPack
     packet->AddHeader(modifiedHeader);
 }
 
+/**
+ * @brief Shared URMA output resolution used by arrival forwarding and recovery transfer.
+ *
+ * Extracted unchanged from the arrival path so recovered packets use the same routing key,
+ * endpoint/ingress constraints, one-detour behavior, and failed-output filter.
+ */
+int
+UbSwitch::ResolveURMAOutput(Ptr<Packet> packet,
+                            const ParsedURMAHeaders& headers,
+                            uint32_t inPort,
+                            RoutingKey& rtKey,
+                            bool& selectedShortestPath)
+{
+    GetURMARoutingKey(headers, rtKey);
+    const bool hasExplicitDestinationPort = (rtKey.dip & 0xff) != 0;
+    const int outPort = hasExplicitDestinationPort
+                            ? m_routingProcess->GetOutPortForEndpoint(rtKey,
+                                                                      selectedShortestPath,
+                                                                      inPort)
+                            : m_routingProcess->GetOutPort(rtKey, selectedShortestPath, inPort);
+
+    // If packet routed via non-shortest path, force subsequent hops to use shortest path
+    if (outPort >= 0 && !selectedShortestPath) {
+        ForceShortestPathRouting(packet, headers.datalinkPacketHeader);
+    }
+    return outPort;
+}
+
+/**
+ * @brief Shared LDST output resolution used by arrival forwarding and recovery transfer.
+ */
+int
+UbSwitch::ResolveLdstOutput(Ptr<Packet> packet,
+                            const ParsedLdstHeaders& headers,
+                            uint32_t inPort,
+                            RoutingKey& rtKey,
+                            bool& selectedShortestPath)
+{
+    GetLdstRoutingKey(headers, rtKey);
+    const bool hasExplicitDestinationPort = headers.network.destination.hasPort;
+    const int outPort = hasExplicitDestinationPort
+                            ? m_routingProcess->GetOutPortForEndpoint(rtKey,
+                                                                      selectedShortestPath,
+                                                                      inPort)
+                            : m_routingProcess->GetOutPort(rtKey, selectedShortestPath, inPort);
+
+    if (outPort >= 0 && !selectedShortestPath) {
+        ForceShortestPathRouting(packet, headers.datalinkPacketHeader);
+    }
+    return outPort;
+}
+
+/**
+ * @brief Shared CTP output resolution used by arrival forwarding and recovery transfer.
+ */
+int
+UbSwitch::ResolveCtpOutput(Ptr<Packet> packet,
+                           const ParsedCtpHeaders& headers,
+                           uint32_t inPort,
+                           RoutingKey& rtKey,
+                           bool& selectedShortestPath)
+{
+    GetCtpRoutingKey(headers, rtKey);
+
+    const bool hasExplicitDestinationPort = headers.isCna24
+                                                ? (headers.cna24NetworkHeader.GetDcna() & 0xff) != 0
+                                                : (headers.cna16NetworkHeader.GetDcna() & 0xf) != 0;
+    const bool hasCompactEntityId =
+        headers.ctpHeader.GetNlp() == UB_CTPH_NLP_UPI16_EID40_TAH;
+    if (!hasExplicitDestinationPort && hasCompactEntityId)
+    {
+        const uint32_t destinationNodeId =
+            headers.isCna24
+                ? utils::Cna24ToNodeId(headers.cna24NetworkHeader.GetDcna())
+                : utils::Cna16ToNodeId(headers.cna16NetworkHeader.GetDcna());
+        NS_ABORT_MSG_IF(destinationNodeId >= NodeList::GetNNodes(),
+                        "CTP destination node does not exist: " << destinationNodeId);
+        Ptr<UbController> destinationController =
+            NodeList::GetNode(destinationNodeId)->GetObject<UbController>();
+        NS_ABORT_MSG_IF(destinationController == nullptr ||
+                            !destinationController->AreCtpEntitiesFrozen(),
+                        "CTP destination Entity registry must be frozen before forwarding to node "
+                            << destinationNodeId);
+        const uint32_t destinationEntityId =
+            headers.compactEidHeader.GetDestinationEid();
+        NS_ABORT_MSG_IF(!destinationController->HasCtpEntity(destinationEntityId),
+                        "CTP destination Entity " << destinationEntityId
+                                                   << " is not configured on node "
+                                                   << destinationNodeId);
+        const uint8_t loadBalanceField =
+            headers.isCna24 ? headers.cna24NetworkHeader.GetLb()
+                            : headers.cna16NetworkHeader.GetLb();
+        const uint16_t destinationPort = destinationController->SelectCtpEntityMemberPort(
+            destinationEntityId,
+            loadBalanceField);
+        rtKey.dip = utils::NodeIdToIp(destinationNodeId, destinationPort).Get();
+        rtKey.dport = destinationPort;
+    }
+    const int outPort = hasExplicitDestinationPort || hasCompactEntityId
+                            ? m_routingProcess->GetOutPortForEndpoint(rtKey,
+                                                                      selectedShortestPath,
+                                                                      inPort)
+                            : m_routingProcess->GetOutPort(rtKey, selectedShortestPath, inPort);
+
+    if (outPort >= 0 && !selectedShortestPath) {
+        ForceShortestPathRouting(packet, headers.datalinkPacketHeader);
+    }
+    return outPort;
+}
+
+void
+UbSwitch::ReportForwardingRouteFailure(const RoutingKey& key, uint32_t inPort)
+{
+    if (m_routingProcess != nullptr && m_routingProcess->LastFailureExcludedAllCandidates())
+    {
+        NS_FATAL_ERROR("No legal output remains after a detected link failure: node "
+                       << GetObject<Node>()->GetId() << " inPort " << inPort << " failedOutput "
+                       << (m_detectedFailedOutput == UINT32_MAX
+                               ? std::string("none")
+                               : std::to_string(m_detectedFailedOutput))
+                       << " destination " << Ipv4Address(key.dip) << " RoutingType "
+                       << static_cast<uint32_t>(key.routingType) << " priority "
+                       << static_cast<uint32_t>(key.priority)
+                       << " (original-ingress exclusion and endpoint restrictions stay in effect)");
+    }
+    utils::UbUtils::RecordRuntimePacketDrop("route cannot be found");
+    NS_LOG_WARN("The route cannot be found. Packet Dropped!");
+}
+
 void UbSwitch::ParseURMAPacketHeader(Ptr<Packet> packet, ParsedURMAHeaders &headers)
 {
     // Parse headers needed by switch (store all that must be removed anyway)
@@ -1105,14 +1229,11 @@ void UbSwitch::ParseURMAPacketHeader(Ptr<Packet> packet, ParsedURMAHeaders &head
 
 void UbSwitch::ParseLdstPacketHeader(Ptr<Packet> packet, ParsedLdstHeaders &headers)
 {
-    // Parse only headers needed by switch for routing and forwarding
-    // Order: DLH -> CNA16NH -> dummyTA -> ...
-    // Note: dummyTA can be either UbCompactTransactionHeader or UbCompactAckTransactionHeader
-    packet->RemoveHeader(headers.datalinkPacketHeader);
-    packet->RemoveHeader(headers.cna16NetworkHeader);
-    packet->PeekHeader(headers.dummyTransactionHeader);
-    packet->AddHeader(headers.cna16NetworkHeader);
-    packet->AddHeader(headers.datalinkPacketHeader);
+    // Use a read-only view: reconstructing from decoded fields would lose CCI bits.
+    Ptr<Packet> view = CopyPacketView(packet);
+    view->RemoveHeader(headers.datalinkPacketHeader);
+    headers.network = RemoveLdstNetworkHeader(view, headers.datalinkPacketHeader.GetConfig());
+    view->PeekHeader(headers.dummyTransactionHeader);
 }
 
 void UbSwitch::ParseCtpPacketHeader(Ptr<Packet> packet, ParsedCtpHeaders &headers)
@@ -1125,7 +1246,15 @@ void UbSwitch::ParseCtpPacketHeader(Ptr<Packet> packet, ParsedCtpHeaders &header
     } else {
         packet->RemoveHeader(headers.cna16NetworkHeader);
     }
-    packet->PeekHeader(headers.ctpHeader);
+    packet->RemoveHeader(headers.ctpHeader);
+    if (headers.ctpHeader.GetNlp() == UB_CTPH_NLP_UPI16_EID40_TAH)
+    {
+        UbCompactUpiHeader upiHeader;
+        packet->RemoveHeader(upiHeader);
+        packet->PeekHeader(headers.compactEidHeader);
+        packet->AddHeader(upiHeader);
+    }
+    packet->AddHeader(headers.ctpHeader);
     if (headers.isCna24) {
         packet->AddHeader(headers.cna24NetworkHeader);
     } else {
@@ -1146,15 +1275,13 @@ void UbSwitch::GetURMARoutingKey(const ParsedURMAHeaders &headers, RoutingKey &r
 
 void UbSwitch::GetLdstRoutingKey(const ParsedLdstHeaders &headers, RoutingKey &rtKey)
 {
-    uint16_t dCna = headers.cna16NetworkHeader.GetDcna();
-    uint16_t sCna = headers.cna16NetworkHeader.GetScna();
-    uint32_t snode = utils::Cna16ToNodeId(sCna);
-    uint32_t dnode = utils::Cna16ToNodeId(dCna);
-    const bool sourcePortExplicit = (sCna & 0xF) != 0;
-    const bool destinationPortExplicit = (dCna & 0xF) != 0;
-    uint16_t sport = sourcePortExplicit ? utils::Cna16ToPortId(sCna) : 0;
-    uint16_t dport = destinationPortExplicit ? utils::Cna16ToPortId(dCna) : 0;
-    uint16_t lb = headers.cna16NetworkHeader.GetLb();
+    const auto& network = headers.network;
+    uint32_t snode = network.source.nodeId;
+    uint32_t dnode = network.destination.nodeId;
+    const bool sourcePortExplicit = network.source.hasPort;
+    uint16_t sport = network.source.portId;
+    uint16_t dport = network.destination.portId;
+    uint16_t lb = network.lb;
     rtKey.sip = sourcePortExplicit ? utils::NodeIdToIp(snode, sport).Get()
                                    : utils::NodeIdToIp(snode).Get();
     // Keep the legacy LDST destination lookup key for wildcard CNA16 addresses. The
@@ -1234,6 +1361,529 @@ void UbSwitch::SendControlFrame(Ptr<Packet> packet, uint32_t portId)
     m_queueManager->PushToVoq(portId, portId, priority, packet->GetSize());
 
     port->TriggerTransmit();
+}
+
+void
+UbSwitch::NotifyOutputDetectedFailed(uint32_t outPort)
+{
+    NS_ABORT_MSG_IF(outPort >= m_portsNum, "Detected failed output is out of range");
+    if (m_detectedFailedOutput == outPort)
+    {
+        return;
+    }
+    NS_ABORT_MSG_IF(m_detectedFailedOutput != UINT32_MAX,
+                    "Version one supports one detected failed output per switch");
+
+    m_detectedFailedOutput = outPort;
+    m_routingProcess->SetOutputUnavailable(static_cast<uint16_t>(outPort));
+
+    // Detection stops new allocations and invalidates pending grants/notifications for the output
+    // without dequeuing, consuming credit, or advancing round-robin/DWRR service state.
+    m_allocator->SuspendOutput(outPort);
+
+    Ptr<Node> node = GetObject<Node>();
+    Ptr<UbPort> port = DynamicCast<UbPort>(node->GetDevice(outPort));
+    NS_ABORT_MSG_IF(port == nullptr, "Detected failed output has no port");
+    port->SetOutputBlocked(true);
+
+    NS_LOG_DEBUG("[UbSwitch] detected failed output " << outPort << " on node " << node->GetId());
+}
+
+void
+UbSwitch::StartOutputRecovery(uint32_t outPort)
+{
+    NS_ABORT_MSG_IF(outPort != m_detectedFailedOutput,
+                    "Recovery start requires the detected failed output");
+    if (m_recoveryBacklogMigrated)
+    {
+        TryTransferPendingRecovery();
+        return;
+    }
+    m_recoveryBacklogMigrated = true;
+
+    Ptr<Node> node = GetObject<Node>();
+
+    // 1. VOQ backlog: packets already admitted at the original ingress keep their reservation and
+    //    only change output association.
+    for (uint32_t priority = 0; priority < m_vlNum; ++priority)
+    {
+        const auto groupKey = BuildVoqGroupKey(outPort, priority);
+        if (groupKey >= m_voq.groups.size())
+        {
+            continue;
+        }
+        auto& group = m_voq.groups[static_cast<size_t>(groupKey)];
+        for (auto& voqEntry : group)
+        {
+            Ptr<UbPacketQueue>& queue = voqEntry.queue;
+            if (queue == nullptr)
+            {
+                continue;
+            }
+            const uint32_t inPort = voqEntry.inPort;
+            while (!queue->IsEmpty())
+            {
+                // GetNextPacket() already removes the head packet from the queue.
+                Ptr<Packet> packet = queue->GetNextPacket();
+                const uint32_t packetBytes = packet->GetSize();
+                if (GetPacketType(packet) == UB_CONTROL_FRAME)
+                {
+                    // Link-local credit/PFC frames are not rerouted; dispose them consistently.
+                    m_queueManager->PopFromVoq(inPort, outPort, priority, packetBytes);
+                    continue;
+                }
+                m_queueManager->MoveVoqToPendingRecovery(inPort, outPort, priority, packetBytes);
+                ParkRecoveryPacket(packet, inPort, priority, /*ingressHeld=*/true);
+            }
+        }
+    }
+
+    // 2. Egress backlog: ownership moves to pending recovery, then it reacquires bounded ingress
+    //    admission before it can enter a healthy VOQ.
+    Ptr<UbPort> failedPort = DynamicCast<UbPort>(node->GetDevice(outPort));
+    NS_ABORT_MSG_IF(failedPort == nullptr, "Detected failed output has no port");
+    Ptr<UbEgressQueue> egressQueue = failedPort->GetUbQueue();
+    while (!egressQueue->IsEmpty())
+    {
+        const PacketEntry entry = egressQueue->DoDequeue();
+        Ptr<Packet> packet = std::get<2>(entry);
+        if (packet == nullptr)
+        {
+            break;
+        }
+        const uint32_t inPort = std::get<0>(entry);
+        const uint32_t priority = std::get<1>(entry);
+        const uint32_t packetBytes = packet->GetSize();
+        m_queueManager->RemoveEgressBufferedBytes(packetBytes);
+        if (GetPacketType(packet) == UB_CONTROL_FRAME)
+        {
+            continue;
+        }
+        m_queueManager->AddPendingRecoveryBytes(inPort, priority, packetBytes);
+        ParkRecoveryPacket(packet, inPort, priority, /*ingressHeld=*/false);
+    }
+
+    PublishRecoveryBacklogCounters(outPort);
+    TryTransferPendingRecovery();
+}
+
+bool
+UbSwitch::HasPendingRecoveryFor(uint32_t outPort) const
+{
+    return GetPendingRecoveryPacketCount(outPort) != 0;
+}
+
+void
+UbSwitch::ParkRecoveryPacket(Ptr<Packet> packet,
+                             uint32_t inPort,
+                             uint32_t priority,
+                             bool ingressHeld)
+{
+    PendingRecoveryEntry entry;
+    entry.packet = packet;
+    entry.inPort = inPort;
+    entry.priority = priority;
+    entry.oldOutput = m_detectedFailedOutput;
+    entry.entryId = ++m_nextRecoveryEntryId;
+    entry.ingressHeld = ingressHeld;
+    m_pendingRecovery.push_back(entry);
+    NS_LOG_DEBUG("[UbSwitch] parked recovery entry " << entry.entryId << " inPort " << inPort
+                                                     << " pri " << priority << " ingressHeld "
+                                                     << ingressHeld);
+}
+
+bool
+UbSwitch::TransferOnePendingEntry(PendingRecoveryEntry& entry)
+{
+    // The alternate output is selected once and then retained while admission is blocked, so a
+    // wakeup cannot advance a selector or consume a one-detour allowance again.
+    if (!entry.outputResolved)
+    {
+        uint16_t newOutput = UINT16_MAX;
+        if (!ResolveRecoveryOutput(entry.packet, entry.inPort, entry.oldOutput, newOutput))
+        {
+            // Link-local control frames leave with their recovery accounting.
+            m_queueManager->RemovePendingRecoveryBytes(entry.inPort,
+                                                       entry.priority,
+                                                       entry.packet->GetSize());
+            if (Ptr<UbReliableRerouting> rerouting = FailedOutputRerouting())
+            {
+                rerouting->PublishBacklogEvent("control_frame_discarded",
+                                               entry.entryId,
+                                               entry.oldOutput);
+            }
+            return true;
+        }
+        entry.selectedOutput = newOutput;
+        entry.outputResolved = true;
+    }
+
+    const uint32_t packetBytes = entry.packet->GetSize();
+    if (!entry.ingressHeld &&
+        !m_queueManager->CheckInPortSpace(entry.inPort, entry.priority, packetBytes))
+    {
+        PublishRecoveryBacklogCounters(entry.oldOutput);
+        if (Ptr<UbReliableRerouting> rerouting = FailedOutputRerouting())
+        {
+            rerouting->PublishBacklogEvent("admission_block", entry.entryId, entry.oldOutput);
+        }
+        return false;
+    }
+
+    // A recovered packet re-enters the healthy VOQ with no new input-processing delay and no repeated
+    // receive/congestion effects, but with its original ingress identity and VL.
+    ClearOldLinkPiggybackMetadata(entry.packet);
+    if (!entry.ingressHeld)
+    {
+        // The original upstream credit was already returned when this packet left the ingress.
+        UbRecoveredCreditTag creditTag;
+        entry.packet->AddPacketTag(creditTag);
+    }
+    m_queueManager->AdmitPendingRecoveryToVoq(entry.inPort,
+                                              entry.selectedOutput,
+                                              entry.priority,
+                                              packetBytes,
+                                              entry.ingressHeld);
+    GetOrCreateVoq(entry.selectedOutput, entry.priority, entry.inPort)->Push(entry.packet);
+    FinalizeForwardedPacketEnqueue(entry.packet,
+                                   entry.inPort,
+                                   entry.selectedOutput,
+                                   entry.priority,
+                                   true);
+    m_lastRecoveryOutput = entry.selectedOutput;
+    ++m_recoveryTransferCount;
+    if (Ptr<UbReliableRerouting> rerouting = FailedOutputRerouting())
+    {
+        rerouting->PublishBacklogEvent("transfer",
+                                       entry.entryId,
+                                       entry.oldOutput,
+                                       entry.selectedOutput);
+    }
+    NS_LOG_DEBUG("[UbSwitch] recovery transfer entry " << entry.entryId << " inPort "
+                                                       << entry.inPort << " oldOutput "
+                                                       << entry.oldOutput << " newOutput "
+                                                       << entry.selectedOutput);
+    return true;
+}
+
+void
+UbSwitch::TryTransferPendingRecovery()
+{
+    if (m_pendingRecovery.empty())
+    {
+        return;
+    }
+
+    bool progressed = true;
+    while (progressed)
+    {
+        progressed = false;
+        for (auto it = m_pendingRecovery.begin(); it != m_pendingRecovery.end();)
+        {
+            if (TransferOnePendingEntry(*it))
+            {
+                it = m_pendingRecovery.erase(it);
+                progressed = true;
+            }
+            else
+            {
+                ++it;
+            }
+        }
+    }
+
+    PublishRecoveryBacklogCounters(m_detectedFailedOutput);
+    if (m_pendingRecovery.empty())
+    {
+        if (Ptr<UbReliableRerouting> rerouting = FailedOutputRerouting())
+        {
+            rerouting->NotifyBacklogFinished();
+        }
+    }
+}
+
+void
+UbSwitch::ScheduleRecoveryWakeup()
+{
+    if (m_recoveryWakeupPending || m_recoveryDisposed)
+    {
+        return;
+    }
+    m_recoveryWakeupPending = true;
+    m_recoveryWakeup = Simulator::ScheduleNow(&UbSwitch::RunRecoveryWakeup, this);
+}
+
+void
+UbSwitch::RunRecoveryWakeup()
+{
+    m_recoveryWakeupPending = false;
+    if (m_recoveryDisposed)
+    {
+        return;
+    }
+    // Blocked admission resumes only when real capacity was released; the same wakeup also lets the
+    // endpoint retry its own retained attempts.
+    if (m_detectedFailedOutput != UINT32_MAX)
+    {
+        Ptr<UbPort> port = DynamicCast<UbPort>(GetObject<Node>()->GetDevice(m_detectedFailedOutput));
+        if (port != nullptr && port->GetReliableRerouting() != nullptr)
+        {
+            port->GetReliableRerouting()->ResumeRetryBacklog();
+        }
+    }
+    TryTransferPendingRecovery();
+}
+
+void
+UbSwitch::OnIngressSpaceReleased(uint32_t inPort, uint32_t priority)
+{
+    if (m_pendingRecovery.empty())
+    {
+        return;
+    }
+    for (const auto& entry : m_pendingRecovery)
+    {
+        if (entry.inPort == inPort && entry.priority == priority)
+        {
+            ScheduleRecoveryWakeup();
+            return;
+        }
+    }
+}
+
+void
+UbSwitch::ClearRecoveryBacklogForOutput(uint32_t outPort)
+{
+    uint64_t released = 0;
+    for (auto it = m_pendingRecovery.begin(); it != m_pendingRecovery.end();)
+    {
+        if (it->oldOutput == outPort)
+        {
+            released += it->packet->GetSize();
+            it = m_pendingRecovery.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+    if (released != 0)
+    {
+        NS_LOG_DEBUG("[UbSwitch] released " << released << " retained recovery bytes on dispose");
+    }
+    m_recoveryWakeup.Cancel();
+    m_recoveryWakeupPending = false;
+}
+
+void
+UbSwitch::ClearOldLinkPiggybackMetadata(Ptr<Packet> packet)
+{
+    if (packet == nullptr)
+    {
+        return;
+    }
+    // A retained packet may carry the failed link's piggyback credit or link-ACK indication. The
+    // alternate neighbour must never receive either; the new output attaches its own.
+    UbDatalinkPacketHeader header;
+    packet->RemoveHeader(header);
+    if (header.GetCredit() || header.GetACK())
+    {
+        header.SetCredit(false);
+        header.SetACK(false);
+        packet->AddHeader(header);
+        return;
+    }
+    packet->AddHeader(header);
+}
+
+bool
+UbSwitch::ResolveRecoveryOutput(Ptr<Packet> packet,
+                                uint32_t inPort,
+                                uint32_t oldOutput,
+                                uint16_t& newOutput)
+{
+    ++m_recoveryResolutionCount;
+    // Reuse the production classification, parsers, routing-key builders, and route resolution.
+    const UbPacketType_t packetType = GetPacketType(packet);
+    RoutingKey rtKey;
+    bool selectedShortestPath = false;
+    std::string packetFamily;
+    int resolved = -1;
+    switch (packetType)
+    {
+    case UB_URMA_DATA_PACKET:
+    {
+        ParsedURMAHeaders headers;
+        ParseURMAPacketHeader(packet, headers);
+        packetFamily = "RTP/URMA";
+        resolved = ResolveURMAOutput(packet, headers, inPort, rtKey, selectedShortestPath);
+        break;
+    }
+    case UB_LDST_DATA_PACKET:
+    {
+        ParsedLdstHeaders headers;
+        ParseLdstPacketHeader(packet, headers);
+        packetFamily = "LDST";
+        resolved = ResolveLdstOutput(packet, headers, inPort, rtKey, selectedShortestPath);
+        break;
+    }
+    case UB_CTP_DATA_PACKET:
+    {
+        ParsedCtpHeaders headers;
+        ParseCtpPacketHeader(packet, headers);
+        packetFamily = "CTP";
+        resolved = ResolveCtpOutput(packet, headers, inPort, rtKey, selectedShortestPath);
+        break;
+    }
+    default:
+        // Link-local credit/PFC frames stay on the link. Their disposal during recovery cleanup is
+        // not user-data loss and must never reach a healthy neighbour.
+        NS_LOG_DEBUG("[UbSwitch] link-local control frame is not rerouted on node "
+                     << GetObject<Node>()->GetId() << " inPort " << inPort);
+        return false;
+    }
+
+    if (resolved < 0)
+    {
+        AbortNoRecoveryRoute(rtKey, inPort, oldOutput, packetFamily);
+    }
+    NS_ABORT_MSG_IF(static_cast<uint32_t>(resolved) == oldOutput,
+                    "Recovery transfer must use a healthy output");
+    newOutput = static_cast<uint16_t>(resolved);
+    return true;
+}
+
+UbRecoverySubmitResult
+UbSwitch::SubmitRecoveryPacket(Ptr<Packet> packet,
+                               uint32_t inPort,
+                               uint32_t priority,
+                               uint32_t oldOutput,
+                               uint64_t entryId)
+{
+    NS_ABORT_MSG_IF(packet == nullptr, "Recovery transfer requires a packet");
+    NS_ABORT_MSG_IF(m_detectedFailedOutput == UINT32_MAX,
+                    "Recovery transfer requires a detected failed output");
+    NS_ABORT_MSG_IF(oldOutput != m_detectedFailedOutput,
+                    "Recovery transfer requires the detected failed output");
+
+    if (GetPacketType(packet) == UB_CONTROL_FRAME)
+    {
+        return UbRecoverySubmitResult::DISCARDED;
+    }
+
+    uint16_t newOutput = UINT16_MAX;
+    const auto blocked = m_blockedRetryOutput.find(entryId);
+    if (entryId != 0 && blocked != m_blockedRetryOutput.end())
+    {
+        // Space-release wakeups must not advance a selector or consume a one-detour allowance again
+        // for the same transfer, so a blocked attempt keeps its already selected alternate output.
+        newOutput = blocked->second;
+    }
+    else if (!ResolveRecoveryOutput(packet, inPort, oldOutput, newOutput))
+    {
+        return UbRecoverySubmitResult::DISCARDED;
+    }
+
+    const uint32_t packetBytes = packet->GetSize();
+    if (!m_queueManager->CheckInPortSpace(inPort, priority, packetBytes))
+    {
+        if (entryId != 0)
+        {
+            m_blockedRetryOutput[entryId] = newOutput;
+        }
+        PublishRecoveryBacklogCounters(oldOutput);
+        return UbRecoverySubmitResult::BLOCKED;
+    }
+
+    ClearOldLinkPiggybackMetadata(packet);
+    // The original ingress credit was already returned when this attempt left the ingress, so the
+    // allocator must release the new occupancy without returning that credit again.
+    UbRecoveredCreditTag creditTag;
+    packet->AddPacketTag(creditTag);
+    m_queueManager->PushToVoq(inPort, newOutput, priority, packetBytes);
+    GetOrCreateVoq(newOutput, priority, inPort)->Push(packet);
+    FinalizeForwardedPacketEnqueue(packet, inPort, newOutput, priority, true);
+    if (entryId != 0)
+    {
+        m_blockedRetryOutput.erase(entryId);
+    }
+    m_lastRecoveryOutput = newOutput;
+    ++m_recoveryTransferCount;
+    NS_LOG_DEBUG("[UbSwitch] recovery transfer node "
+                 << GetObject<Node>()->GetId() << " entry " << entryId << " inPort " << inPort
+                 << " oldOutput " << oldOutput << " newOutput " << newOutput);
+    return UbRecoverySubmitResult::TRANSFERRED;
+}
+
+
+void
+UbSwitch::AbortNoRecoveryRoute(const RoutingKey& key,
+                               uint32_t inPort,
+                               uint32_t outPort,
+                               const std::string& packetFamily) const
+{
+    NS_FATAL_ERROR("No legal recovery output: node "
+                   << GetObject<Node>()->GetId() << " inPort " << inPort << " failedOutput "
+                   << outPort << " destination " << Ipv4Address(key.dip) << " RoutingType "
+                   << static_cast<uint32_t>(key.routingType) << " family " << packetFamily
+                   << " (original-ingress exclusion, endpoint restrictions, and shortest-path "
+                      "limits stay in effect)");
+}
+
+uint64_t
+UbSwitch::GetPendingRecoveryPacketCount(uint32_t outPort) const
+{
+    uint64_t count = 0;
+    for (const auto& entry : m_pendingRecovery)
+    {
+        if (entry.oldOutput == outPort)
+        {
+            ++count;
+        }
+    }
+    return count;
+}
+
+uint64_t
+UbSwitch::GetPendingRecoveryByteCount(uint32_t outPort) const
+{
+    uint64_t bytes = 0;
+    for (const auto& entry : m_pendingRecovery)
+    {
+        if (entry.oldOutput == outPort)
+        {
+            bytes += entry.packet->GetSize();
+        }
+    }
+    return bytes;
+}
+
+void
+UbSwitch::PublishRecoveryBacklogCounters(uint32_t outPort)
+{
+    if (outPort == UINT32_MAX)
+    {
+        return;
+    }
+    Ptr<Node> node = GetObject<Node>();
+    Ptr<UbPort> port = DynamicCast<UbPort>(node->GetDevice(outPort));
+    if (port == nullptr || port->GetReliableRerouting() == nullptr)
+    {
+        return;
+    }
+    port->GetReliableRerouting()->SetPendingRecoveryCounters(GetPendingRecoveryPacketCount(outPort),
+                                                             GetPendingRecoveryByteCount(outPort));
+}
+
+Ptr<UbReliableRerouting>
+UbSwitch::FailedOutputRerouting()
+{
+    if (m_detectedFailedOutput == UINT32_MAX)
+    {
+        return nullptr;
+    }
+    Ptr<UbPort> port = DynamicCast<UbPort>(GetObject<Node>()->GetDevice(m_detectedFailedOutput));
+    return port == nullptr ? nullptr : port->GetReliableRerouting();
 }
 
 void UbSwitch::NotifySwitchDequeue(uint16_t inPortId, uint32_t outPort, uint32_t priority, Ptr<Packet> packet)

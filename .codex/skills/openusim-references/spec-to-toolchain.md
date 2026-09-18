@@ -198,11 +198,23 @@ If the workload is a reference `traffic.csv`, copy it into the case directory.
 If the spec workload is `custom-traffic-skeleton`, generate `{case_dir}/traffic.csv` directly by following the decomposition steps in `workload-options.md`. The generated CSV must conform to the `traffic.csv Schema` section in that document.
 
 Use the Write tool to create the CSV. Verify:
-- Header matches exactly: `taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,srcPortId,dstPortId`, or the nine-column form without the optional port columns
+- Header is the nine-column base form, base + `srcPortId,dstPortId`, base +
+  `atomicSubOperation,requestPayloadBytes`, or base + ports + atomic options (in that order).
+  The two 11-column forms are distinguished by exact names; the combined form has 13 columns.
+  Entity-bearing headers remain invalid; every row must match its header width.
+- Atomic `dataSize(Byte)` is N (1/2/4/8/16/32/64), while explicit `requestPayloadBytes` is P
+  (1..4096), overriding defaults CAS=2N and other atomic=N. Load/Store requires one of the eight
+  local-only suboperations; see `workload-options.md` for all nine names and the N/P/S contract.
+  Use the reference atomic CSVs or a custom skeleton; the collective generator stays Write-only.
 - `taskId` is 0-indexed and sequential
 - `sourceNode` and `destNode` are valid host IDs for the topology (0 to `host_num - 1`)
 - `srcPortId` and `dstPortId`, when present, are valid endpoint ports; each may be empty independently, and an explicit `0` means port 0
-- `opType` is a valid value from `TaOpcodeMap` (see `workload-options.md` "Valid `opType` values" or grep `TaOpcodeMap` in `src/unified-bus/model/ub-app.h`)
+- `opType` is a valid value from the runtime traffic-op parser (see `workload-options.md`
+  "Valid `opType` values" / "URMA request operation names" and `ParseOpLocked` in
+  `src/unified-bus/model/ub-traffic-gen.cc`); every accepted URMA name must also satisfy
+  `UbTrafficGen::IsUrmaTask`, and the six references under
+  `scratch/2nodes_transaction_extensions/` show the transport/operation split. MegaMoE cases may
+  additionally use `COMPUTE` and `LOCAL_READY`
 - `dependOnPhases` is empty string for first-phase tasks, space-separated phaseIds otherwise
 
 ### Multi-collective composition
@@ -233,7 +245,28 @@ Unknown override keys must fail before execution. Do not write keys that are not
 Runtime-catalog boundary:
 - Treat the runtime catalog as the current build + current `scratch/ub-quick-example` introspection surface.
 - Treat it as authoritative for `ns3::...` attribute keys.
+- Runtime queries use `--no-build`; build before refreshing the catalog. `runtime-query-v2`
+  preserves empty string defaults (including packet trace controls) and invalidates v1 caches.
 - For UB globals, prefer `--PrintUbGlobals`; if that surface is unavailable in the current build, fall back only to the documented minimum UB-global set used by the project tooling.
+
+### LDST network format
+
+`ns3::UbLdstApi::HeaderConfig` and `ns3::UbLdstEndpoint::HeaderConfig` are independent
+attributes, both defaulting to `9` and accepting only `7` or `9` (enum checker, not 7..9).
+They select outgoing requests; receivers parse the packet and responses retain the request
+CFG, including delayed replies. The CSV MEM task path uses Api/Instance/Thread; direct
+Endpoint behavior is covered by the module integration suite.
+
+| HeaderConfig | Network header | NLP | Transaction representation |
+| --- | --- | --- | --- |
+| 9 | CNA16 | 0 | Existing compact LDST TP bypass |
+| 7 | CNA24 | 4 | Same compact headers and payload semantics |
+
+CFG7/NLP4 is a simulator-local extension, not a standardized CFG7 bypass combination.
+CFG7/NLP0 remains CTP. Requests use validated simulator node/optional-port CNA mapping;
+CNA16 supports node 0..4095 and port 0..14, CNA24 node 0..65535 and port 0..254.
+Explicit port 0 is distinct from an unspecified port. Api aborts on unencodable addresses;
+Endpoint returns false without creating inflight state. Example: `scratch/2nodes_ldst-cfg7/`.
 
 ### Resolving natural-language parameter intent
 
@@ -299,7 +332,7 @@ For values not discoverable from the catalog, check the C++ source:
 | GlobalValue enum values (UB_CC_ALGO, ...) | `MakeEnumChecker(...)` in `GlobalValue(...)` definitions | Grep for `GlobalValue.*UB_` in `src/unified-bus/` |
 | Boolean attributes | `MakeBooleanChecker()` in `GetTypeId()` | Values are always `true` / `false` |
 | Integer attributes with range | `MakeUintegerChecker<T>()` or `MakeIntegerChecker<T>(min, max)` | Grep for the attribute name in `src/unified-bus/` |
-| traffic.csv `opType` values | `TaOpcodeMap` in `src/unified-bus/model/ub-app.h` | Grep for `TaOpcodeMap` |
+| traffic.csv `opType` values | `UbTrafficGen::ParseOpLocked` in `src/unified-bus/model/ub-traffic-gen.cc` plus `UbApp::SendTraffic` | Grep for `ParseOpLocked` and `RuntimeTaskOp` |
 
 #### Risk mitigation during planning
 
@@ -349,10 +382,12 @@ When the user asks for a non-template topology but provides bounded node/link fa
 - Default to `on-demand`; do not ask the user to precompute TP mappings unless they explicitly want fixed TP ids / priorities / endpoint pairs.
 - `precomputed`: topology generation should call `config_transport_channel(...)` and `graph.write_config(include_transport=True)`; the case checker should require `transport_channel.csv`
 - `on-demand`: `transport_channel.csv` may be omitted; topology generation should call `graph.write_config(include_transport=False)` so large cases do not precompute host-pair TP mappings. Compressed route generators require this mode.
-- `traffic.csv` may include optional trailing `srcPortId,dstPortId`; empty cells are wildcards and
-  the two cells are independent.
-- The endpoint tuple is `sourceNode,destNode,srcPortId,dstPortId`. Entity IDs, CTP service entities,
-  and RTP TP records are protocol-internal consequences of that tuple and are not traffic-file inputs.
+- `traffic.csv` may include trailing `srcPortId,dstPortId`. Empty port cells are independent
+  wildcards and explicit `0` means port 0. Traffic never selects CTP Entity IDs.
+- The runner internally creates Entity 1 on each Host with all local CNA16-encodable UB ports;
+  Entity membership is not a case-file input.
+- Advanced multi-Entity cases select `LocalEntityId` and `PeerEntityId` through separate
+  `UbApp`/Jetty configurations and the controller API. RTP TP records remain protocol-internal.
 - CTP multipath remains entity based internally and should not be represented by multiple RTP TP rows.
 
 ## Observability Slot → Observability Overrides

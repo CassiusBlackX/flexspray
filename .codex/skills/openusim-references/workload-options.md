@@ -34,10 +34,14 @@ All workload paths — built-in generator, reference file, or custom skeleton �
 ```
 taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases
 taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,srcPortId,dstPortId
+taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,atomicSubOperation,requestPayloadBytes
+taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases,srcPortId,dstPortId,atomicSubOperation,requestPayloadBytes
 ```
 
-The nine-column header omits endpoint constraints. The eleven-column header adds the optional
-`srcPortId` and `dstPortId` fields; the two cells remain independently optional.
+The nine-column header omits optional fields. Either the endpoint-port pair or atomic-options pair
+makes an eleven-column header; both pairs make thirteen columns, with ports before atomic options.
+Names and order must match exactly and row width must match the header. Port cells remain
+independently optional. Entity-bearing headers are rejected.
 
 ### Column definitions
 
@@ -45,8 +49,8 @@ The nine-column header omits endpoint constraints. The eleven-column header adds
 |--------|------|-------------|-------------|
 | `taskId` | int | Unique task identifier | 0-indexed, monotonically increasing |
 | `sourceNode` | int | Source host node ID | Must be a valid host ID in the topology (`0 .. host_num-1`) |
-| `destNode` | int | Destination host node ID | Must be a valid host ID; `sourceNode != destNode` |
-| `dataSize(Byte)` | int | Data size in bytes | > 0 |
+| `destNode` | int | Destination host node ID | Must be a valid host ID for network tasks; local `COMPUTE` and `LOCAL_READY` rows use `destNode = sourceNode` |
+| `dataSize(Byte)` | int | Data size; for atomic, operand width N (not request Payload P) | Atomic N: 1/2/4/8/16/32/64 |
 | `opType` | string | Operation type | See valid values below |
 | `priority` | int | Task priority | 0 is highest (not recommended); typical value: `7` |
 | `delay` | string | Task start delay with time unit | e.g. `10ns`, `0ns`; valid units: `ns`, `us`, `ms`, `s` |
@@ -55,14 +59,17 @@ The nine-column header omits endpoint constraints. The eleven-column header adds
 | `srcPortId` | int | Optional source endpoint port ID | Trailing field; empty means any source endpoint port |
 | `dstPortId` | int | Optional destination endpoint port ID | Trailing field; empty means any destination endpoint port |
 
-An explicit `0` selects endpoint port 0; an empty cell is a wildcard. The four endpoint fields
-`sourceNode,destNode,srcPortId,dstPortId` identify the requested endpoint pair when either port is
-specified. The simulator derives protocol-specific internal state from that pair; traffic files do
-not contain Entity IDs.
+An explicit `0` selects endpoint port 0; an empty port cell is a wildcard. The endpoint fields
+`sourceNode,destNode,srcPortId,dstPortId` constrain routing. In CTP mode, each explicit port must be
+a member of the Entity selected by the application's `LocalEntityId` or `PeerEntityId`.
+
+The standard runner creates and freezes Entity ID 1 on every Host, binding all local CNA16-encodable
+UB ports; Entity membership is not a workload or case-file input. Multiple Entities are selected
+through separate `UbApp`/Jetty configurations and the controller API, not by traffic rows.
 
 ### Valid `opType` values
 
-**Source of truth:** `TaOpcodeMap` in `src/unified-bus/model/ub-app.h` and `src/unified-bus/model/ub-traffic-gen.h`. Grep for `TaOpcodeMap` to verify the current set.
+**Source of truth:** `UbTrafficGen::ParseOpLocked` in `src/unified-bus/model/ub-traffic-gen.cc` and the matching `UbApp::SendTraffic` dispatch. The ordinary network opTypes remain the TA op map; simulator-local workload stages may use the additional entries below.
 
 Snapshot (verify against code before relying on this list):
 
@@ -70,11 +77,87 @@ Snapshot (verify against code before relying on this list):
 |--------|-----------|
 | `URMA_WRITE` | Remote write (most common, default for collective generators) |
 | `URMA_READ` | Remote read (data returned from destination) |
-| `URMA_WRITE_NOTIFY` | Remote write with completion notification |
 | `MEM_STORE` | Memory-semantic store (maps to TA_OPCODE_WRITE via LdstInstance path) |
 | `MEM_LOAD` | Memory-semantic load (maps to TA_OPCODE_READ via LdstInstance path) |
+| `COMPUTE` | Local compute task; `dataSize(Byte)` is interpreted as duration in nanoseconds and is serialized per source UBPU |
+| `LOCAL_READY` | Zero-cost local phase marker used for local-only workload edges; execution is immediate, normal phase visibility delay still applies, and it does not consume a compute slot |
 
-**`build_traffic.py` only generates `URMA_WRITE`.** For other opTypes, use `reference traffic.csv` or `custom-traffic-skeleton`.
+**`build_traffic.py` only generates `URMA_WRITE`.** For `COMPUTE` and `LOCAL_READY`, use the MegaMoE generator or a reference `traffic.csv`.
+
+`URMA_WRITE_NOTIFY` is present in some legacy case files but is not accepted by the active
+`UbTrafficGen::ParseOpLocked` parser; do not use it for new cases without an explicit compatibility
+adapter.
+
+### URMA request operation names
+
+The current URMA CSV surface accepts 25 request names: the nine `URMA_ATOMIC_*` rows documented
+below and the following sixteen names. Response opcodes
+(`TAACK`/`READ_RESPONSE`/`ATOMIC_RESPONSE`) and reserved values are rejected as task input.
+`UbTrafficGen::IsUrmaTask` must classify every accepted name as URMA so the task reaches
+`UbApp::SendTraffic` and the shared submit path.
+
+| opType | Request opcode | Notes |
+| --- | --- | --- |
+| `URMA_WRITE` | 0x03 | Remote write; single or multi-packet by segment size |
+| `URMA_READ` | 0x06 | Remote read; response carries the requested data |
+| `URMA_SEND` | 0x00 | Message send with the required MTETAH |
+| `URMA_SEND_WITH_IMMEDIATE` | 0x01 | MTETAH plus IMMETAH |
+| `URMA_WRITE_WITH_IMMEDIATE` | 0x04 | MTETAH plus MAETAH plus IMMETAH |
+| `URMA_WRITE_WITH_NOTIFY` | 0x05 | Write with the required NTFETAH |
+| `URMA_PREFETCH_TGT` | 0x15 | Maintenance prefetch request |
+| `URMA_WRITEBACK` | 0x17 | Full writeback |
+| `URMA_MANAGEMENT` | 0x10 | Management PDU, payload at most 1024 bytes |
+| `URMA_WRITE_WITH_ATOMIC_STORE_ADD` | 0x19 | Multi-packet write with NTFETAH on every packet |
+| `URMA_WRITE_WITH_REMOTE_SYNC` | 0x1A | Multi-packet write with UDETAH Type=2 |
+| `URMA_WRITE_WITH_REMOTE_SYNC_WITH_BE` | 0x1B | Single-packet BE write at 64/128/256/512/1024 bytes |
+| `URMA_ATOMIC_STORE_WITH_RETURN_STATUS` | 0x1C | Queue operation, P=N power of two 1..64, zero-payload 0x11 response |
+| `URMA_ATOMIC_SYNC` | 0x1D | Queue operation, 0x13 response defaults to N; executor may select 0 or N |
+| `URMA_WRITE_WITH_BE` | 0x14 | Single-packet BE write at 64/128/256/512/1024 bytes |
+| `URMA_WRITEBACK_WITH_BE` | 0x18 | Single-packet partial writeback at 64/128/256/512/1024 bytes |
+
+The six runnable references under `scratch/2nodes_transaction_extensions/` split the coverage by
+transport and operation family: `*-queue` covers the two 0x1C/0x1D queue operations over all seven
+N values, `*-writes` covers 0x19/0x1A and the three BE writes, and `*-existing` covers the seven
+older operations plus the nine atomics. The collective `build_traffic.py` CLI remains
+`URMA_WRITE`-only.
+
+### Atomic inputs
+
+URMA/Jetty atomic supports ROI over RTP and CTP. One row creates one WQE, one atomic operation,
+one request segment and one request packet. `dataSize(Byte)` is operand width N, one of
+1/2/4/8/16/32/64 bytes. Request Payload P is separate; explicit `requestPayloadBytes` takes priority.
+An empty cell uses the default below. P must be an unsigned decimal integer in 1..4096 (the current
+single-packet Payload limit); explicit zero is rejected. Response Payload S is not configurable.
+
+| opType | Request opcode | Default P | S |
+| --- | --- | --- | --- |
+| `URMA_ATOMIC_COMPARE_SWAP` | 0x07 | 2N | N |
+| `URMA_ATOMIC_SWAP` | 0x08 | N | N |
+| `URMA_ATOMIC_STORE` | 0x09 | N | 0 |
+| `URMA_ATOMIC_LOAD` | 0x0A | N | N |
+| `URMA_ATOMIC_FETCH_ADD` | 0x0B | N | N |
+| `URMA_ATOMIC_FETCH_SUB` | 0x0C | N | N |
+| `URMA_ATOMIC_FETCH_AND` | 0x0D | N | N |
+| `URMA_ATOMIC_FETCH_OR` | 0x0E | N | N |
+| `URMA_ATOMIC_FETCH_XOR` | 0x0F | N | N |
+
+Load/Store requires `atomicSubOperation`: ADD, CLR, EOR, SET, SMAX, SMIN, UMAX or UMIN.
+Other operations reject a nonempty suboperation. Non-atomic rows require both atomic cells empty.
+Without atomic columns, the other seven atomic operations can use defaults. Conversion uses
+`UbTrafficGen::ParseTaskOperation` and the common `ResolveAtomicRequest` API rules.
+
+All atomic responses use 0x13; Store sends a real zero-Payload response. This is a timing and byte
+model with placeholder data: no arithmetic, old values, CAS success or address contention.
+Suboperations are validated and retained only in the local WQE, never encoded or executed remotely.
+Default runs register no remote callback. CTP keeps its existing compact packet format and obtains
+exact N from the existing FlowTag even with trace disabled; missing/invalid metadata is rejected.
+No new header or tag layout is introduced. This does not claim full CTP specification conformance.
+
+Use reference CSVs in `scratch/2nodes_atomic_rtp` and `scratch/2nodes_atomic_ctp`; the collective
+`build_traffic.py` CLI remains Write-only. The current case inspector and trace/task parsers accept
+the additional names/columns without a tool-submodule interface change. Task statistics use N for
+atomic dataSize; their taskThroughput is not wire throughput when N differs from P/S.
+See `src/unified-bus/doc/atomic-support.md` for API and runner examples.
 
 ### Phase dependency rules
 
@@ -83,6 +166,17 @@ Snapshot (verify against code before relying on this list):
 - First-phase tasks should have an empty `dependOnPhases` field (empty string, not `0`).
 - Cross-phase dependency example: task in phase 20 depends on phase 10 → `dependOnPhases` = `10`.
 - Multiple dependencies: `dependOnPhases` = `10 20` (space-separated).
+
+### MegaMoE local phase markers
+
+`scratch/dsv4-megamoe/generate_traffic.py` emits routing-derived variable-size
+Dispatch/Combine rows and local block/wave compute tasks. A local owner does not
+need a network transfer, so the generator emits `LOCAL_READY` in the phase to
+preserve the all-of DAG without charging the UBPU compute resource. Its local
+execution is zero-cost, but the ordinary phase visibility delay still controls
+when dependent phases become visible. `COMPUTE` rows use `dataSize(Byte)` as a
+duration in nanoseconds and are serialized by source node; network rows remain
+independent of that compute queue.
 
 ## Supported planning modes
 

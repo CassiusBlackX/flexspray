@@ -1,1 +1,0 @@
-T27_TIMER mode=SELECTIVE retained=4096 repeated_checks=1000000 elapsed_us=4305 start_calls=1000001 scan_calls=1 scanned_entries=1 schedules=1 cancels=0 restarts=0

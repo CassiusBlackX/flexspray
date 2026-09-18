@@ -182,9 +182,42 @@ public:
     void RecvDataPacket(Ptr<Packet> p);
 
     /**
-     * @brief apply ta for next wqesegment
+     * Decoded content of one received RTP data packet.
+     *
+     * It exposes the transaction header view a carrier produced after consuming the rule-driven
+     * header plan, so wire-format tests can assert header order, payload integrity, and decoded
+     * field presence without reaching into the channel.
      */
-    void ApplyNextWqeSegment();
+    struct ReceivedDataPacketContext
+    {
+        Ptr<Packet> packet;
+        UbDatalinkPacketHeader dataLinkHeader;
+        UbIpBasedNetworkHeader networkHeader;
+        Ipv4Header ipv4Header;
+        UdpHeader udpHeader;
+        UbTransportHeader transportHeader;
+        UbTransactionHeader transactionHeader;
+        UbMAExtTah maExtHeader;
+        UbFlowTag flowTag;
+        bool hasTransactionCorrelation{false};
+        UbTransactionCorrelationIdentity transactionCorrelation;
+        uint64_t psn{0};
+        uint32_t payloadBytes{0};
+        uint32_t resLenBytes{0};
+        Ptr<const Packet> explicitPayload;
+        UbTransactionFields transactionFields;
+    };
+
+    /** Decode-only seam for wire-format tests; it has no side effects on the channel. */
+    bool ParseReceivedDataPacketForTest(Ptr<Packet> packet, ReceivedDataPacketContext& ctx)
+    {
+        return ParseReceivedDataPacket(packet, ctx);
+    }
+
+    /**
+     * @brief Ask the transaction owner to continue RTP WQE transmission after TP capacity changes.
+     */
+    void TryContinueJettyTransmission();
     void MarkOwnerControllerDisposing()
     {
         m_ownerControllerDisposing = true;
@@ -461,6 +494,11 @@ public:
     uint32_t GetGbnDescriptorCountForTest() const;
     bool HasGbnDescriptorForTest(uint64_t psn) const;
     uint64_t GetGbnRetransmissionCursorForTest() const;
+    /** Whether a GBN retransmission is currently pending for the next packet pull. */
+    bool HasPendingGbnRetransmissionForTest() const
+    {
+        return m_retrans->HasPendingGbnRetransmission();
+    }
     void RetainGbnDescriptorForTest(uint64_t psn);
     bool IsRetransTimerRunningForTest() const;
     void StartRetransTimerForTest() { m_retrans->StartTimerIfNeeded(); }
@@ -510,6 +548,7 @@ private:
     {
         Ptr<UbWqeSegment> segment;
         uint32_t bytesReceived{0};
+        Ptr<Packet> explicitPayload;
     };
 
     struct BufferedInboundPacket
@@ -517,28 +556,14 @@ private:
         UbTransportHeader tpHeader;
         UbTransactionHeader taHeader;
         uint32_t resLenBytes{0};
+        uint64_t remoteAddress{0};
+        uint32_t remoteTokenId{0};
         uint32_t payloadBytes{0};
         uint32_t taskId{0};
         bool hasTransactionCorrelation{false};
         UbTransactionCorrelationIdentity transactionCorrelation;
-    };
-
-    struct ReceivedDataPacketContext
-    {
-        Ptr<Packet> packet;
-        UbDatalinkPacketHeader dataLinkHeader;
-        UbIpBasedNetworkHeader networkHeader;
-        Ipv4Header ipv4Header;
-        UdpHeader udpHeader;
-        UbTransportHeader transportHeader;
-        UbTransactionHeader transactionHeader;
-        UbMAExtTah maExtHeader;
-        UbFlowTag flowTag;
-        bool hasTransactionCorrelation{false};
-        UbTransactionCorrelationIdentity transactionCorrelation;
-        uint64_t psn{0};
-        uint32_t payloadBytes{0};
-        uint32_t resLenBytes{0};
+        Ptr<const Packet> explicitPayload;
+        UbTransactionFields transactionFields;
     };
 
     struct AckResponseContext
@@ -593,13 +618,16 @@ private:
     void NotifyDataPacketSent(const UbGbnPacketDescriptor& descriptor, Ptr<Packet> packet);
     void AdvanceNewDataSendState(const NewDataSendContext& ctx, Ptr<Packet> packet);
     Ptr<UbTransaction> GetTransaction();
-    Ptr<UbWqeSegment> TrackInboundTaPacket(const UbTransportHeader& tpHeader,
-                                           const UbTransactionHeader& taHeader,
-                                           uint32_t resLenBytes,
-                                           uint32_t payloadBytes,
-                                           uint32_t taskId,
-                                           bool hasTransactionCorrelation,
-                                           const UbTransactionCorrelationIdentity& correlation);
+    Ptr<UbWqeSegment> TrackInboundTaPacket(const BufferedInboundPacket& packet);
+    /**
+     * Bytes one outgoing RTP data packet carries outside its payload.
+     *
+     * The transaction part is the rule-driven header plan that BuildRtpDataPacket serializes for
+     * this opcode, role, and field set; the stack part is the network stack the packet traverses.
+     */
+    uint32_t GetDataPacketHeaderBytes(UbTransactionOpcode opcode,
+                                      UbTransactionSegmentKind segmentKind,
+                                      const UbTransactionFields& fields) const;
     bool ShouldCompleteOnTpAck(const Ptr<UbWqeSegment>& segment) const;
     uint64_t GetCumulativeAckPsn() const;
     TpOpcode GetResponseOpcode(bool selectiveAck) const;
@@ -771,7 +799,7 @@ private:
     uint32_t m_selectionCursor{0};
     bool m_acceptingNewOperations{true};
     std::optional<UbLifecycleResourceIdentity> m_pendingLastMemberRemoval;
-    bool m_destroyPending{false};
+    bool m_destroyRequested{false};
     UbTpgCleanupMode m_cleanupMode{UbTpgCleanupMode::GRACEFUL};
     uint64_t m_membershipVersion{1};
 };

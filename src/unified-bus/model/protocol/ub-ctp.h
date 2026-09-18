@@ -14,7 +14,7 @@
 #include "ns3/ub-lifecycle.h"
 #include "ns3/ub-queue-manager.h"
 #include "ns3/ub-tag.h"
-#include "ns3/ub-transaction.h"
+#include "ub-transaction.h"
 
 #include <cstdint>
 #include <deque>
@@ -138,10 +138,6 @@ class UbCtpTransportService : public Object
     void SetRoutingType(RoutingType routingType);
     void SetBoundOutPortCountForTest(uint32_t boundOutPortCount);
     void SetExperimentTaAckPacketBytesForTest(uint32_t packetBytes);
-    void SetSourcePortHint(const UbCtpEntityKey& key, uint32_t port);
-    void ClearSourcePortHint(const UbCtpEntityKey& key);
-    void SetDestinationPortHint(const UbCtpEntityKey& key, uint32_t port);
-    void ClearDestinationPortHint(const UbCtpEntityKey& key);
     UbCtpTransportConstraints GetTransactionConstraints() const;
 
     UbCtpEntityState& GetOrCreateEntityState(const UbCtpEntityKey& key);
@@ -153,10 +149,17 @@ class UbCtpTransportService : public Object
     Ptr<Packet> BuildResponsePacketForTest(Ptr<UbWqeSegment> response,
                                            const UbCtpEntityKey& key);
     bool HandleReceivedPacket(Ptr<Packet> packet);
-    bool HandleReceivedPacket(Ptr<Packet> packet, uint32_t receivePortHint);
+    bool HandleReceivedPacket(Ptr<Packet> packet, uint32_t ingressPortId);
     bool SendSegment(Ptr<UbWqeSegment> segment, const UbCtpEntityKey& key);
     void PrepareJetty(Ptr<UbJetty> jetty);
+    bool PrepareJetty(Ptr<UbJetty> jetty, const UbCtpEntityKey& key);
+    bool HasJettyPreparation(uint32_t jettyNum) const;
+    bool CanSubmitWqe(uint32_t jettyNum, Ptr<UbWqe> wqe) const;
+    bool SubmitPreparedWqe(uint32_t jettyNum, Ptr<UbWqe> wqe);
+    bool NotifyJettyWork(uint32_t jettyNum);
+    bool UnprepareJetty(uint32_t jettyNum);
     void StartJetty(Ptr<UbJetty> jetty, const UbCtpEntityKey& key);
+    void TryContinueJettyTransmission(const UbCtpEntityKey& entityKey);
     void ReleaseJetty(uint32_t jettyNum);
     bool HasJettyBindingForTest(uint32_t jettyNum) const;
     UbCtpEntityKey MakeSourceGroupKeyForRequest(const UbCtpEntityKey& key) const;
@@ -190,6 +193,9 @@ class UbCtpTransportService : public Object
     Ptr<UbTransaction> GetTransactionOwner() const;
     UbCtpTransactionState& GetTransactionState(const UbCtpEntityKey& key) const;
     void ValidateRoutingType(RoutingType routingType, const std::string& owner) const;
+    bool TryGetJettyPreparation(uint32_t jettyNum,
+                                Ptr<UbJetty>& jetty,
+                                UbCtpEntityKey& key) const;
 
     Ptr<Packet> BuildDataPacketWithTaSsn(Ptr<UbWqeSegment> segment,
                                          UbCtpEntityState& state,
@@ -203,23 +209,24 @@ class UbCtpTransportService : public Object
                               const UbCtpEntityKey& packetKey,
                               uint32_t taSsn,
                               uint32_t progressBytes);
-    Ptr<UbWqeSegment> ProcessInboundTaRequest(Ptr<UbWqeSegment> request) const;
+    bool DispatchInboundTransaction(Ptr<UbWqeSegment> request, const UbCtpEntityKey& key);
     Ptr<UbWqeSegment> BuildInboundTaOperation(const UbCompactTransactionHeader& taHeader,
                                               const UbCompactMAExtTah& maHeader,
-                                              TaOpcode taOpcode,
+                                              UbTransactionOpcode taOpcode,
+                                              const UbTransactionFields& fields,
+                                              bool maetahPresent,
                                               uint32_t srcNodeId,
                                               uint32_t dstNodeId,
                                               uint32_t priority,
                                               uint32_t payloadBytes,
                                               uint32_t flowId,
-                                              uint32_t flowSize);
-    void DrainJettys(UbCtpEntityState& state);
-    uint32_t SelectOutPort(UbCtpEntityState& state,
+                                              uint32_t flowSize,
+                                              Ptr<const Packet> explicitPayload);
+    uint32_t SelectOutPort(Ptr<UbWqeSegment> segment,
+                           UbCtpEntityState& state,
                            const UbCtpEntityKey& routeKey,
                            uint16_t loadBalanceSalt);
     uint16_t NextLoadBalanceSalt(UbCtpEntityState& state, const UbCtpEntityKey& routeKey);
-    uint32_t ResolveDestinationPortHint(const UbCtpEntityKey& key) const;
-    uint32_t ResolveSourcePortHint(const UbCtpEntityKey& key) const;
     void RegisterQueueIfNeeded(Ptr<UbCtpTxQueue> queue,
                                uint32_t outPort,
                                uint32_t priority);
@@ -256,12 +263,12 @@ class UbCtpTransportService : public Object
                                 uint32_t taSsn,
                                 uint32_t outPort,
                                 uint32_t payloadBytes,
-                                TaOpcode opcode);
+                                UbTransactionOpcode opcode);
     void LastPacketACKsNotify(uint32_t taskId,
                               const UbCtpEntityKey& key,
                               uint32_t taSsn,
                               uint32_t payloadBytes,
-                              TaOpcode opcode);
+                              UbTransactionOpcode opcode);
     void CtpRecvNotify(uint32_t packetUid,
                        const UbCtpEntityKey& key,
                        uint32_t taSsn,
@@ -302,8 +309,6 @@ class UbCtpTransportService : public Object
     Time m_delayTaAckTime{NanoSeconds(0)};
     std::map<UbCtpEntityKey, std::vector<Ptr<UbJetty>>> m_keyJettys;
     std::map<UbCtpEntityKey, uint32_t> m_keyJettyRrIndex;
-    std::map<UbCtpEntityKey, uint32_t> m_srcPortHints;
-    std::map<UbCtpEntityKey, uint32_t> m_dstPortHints;
     std::map<UbCtpEntityKey, UbCtpEntityState> m_entityStates;
     std::map<QueueKey, Ptr<UbCtpTxQueue>> m_queues;
     std::set<Ptr<UbCtpTxQueue>> m_registeredQueues;
