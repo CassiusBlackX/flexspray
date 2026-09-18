@@ -28,8 +28,15 @@
 
 <p align="center">
   <strong>Release 2.1.0</strong> · September 2026<br>
-  Simulation models based on the UB Base Specification 2.1: richer queue and other transaction types · more transport layer modes · reliable rerouting at the network layer · datalink header configuration and packet rate control<br>
-  Engine optimizations: fewer simulation events · on-demand resource loading · topology structure recognition · fast route computation · lower memory footprint<br>
+  <br>
+  <strong>Simulation models based on the UB Base Specification 2.1</strong><br>
+  Richer queue and other transaction types · more transport layer modes<br>
+  Reliable rerouting at the network layer · datalink header configuration and packet rate control<br>
+  <br>
+  <strong>Simulation engine optimizations</strong><br>
+  Fewer simulation events · on-demand resource loading · topology structure recognition<br>
+  Fast route computation · lower memory footprint<br>
+  <br>
   <a href="RELEASE_NOTES_UB_en.md#release-210">Full release notes →</a>
 </p>
 
