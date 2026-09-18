@@ -7,7 +7,7 @@ This repository standardizes on four repo-local OpenUSim stage skills:
 - `openusim-run-experiment`
 - `openusim-analyze-results`
 
-All four ship inside this repository under `.codex/skills/` and are maintained with the main repo.
+All four ship inside this repository under `.agents/skills/` and are maintained with the main repo.
 
 The repository also contains one optional post-analysis companion skill:
 
@@ -213,16 +213,16 @@ When the discussion turns to a specialized OpenUSim domain topic that is easy to
 
 Current required card:
 
-- for `trace/debug` semantics and recommendations: `.codex/skills/openusim-references/trace-observability.md`
-- for transport-channel semantics: `.codex/skills/openusim-references/transport-channel-modes.md`
-- for throughput evidence and line-rate interpretation: `.codex/skills/openusim-references/throughput-evidence.md`
-- for spec-to-toolchain mapping: `.codex/skills/openusim-references/spec-to-toolchain.md`
-- for queue backpressure vs topology capacity: `.codex/skills/openusim-references/queue-backpressure-vs-topology.md`
-- for controlled experiment groups, package contracts, run ledgers, and prediction-vs-actual analysis: `.codex/skills/openusim-references/controlled-experiment-method.md`
+- for `trace/debug` semantics and recommendations: `.agents/skills/openusim-references/trace-observability.md`
+- for transport-channel semantics: `.agents/skills/openusim-references/transport-channel-modes.md`
+- for throughput evidence and line-rate interpretation: `.agents/skills/openusim-references/throughput-evidence.md`
+- for spec-to-toolchain mapping: `.agents/skills/openusim-references/spec-to-toolchain.md`
+- for queue backpressure vs topology capacity: `.agents/skills/openusim-references/queue-backpressure-vs-topology.md`
+- for controlled experiment groups, package contracts, run ledgers, and prediction-vs-actual analysis: `.agents/skills/openusim-references/controlled-experiment-method.md`
 
 ## Skill Reference Maintenance
 
-When tool scripts under `scratch/ns-3-ub-tools/` change their interface (parameters, CLI arguments, constraints, output schema), the corresponding reference files under `.codex/skills/openusim-references/` must be updated in the same commit.
+When tool scripts under `scratch/ns-3-ub-tools/` change their interface (parameters, CLI arguments, constraints, output schema), the corresponding reference files under `.agents/skills/openusim-references/` must be updated in the same commit.
 
 Affected mappings:
 

@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TOOLS_DIR = REPO_ROOT / "scratch" / "ns-3-ub-tools"
 CASE_DIR = Path(__file__).resolve().parent
 RUN_EXPERIMENT_SCRIPTS = (
-    REPO_ROOT / ".codex" / "skills" / "openusim-run-experiment" / "scripts"
+    REPO_ROOT / ".agents" / "skills" / "openusim-run-experiment" / "scripts"
 )
 
 sys.path.insert(0, str(TOOLS_DIR))

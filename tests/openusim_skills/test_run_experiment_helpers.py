@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-HELPER_ROOT = REPO_ROOT / ".codex/skills/openusim-run-experiment/scripts"
+HELPER_ROOT = REPO_ROOT / ".agents/skills/openusim-run-experiment/scripts"
 if str(HELPER_ROOT) not in sys.path:
     sys.path.insert(0, str(HELPER_ROOT))
 

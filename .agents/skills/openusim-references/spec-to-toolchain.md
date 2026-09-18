@@ -227,7 +227,7 @@ If the spec combines multiple collectives:
 ## Network Overrides Slot → network_attribute.txt
 
 Use the `write_network_attributes()` function from
-`.codex/skills/openusim-run-experiment/scripts/openusim_run_experiment/network_attribute_writer.py`:
+`.agents/skills/openusim-run-experiment/scripts/openusim_run_experiment/network_attribute_writer.py`:
 
 ```python
 from openusim_run_experiment.network_attribute_writer import write_network_attributes

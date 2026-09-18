@@ -65,7 +65,7 @@ Each knowledge card exposes a structured `<reference-hint>` block near the top s
 ## Skill Discovery
 
 These skills can be discovered via:
-- `.codex/skills/` (canonical location)
+- `.agents/skills/` (canonical location)
 - `.claude/skills/` (symlinks)
 
 Each skill's `SKILL.md` defines its purpose and usage conditions.

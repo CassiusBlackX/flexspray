@@ -281,7 +281,7 @@ Provides the complete network simulation workflow to support:
 
 ### 4. OpenUSim Skills (Repository-Bundled)
 
-This repository includes OpenUSim skills under `.codex/skills/` for planning, running, and reviewing `ns-3-ub` simulations.
+This repository includes OpenUSim skills under `.agents/skills/` for planning, running, and reviewing `ns-3-ub` simulations.
 
 They cover smoke runs, old-case reproduction, one-off debugging, A/B comparisons, parameter sweeps, and controlled-variable studies. For comparisons, the plan records the baseline, compared configurations, fixed controls, prediction, and evidence source before cases are generated.
 

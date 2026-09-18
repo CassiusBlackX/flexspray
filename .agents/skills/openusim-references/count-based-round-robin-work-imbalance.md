@@ -357,8 +357,8 @@ src/unified-bus/model/protocol/ub-transport.cc
 Related references:
 
 ```text
-.codex/skills/openusim-references/queue-backpressure-vs-topology.md
-.codex/skills/openusim-references/trace-observability.md
+.agents/skills/openusim-references/queue-backpressure-vs-topology.md
+.agents/skills/openusim-references/trace-observability.md
 ```
 
 Evidence level: the general scheduling argument follows from count-versus-cost accounting; the

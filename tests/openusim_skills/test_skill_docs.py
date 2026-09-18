@@ -11,17 +11,17 @@ class OpenUSimStageSkillDocsTest(unittest.TestCase):
         return (self.repo_root() / relative_path).read_text(encoding="utf-8")
 
     def reference_files(self):
-        return sorted((self.repo_root() / ".codex/skills/openusim-references").glob("*.md"))
+        return sorted((self.repo_root() / ".agents/skills/openusim-references").glob("*.md"))
 
     def skill_files(self):
         return [
             self.repo_root() / relative_path
             for relative_path in (
-                ".codex/skills/openusim-welcome/SKILL.md",
-                ".codex/skills/openusim-plan-experiment/SKILL.md",
-                ".codex/skills/openusim-run-experiment/SKILL.md",
-                ".codex/skills/openusim-analyze-results/SKILL.md",
-                ".codex/skills/openusim-capture-insights/SKILL.md",
+                ".agents/skills/openusim-welcome/SKILL.md",
+                ".agents/skills/openusim-plan-experiment/SKILL.md",
+                ".agents/skills/openusim-run-experiment/SKILL.md",
+                ".agents/skills/openusim-analyze-results/SKILL.md",
+                ".agents/skills/openusim-capture-insights/SKILL.md",
             )
         ]
 
@@ -39,11 +39,11 @@ class OpenUSimStageSkillDocsTest(unittest.TestCase):
     def test_stage_skill_bundle_exists(self):
         repo_root = self.repo_root()
         for relative_path in (
-            ".codex/skills/openusim-welcome/SKILL.md",
-            ".codex/skills/openusim-plan-experiment/SKILL.md",
-            ".codex/skills/openusim-run-experiment/SKILL.md",
-            ".codex/skills/openusim-analyze-results/SKILL.md",
-            ".codex/skills/openusim-capture-insights/SKILL.md",
+            ".agents/skills/openusim-welcome/SKILL.md",
+            ".agents/skills/openusim-plan-experiment/SKILL.md",
+            ".agents/skills/openusim-run-experiment/SKILL.md",
+            ".agents/skills/openusim-analyze-results/SKILL.md",
+            ".agents/skills/openusim-capture-insights/SKILL.md",
         ):
             self.assertTrue((repo_root / relative_path).is_file(), msg=relative_path)
 
@@ -53,7 +53,7 @@ class OpenUSimStageSkillDocsTest(unittest.TestCase):
         self.assertNotIn("NETWORK_ATTRIBUTES =", generator)
 
     def test_trace_observability_documents_lifecycle_preset_levels(self):
-        text = self.read_text(".codex/skills/openusim-references/trace-observability.md")
+        text = self.read_text(".agents/skills/openusim-references/trace-observability.md")
         self.assertRegex(text, r"\| minimal \|.*lifecycle `OFF` \|")
         self.assertRegex(text, r"\| balanced \|.*lifecycle `SUMMARY` \|")
         self.assertRegex(text, r"\| detailed \|.*lifecycle `EVENT` \|")
@@ -97,18 +97,18 @@ class OpenUSimStageSkillDocsTest(unittest.TestCase):
             self.assertTrue(path.is_symlink(), msg=skill_dir)
             self.assertEqual(
                 path.readlink(),
-                Path("../../.codex/skills") / skill_dir,
+                Path("../../.agents/skills") / skill_dir,
                 msg=skill_dir,
             )
 
     def test_stage_skill_docs_define_handoff_surface(self):
-        welcome_text = self.read_text(".codex/skills/openusim-welcome/SKILL.md")
-        plan_text = self.read_text(".codex/skills/openusim-plan-experiment/SKILL.md")
-        run_text = self.read_text(".codex/skills/openusim-run-experiment/SKILL.md")
-        analyze_text = self.read_text(".codex/skills/openusim-analyze-results/SKILL.md")
-        capture_text = self.read_text(".codex/skills/openusim-capture-insights/SKILL.md")
-        topology_text = self.read_text(".codex/skills/openusim-references/topology-options.md")
-        spec_rules_text = self.read_text(".codex/skills/openusim-references/spec-rules.md")
+        welcome_text = self.read_text(".agents/skills/openusim-welcome/SKILL.md")
+        plan_text = self.read_text(".agents/skills/openusim-plan-experiment/SKILL.md")
+        run_text = self.read_text(".agents/skills/openusim-run-experiment/SKILL.md")
+        analyze_text = self.read_text(".agents/skills/openusim-analyze-results/SKILL.md")
+        capture_text = self.read_text(".agents/skills/openusim-capture-insights/SKILL.md")
+        topology_text = self.read_text(".agents/skills/openusim-references/topology-options.md")
+        spec_rules_text = self.read_text(".agents/skills/openusim-references/spec-rules.md")
 
         for text in (welcome_text, plan_text, run_text, analyze_text, capture_text):
             self.assertIn("## Overview", text)
@@ -201,12 +201,12 @@ class OpenUSimStageSkillDocsTest(unittest.TestCase):
 
     def test_controlled_experiment_method_is_integrated(self):
         method_text = self.read_text(
-            ".codex/skills/openusim-references/controlled-experiment-method.md"
+            ".agents/skills/openusim-references/controlled-experiment-method.md"
         )
-        plan_text = self.read_text(".codex/skills/openusim-plan-experiment/SKILL.md")
-        run_text = self.read_text(".codex/skills/openusim-run-experiment/SKILL.md")
-        analyze_text = self.read_text(".codex/skills/openusim-analyze-results/SKILL.md")
-        spec_rules_text = self.read_text(".codex/skills/openusim-references/spec-rules.md")
+        plan_text = self.read_text(".agents/skills/openusim-plan-experiment/SKILL.md")
+        run_text = self.read_text(".agents/skills/openusim-run-experiment/SKILL.md")
+        analyze_text = self.read_text(".agents/skills/openusim-analyze-results/SKILL.md")
+        spec_rules_text = self.read_text(".agents/skills/openusim-references/spec-rules.md")
 
         for marker in (
             "<reference-hint>",
@@ -255,16 +255,16 @@ class OpenUSimStageSkillDocsTest(unittest.TestCase):
 
     def test_routing_strategy_selection_is_integrated(self):
         card_text = self.read_text(
-            ".codex/skills/openusim-references/routing-strategy-selection.md"
+            ".agents/skills/openusim-references/routing-strategy-selection.md"
         )
-        plan_text = self.read_text(".codex/skills/openusim-plan-experiment/SKILL.md")
+        plan_text = self.read_text(".agents/skills/openusim-plan-experiment/SKILL.md")
         spec_rules_text = self.read_text(
-            ".codex/skills/openusim-references/spec-rules.md"
+            ".agents/skills/openusim-references/spec-rules.md"
         )
         toolchain_text = self.read_text(
-            ".codex/skills/openusim-references/spec-to-toolchain.md"
+            ".agents/skills/openusim-references/spec-to-toolchain.md"
         )
-        skills_readme_text = self.read_text(".codex/skills/README.md")
+        skills_readme_text = self.read_text(".agents/skills/README.md")
 
         for marker in (
             "<reference-hint>",
@@ -315,7 +315,7 @@ class OpenUSimStageSkillDocsTest(unittest.TestCase):
             self.assertIn("## Contents", lines[:30], msg=path.name)
 
     def test_welcome_skill_spells_out_startup_gate(self):
-        welcome_text = self.read_text(".codex/skills/openusim-welcome/SKILL.md")
+        welcome_text = self.read_text(".agents/skills/openusim-welcome/SKILL.md")
         for marker in (
             "`./ns3` exists",
             "`scratch/ns-3-ub-tools/` exists",
@@ -337,7 +337,7 @@ class OpenUSimStageSkillDocsTest(unittest.TestCase):
 
     def test_spec_rules_define_minimal_experiment_spec_shape(self):
         spec_rules_text = self.read_text(
-            ".codex/skills/openusim-references/spec-rules.md"
+            ".agents/skills/openusim-references/spec-rules.md"
         )
         for marker in (
             "## Planning modes",
@@ -385,7 +385,7 @@ class OpenUSimStageSkillDocsTest(unittest.TestCase):
             readme_text,
             readme_en_text,
         ):
-            self.assertIn(".codex/skills/", text)
+            self.assertIn(".agents/skills/", text)
             self.assertIn("openusim-welcome", text)
             self.assertIn("openusim-plan-experiment", text)
             self.assertIn("openusim-run-experiment", text)
@@ -401,7 +401,7 @@ class OpenUSimStageSkillDocsTest(unittest.TestCase):
             self.assertNotIn("run-ledger.md", text)
 
         for text in (quick_start_text, quick_start_en_text):
-            self.assertIn(".codex/skills/", text)
+            self.assertIn(".agents/skills/", text)
             self.assertIn("smoke", text)
             self.assertIn("A/B", text)
             self.assertIn("sweep", text)
@@ -422,7 +422,7 @@ class OpenUSimStageSkillDocsTest(unittest.TestCase):
         self.assertIn("Included skills:", readme_en_text)
 
     def test_skills_readme_and_repo_agents_document_capture_insights(self):
-        skills_readme_text = self.read_text(".codex/skills/README.md")
+        skills_readme_text = self.read_text(".agents/skills/README.md")
         agents_text = self.read_text("AGENTS.md")
 
         self.assertIn("openusim-capture-insights", skills_readme_text)
@@ -434,7 +434,7 @@ class OpenUSimStageSkillDocsTest(unittest.TestCase):
         self.assertIn("not a fifth stage", agents_text)
 
     def test_entry_docs_document_experiment_group_contract(self):
-        skills_readme_text = self.read_text(".codex/skills/README.md")
+        skills_readme_text = self.read_text(".agents/skills/README.md")
         agents_text = self.read_text("AGENTS.md")
 
         for text in (skills_readme_text, agents_text):
@@ -454,10 +454,10 @@ class OpenUSimStageSkillDocsTest(unittest.TestCase):
 
     def test_pfc_dynamic_paper_reference_names_source_paper(self):
         lessons_text = self.read_text(
-            ".codex/skills/openusim-references/congestion-control-and-pfc-lessons.md"
+            ".agents/skills/openusim-references/congestion-control-and-pfc-lessons.md"
         )
         toolchain_text = self.read_text(
-            ".codex/skills/openusim-references/spec-to-toolchain.md"
+            ".agents/skills/openusim-references/spec-to-toolchain.md"
         )
         scratch_readme_text = self.read_text("scratch/README.md")
         paper_title = "Congestion Control for Large-Scale RDMA Deployments"
@@ -468,5 +468,5 @@ class OpenUSimStageSkillDocsTest(unittest.TestCase):
 
     def test_old_openusim_helper_surface_is_gone(self):
         repo_root = self.repo_root()
-        self.assertFalse((repo_root / ".codex/skills/openusim-helper/SKILL.md").exists())
-        self.assertFalse((repo_root / ".codex/skills/openusim-helper" / "scripts").exists())
+        self.assertFalse((repo_root / ".agents/skills/openusim-helper/SKILL.md").exists())
+        self.assertFalse((repo_root / ".agents/skills/openusim-helper" / "scripts").exists())

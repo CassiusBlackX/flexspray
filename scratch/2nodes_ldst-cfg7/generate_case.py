@@ -10,7 +10,7 @@ from pathlib import Path
 CASE = Path(__file__).resolve().parent
 ROOT = CASE.parents[1]
 sys.path.insert(0, str(ROOT / "scratch/ns-3-ub-tools"))
-sys.path.insert(0, str(ROOT / ".codex/skills/openusim-run-experiment/scripts"))
+sys.path.insert(0, str(ROOT / ".agents/skills/openusim-run-experiment/scripts"))
 
 import net_sim_builder as netsim
 from openusim_run_experiment.case_checker import check_case_files

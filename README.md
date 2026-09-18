@@ -280,7 +280,7 @@ UB 模块是基于灵衢基础规范实现的仿真组件：
 
 ### 4. OpenUSim Skills（仓库内置）
 
-本仓库在 `.codex/skills/` 目录下维护一组 OpenUSim Skills，用于配合 Agent 规划、运行和分析 `ns-3-ub` 仿真。
+本仓库在 `.agents/skills/` 目录下维护一组 OpenUSim Skills，用于配合 Agent 规划、运行和分析 `ns-3-ub` 仿真。
 
 这些 skills 既支持单次仿真，也支持 A/B 对比、参数 sweep 和控制变量实验。对比类实验会先定下 baseline、待比较配置、固定控制项、预期结果和证据来源，再生成和运行 case。
 

@@ -76,7 +76,7 @@ conda install pandas matplotlib seaborn
 
 说明： 以上依赖主要用于拓扑 / 流量生成与可视化工具（`net_sim_builder.py`、`topo_plot.py`、`traffic_maker/*`）。`trace_analysis/` 下的 trace 后处理脚本只依赖 Python 标准库，无需安装这些包。
 
-提示：如果你使用支持 repo-local skill 的 Agent，本仓库在 ` .codex/skills/ ` 下提供 OpenUSim skills。它们会先按本页和 `README.md` 检查启动状态，再处理实验定义、case 生成、仿真执行和结果分析。普通 smoke run、旧 case 复现、单次调试、A/B 对比、参数 sweep 和控制变量实验都可以走这套流程；对比类实验会先定下 baseline、待比较配置、固定控制项、预期结果和证据来源。分析得到稳定根因或通用判断后，也可以在用户同意后写成知识卡。这些 skills 依赖当前 `ns-3-ub` 工作树与 `scratch/ns-3-ub-tools/`，不作为独立 submodule 维护。
+提示：如果你使用支持 repo-local skill 的 Agent，本仓库在 ` .agents/skills/ ` 下提供 OpenUSim skills。它们会先按本页和 `README.md` 检查启动状态，再处理实验定义、case 生成、仿真执行和结果分析。普通 smoke run、旧 case 复现、单次调试、A/B 对比、参数 sweep 和控制变量实验都可以走这套流程；对比类实验会先定下 baseline、待比较配置、固定控制项、预期结果和证据来源。分析得到稳定根因或通用判断后，也可以在用户同意后写成知识卡。这些 skills 依赖当前 `ns-3-ub` 工作树与 `scratch/ns-3-ub-tools/`，不作为独立 submodule 维护。
 
 ## 配置与编译
 
