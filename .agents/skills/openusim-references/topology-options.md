@@ -489,7 +489,7 @@ def build_topology():
     return graph
 ```
 
-Compile the case with `python3 scratch/ns-3-ub-tools/ub_tools.py topology build generate_topology.py --output-dir {case_dir} --route-generation structured`; the CLI owns route generation and file output, and a Clos is a recognized family, so rule-based generation applies. If it fails with `rule routing requires every route lookup to pass equivalence verification`, drop the flag and keep the `mixed` default. `all_shortest_paths` may be passed as `--path-finder generate_topology.py:all_shortest_paths`.
+Compile the case with `python3 scratch/ns-3-ub-tools/ub_tools.py topology build generate_topology.py --output-dir {case_dir} --route-generation structured`; the CLI owns route generation and file output, and a Clos is a recognized family, so rule-based generation applies. If it fails with `rule routing requires every route lookup to pass equivalence verification`, drop the flag and keep the `mixed` default. This CLI always uses the default shortest-path finder; to supply a custom one, run the standalone compiler instead: `python3 scratch/ns-3-ub-tools/prepare_structured_case.py generate_topology.py:build_topology --path-finder generate_topology.py:all_shortest_paths --case-path {case_dir} --route-generation structured`.
 
 For very large two-layer Clos graphs where CLI route generation is too slow, call `graph.gen_2layer_clos_compressed_route_table(host_num, leaf_sw_num)` inside `build_topology()` just before `return graph` to use the specialized generator.
 
@@ -665,4 +665,4 @@ def build_topology():
     return graph
 ```
 
-For custom graphs, pass the bounded path finder explicitly so the CLI does not enumerate explosive path sets: `ub_tools.py topology build generate_topology.py --output-dir {case_dir} --path-finder generate_topology.py:bounded_paths`. A hand-built graph is usually not a recognized structure, so keep the `mixed` default here: a custom path finder also disables the structure-rule fast path, and `--route-generation full` would build the complete baseline for every lookup.
+For custom graphs, pass the bounded path finder through the standalone compiler so the route step does not enumerate explosive path sets: `python3 scratch/ns-3-ub-tools/prepare_structured_case.py generate_topology.py:build_topology --path-finder generate_topology.py:bounded_paths --case-path {case_dir}`. `ub_tools.py topology build` has no path-finder option and always uses the default shortest-path finder. A hand-built graph is usually not a recognized structure, so keep the `mixed` route generation default here: a custom path finder also disables the structure-rule fast path, and `full` would build the complete baseline for every lookup.
