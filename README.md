@@ -1,7 +1,7 @@
-<h1 align="center">OpenUSim · ns-3-UB</h1>
+<h1 align="center">OpenUSim</h1>
 
 <p align="center">
-  <strong>UnifiedBus Network Simulation Framework</strong><br>
+  <strong>ns-3-UB: UnifiedBus Network Simulation Framework</strong><br>
   基于灵衢（UnifiedBus）基础规范构建的 ns-3 仿真模块
 </p>
 
