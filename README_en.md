@@ -30,7 +30,7 @@
   <strong>Release 2.1.0</strong> · September 2026<br>
   <br>
   <strong>Simulation models updated for the UB Base Specification 2.1</strong><br>
-  Richer queue and other transaction types · more transport layer modes · reliable rerouting at the network layer · datalink header configuration and packet rate control<br>
+  Richer queue and other transaction types · more transport layer modes · support for reliable rerouting at the network layer · new header and packet formats · datalink packet rate control<br>
   <br>
   <strong>Simulation engine optimizations</strong><br>
   Fewer simulation events · on-demand resource loading · topology structure recognition · fast route computation · lower memory footprint<br>
@@ -40,7 +40,7 @@
 
 ---
 
-**Contents**: [Project Overview](#-project-overview) · [Project Architecture](#-project-architecture) · [Key Components](#-key-components) · [OpenUSim Skills](#4-openusim-skills-repository-bundled) · [License](#-license) · [Citation](#-citation)
+**Contents**: [Project Overview](#project-overview) · [Project Architecture](#project-architecture) · [Key Components](#key-components) · [OpenUSim Skills](#4-openusim-skills-repository-bundled) · [License](#license) · [Citation](#citation)
 
 ## Project Overview
 
@@ -259,9 +259,16 @@ The UB module is a simulation component implemented based on the UB Base Specifi
 
 - **Flow Control**: Implements credit-based flow control (CBFC exclusive / shared-credit) and priority-based flow control (PFC fixed / dynamic thresholds)
 - **Congestion Control**: Implements the framework of the well-known congestion control loop, including network-side marking, receiver response, sender response, and congestion control algorithms; supports CAQM and DCQCN
-- **Routing Policies**: Supports shortest-path routing and bypass strategies; supports packet spraying, ECMP, and other load balancing mechanisms
+- **Routing Policies**: Supports shortest-path routing and bypass strategies, plus per-flow / per-packet Hash, Round Robin, adaptive, and ingress-port-stripe selection
 - **QoS Support**: Provides end-to-end QoS support, currently supporting SP and DWRR scheduling policies
 - **Switch Arbitration**: Modular implementation of the UB Switch arbitration mechanism, currently supporting SP and DWRR scheduling
+
+`network_attribute.txt` uses `RoutingType` to express the UB RT field:
+`PER_FLOW_ALL_PATHS`, `PER_PACKET_ALL_PATHS`, `PER_FLOW_SHORTEST_PATHS`,
+`PER_PACKET_SHORTEST_PATHS`. The path selection algorithm is configured by
+`ns3::UbRoutingProcess::MultipathSelector`. Per-flow mode supports `HASH64`, `CRC32`,
+`TOEPLITZ`, `INGRESS_PORT_STRIPE`; per-packet mode supports `HASH64`, `CRC32`,
+`TOEPLITZ`, `ROUND_ROBIN`, `ADAPTIVE`.
 
 ### 3. Script Toolset
 
@@ -287,6 +294,15 @@ Included skills:
 - `openusim-capture-insights`: with user approval, writes confirmed root causes or reusable judgments as knowledge cards
 
 These skills depend on this repository and the `ns-3-ub-tools` submodule, so they are maintained in-tree.
+
+### UnifiedBus Transaction Specification Scope
+
+The current implementation covers a subset of the UB Base Specification 2.1: BTAH requests and
+ATAH/compact responses over RTP/CTP, rule-driven Read/Atomic payloads, outstanding request
+response matching, Atomic Load/Store sub-operation input validation, and Management status
+fields. BE request, ROT, LDST, real atomic value semantics, Management command effects, and the
+full CTP common format migration are explicitly unimplemented or out of scope; the project
+therefore does not claim full conformance to the UB Base Specification.
 
 ## License
 

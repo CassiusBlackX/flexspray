@@ -30,7 +30,7 @@
   <strong>Release 2.1.0</strong> · 2026 年 9 月<br>
   <br>
   <strong>基于灵衢基础规范 2.1 版本更新仿真模型</strong><br>
-  丰富队列事务等事务类型 · 完善传输层模式 · 网络层可靠重路由 · 数据链路层包头配置与包率控制<br>
+  丰富队列事务等事务类型 · 完善传输层模式 · 支持网络层可靠重路由 · 新增包头与包格式 · 数据链路层包率控制<br>
   <br>
   <strong>仿真引擎优化</strong><br>
   精简仿真事件 · 资源按需加载 · 拓扑结构识别 · 快速路由计算 · 降低内存占用<br>
@@ -294,12 +294,12 @@ UB 模块是基于灵衢基础规范实现的仿真组件：
 
 上述 Skills 与主仓代码及 `ns-3-ub-tools` 子模块紧密耦合，随仓库统一维护。
 
-### Unified Bus 事务规范范围
+### UnifiedBus 事务规范范围
 
-当前实现符合 UB-DOC 2.0 的已实现子集：RTP/CTP 的 BTAH 请求与 ATAH/compact 响应、规则驱动
-的 Read/Atomic Payload、outstanding request 响应匹配、Atomic Load/Store 子操作输入校验和
-Management 状态字段。BE request、ROT/ROL/UNO、LDST、真实原子值语义、Management 命令效果及
-完整 CTP 公共格式迁移明确属于未实现/范围外；因此项目不声称完整 UB-DOC 合规。
+当前实现符合灵衢基础规范 2.1 版本的已实现子集：RTP/CTP 的 BTAH 请求与 ATAH/compact 响应、
+规则驱动的 Read/Atomic Payload、outstanding request 响应匹配、Atomic Load/Store 子操作输入
+校验和 Management 状态字段。BE request、ROT、LDST、真实原子值语义、Management 命令效果及
+完整 CTP 公共格式迁移明确属于未实现/范围外；因此项目不声称完整符合灵衢基础规范。
 
 ## 许可证
 
