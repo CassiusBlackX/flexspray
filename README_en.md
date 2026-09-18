@@ -1,4 +1,4 @@
-<h1 align="center">ns-3-UB</h1>
+<h1 align="center">OpenUSim · ns-3-UB</h1>
 
 <p align="center">
   <strong>UnifiedBus Network Simulation Framework</strong><br>
