@@ -203,7 +203,14 @@ TypeId UbTransaction::GetTypeId(void)
 {
     static TypeId tid = TypeId("ns3::UbTransaction")
         .SetParent<Object>()
-        .SetGroupName("UnifiedBus");
+        .SetGroupName("UnifiedBus")
+        .AddAttribute(
+            "TargetExecutionDelay",
+            "Delay between inbound transaction receipt and target execution.",
+            TimeValue(NanoSeconds(0)),
+            MakeTimeAccessor(&UbTransaction::SetTargetExecutionDelay,
+                             &UbTransaction::GetTargetExecutionDelay),
+            MakeTimeChecker(TimeStep(0)));
     return tid;
 }
 

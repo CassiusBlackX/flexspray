@@ -338,6 +338,11 @@ class UbTargetExecutionDelayTimingTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(m_completedDuringArrival,
                               false,
                               "target completion is asynchronous, never inline with the arrival");
+        NS_TEST_ASSERT_MSG_EQ(
+            pair.receiverTransaction->SetAttributeFailSafe("TargetExecutionDelay",
+                                                            TimeValue(NanoSeconds(7))),
+            false,
+            "target execution delay attribute is rejected after the first request");
         Simulator::Destroy();
     }
 

@@ -1040,6 +1040,49 @@ class UbControllerProtocolDelayAttributesTest : public TestCase
     }
 };
 
+class UbTransactionTargetExecutionDelayAttributeTest : public TestCase
+{
+  public:
+    UbTransactionTargetExecutionDelayAttributeTest()
+        : TestCase("UnifiedBus - transaction target execution delay attribute")
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        Config::Reset();
+        Config::SetDefault("ns3::UbTransaction::TargetExecutionDelay",
+                           TimeValue(NanoSeconds(11)));
+        Ptr<UbTransaction> transaction = CreateObject<UbTransaction>();
+
+        TimeValue value;
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetAttributeFailSafe("TargetExecutionDelay", value),
+                              true,
+                              "Target execution delay attribute should be readable");
+        NS_TEST_ASSERT_MSG_EQ(value.Get(), NanoSeconds(11), "Configured target delay should load");
+        NS_TEST_ASSERT_MSG_EQ(
+            transaction->SetAttributeFailSafe("TargetExecutionDelay", TimeValue(NanoSeconds(7))),
+            true,
+            "Non-negative target execution delay should be accepted");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetAttributeFailSafe("TargetExecutionDelay", value),
+                              true,
+                              "Target execution delay attribute should remain readable");
+        NS_TEST_ASSERT_MSG_EQ(value.Get(), NanoSeconds(7), "Target delay should round-trip");
+        NS_TEST_ASSERT_MSG_EQ(
+            transaction->SetAttributeFailSafe("TargetExecutionDelay", TimeValue(NanoSeconds(-1))),
+            false,
+            "Negative target execution delay should be rejected");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetAttributeFailSafe("TargetExecutionDelay", value),
+                              true,
+                              "Rejected target execution delay should remain readable");
+        NS_TEST_ASSERT_MSG_EQ(value.Get(), NanoSeconds(7), "Rejected delay must not change value");
+
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
 class UbTargetExecutionDelayPipelinesTaUnitsTest : public TestCase
 {
   public:
@@ -33092,6 +33135,7 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbFunctionalityTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbControllerCtpLazyServiceTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbControllerProtocolDelayAttributesTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbTransactionTargetExecutionDelayAttributeTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTargetExecutionDelayPipelinesTaUnitsTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbInitiatorProtocolDispatchDelayRtpTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbInitiatorProtocolDispatchDelayCtpTest(), TestCase::Duration::QUICK);
