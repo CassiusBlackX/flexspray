@@ -31,3 +31,15 @@ route resolution and transfer at capacity release, with bounded event count. Del
 checks the first DRAINED timestamp. Existing CBFC/PFC credit/disposal cases also pass.
 Independent Spec and Standards review found no blocking defects.
 The CSV evidence now includes `processing_packets`; nonzero processing rejects a drain claim.
+
+# Ticket 03 validation — 2026-09-24
+
+Implementation `67602a43`. Reliable-rerouting suite PASS37. Production three-leaf/two-spine
+fixture records 18 LastAck serializations (six copies over three hops) and bidirectional delivery
+of retained and new data. Table, index and rule routes preserve endpoint/allow-list/ingress
+restrictions; the ordinary shortest API still rejects non-shortest fallback.
+Routing, routing-modes and structured-routing suites PASS; final routing-mode and structured
+runs were serial. A prior orchestration error briefly overlapped suites; it was recorded locally
+and corrected before final evidence. Original small case, 13 checker mutations and CSV route
+preflight PASS. Preparation validator explicitly rejects unsupported routing/workload formats.
+Independent Standards/Spec findings were resolved. See ADR0028 for the API and topology boundary.
