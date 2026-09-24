@@ -334,3 +334,13 @@ UB 模块是基于灵衢基础规范实现的仿真组件：
 <p align="center">
   <sub>基于 <a href="https://www.unifiedbus.com/zh">灵衢基础规范</a> 构建 · 基于 <a href="https://www.nsnam.org/releases/ns-3-44/">ns-3.44</a> · GPL-2.0 License</sub>
 </p>
+
+### Reliable rerouting cases
+
+[可靠重路由 case 索引](scratch/reliable-rerouting/README.md) 保留双交换机小 case，
+用于真实 LastAck 握手和双向积压恢复回归。
+
+```bash
+python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/reliable-rerouting/2nodes_reliable-rerouting'
+python3 scratch/reliable-rerouting/2nodes_reliable-rerouting/check_results.py --self-test
+```

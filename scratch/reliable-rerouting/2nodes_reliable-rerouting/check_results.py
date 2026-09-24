@@ -4,7 +4,7 @@
 The checker derives its expectations from the case inputs instead of hard-coding one run:
 
 * `link_fault.csv` gives the absolute failure time and the failed node/port;
-* `network_attribute.txt` gives the modeled detection and LastAck delays;
+* `network_attribute.txt` gives the detection delay and LastAck receive deadline;
 * `traffic.csv` gives the expected task set;
 * `output/task_statistics.csv` gives task completion;
 * `output/reliable_rerouting.csv` gives the recovery evidence stream.
@@ -38,6 +38,8 @@ EXPECTED_EVIDENCE_HEADER = [
     "retry_bytes",
     "pending_packets",
     "pending_bytes",
+    "source_node", "source_port", "destination_node", "destination_port",
+    "receive_next", "copy", "owner",
 ]
 EXPECTED_LINK_FAULT_HEADER = ["nodeId", "portId", "failTimeNs"]
 
@@ -64,7 +66,13 @@ def _read_rows(path: Path, expected_header: list[str]) -> list[dict[str, str]]:
             raise CheckFailure(f"{path} is empty") from exc
         if header != expected_header:
             raise CheckFailure(f"{path} header is {header}, expected {expected_header}")
-        rows = [dict(zip(header, raw)) for raw in reader if raw]
+        rows = []
+        for raw in reader:
+            if not raw:
+                continue
+            if len(raw) != len(header):
+                raise CheckFailure(f"truncated or extra columns in {path}")
+            rows.append(dict(zip(header, raw)))
     return rows
 
 
@@ -89,10 +97,10 @@ def _read_delays(case_dir: Path) -> tuple[int, int]:
             continue
         if line.startswith("default ns3::UbLink::FailureDetectionDelay"):
             detection_ps = _time_to_ps(fields[-1].strip('"'))
-        elif line.startswith("default ns3::UbLink::LastAckDelay"):
+        elif line.startswith("default ns3::UbLink::LastAckTimeout"):
             last_ack_ps = _time_to_ps(fields[-1].strip('"'))
     if detection_ps is None or last_ack_ps is None:
-        raise CheckFailure("network_attribute.txt must set FailureDetectionDelay and LastAckDelay")
+        raise CheckFailure("network_attribute.txt must set FailureDetectionDelay and LastAckTimeout")
     return detection_ps, last_ack_ps
 
 
@@ -117,6 +125,107 @@ def _read_expected_tasks(case_dir: Path) -> set[int]:
     with (case_dir / "traffic.csv").open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         return {int(row["taskId"]) for row in reader if row.get("taskId")}
+
+
+def validate_handshakes(case_dir, evidence, detection_time, deadline):
+    """Bind copy identities to physical directed hops and actual serialization events."""
+    import re
+    from fractions import Fraction
+
+    links = {}
+    with (case_dir / "topology.csv").open(newline="") as handle:
+        for row in csv.DictReader(handle):
+            a = (int(row["nodeId1"]), int(row["portId1"]))
+            b = (int(row["nodeId2"]), int(row["portId2"]))
+            match = re.fullmatch(r"([0-9.]+)([KMG]?)bps", row["bandwidth"])
+            if not match:
+                raise CheckFailure("unsupported topology bandwidth")
+            rate = Fraction(match[1]) * {"": 1, "K": 10**3, "M": 10**6, "G": 10**9}[match[2]]
+            delay = _time_to_ps(row["delay"])
+            links[a] = (b, rate, delay)
+            links[b] = (a, rate, delay)
+    fault = _read_link_fault(case_dir)
+    first = (fault.node_id, fault.port_id)
+    if first not in links:
+        raise CheckFailure("failure endpoint missing from topology")
+    peer = links[first][0]
+    endpoints = {first: peer, peer: first}
+    actual = {(int(r["node_id"]), int(r["port_id"])) for r in evidence
+              if r["event"] == "state:DETECTION_PENDING"}
+    if actual != set(endpoints):
+        raise CheckFailure("failure evidence does not cover exactly both physical endpoints")
+
+    def time(row):
+        return int(row["time_ps"])
+
+    def identity(row):
+        return (row["source_node"], row["source_port"], row["copy"])
+
+    legal_identities = {(str(node), str(port), str(copy))
+                        for node, port in endpoints for copy in range(1, 4)}
+    for row in evidence:
+        if row["event"].startswith("lastack_") and identity(row) not in legal_identities:
+            raise CheckFailure("unknown LastAck source/copy identity")
+    for source, destination in endpoints.items():
+        frozen_boundary = None
+        for copy in range(1, 4):
+            key = (str(source[0]), str(source[1]), str(copy))
+            rows = [r for r in evidence if identity(r) == key]
+            submit = [r for r in rows if r["event"] == "lastack_submit"]
+            starts = [r for r in rows if r["event"] == "lastack_tx_start"]
+            finishes = [r for r in rows if r["event"] == "lastack_tx_complete"]
+            if len(submit) != 1 or not starts:
+                raise CheckFailure(f"{key}: missing real source submission/transmission")
+            if time(submit[0]) < detection_time:
+                raise CheckFailure(f"{key}: premature LastAck")
+            boundary = int(submit[0]["receive_next"])
+            if not 0 <= boundary <= 65535:
+                raise CheckFailure(f"{key}: out-of-range receive boundary")
+            if frozen_boundary is not None and boundary != frozen_boundary:
+                raise CheckFailure(f"{key}: three copies disagree on frozen boundary")
+            frozen_boundary = boundary
+            if any(row["receive_next"] != str(boundary) for row in rows):
+                raise CheckFailure(f"{key}: receive boundary changed in transit")
+            source_finishes = [r for r in finishes if r["node_id"] == key[0]]
+            if len(source_finishes) != 1 or time(source_finishes[0]) > detection_time + 500_000_000_000:
+                raise CheckFailure(f"{key}: missing or late source serialization completion")
+            visited = set()
+            next_node = source[0]
+            ready = time(submit[0])
+            reached = False
+            for start in sorted(starts, key=time):
+                node, port = int(start["node_id"]), int(start["port_id"])
+                if node != next_node or node in visited or time(start) < ready:
+                    raise CheckFailure(f"{key}: impossible or looping directed path")
+                visited.add(node)
+                if (node, port) in endpoints or (node, port) not in links:
+                    raise CheckFailure(f"{key}: failed or nonexistent physical output")
+                remote, rate, delay = links[node, port]
+                finish = [r for r in finishes if r["node_id"] == str(node) and r["port_id"] == str(port)]
+                size = 16 if max(source[0], destination[0]) <= 4095 else 18
+                serialization = int(Fraction(size * 8 * 10**12, 1) / rate)
+                if len(finish) != 1 or time(finish[0]) < time(start) + serialization:
+                    raise CheckFailure(f"{key}: invalid serialization evidence")
+                receives = [r for r in rows if r["event"] == "lastack_hop_receive"
+                            and r["node_id"] == str(remote[0]) and r["port_id"] == str(remote[1])]
+                if not receives:
+                    break  # Loss is allowed if another copy completes the handshake.
+                if len(receives) != 1 or time(receives[0]) < time(finish[0]) + delay:
+                    raise CheckFailure(f"{key}: receipt is not causally after physical delivery")
+                ready = time(receives[0])
+                next_node = remote[0]
+                reached = next_node == destination[0]
+            decisions = [r for r in rows if r["event"] in ("lastack_valid", "lastack_duplicate")]
+            for decision in decisions:
+                if not reached or time(decision) < ready or time(decision) > deadline:
+                    raise CheckFailure(f"{key}: accepted message lacks a timely physical path")
+                if (int(decision["node_id"]), int(decision["port_id"])) != destination:
+                    raise CheckFailure(f"{key}: delivered to wrong failure owner")
+                if (int(decision["destination_node"]), int(decision["destination_port"])) != destination:
+                    raise CheckFailure(f"{key}: wrong wire destination")
+            for row in rows:
+                if (row["destination_node"], row["destination_port"]) != tuple(map(str, destination)):
+                    raise CheckFailure(f"{key}: inconsistent message destination")
 
 
 def check(case_dir: Path) -> None:
@@ -156,7 +265,8 @@ def check(case_dir: Path) -> None:
 
     failed_output = schedule.port_id
     detection_time = schedule.fail_time_ps + detection_ps
-    last_ack_time = detection_time + last_ack_ps
+    receive_deadline = detection_time + last_ack_ps
+    validate_handshakes(case_dir, evidence, detection_time, receive_deadline)
 
     def rows_for(event: str, node_id: int, port_id: int) -> list[dict[str, str]]:
         return [
@@ -184,13 +294,20 @@ def check(case_dir: Path) -> None:
             raise CheckFailure(
                 f"node {node_id}: detection must complete at {detection_time} ps"
             )
-        retained = int(wait[0]["retry_packets"]) + int(wait[0]["pending_packets"])
+        retained = int(wait[0]["retry_packets"])
         if retained <= 0:
             raise CheckFailure(f"node {node_id}: no unreceived recovery work at detection")
 
+        valid = rows_for("lastack_valid", node_id, failed_output)
+        if len(valid) != 1:
+            raise CheckFailure(f"node {node_id}: expected exactly one valid LastAck")
+        last_ack_time = int(valid[0]["time_ps"])
         recovering = rows_for("state:RECOVERING", node_id, failed_output)
-        if not recovering or int(recovering[0]["time_ps"]) != last_ack_time:
-            raise CheckFailure(f"node {node_id}: LastAck must be modeled at {last_ack_time} ps")
+        if len(recovering) != 1 or int(recovering[0]["time_ps"]) != last_ack_time:
+            raise CheckFailure(f"node {node_id}: recovery must start at actual LastAck receipt")
+        for row in rows_for("attempt_start", node_id, failed_output):
+            if int(row["time_ps"]) > detection_time or evidence.index(row) > evidence.index(wait[0]):
+                raise CheckFailure(f"node {node_id}: send started after output detection")
 
         transfers = rows_for("transfer", node_id, failed_output)
         if not transfers:
@@ -213,7 +330,11 @@ def check(case_dir: Path) -> None:
         drain = rows_for("state:DRAINED", node_id, failed_output)
         if not drain:
             raise CheckFailure(f"node {node_id}: local recovery never drained")
-        last_drain = drain[-1]
+        if len(drain) != 1:
+            raise CheckFailure(f"node {node_id}: multiple local drain claims")
+        last_drain = drain[0]
+        if int(last_drain["time_ps"]) < max(int(row["time_ps"]) for row in transfers):
+            raise CheckFailure(f"node {node_id}: drain precedes final ownership transfer")
         if int(last_drain["retry_packets"]) != 0 or int(last_drain["pending_packets"]) != 0:
             raise CheckFailure(
                 f"node {node_id}: claimed drain with outstanding recovery work "
@@ -229,25 +350,19 @@ def check(case_dir: Path) -> None:
     seen: set[tuple[str, str, str]] = set()
     all_transfers = [row for row in evidence if row["event"] == "transfer"]
     for row in all_transfers:
-        key = (row["node_id"], row["attempt_id"], row["old_output"])
+        if row["owner"] not in ("retry", "switch"):
+            raise CheckFailure("transfer missing recovery owner")
+        key = (row["node_id"], row["owner"], row["attempt_id"], row["old_output"])
         if key in seen:
             raise CheckFailure(f"duplicate recovery transfer for local identity {key}")
         seen.add(key)
 
-    # No evidence row after a drain may claim outstanding recovery work.
-    for node_id, transfers in transfers_per_direction.items():
-        last_transfer = transfers[-1]
-        for row in evidence:
-            if row["node_id"] != str(node_id) or row["port_id"] != str(failed_output):
-                continue
-            if int(row["time_ps"]) > int(last_transfer["time_ps"]) and int(last_transfer["time_ps"]) > 0:
-                continue
+
     print(
-        "PASS: failure at {fail} ps, detection at {det} ps, LastAck at {lack} ps, "
+        "PASS: failure at {fail} ps, detection at {det} ps, real LastAck verified, "
         "{transfers} transfers over {dirs} directions, {tasks} tasks complete".format(
             fail=schedule.fail_time_ps,
             det=detection_time,
-            lack=last_ack_time,
             transfers=len(all_transfers),
             dirs=len(transfers_per_direction),
             tasks=len(completed),
@@ -339,6 +454,41 @@ def self_test(case_dir: Path) -> None:
                     break
             path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
+        def remove_actual_sends(target):
+            path = target / "output/reliable_rerouting.csv"
+            path.write_text("\n".join(line for line in path.read_text().splitlines()
+                                       if ",lastack_tx_start," not in line) + "\n")
+
+        def fake_path(target):
+            path = target / "output/reliable_rerouting.csv"
+            rows = list(csv.DictReader(path.open()))
+            for row in rows:
+                if row["event"] == "lastack_hop_receive":
+                    row["port_id"] = "65535"
+                    break
+            with path.open("w", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=EXPECTED_EVIDENCE_HEADER)
+                writer.writeheader()
+                writer.writerows(rows)
+
+        def corrupt_valid(target, field, value):
+            path = target / "output/reliable_rerouting.csv"
+            with path.open() as handle:
+                rows = list(csv.DictReader(handle))
+            for row in rows:
+                if row["event"] == "lastack_valid":
+                    row[field] = value
+                    break
+            with path.open("w", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=EXPECTED_EVIDENCE_HEADER)
+                writer.writeheader()
+                writer.writerows(rows)
+
+        expect_rejection("unknown-copy", lambda target: corrupt_valid(target, "copy", "0"))
+        expect_rejection("unknown-source-port", lambda target: corrupt_valid(target, "source_port", "65535"))
+        expect_rejection("changed-receive-boundary", lambda target: corrupt_valid(target, "receive_next", "65535"))
+        expect_rejection("missing-actual-lastack", remove_actual_sends)
+        expect_rejection("fake-physical-path", fake_path)
         expect_rejection("missing-evidence", drop_evidence)
         expect_rejection("truncated-evidence", truncate_evidence)
         expect_rejection("missing-task", drop_task)
@@ -346,7 +496,7 @@ def self_test(case_dir: Path) -> None:
         expect_rejection("zero-recovery-in-one-direction", zero_direction)
         expect_rejection("duplicate-transfer", duplicate_transfer)
         expect_rejection("drain-with-outstanding-work", drain_with_work)
-    print("PASS: checker self-test exercised the positive run and 7 rejection paths")
+    print("PASS: checker self-test exercised the positive run and 12 rejection paths")
 
 
 def main(argv: list[str]) -> int:

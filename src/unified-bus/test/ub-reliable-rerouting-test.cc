@@ -93,8 +93,7 @@ ConnectPorts(Ptr<UbPort> left,
              Ptr<UbPort> right,
              bool enableRerouting,
              Time delay,
-             Time detectionDelay = NanoSeconds(0),
-             Time lastAckDelay = NanoSeconds(0))
+             Time detectionDelay = NanoSeconds(0))
 {
     Ptr<UbLink> link = CreateObject<UbLink>();
     link->SetAttribute("Delay", TimeValue(delay));
@@ -102,7 +101,7 @@ ConnectPorts(Ptr<UbPort> left,
     // Arming captures the immutable configuration when the link completes, so every recovery
     // attribute must be in place before the second endpoint attaches.
     link->SetAttribute("FailureDetectionDelay", TimeValue(detectionDelay));
-    link->SetAttribute("LastAckDelay", TimeValue(lastAckDelay));
+    link->SetAttribute("LastAckTimeout", TimeValue(Seconds(1)));
     left->Attach(link);
     right->Attach(link);
     return link;
@@ -368,7 +367,7 @@ struct ReroutingTopology
     ReroutingTopology(bool enableRerouting = true,
                       Time failedLinkDelay = NanoSeconds(20),
                       Time detectionDelay = NanoSeconds(0),
-                      Time lastAckDelay = NanoSeconds(0),
+                      Time lastAckPathDelay = NanoSeconds(0),
                       FcType flowControl = FcType::NONE)
     {
         hostA = CreateObject<Node>(0);
@@ -394,11 +393,12 @@ struct ReroutingTopology
                                   c1,
                                   enableRerouting,
                                   failedLinkDelay,
-                                  detectionDelay,
-                                  lastAckDelay);
-        alternateLink = ConnectPorts(b2, c2, enableRerouting, NanoSeconds(20));
+                                  detectionDelay);
+        alternateLink = ConnectPorts(b2, c2, enableRerouting, NanoSeconds(20) + lastAckPathDelay);
         ConnectPorts(c0, d0, enableRerouting, NanoSeconds(20));
 
+        AddRoute(swB, swC->GetId(), {1, 2});
+        AddRoute(swC, swB->GetId(), {1, 2});
         AddRoute(swB, hostD->GetId(), {1, 2});
         AddRoute(swC, hostA->GetId(), {1, 2});
         AddRoute(swB, hostA->GetId(), {0});
@@ -578,6 +578,9 @@ WatchPacketSerialized(SendWatcher* watcher, Ptr<Packet>, Time txCompleteTime)
 struct TransferWatcher
 {
     Time transferTime;
+    Time validLastAckTime;
+    uint32_t validCopies{0};
+    uint32_t duplicateCopies{0};
     bool sawDrain{false};
     bool sawLastAckWait{false};
     bool sawControlFrameDiscard{false};
@@ -601,6 +604,15 @@ WatchReroutingEvent(TransferWatcher* watcher, const UbReliableReroutingEvent& re
                                    watcher->newcomer);
         }
     }
+    if (record.event == "lastack_valid")
+    {
+        ++watcher->validCopies;
+        watcher->validLastAckTime = Simulator::Now();
+    }
+    if (record.event == "lastack_duplicate")
+    {
+        ++watcher->duplicateCopies;
+    }
     if (record.event == "transfer" && watcher->transferTime.IsZero())
     {
         watcher->transferTime = Simulator::Now();
@@ -620,6 +632,14 @@ struct ReceiveWatcher
     std::vector<uint8_t> expected;
     Time arrivalTime;
 };
+
+void WatchSendPacket(ReceiveWatcher* watcher, Ptr<Packet> packet, Time)
+{
+    if (PacketBytes(packet) == watcher->expected)
+    {
+        watcher->arrivalTime = Simulator::Now();
+    }
+}
 
 /** Records the local transmit-attempt identity of every recovery transfer. */
 void
@@ -658,6 +678,7 @@ struct ChildOutcome
     int exitCode{0};
     bool signalled{false};
     int signalNumber{0};
+    std::string diagnostic;
 };
 
 /**
@@ -670,17 +691,35 @@ ChildOutcome
 RunInChild(const std::function<void()>& body)
 {
     ChildOutcome outcome;
+    int diagnosticPipe[2];
+    if (pipe(diagnosticPipe) != 0)
+    {
+        return outcome;
+    }
     pid_t child = fork();
     if (child == -1)
     {
+        close(diagnosticPipe[0]);
+        close(diagnosticPipe[1]);
         return outcome;
     }
     if (child == 0)
     {
+        close(diagnosticPipe[0]);
+        dup2(diagnosticPipe[1], STDERR_FILENO);
+        close(diagnosticPipe[1]);
         std::signal(SIGABRT, ExitOnAbortSignal);
         body();
         std::_Exit(1);
     }
+    close(diagnosticPipe[1]);
+    char diagnosticBuffer[1024];
+    ssize_t diagnosticBytes;
+    while ((diagnosticBytes = read(diagnosticPipe[0], diagnosticBuffer, sizeof(diagnosticBuffer))) > 0)
+    {
+        outcome.diagnostic.append(diagnosticBuffer, diagnosticBytes);
+    }
+    close(diagnosticPipe[0]);
     int status = 0;
     outcome.collected = (waitpid(child, &status, 0) == child);
     outcome.exited = WIFEXITED(status);
@@ -772,7 +811,7 @@ class UbReroutingScopeTest : public TestCase
         {
             // Recovery configuration is armed before traffic and cannot change later.
             ReroutingTopology topo;
-            topo.failedLink->SetAttribute("LastAckDelay", TimeValue(MicroSeconds(7)));
+            topo.failedLink->SetAttribute("LastAckTimeout", TimeValue(MicroSeconds(7)));
             Ptr<UbLink> link = topo.failedLink;
             const auto outcome = RunInChild([link]() { link->Fail(); });
             NS_TEST_ASSERT_MSG_EQ(outcome.collected, true, "child collected");
@@ -892,8 +931,8 @@ class UbReroutingBidirectionalRecoveryTest : public TestCase
     void DoRun() override
     {
         const Time detectionDelay = m_positiveDelays ? MicroSeconds(3) : NanoSeconds(0);
-        const Time lastAckDelay = m_positiveDelays ? MicroSeconds(5) : NanoSeconds(0);
-        ReroutingTopology topo(true, NanoSeconds(20), detectionDelay, lastAckDelay);
+        const Time lastAckPathDelay = m_positiveDelays ? MicroSeconds(5) : NanoSeconds(0);
+        ReroutingTopology topo(true, NanoSeconds(20), detectionDelay, lastAckPathDelay);
 
         PacketSink sinkD;
         PacketSink sinkA;
@@ -999,49 +1038,79 @@ class UbReroutingBidirectionalRecoveryTest : public TestCase
     bool m_positiveDelays;
 };
 
-/** @brief No-fault behaviour: healthy backups always return to zero. */
+/** @brief Healthy delivery and real failure handshake at zero, wrapped and retained boundaries. */
 class UbReroutingHealthyBackupTest : public TestCase
 {
   public:
-    explicit UbReroutingHealthyBackupTest(bool enabled)
+    explicit UbReroutingHealthyBackupTest(bool enabled, bool wrap = false, bool retained = false)
         : TestCase(std::string("Reliable rerouting - healthy traffic with feature ") +
-                   (enabled ? "enabled" : "disabled")),
-          m_enabled(enabled)
+                   (enabled ? "enabled" : "disabled") + (wrap ? " wrap" : "") +
+                   (retained ? " unconfirmed" : "")),
+          m_enabled(enabled), m_wrap(wrap), m_retained(retained)
     {
     }
 
   private:
     void DoRun() override
     {
-        ReroutingTopology topo(m_enabled);
+        ReroutingTopology topo(m_enabled, m_retained ? MilliSeconds(10) : NanoSeconds(20));
+        if (m_retained)
+        {
+            // This boundary test isolates the >16-bit window from ticket 02 capacity wakeups.
+            topo.Switch(topo.swB)->GetQueueManager()->SetReservePerQueueBytes(16 * 1024 * 1024);
+        }
         PacketSink sink;
         topo.d0->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sink));
 
+        NS_TEST_ASSERT_MSG_EQ(topo.Rerouting(1)->GetConfirmedNext(), 0u, "zero TX boundary");
+        NS_TEST_ASSERT_MSG_EQ(topo.c1->GetReliableRerouting()->GetReceiveNext(), 0u, "zero RX boundary");
+        const uint32_t count = m_wrap ? 65537 : 4;
         std::vector<std::vector<uint8_t>> sent;
-        for (uint32_t index = 0; index < 4; ++index)
+        for (uint32_t index = 0; index < count; ++index)
         {
-            Ptr<Packet> packet = BuildUrmaPacket(1024,
+            Ptr<Packet> packet = BuildUrmaPacket(m_wrap ? 1 : 1024,
                                                  topo.hostA->GetId(),
                                                  topo.hostD->GetId(),
                                                  kPriority,
                                                  RoutingType::PER_FLOW_SHORTEST_PATHS,
                                                  index);
             sent.push_back(PacketBytes(packet));
-            Simulator::Schedule(NanoSeconds(10) + MicroSeconds(index) * 20,
+            Simulator::Schedule(NanoSeconds(10) + (m_wrap ? NanoSeconds(index * 100) : MicroSeconds(index * 20)),
                                 &UbSwitch::SwitchHandlePacket,
                                 topo.Switch(topo.swB),
                                 topo.b0,
                                 packet);
         }
 
-        Simulator::Stop(MicroSeconds(200));
+        TransferWatcher events;
+        if (m_enabled)
+        {
+            topo.Rerouting(1)->TraceConnectWithoutContext("Rerouting",
+                MakeBoundCallback(&WatchReroutingEvent, &events));
+            // Healthy complete delivery anchors a nonzero wrapped boundary; retained mode
+            // fails before any delayed delivery, leaving more than a wire period outstanding.
+            Simulator::Schedule(MilliSeconds(7), &UbLink::Fail, topo.failedLink);
+        }
+        Simulator::Stop(MilliSeconds(9));
         Simulator::Run();
+        if (m_enabled)
+        {
+            NS_TEST_ASSERT_MSG_EQ(events.validCopies, 1u, "real LastAck accepts anchored boundary");
+        }
         const auto peakRetryB = topo.Rerouting(1)->GetPeakRetryPacketCount();
+        if (m_retained)
+        {
+            NS_TEST_ASSERT_MSG_EQ(peakRetryB, count, "more than one field period was unconfirmed");
+        }
         const auto retryB = topo.Rerouting(1)->GetRetryPacketCount();
+        NS_TEST_ASSERT_MSG_EQ(topo.Rerouting(1)->GetConfirmedNext(), (m_enabled && !m_retained ? count : 0),
+                              "wide TX boundary survives wire wraparound");
+        NS_TEST_ASSERT_MSG_EQ(topo.c1->GetReliableRerouting()->GetReceiveNext(), (m_enabled && !m_retained ? count : 0),
+                              "RX complete delivery agrees with confirmed boundary");
         Simulator::Destroy();
 
         NS_TEST_ASSERT_MSG_EQ(sink.packets.size(), sent.size(), "all packets delivered");
-        for (size_t index = 0; index < sink.packets.size(); ++index)
+        for (size_t index = 0; index < std::min(sink.packets.size(), sent.size()); ++index)
         {
             NS_TEST_ASSERT_MSG_EQ(HexOf(sink.packets[index]), HexOf(sent[index]),
                                   "packet bytes and receive order preserved");
@@ -1054,6 +1123,8 @@ class UbReroutingHealthyBackupTest : public TestCase
     }
 
     bool m_enabled;
+    bool m_wrap;
+    bool m_retained;
 };
 
 /**
@@ -1083,6 +1154,7 @@ class UbReroutingNoLegalOutputTest : public TestCase
             // Only the failed output is legal towards the destination host.
             Ptr<UbRoutingProcess> routing =
                 topo.swB->GetObject<UbSwitch>()->GetRoutingProcess();
+            routing->GetRoutingTable().RemoveShortestRoute(utils::NodeIdToIp(topo.hostD->GetId()).Get());
             routing->GetRoutingTable().AddShortestRoute(
                 utils::NodeIdToIp(topo.hostD->GetId()).Get(),
                 std::vector<uint16_t>{1});
@@ -1122,8 +1194,8 @@ class UbReroutingLastAckGateTest : public TestCase
     void DoRun() override
     {
         const Time detectionDelay = MicroSeconds(4);
-        const Time lastAckDelay = MicroSeconds(4);
-        ReroutingTopology topo(true, NanoSeconds(20), detectionDelay, lastAckDelay);
+        const Time lastAckPathDelay = MicroSeconds(4);
+        ReroutingTopology topo(true, NanoSeconds(20), detectionDelay, lastAckPathDelay);
 
         PacketSink sink;
         topo.d0->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sink));
@@ -1150,6 +1222,10 @@ class UbReroutingLastAckGateTest : public TestCase
         topo.Rerouting(1)->TraceConnectWithoutContext(
             "Rerouting",
             MakeBoundCallback(&WatchReroutingEvent, &transfers));
+        ReceiveWatcher newcomerSent;
+        newcomerSent.expected = newcomerBytes;
+        topo.b2->TraceConnectWithoutContext("TraComEventNotify",
+            MakeBoundCallback(&WatchSendPacket, &newcomerSent));
         ReceiveWatcher newcomerArrival;
         newcomerArrival.expected = newcomerBytes;
         topo.d0->TraceConnectWithoutContext("PktRcvNotify",
@@ -1178,15 +1254,17 @@ class UbReroutingLastAckGateTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(transfers.sawLastAckWait, true,
                               "detection happened before the new packet is offered");
         const Time expectedTransfer =
-            watcher.observedStart + watcher.failOffset + detectionDelay + lastAckDelay;
+            watcher.observedStart + watcher.failOffset + detectionDelay + lastAckPathDelay;
         NS_TEST_ASSERT_MSG_GT(transfers.transferTime.GetNanoSeconds(), 0,
                               "retained attempt transferred");
-        NS_TEST_ASSERT_MSG_EQ(transfers.transferTime, expectedTransfer,
-                              "transfer happens at failure plus detection plus LastAck");
+        NS_TEST_ASSERT_MSG_GT(transfers.validLastAckTime, expectedTransfer,
+                              "LastAck includes actual queue and wire delay");
+        NS_TEST_ASSERT_MSG_EQ(transfers.transferTime, transfers.validLastAckTime,
+                              "retained transfer is gated by actual LastAck receipt");
         NS_TEST_ASSERT_MSG_GT(newcomerArrival.arrivalTime.GetNanoSeconds(), 0,
                               "new traffic delivered");
-        NS_TEST_ASSERT_MSG_LT(newcomerArrival.arrivalTime, transfers.transferTime,
-                              "new traffic overtakes retained work during the LastAck wait");
+        NS_TEST_ASSERT_MSG_LT(newcomerSent.arrivalTime, transfers.validLastAckTime,
+                              "new traffic starts over the healthy output during LastAck wait");
         NS_TEST_ASSERT_MSG_EQ(sink.packets.size(), 2, "both packets delivered exactly once");
         NS_TEST_ASSERT_MSG_EQ(HexOf(sink.packets[0]), HexOf(newcomerBytes),
                               "new traffic arrives first");
@@ -1273,8 +1351,8 @@ class UbReroutingVoqGrantCancellationTest : public TestCase
     void DoRun() override
     {
         const Time detectionDelay = MicroSeconds(1);
-        const Time lastAckDelay = MicroSeconds(2);
-        ReroutingTopology topo(true, NanoSeconds(20), detectionDelay, lastAckDelay);
+        const Time lastAckPathDelay = MicroSeconds(2);
+        ReroutingTopology topo(true, NanoSeconds(20), detectionDelay, lastAckPathDelay);
         // Keep the packet invisible to the allocator long enough to fail before it is granted.
         topo.Switch(topo.swB)->GetAllocator()->SetAttribute("AllocationTime",
                                                              TimeValue(MicroSeconds(50)));
@@ -1302,7 +1380,7 @@ class UbReroutingVoqGrantCancellationTest : public TestCase
                             &UbLink::Fail,
                             PeekPointer(topo.failedLink));
 
-        Simulator::Stop(MicroSeconds(60));
+        Simulator::Stop(MicroSeconds(300));
         Simulator::Run();
 
         const auto failedVoq = topo.Switch(topo.swB)->GetVoqPacketCountForTest(1, kPriority, 0);
@@ -1313,11 +1391,15 @@ class UbReroutingVoqGrantCancellationTest : public TestCase
         Simulator::Destroy();
 
         NS_TEST_ASSERT_MSG_EQ(sink.packets.size(), 1, "VOQ backlog reaches the destination once");
+        if (sink.packets.size() != 1)
+        {
+            return;
+        }
         NS_TEST_ASSERT_MSG_EQ(HexOf(sink.packets[0]), HexOf(bytes),
                               "migrated packet keeps its bytes");
         NS_TEST_ASSERT_MSG_EQ(transfers.transferTime,
-                              MicroSeconds(1) + detectionDelay + lastAckDelay,
-                              "migration waits for the modeled LastAck");
+                              transfers.validLastAckTime,
+                              "migration waits for actual LastAck");
         NS_TEST_ASSERT_MSG_EQ(failedVoq, 0u, "failed output VOQ drained by migration");
         NS_TEST_ASSERT_MSG_EQ(egressBytes, 0u, "failed output egress never took the packet");
         NS_TEST_ASSERT_MSG_EQ(pendingBytes, 0u, "recovery storage released after transfer");
@@ -1341,8 +1423,8 @@ class UbReroutingEgressBacklogTest : public TestCase
     void DoRun() override
     {
         const Time detectionDelay = MicroSeconds(1);
-        const Time lastAckDelay = MicroSeconds(2);
-        ReroutingTopology topo(true, NanoSeconds(20), detectionDelay, lastAckDelay);
+        const Time lastAckPathDelay = MicroSeconds(2);
+        ReroutingTopology topo(true, NanoSeconds(20), detectionDelay, lastAckPathDelay);
         // A long interframe gap keeps later packets in the egress queue while the first is in flight.
         for (Ptr<UbPort> port : {topo.b1, topo.c1})
         {
@@ -1422,9 +1504,9 @@ class UbReroutingDelayedProcessingTest : public TestCase
     void DoRun() override
     {
         const Time detectionDelay = MicroSeconds(1);
-        const Time lastAckDelay = MicroSeconds(2);
+        const Time lastAckPathDelay = MicroSeconds(2);
         const Time processingDelay = m_readyBeforeLastAck ? MicroSeconds(1) : MicroSeconds(10);
-        ReroutingTopology topo(true, NanoSeconds(20), detectionDelay, lastAckDelay);
+        ReroutingTopology topo(true, NanoSeconds(20), detectionDelay, lastAckPathDelay);
         topo.Switch(topo.swB)->SetAttribute("InPortProcessingDelay", TimeValue(processingDelay));
 
         PacketSink sink;
@@ -1453,7 +1535,7 @@ class UbReroutingDelayedProcessingTest : public TestCase
         Simulator::Destroy();
 
         const Time failure = MicroSeconds(1);
-        const Time lastAck = failure + detectionDelay + lastAckDelay;
+        const Time lastAck = transfers.validLastAckTime;
         const Time ready = NanoSeconds(10) + processingDelay;
         const Time expected = std::max(lastAck, ready);
         NS_TEST_ASSERT_MSG_EQ(transfers.transferTime, expected,
@@ -1480,8 +1562,8 @@ class UbReroutingBlockedAdmissionTest : public TestCase
     void DoRun() override
     {
         const Time detectionDelay = NanoSeconds(0);
-        const Time lastAckDelay = MicroSeconds(2);
-        ReroutingTopology topo(true, NanoSeconds(20), detectionDelay, lastAckDelay);
+        const Time lastAckPathDelay = MicroSeconds(2);
+        ReroutingTopology topo(true, NanoSeconds(20), detectionDelay, lastAckPathDelay);
 
         PacketSink sink;
         topo.d0->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sink));
@@ -2217,12 +2299,172 @@ class UbReroutingAttemptIdentityTest : public TestCase
     }
 };
 
+void CountLastAckSerialization(uint32_t* count, Ptr<Packet> packet, Time)
+{
+    UbLastAckMessage message;
+    if (ParseReliableReroutingLastAck(packet, message))
+    {
+        ++*count;
+    }
+}
+
+struct LastAckLoss
+{
+    uint32_t drop{0};
+    uint32_t seen{0};
+    uint32_t corruption{0};
+};
+
+void ReceiveWithLastAckLoss(LastAckLoss* loss, Ptr<UbPort> port, Ptr<Packet> packet)
+{
+    UbLastAckMessage message;
+    if (ParseReliableReroutingLastAck(packet, message))
+    {
+        if (++loss->seen <= loss->drop)
+        {
+            return;
+        }
+        if (loss->corruption != 0)
+        {
+            packet = BuildReliableReroutingLastAck(
+                message.sourceNode + (loss->corruption == 2 ? 1 : 0), message.destinationNode,
+                message.destinationPort + (loss->corruption == 3 ? 100 : 0),
+                message.receiveNext + (loss->corruption == 1 ? 1 : 0));
+        }
+    }
+    port->GetNode()->GetObject<UbSwitch>()->SwitchHandlePacket(port, packet);
+}
+
+class UbReroutingWireHandshakeTest : public TestCase
+{
+  public:
+    UbReroutingWireHandshakeTest(uint32_t drop = 0, bool cna24 = false)
+        : TestCase("LastAck real three-copy handshake drop=" + std::to_string(drop) +
+                   (cna24 ? " CNA24" : " CNA16")), m_drop(drop), m_cna24(cna24) {}
+    void DoRun() override
+    {
+        if (m_cna24)
+        {
+            for (uint32_t i = 0; i < 4096; ++i)
+            {
+                CreateObject<Node>();
+            }
+        }
+        ReroutingTopology topo;
+        uint32_t left = 0, right = 0;
+        LastAckLoss leftLoss{m_drop}, rightLoss{m_drop};
+        topo.b2->SetReceiveHandler(MakeBoundCallback(&ReceiveWithLastAckLoss, &leftLoss));
+        topo.c2->SetReceiveHandler(MakeBoundCallback(&ReceiveWithLastAckLoss, &rightLoss));
+        TransferWatcher leftEvents, rightEvents;
+        topo.Rerouting(1)->TraceConnectWithoutContext("Rerouting",
+            MakeBoundCallback(&WatchReroutingEvent, &leftEvents));
+        topo.c1->GetReliableRerouting()->TraceConnectWithoutContext("Rerouting",
+            MakeBoundCallback(&WatchReroutingEvent, &rightEvents));
+        topo.b2->TraceConnectWithoutContext("TraComEventNotify",
+            MakeBoundCallback(&CountLastAckSerialization, &left));
+        topo.c2->TraceConnectWithoutContext("TraComEventNotify",
+            MakeBoundCallback(&CountLastAckSerialization, &right));
+        topo.failedLink->Fail();
+        Simulator::Stop(MicroSeconds(20));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(left, 3u, "three source sends left");
+        NS_TEST_ASSERT_MSG_EQ(right, 3u, "three source sends right");
+        NS_TEST_ASSERT_MSG_EQ(leftEvents.validCopies, 1u, "one recovery start left");
+        NS_TEST_ASSERT_MSG_EQ(rightEvents.validCopies, 1u, "one recovery start right");
+        NS_TEST_ASSERT_MSG_EQ(leftEvents.duplicateCopies, (2 - m_drop), "duplicate suppression left");
+        NS_TEST_ASSERT_MSG_EQ(rightEvents.duplicateCopies, (2 - m_drop), "duplicate suppression right");
+        NS_TEST_ASSERT_MSG_EQ(topo.State(1), UbReliableRerouting::State::DRAINED, "left empty drain");
+        NS_TEST_ASSERT_MSG_EQ(topo.c1->GetReliableRerouting()->GetState(),
+                              UbReliableRerouting::State::DRAINED, "right empty drain");
+        Simulator::Destroy();
+    }
+  private:
+    uint32_t m_drop;
+    bool m_cna24;
+};
+
+class UbReroutingHandshakeTimeoutTest : public TestCase
+{
+  public:
+    explicit UbReroutingHandshakeTimeoutTest(uint32_t mode)
+        : TestCase("LastAck explicit failure mode " + std::to_string(mode)), m_mode(mode) {}
+    void DoRun() override
+    {
+#ifndef _WIN32
+        const auto outcome = RunInChild([this]() {
+            ReroutingTopology topo(true, NanoSeconds(20), NanoSeconds(0),
+                                   m_mode == 3 ? Seconds(2) : NanoSeconds(0));
+            LastAckLoss loss{m_mode == 0 ? 3u : 0u, 0, m_mode == 1 ? 1u : (m_mode == 5 ? 2u : (m_mode == 6 ? 3u : 0u))};
+            topo.b2->SetReceiveHandler(MakeBoundCallback(&ReceiveWithLastAckLoss, &loss));
+            if (m_mode == 2)
+            {
+                topo.Switch(topo.swB)->GetAllocator()->SetAttribute("AllocationTime",
+                                                                   TimeValue(MilliSeconds(600)));
+            }
+            if (m_mode == 4)
+            {
+                topo.b2->SetAttribute("UbInterframeGap", TimeValue(MilliSeconds(200)));
+                topo.c2->SetAttribute("UbInterframeGap", TimeValue(MilliSeconds(200)));
+            }
+            topo.failedLink->Fail();
+            Simulator::Stop(Seconds(2));
+            Simulator::Run();
+            Simulator::Destroy();
+        });
+        if (m_mode == 4)
+        {
+            NS_TEST_ASSERT_MSG_EQ(outcome.exitCode, 1, "third serialization at 400ms beats deadline despite IFG");
+            return;
+        }
+        NS_TEST_ASSERT_MSG_EQ(outcome.exitCode, 42, "explicit recovery failure");
+        const std::string expected = m_mode == 2 ? "ReliableRerouting_SEND_TO" : "ReliableRerouting_TO";
+        NS_TEST_ASSERT_MSG_NE(outcome.diagnostic.find(expected), std::string::npos,
+                              "expected timeout diagnostic: " + outcome.diagnostic);
+#endif
+    }
+  private:
+    uint32_t m_mode;
+};
+
+class UbReroutingLastAckCodecTest : public TestCase
+{
+  public:
+    UbReroutingLastAckCodecTest() : TestCase("LastAck codec validates wire layout and device identity") {}
+    void DoRun() override
+    {
+        for (uint32_t source : {12u, 4096u})
+        {
+            auto packet = BuildReliableReroutingLastAck(source, 23, 65535, 0x1234);
+            NS_TEST_ASSERT_MSG_EQ(packet->GetSize(), (source == 12 ? 16 : 18), "wire length");
+            UbLastAckMessage message;
+            NS_TEST_ASSERT_MSG_EQ(ParseReliableReroutingLastAck(packet, message), true, "valid message");
+            NS_TEST_ASSERT_MSG_EQ(message.sourceNode, source, "source device");
+            NS_TEST_ASSERT_MSG_EQ(message.destinationNode, 23, "destination device");
+            NS_TEST_ASSERT_MSG_EQ(message.destinationPort, 65535, "full port range");
+            NS_TEST_ASSERT_MSG_EQ(message.receiveNext, 0x1234, "packet boundary");
+            const auto bytes = PacketBytes(packet);
+            NS_TEST_ASSERT_MSG_EQ(bytes[bytes.size()-4], 0x12, "boundary network byte order");
+            NS_TEST_ASSERT_MSG_EQ(bytes[bytes.size()-3], 0x34, "boundary network byte order");
+            packet->RemoveAtEnd(1);
+            NS_TEST_ASSERT_MSG_EQ(ParseReliableReroutingLastAck(packet, message), false, "truncated");
+        }
+    }
+};
+
 class UbReliableReroutingSuite : public TestSuite
 {
   public:
     UbReliableReroutingSuite()
         : TestSuite("unified-bus-reliable-rerouting", Type::UNIT)
     {
+        AddTestCase(new UbReroutingWireHandshakeTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingWireHandshakeTest(2), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingWireHandshakeTest(0, true), TestCase::Duration::QUICK);
+        for (uint32_t mode = 0; mode < 7; ++mode)
+        {
+            AddTestCase(new UbReroutingHandshakeTimeoutTest(mode), TestCase::Duration::QUICK);
+        }
+        AddTestCase(new UbReroutingLastAckCodecTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingScopeTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingSameTimestampOrderTest(true), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingSameTimestampOrderTest(false), TestCase::Duration::QUICK);
@@ -2230,6 +2472,8 @@ class UbReliableReroutingSuite : public TestSuite
         AddTestCase(new UbReroutingBidirectionalRecoveryTest(true), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingHealthyBackupTest(false), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingHealthyBackupTest(true), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingHealthyBackupTest(true, true), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingHealthyBackupTest(true, true, true), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingNoLegalOutputTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingLastAckGateTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingDisposalTest(), TestCase::Duration::QUICK);

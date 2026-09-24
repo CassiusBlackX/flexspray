@@ -43,3 +43,10 @@
 
 - `code/doc fact`: `scratch/ns-3-ub-tools/trace_analysis/cal_throughput.py` writes per-port `Rx/Tx throughput(Gbps)`
 - `code/doc fact`: `scratch/ns-3-ub-tools/trace_analysis/task_statistics.py` writes per-task `taskThroughput(Gbps)`
+
+## Parser version baseline
+
+The tools gitlink `0fec3ae` includes the existing canonical CSV/CSV.gz trace parsers and
+legacy traffic node-column compatibility. Task and port parsers prefer CSV over legacy `.tr`
+for the same trace stream, avoiding double counting. Older tools at `2900917` only scanned
+`.tr` and could report zero tasks/directions for valid canonical CSV runlogs.

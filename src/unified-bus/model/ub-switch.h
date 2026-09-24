@@ -42,6 +42,7 @@ typedef enum {
     UB_URMA_DATA_PACKET,
     UB_LDST_DATA_PACKET,
     UB_CTP_DATA_PACKET,
+    UB_LAST_ACK_PACKET,
     UNKOWN_TYPE
 } UbPacketType_t;
 
@@ -141,6 +142,8 @@ public:
     Ptr<UbCongestionControl> GetCongestionCtrl();
     Ptr<UbQueueManager> GetQueueManager();    // Queue Manage Unit
     void SendPacket(Ptr<Packet> p, uint32_t inPort, uint32_t outPort, uint32_t priority);
+    void SendLastAck(Ptr<Packet> packet);
+    void HandleLastAck(Ptr<UbPort> port, Ptr<Packet> packet);
     void SendControlFrame(Ptr<Packet> packet, uint32_t portId);
 
     /**

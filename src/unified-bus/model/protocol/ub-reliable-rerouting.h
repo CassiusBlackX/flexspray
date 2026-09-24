@@ -7,6 +7,7 @@
 #include "ns3/object.h"
 #include "ns3/packet.h"
 #include "ns3/traced-callback.h"
+#include "ns3/tag.h"
 
 #include <cstdint>
 #include <deque>
@@ -14,6 +15,46 @@
 #include <string>
 
 namespace ns3 {
+
+/** Strict whole-message codec for CFG5/NLP6 packet-level LastAck. */
+struct UbLastAckMessage
+{
+    uint32_t sourceNode{0};
+    uint32_t destinationNode{0};
+    uint16_t destinationPort{0};
+    uint16_t receiveNext{0};
+};
+
+Ptr<Packet> BuildReliableReroutingLastAck(uint32_t sourceNode,
+                                         uint32_t destinationNode,
+                                         uint32_t destinationPort,
+                                         uint16_t receiveNext);
+bool ParseReliableReroutingLastAck(Ptr<const Packet> packet, UbLastAckMessage& message);
+
+/** Simulator-only source-copy identity, never a substitute for wire validation. */
+class UbLastAckTag : public Tag
+{
+  public:
+    static TypeId GetTypeId()
+    {
+        static TypeId tid = TypeId("ns3::UbLastAckTag").SetParent<Tag>().AddConstructor<UbLastAckTag>();
+        return tid;
+    }
+    TypeId GetInstanceTypeId() const override { return GetTypeId(); }
+    uint32_t GetSerializedSize() const override { return 9; }
+    void Serialize(TagBuffer b) const override
+    {
+        b.WriteU32(sourceNode); b.WriteU32(sourcePort); b.WriteU8(copy);
+    }
+    void Deserialize(TagBuffer b) override
+    {
+        sourceNode = b.ReadU32(); sourcePort = b.ReadU32(); copy = b.ReadU8();
+    }
+    void Print(std::ostream& os) const override { os << sourceNode << ':' << sourcePort << ':' << +copy; }
+    uint32_t sourceNode{0};
+    uint32_t sourcePort{0};
+    uint8_t copy{0};
+};
 
 class UbLink;
 class UbPort;
@@ -40,13 +81,25 @@ struct UbReliableReroutingEvent
     uint32_t portId{0};
     std::string event;
     uint64_t attemptId{0};
+    std::string owner{"none"};
     uint32_t oldOutput{UB_REROUTING_NO_OUTPUT};
     uint32_t newOutput{UB_REROUTING_NO_OUTPUT};
     uint64_t retryPackets{0};
     uint64_t retryBytes{0};
     uint64_t pendingPackets{0};
     uint64_t pendingBytes{0};
+    uint32_t sourceNode{UB_REROUTING_NO_OUTPUT};
+    uint32_t sourcePort{UB_REROUTING_NO_OUTPUT};
+    uint32_t destinationNode{UB_REROUTING_NO_OUTPUT};
+    uint32_t destinationPort{UB_REROUTING_NO_OUTPUT};
+    uint32_t receiveNext{UB_REROUTING_NO_OUTPUT};
+    uint32_t copy{0};
 };
+
+void TraceReliableReroutingLastAck(Ptr<const Packet> packet,
+                                   uint32_t node,
+                                   uint32_t port,
+                                   const std::string& event);
 
 /**
  * @brief Direction-local reliable rerouting state for one UB port.
@@ -79,9 +132,9 @@ class UbReliableRerouting : public Object
      * @param port Owning port.
      * @param link Attached link.
      * @param detectionDelay Physical failure to endpoint detection.
-     * @param lastAckDelay Detection to modeled LastAck receipt.
+     * @param lastAckTimeout Maximum wait for an actual LastAck.
      */
-    void Arm(Ptr<UbPort> port, Ptr<UbLink> link, Time detectionDelay, Time lastAckDelay);
+    void Arm(Ptr<UbPort> port, Ptr<UbLink> link, Time detectionDelay, Time lastAckTimeout);
 
     bool IsArmed() const { return m_state != State::DISABLED; }
     State GetState() const { return m_state; }
@@ -94,7 +147,7 @@ class UbReliableRerouting : public Object
     }
 
     Time GetDetectionDelay() const { return m_detectionDelay; }
-    Time GetLastAckDelay() const { return m_lastAckDelay; }
+    Time GetLastAckTimeout() const { return m_lastAckTimeout; }
 
     // ---- Backup lifecycle -------------------------------------------------
 
@@ -112,6 +165,10 @@ class UbReliableRerouting : public Object
      * @param token Attempt token; zero means "not a retained attempt".
      */
     void ConfirmAttempt(uint64_t token);
+    /** Advance only at complete link delivery; token-1 is the zero-based packet sequence. */
+    void ReceiveAttempt(uint64_t token);
+    uint64_t GetConfirmedNext() const { return m_confirmedNext; }
+    uint64_t GetReceiveNext() const { return m_receiveNext; }
 
     uint64_t GetRetryPacketCount() const { return static_cast<uint64_t>(m_attempts.size()); }
     uint64_t GetRetryByteCount() const;
@@ -125,8 +182,9 @@ class UbReliableRerouting : public Object
     /** Detection completion (td); freezes the output and stops new attempts. */
     void OnDetection();
 
-    /** Modeled LastAck receipt (ta); starts backlog recovery. */
-    void OnLastAck();
+    /** Validate an actual network-delivered LastAck before releasing retained ownership. */
+    void ReceiveLastAck(Ptr<const Packet> packet, const UbLastAckMessage& message);
+    void NotifyLastAckSent(uint8_t copy);
 
     /** Switch reports that retained backlog for this output finished recovery. */
     void NotifyBacklogFinished();
@@ -168,9 +226,14 @@ class UbReliableRerouting : public Object
     void Publish(const std::string& event,
                  uint64_t attemptId = 0,
                  uint32_t oldOutput = UB_REROUTING_NO_OUTPUT,
-                 uint32_t newOutput = UB_REROUTING_NO_OUTPUT);
+                 uint32_t newOutput = UB_REROUTING_NO_OUTPUT,
+                 Ptr<const Packet> message = nullptr,
+                 bool switchOwned = false);
     void TransitionTo(State state);
     void TransferRetryBacklog();
+    void OnLastAck();
+    void OnLastAckTimeout();
+    void OnLastAckSendTimeout();
     void UpdateDrainState();
     bool m_retryBlocked{false};
 
@@ -178,10 +241,17 @@ class UbReliableRerouting : public Object
     Ptr<UbLink> m_link;
     State m_state{State::DISABLED};
     Time m_detectionDelay{Time(0)};
-    Time m_lastAckDelay{Time(0)};
+    Time m_lastAckTimeout{Time(0)};
+    Time m_detectionTime{Time(0)};
     EventId m_detectionEvent;
     EventId m_lastAckEvent;
+    EventId m_lastAckSendEvent;
+    uint32_t m_peerNode{0};
+    uint32_t m_peerPort{0};
+    uint8_t m_sentCopies{0};
     uint64_t m_nextAttemptToken{1};
+    uint64_t m_confirmedNext{0};
+    uint64_t m_receiveNext{0};
     std::deque<Attempt> m_attempts;
     uint64_t m_peakRetryPackets{0};
     uint64_t m_pendingPackets{0};

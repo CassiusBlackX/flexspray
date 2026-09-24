@@ -87,7 +87,7 @@ public:
     bool IsReliableReroutingArmed() const { return m_reroutingArmed; }
 
     Time GetFailureDetectionDelay() const { return m_failureDetectionDelay; }
-    Time GetLastAckDelay() const { return m_lastAckDelay; }
+    Time GetLastAckTimeout() const { return m_lastAckTimeout; }
 
     virtual bool IsRemote(void) const;
 
@@ -160,10 +160,10 @@ private:
     bool m_enableReliableRerouting{false};
     bool m_reroutingArmed{false};
     Time m_failureDetectionDelay{Time(0)};
-    Time m_lastAckDelay{Time(0)};
+    Time m_lastAckTimeout{Time(0)};
     // Immutable armed snapshot: recovery configuration may not change after traffic starts.
     Time m_armedFailureDetectionDelay{Time(0)};
-    Time m_armedLastAckDelay{Time(0)};
+    Time m_armedLastAckTimeout{Time(0)};
 
     // One-link-per-simulation guard. The raw pointer is only used for identity comparison and is
     // released at Simulator::Destroy(), so it never outlives the simulation it belongs to.

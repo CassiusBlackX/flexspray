@@ -514,7 +514,7 @@ UbSwitch::FinalizeForwardedPacketEnqueue(Ptr<Packet> packet,
 
     // A recovery transfer re-enters an existing packet that already reported its arrival-time
     // congestion effect; re-running the post-enqueue hook would double count it.
-    if (m_congestionCtrl != nullptr && !recoveryTransfer)
+    if (m_congestionCtrl != nullptr && !recoveryTransfer && GetPacketType(packet) != UB_LAST_ACK_PACKET)
     {
         m_congestionCtrl->OnSwitchPostEnqueue(inPort, outPort, packet);
     }
@@ -678,6 +678,8 @@ UbPacketType_t UbSwitch::GetPacketType(Ptr<Packet> packet)
 {
     UbDatalinkHeader dlHeader;
     packet->PeekHeader(dlHeader);
+    if (dlHeader.GetConfig() == 5)
+        return UB_LAST_ACK_PACKET;
     if (dlHeader.IsControlCreditHeader())
         return UB_CONTROL_FRAME;
     if (dlHeader.IsPacketIpv4Header())
@@ -719,6 +721,9 @@ void UbSwitch::SwitchHandlePacket(Ptr<UbPort> port, Ptr<Packet> packet)
     // 帧类型判断
     auto packetType = GetPacketType(packet);
     switch (packetType) {
+        case UB_LAST_ACK_PACKET:
+            HandleLastAck(port, packet);
+            break;
         case UB_CONTROL_FRAME:
             port->GetFlowControl()->OnControlFrameReceived(packet);
             break;
@@ -1346,6 +1351,75 @@ void UbSwitch::SendPacket(Ptr<Packet> packet, uint32_t inPort, uint32_t outPort,
     ForwardDataPacketAfterAdmission(packet, inPort, outPort, priority);
 }
 
+void
+UbSwitch::SendLastAck(Ptr<Packet> packet)
+{
+    UbLastAckMessage message;
+    NS_ABORT_MSG_IF(!ParseReliableReroutingLastAck(packet, message), "Invalid local LastAck");
+    RoutingKey key{};
+    key.sip = utils::NodeIdToIp(message.sourceNode).Get();
+    key.dip = utils::NodeIdToIp(message.destinationNode).Get();
+    key.priority = 1;
+    key.routingType = RoutingType::PER_FLOW_SHORTEST_PATHS;
+    bool shortest = false;
+    const int output = m_routingProcess->GetOutPort(key, shortest);
+    NS_ABORT_MSG_IF(output < 0, "Reliable rerouting has no legal LastAck output");
+    GetOrCreateVoq(output, 1, output)->Push(packet);
+    TraceReliableReroutingLastAck(packet, GetObject<Node>()->GetId(), output, "lastack_submit");
+    DynamicCast<UbPort>(GetObject<Node>()->GetDevice(output))->TriggerTransmit();
+}
+
+void
+UbSwitch::HandleLastAck(Ptr<UbPort> port, Ptr<Packet> packet)
+{
+    const auto node = GetObject<Node>();
+    TraceReliableReroutingLastAck(packet, node->GetId(), port->GetIfIndex(), "lastack_hop_receive");
+    UbLastAckMessage message;
+    if (!ParseReliableReroutingLastAck(packet, message))
+    {
+        TraceReliableReroutingLastAck(packet, node->GetId(), port->GetIfIndex(), "lastack_format_rejected");
+        return;
+    }
+    if (IsCBFCEnable() || IsCBFCSharedEnable())
+    {
+        port->GetFlowControl()->OnDataPacketReceived(packet);
+    }
+    if (message.destinationNode == node->GetId())
+    {
+        if (IsCBFCEnable() || IsCBFCSharedEnable())
+        {
+            port->GetFlowControl()->OnIngressEnqueued(MakeIngressFlowControlEventContext(
+                packet, nullptr, port->GetIfIndex(), port->GetIfIndex(), 1));
+        }
+        if (message.destinationPort >= m_portsNum)
+        {
+            TraceReliableReroutingLastAck(packet, node->GetId(), port->GetIfIndex(), "lastack_port_rejected");
+            return;
+        }
+        auto target = DynamicCast<UbPort>(node->GetDevice(message.destinationPort))->GetReliableRerouting();
+        if (target->IsArmed())
+        {
+            target->ReceiveLastAck(packet, message);
+        }
+        return;
+    }
+    RoutingKey key{};
+    key.sip = utils::NodeIdToIp(message.sourceNode).Get();
+    key.dip = utils::NodeIdToIp(message.destinationNode).Get();
+    key.priority = 1;
+    key.routingType = RoutingType::PER_FLOW_SHORTEST_PATHS;
+    bool shortest = false;
+    const int output = m_routingProcess->GetOutPort(key, shortest, port->GetIfIndex());
+    NS_ABORT_MSG_IF(output < 0, "Reliable rerouting has no legal LastAck forwarding output");
+    if (!m_queueManager->CheckInPortSpace(port->GetIfIndex(), 1, packet->GetSize()))
+    {
+        utils::UbUtils::RecordRuntimePacketDrop("LastAck ingress buffer full");
+        return;
+    }
+    TraceReliableReroutingLastAck(packet, node->GetId(), output, "lastack_forward");
+    SendPacket(packet, port->GetIfIndex(), output, 1);
+}
+
 // Control frames use priority 0 and inPort==outPort in this simulator model.
 // This is a performance-oriented modeling tradeoff, not a UB protocol requirement.
 // The switch peeks once here, then the VOQ path relies on queue identity instead of re-parsing
@@ -1892,7 +1966,7 @@ void UbSwitch::NotifySwitchDequeue(uint16_t inPortId, uint32_t outPort, uint32_t
 
     // 只有数据报文触发拥塞控制
     UbPacketType_t packetType = GetPacketType(packet);
-    if (packetType != UB_CONTROL_FRAME && m_congestionCtrl != nullptr) {
+    if (packetType != UB_CONTROL_FRAME && packetType != UB_LAST_ACK_PACKET && m_congestionCtrl != nullptr) {
         NS_LOG_DEBUG("[QMU] Node:" << GetObject<Node>()->GetId()
               << " port:" << outPort
               << " VOQ outPort buffer:" << m_queueManager->GetTotalOutPortBufferUsed(outPort));

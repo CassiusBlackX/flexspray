@@ -35,7 +35,7 @@ another case. Key choices:
 | --- | --- | --- |
 | `ns3::UbLink::EnableReliableRerouting` | `true` | Arms eligible switch-to-switch links only; the host access links stay ordinary |
 | `ns3::UbLink::FailureDetectionDelay` | `+5us` | Positive modeled detection interval |
-| `ns3::UbLink::LastAckDelay` | `+10us` | Positive modeled LastAck interval |
+| `ns3::UbLink::LastAckTimeout` | `+1s` | Receive deadline for a real LastAck |
 | `ns3::UbRoutingProcess::MultipathSelector` | `INGRESS_PORT_STRIPE` | Deterministic candidate choice |
 | `ns3::UbTransportChannel::EnableRetrans` | `false` | The primary run proves link recovery without transport resend |
 | `ns3::UbSwitch::FlowControl` | `NONE` | Bounded storage comes from the queue-manager reserve |
@@ -44,31 +44,30 @@ another case. Key choices:
 ## Run
 
 ```bash
-python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/2nodes_reliable-rerouting'
-python3 scratch/2nodes_reliable-rerouting/check_results.py
-python3 scratch/2nodes_reliable-rerouting/check_results.py --self-test
+python3.12 ./ns3 run --no-build 'scratch/ub-quick-example --case-path=scratch/reliable-rerouting/2nodes_reliable-rerouting'
+python3 scratch/reliable-rerouting/2nodes_reliable-rerouting/check_results.py
+python3 scratch/reliable-rerouting/2nodes_reliable-rerouting/check_results.py --self-test
 ```
 
-The second command validates the positive run. The third re-runs the positive path plus seven
-rejection paths (missing/truncated evidence, missing task, wrong detection time, zero recovery in one
-direction, duplicate transfer, false drain) on isolated copies.
+The second command validates the positive run. The third checks the positive evidence and
+12 mutations, including missing actual sends, impossible paths, unknown copy/source-port identity,
+changed receive boundary, missing tasks, early recovery, duplicate transfer and false drain.
 
-## Measured invariants (2026-09-17, baseline revision `8be8ad8f`)
+## Verified real-handshake run (2026-09-24)
 
-| Observation | Value |
-| --- | --- |
-| Failure instant | 100 000 000 ps (100 us) |
-| Endpoint detection | 105 000 000 ps (failure + 5 us) |
-| Modeled LastAck | 115 000 000 ps (detection + 10 us) |
-| Unreceived recovery work at detection | 191 retained packets per direction (8472 bytes shown as the first row) |
-| Recovery transfers | 382 (191 per direction), all `old_output=1 -> new_output=2`, all at the LastAck instant |
-| Duplicate local attempts | 0 |
-| Local drain | both endpoints drained with `retry_packets=0`, `pending_packets=0` |
-| Tasks | 4 / 4 completed (1 MiB per task per direction, ~487 Gbps) |
+The original topology and four 2 MiB tasks are preserved. Failure occurs at 100 us and both
+endpoints detect it at 105 us. Each endpoint sends three real LastAck packets over port 2;
+only its first valid incoming copy authorizes recovery. The checker reconstructs transmission,
+serialization and propagation from the actual physical path. There are 382 transfers
+(191 per direction), and all four tasks complete. Local drain and destination completion are
+checked separately. Results are in this case's `output/` and `runlog/` after execution.
+
+The old 2026-09-17 demonstration at revision `8be8ad8f` used a synthetic arrival at 115 us;
+that historical timing is not an acceptance criterion for the real network handshake.
 
 ## Scope notes
 
-* Local drain is not destination completion: the checker verifies both, separately.
-* Version one excludes host access-link recovery, multiple distinct failures, link repair,
-  single-direction faults, MPI/MTP recovery, finite retry-buffer hardware behavior, flit-level
-  retry, and real LastAck encoding. See the design document for the complete list.
+Host access-link recovery, multiple distinct failures, repair, one-way faults, MPI/MTP,
+finite retry-buffer hardware and flit-level retry remain outside scope. LastAck has real
+CNA16/CNA24 encoding and packet-level boundaries, with the model's no-bit-corruption assumption.
+See [ADR 0027](../../../doc/adr/0027-use-packet-boundaries-for-routed-lastack.md).

@@ -511,6 +511,21 @@ void UbPort::CreateAndInitFc(FcType type)
     }
 }
 
+void
+UbPort::LastAckSerialized(Ptr<Packet> packet)
+{
+    UbLastAckTag lastAckTag;
+    if (packet != nullptr && packet->PeekPacketTag(lastAckTag))
+    {
+        TraceReliableReroutingLastAck(packet, GetNode()->GetId(), GetIfIndex(), "lastack_tx_complete");
+        if (lastAckTag.sourceNode == GetNode()->GetId())
+        {
+            DynamicCast<UbPort>(GetNode()->GetDevice(lastAckTag.sourcePort))
+                ->GetReliableRerouting()->NotifyLastAckSent(lastAckTag.copy);
+        }
+    }
+}
+
 void UbPort::TransmitComplete()
 {
     NS_LOG_FUNCTION(this);
@@ -822,7 +837,8 @@ void UbPort::TransmitPacket(Ptr<Packet> packet, Time delay)
                       : m_channel->TransmitStart(packet, this, txTime, attemptToken);
     if (result == false) {
         NS_LOG_WARN("Channel transmission failed! Packet dropped at Node " << GetNode()->GetId() << " Port " << m_portId);
-        ConfirmTransmitAttempt(attemptToken);
+        NS_ABORT_MSG_IF(attemptToken != 0,
+                        "Reliable rerouting carrier rejected an accepted transmit attempt");
         // Reset port state so it won't remain BUSY and try next packet
         m_sendState = SendState::READY;
         m_currentPkt = nullptr;
@@ -835,6 +851,12 @@ void UbPort::TransmitPacket(Ptr<Packet> packet, Time delay)
     // Transmission started successfully: notify and schedule completion. The
     // counters advance here and not in ComputePacketRateNobTime, so a rejected
     // attempt cannot consume burst budget.
+    UbLastAckTag lastAckTag;
+    if (packet->PeekPacketTag(lastAckTag))
+    {
+        TraceReliableReroutingLastAck(packet, GetNode()->GetId(), GetIfIndex(), "lastack_tx_start");
+        m_lastAckSerialization = Simulator::Schedule(txTime, &UbPort::LastAckSerialized, this, packet);
+    }
     CommitPacketRateControlCounters(packet);
     TraComEventNotify(packet, txCompleteTime);
     Simulator::Schedule(txCompleteTime, &UbPort::TransmitComplete, this);
@@ -1160,6 +1182,7 @@ void UbPort::PortRxNotify(uint32_t nodeId, uint32_t mPortId, uint32_t size)
 void UbPort::DoDispose()
 {
     NS_LOG_FUNCTION(this);
+    m_lastAckSerialization.Cancel();
     m_ubEQ = nullptr;
     m_channel = nullptr;
     m_currentPkt = nullptr;

@@ -2,10 +2,13 @@
 #include "ub-reliable-rerouting.h"
 
 #include "ns3/log.h"
+#include "ns3/ub-header.h"
+#include "ns3/ub-network-address.h"
 #include "ns3/simulator.h"
 #include "ns3/ub-link.h"
 #include "ns3/ub-port.h"
 #include "ns3/ub-switch.h"
+#include "ns3/ub-utils.h"
 
 #include <algorithm>
 #include <string>
@@ -14,6 +17,92 @@ namespace ns3 {
 
 NS_LOG_COMPONENT_DEFINE("UbReliableRerouting");
 NS_OBJECT_ENSURE_REGISTERED(UbReliableRerouting);
+NS_OBJECT_ENSURE_REGISTERED(UbLastAckTag);
+
+Ptr<Packet>
+BuildReliableReroutingLastAck(uint32_t sourceNode,
+                              uint32_t destinationNode,
+                              uint32_t destinationPort,
+                              uint16_t receiveNext)
+{
+    NS_ABORT_MSG_IF(sourceNode > 65535 || destinationNode > 65535 || destinationPort > 65535,
+                    "LastAck identity exceeds the supported address mapping");
+    const uint8_t body[] = {static_cast<uint8_t>(receiveNext >> 8),
+                            static_cast<uint8_t>(receiveNext),
+                            static_cast<uint8_t>(destinationPort >> 8),
+                            static_cast<uint8_t>(destinationPort)};
+    auto packet = Create<Packet>(body, sizeof(body));
+    if (sourceNode <= 4095 && destinationNode <= 4095)
+    {
+        UbCna16NetworkHeader header;
+        header.SetScna(utils::NodeIdToCna16(sourceNode));
+        header.SetDcna(utils::NodeIdToCna16(destinationNode));
+        header.SetServiceLevel(1);
+        header.SetNlp(6);
+        packet->AddHeader(header);
+    }
+    else
+    {
+        UbCna24NetworkHeader header;
+        header.SetScna(utils::NodeIdToCna24(sourceNode));
+        header.SetDcna(utils::NodeIdToCna24(destinationNode));
+        header.SetServiceLevel(1);
+        header.SetNlp(6);
+        packet->AddHeader(header);
+    }
+    UbDatalinkPacketHeader header;
+    header.SetConfig(5);
+    header.SetPacketVL(1);
+    packet->AddHeader(header);
+    return packet;
+}
+
+bool
+ParseReliableReroutingLastAck(Ptr<const Packet> packet, UbLastAckMessage& message)
+{
+    if (packet == nullptr || (packet->GetSize() != 16 && packet->GetSize() != 18))
+    {
+        return false;
+    }
+    auto copy = packet->Copy();
+    UbDatalinkPacketHeader dl;
+    copy->RemoveHeader(dl);
+    if (dl.GetConfig() != 5 || dl.GetPacketVL() != 1)
+    {
+        return false;
+    }
+    UbLastAckMessage decoded;
+    if (packet->GetSize() == 16)
+    {
+        UbCna16NetworkHeader header;
+        copy->RemoveHeader(header);
+        if (header.GetNlp() != 6 || header.GetServiceLevel() != 1 ||
+            (header.GetScna() & 15) != 0 || (header.GetDcna() & 15) != 0)
+        {
+            return false;
+        }
+        decoded.sourceNode = utils::Cna16ToNodeId(header.GetScna());
+        decoded.destinationNode = utils::Cna16ToNodeId(header.GetDcna());
+    }
+    else
+    {
+        UbCna24NetworkHeader header;
+        copy->RemoveHeader(header);
+        if (header.GetNlp() != 6 || header.GetServiceLevel() != 1 ||
+            (header.GetScna() & 255) != 0 || (header.GetDcna() & 255) != 0)
+        {
+            return false;
+        }
+        decoded.sourceNode = utils::Cna24ToNodeId(header.GetScna());
+        decoded.destinationNode = utils::Cna24ToNodeId(header.GetDcna());
+    }
+    uint8_t body[4];
+    copy->CopyData(body, sizeof(body));
+    decoded.receiveNext = (static_cast<uint16_t>(body[0]) << 8) | body[1];
+    decoded.destinationPort = (static_cast<uint16_t>(body[2]) << 8) | body[3];
+    message = decoded;
+    return true;
+}
 
 TypeId
 UbReliableRerouting::GetTypeId()
@@ -56,18 +145,24 @@ UbReliableRerouting::GetStateName(State state)
 }
 
 void
-UbReliableRerouting::Arm(Ptr<UbPort> port, Ptr<UbLink> link, Time detectionDelay, Time lastAckDelay)
+UbReliableRerouting::Arm(Ptr<UbPort> port, Ptr<UbLink> link, Time detectionDelay, Time lastAckTimeout)
 {
     NS_ABORT_MSG_IF(port == nullptr || link == nullptr,
                     "Reliable rerouting requires an attached port and link");
-    NS_ABORT_MSG_IF(detectionDelay.IsStrictlyNegative() || lastAckDelay.IsStrictlyNegative(),
+    NS_ABORT_MSG_IF(detectionDelay.IsStrictlyNegative() || lastAckTimeout <= Time(0),
                     "Reliable rerouting delays must be non-negative");
     NS_ABORT_MSG_IF(m_state != State::DISABLED,
                     "Reliable rerouting is armed once, before traffic starts");
     m_port = port;
     m_link = link;
     m_detectionDelay = detectionDelay;
-    m_lastAckDelay = lastAckDelay;
+    m_lastAckTimeout = lastAckTimeout;
+    const auto peer = link->GetDestination(port);
+    m_peerNode = peer->GetNode()->GetId();
+    m_peerPort = peer->GetIfIndex();
+    NS_ABORT_MSG_IF(m_peerNode > 65535 || port->GetNode()->GetId() > 65535 ||
+                        m_peerPort > 65535 || port->GetIfIndex() > 65535,
+                    "LastAck endpoint exceeds supported identity range");
     TransitionTo(State::HEALTHY);
 }
 
@@ -100,6 +195,10 @@ UbReliableRerouting::CreateAttempt(Ptr<const Packet> packet, uint32_t inPort, ui
     NS_LOG_DEBUG("[UbReliableRerouting] retained attempt " << attempt.token << " ("
                                                            << attempt.packet->GetSize()
                                                            << " bytes) retry=" << m_attempts.size());
+    if (m_state != State::HEALTHY)
+    {
+        Publish("attempt_start", attempt.token, m_port->GetIfIndex());
+    }
     return attempt.token;
 }
 
@@ -119,7 +218,22 @@ UbReliableRerouting::ConfirmAttempt(uint64_t token)
         NS_LOG_DEBUG("[UbReliableRerouting] confirmation for unknown attempt " << token);
         return;
     }
+    NS_ABORT_MSG_IF(token != m_confirmedNext + 1,
+                    "Reliable rerouting requires ordered complete link confirmations");
+    m_confirmedNext = token;
     m_attempts.erase(it);
+}
+
+void
+UbReliableRerouting::ReceiveAttempt(uint64_t token)
+{
+    if (token == 0 || m_state == State::DISABLED)
+    {
+        return;
+    }
+    NS_ABORT_MSG_IF(token != m_receiveNext + 1,
+                    "Reliable rerouting requires ordered complete link delivery");
+    m_receiveNext = token;
 }
 
 uint64_t
@@ -154,11 +268,116 @@ UbReliableRerouting::OnDetection()
     {
         return;
     }
+    m_detectionTime = Simulator::Now();
     TransitionTo(State::WAIT_LAST_ACK);
     Ptr<UbSwitch> sw = m_port->GetNode()->GetObject<UbSwitch>();
     NS_ABORT_MSG_IF(sw == nullptr, "Reliable rerouting requires a switch on the port node");
     sw->NotifyOutputDetectedFailed(m_port->GetIfIndex());
-    m_lastAckEvent = Simulator::Schedule(m_lastAckDelay, &UbReliableRerouting::OnLastAck, this);
+    m_lastAckEvent = Simulator::Schedule(m_lastAckTimeout,
+                                         &UbReliableRerouting::OnLastAckTimeout, this);
+    m_lastAckSendEvent = Simulator::Schedule(MilliSeconds(500),
+                                             &UbReliableRerouting::OnLastAckSendTimeout, this);
+    for (uint8_t copy = 1; copy <= 3; ++copy)
+    {
+        auto packet = BuildReliableReroutingLastAck(m_port->GetNode()->GetId(), m_peerNode,
+                                                    m_peerPort, static_cast<uint16_t>(m_receiveNext));
+        UbLastAckTag tag;
+        tag.sourceNode = m_port->GetNode()->GetId();
+        tag.sourcePort = m_port->GetIfIndex();
+        tag.copy = copy;
+        packet->AddPacketTag(tag);
+        sw->SendLastAck(packet);
+    }
+}
+
+namespace {
+
+void FillLastAckIdentity(UbReliableReroutingEvent& record, Ptr<const Packet> packet)
+{
+    UbLastAckMessage message;
+    UbLastAckTag tag;
+    if (ParseReliableReroutingLastAck(packet, message))
+    {
+        record.sourceNode = message.sourceNode;
+        record.destinationNode = message.destinationNode;
+        record.destinationPort = message.destinationPort;
+        record.receiveNext = message.receiveNext;
+    }
+    if (packet != nullptr && packet->PeekPacketTag(tag))
+    {
+        record.sourcePort = tag.sourcePort;
+        record.copy = tag.copy;
+    }
+}
+
+} // namespace
+
+void
+TraceReliableReroutingLastAck(Ptr<const Packet> packet, uint32_t node, uint32_t port,
+                              const std::string& event)
+{
+    UbReliableReroutingEvent record;
+    record.nodeId = node;
+    record.portId = port;
+    record.event = event;
+    FillLastAckIdentity(record, packet);
+    utils::UbUtils::ReliableReroutingNotify(record);
+}
+
+void
+UbReliableRerouting::ReceiveLastAck(Ptr<const Packet> packet, const UbLastAckMessage& message)
+{
+    const bool valid = message.sourceNode == m_peerNode &&
+                       message.destinationNode == m_port->GetNode()->GetId() &&
+                       message.destinationPort == m_port->GetIfIndex() &&
+                       message.receiveNext == static_cast<uint16_t>(m_confirmedNext) &&
+                       m_confirmedNext < m_nextAttemptToken &&
+                       (m_state != State::WAIT_LAST_ACK || m_attempts.empty() ||
+                        m_attempts.front().token == m_confirmedNext + 1);
+    if (!valid || (m_state != State::WAIT_LAST_ACK && m_state != State::RECOVERING &&
+                   m_state != State::DRAINED))
+    {
+        Publish("lastack_rejected", 0, UB_REROUTING_NO_OUTPUT, UB_REROUTING_NO_OUTPUT, packet);
+        return;
+    }
+    if (m_state != State::WAIT_LAST_ACK)
+    {
+        Publish("lastack_duplicate", 0, UB_REROUTING_NO_OUTPUT, UB_REROUTING_NO_OUTPUT, packet);
+        return;
+    }
+    Publish("lastack_valid", 0, UB_REROUTING_NO_OUTPUT, UB_REROUTING_NO_OUTPUT, packet);
+    m_lastAckEvent.Cancel();
+    OnLastAck();
+}
+
+void
+UbReliableRerouting::NotifyLastAckSent(uint8_t copy)
+{
+    NS_ABORT_MSG_IF(copy < 1 || copy > 3, "Invalid LastAck source copy identity");
+    m_sentCopies |= 1u << (copy - 1);
+    if (m_sentCopies == 7)
+    {
+        m_lastAckSendEvent.Cancel();
+    }
+}
+
+void
+UbReliableRerouting::OnLastAckTimeout()
+{
+    NS_ABORT_MSG("ReliableRerouting_TO: node=" << m_port->GetNode()->GetId()
+                 << " failed_port=" << m_port->GetIfIndex() << " peer=" << m_peerNode << ':' << m_peerPort
+                 << " detection_ps=" << m_detectionTime.GetPicoSeconds()
+                 << " timeout_ps=" << m_lastAckTimeout.GetPicoSeconds());
+}
+
+void
+UbReliableRerouting::OnLastAckSendTimeout()
+{
+    NS_ABORT_MSG("ReliableRerouting_SEND_TO: node=" << m_port->GetNode()->GetId()
+                 << " failed_port=" << m_port->GetIfIndex() << " peer=" << m_peerNode << ':' << m_peerPort
+                 << " detection_ps=" << m_detectionTime.GetPicoSeconds()
+                 << " timeout_ps=" << MilliSeconds(500).GetPicoSeconds()
+                 << " sent_mask=" << +m_sentCopies);
 }
 
 void
@@ -245,7 +464,7 @@ UbReliableRerouting::PublishBacklogEvent(const std::string& event,
                                          uint32_t oldOutput,
                                          uint32_t newOutput)
 {
-    Publish(event, entryId, oldOutput, newOutput);
+    Publish(event, entryId, oldOutput, newOutput, nullptr, true);
 }
 
 void
@@ -283,19 +502,23 @@ void
 UbReliableRerouting::Publish(const std::string& event,
                              uint64_t attemptId,
                              uint32_t oldOutput,
-                             uint32_t newOutput)
+                             uint32_t newOutput,
+                             Ptr<const Packet> message,
+                             bool switchOwned)
 {
     UbReliableReroutingEvent record;
     record.nodeId = m_port != nullptr ? m_port->GetNode()->GetId() : 0;
     record.portId = m_port != nullptr ? m_port->GetIfIndex() : 0;
     record.event = event;
     record.attemptId = attemptId;
+    record.owner = attemptId == 0 ? "none" : (switchOwned ? "switch" : "retry");
     record.oldOutput = oldOutput;
     record.newOutput = newOutput;
     record.retryPackets = GetRetryPacketCount();
     record.retryBytes = GetRetryByteCount();
     record.pendingPackets = m_pendingPackets;
     record.pendingBytes = m_pendingBytes;
+    FillLastAckIdentity(record, message);
     m_traceRerouting(record);
 }
 
@@ -304,6 +527,7 @@ UbReliableRerouting::DoDispose()
 {
     m_detectionEvent.Cancel();
     m_lastAckEvent.Cancel();
+    m_lastAckSendEvent.Cancel();
     m_attempts.clear();
     m_pendingPackets = 0;
     m_pendingBytes = 0;

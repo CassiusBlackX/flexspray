@@ -76,10 +76,10 @@ TypeId UbLink::GetTypeId(void)
                           TimeValue(NanoSeconds(0)),
                           MakeTimeAccessor(&UbLink::m_failureDetectionDelay),
                           MakeTimeChecker())
-            .AddAttribute("LastAckDelay",
-                          "Modeled detection to LastAck receipt interval for reliable rerouting.",
-                          TimeValue(NanoSeconds(0)),
-                          MakeTimeAccessor(&UbLink::m_lastAckDelay),
+            .AddAttribute("LastAckTimeout",
+                          "Maximum wait for an actual routed LastAck.",
+                          TimeValue(Seconds(1)),
+                          MakeTimeAccessor(&UbLink::m_lastAckTimeout),
                           MakeTimeChecker());
     return tid;
 }
@@ -135,18 +135,18 @@ void UbLink::ArmEndpointsIfEligible()
     }
 
     NS_ABORT_MSG_IF(m_failureDetectionDelay.IsStrictlyNegative() ||
-                        m_lastAckDelay.IsStrictlyNegative(),
+                        m_lastAckTimeout <= Time(0),
                     "Reliable rerouting delays must be non-negative");
-    NS_ABORT_MSG_IF(m_failureDetectionDelay + m_lastAckDelay < Time(0),
+    NS_ABORT_MSG_IF(m_failureDetectionDelay + m_lastAckTimeout < Time(0),
                     "Reliable rerouting delay sum does not fit the simulator time range");
 
     for (int32_t index = 0; index < nDevices; ++index)
     {
         Ptr<UbPort> port = m_link[index].m_src;
-        port->GetReliableRerouting()->Arm(port, this, m_failureDetectionDelay, m_lastAckDelay);
+        port->GetReliableRerouting()->Arm(port, this, m_failureDetectionDelay, m_lastAckTimeout);
     }
     m_armedFailureDetectionDelay = m_failureDetectionDelay;
-    m_armedLastAckDelay = m_lastAckDelay;
+    m_armedLastAckTimeout = m_lastAckTimeout;
     m_reroutingArmed = true;
     NS_LOG_DEBUG("Armed reliable rerouting on link with node "
                  << m_link[0].m_src->GetNode()->GetId() << " port "
@@ -220,6 +220,7 @@ UbLink::Deliver(Ptr<UbPort> dst, Ptr<UbPort> src, Ptr<Packet> p, uint64_t attemp
     // backup happens in the same serial delivery event that hands the packet to the peer port.
     if (attemptToken != 0 && src != nullptr)
     {
+        dst->GetReliableRerouting()->ReceiveAttempt(attemptToken);
         src->ConfirmTransmitAttempt(attemptToken);
     }
     dst->Receive(p);
@@ -238,7 +239,7 @@ UbLink::Fail()
         AbortIfUnsupportedRuntime(m_link[index].m_src);
     }
     NS_ABORT_MSG_IF(m_failureDetectionDelay != m_armedFailureDetectionDelay ||
-                        m_lastAckDelay != m_armedLastAckDelay,
+                        m_lastAckTimeout != m_armedLastAckTimeout,
                     "Reliable rerouting configuration is armed before traffic starts and cannot "
                     "change later: link attached to node "
                         << m_link[0].m_src->GetNode()->GetId() << " port "
