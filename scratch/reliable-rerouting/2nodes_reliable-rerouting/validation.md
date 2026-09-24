@@ -20,3 +20,14 @@ are not claimed complete by this ticket. No full repository test run was claimed
 Knowledge sources: ADR 0027 defines the accepted packet-level scope;
 `dev-knowledge/specification/` supplies the protocol baseline. UB 2.1 section 5.3.9
 and its packet-boundary interpretation are recorded in the approved local feature design.
+
+# Ticket 02 validation — 2026-09-24
+
+The same serial build and execution commands above passed after the capacity/drain fix:
+35 reliable-rerouting tests, 3 link-fault tests, four-task small case and 13 checker mutations.
+The 65,537-unconfirmed-attempt regression now uses default capacity and completes all packets.
+Explicit retry-only and cross-ingress shared-pool tests observe a real block, exactly one
+route resolution and transfer at capacity release, with bounded event count. Delayed processing
+checks the first DRAINED timestamp. Existing CBFC/PFC credit/disposal cases also pass.
+Independent Spec and Standards review found no blocking defects.
+The CSV evidence now includes `processing_packets`; nonzero processing rejects a drain claim.
