@@ -1,0 +1,79 @@
+schema_version: 1
+status: implemented
+package_root: scratch/20260921-2nodes-roi-write-counter
+checkpoint_policy: continue_full_matrix
+manual_approval_gate: false
+fixed_controls: &fixed_controls
+  endpoints: 2
+  links: 1
+  full_duplex: true
+  rate_bps_each_direction: 400000000000
+  propagation_delay_ps_each_direction: 1000000
+  transport: RTP
+  service_mode: ROI
+  transport_channel_mode: precomputed
+  transport_channel_source: driver_public_api
+  rtp_pairs: 1
+  tpg: false
+  multipath: false
+  background_traffic: false
+  fault_injection: false
+  data_bytes: 64
+  data_packets: 1
+  data_address: "0x1000"
+  counter_address: "0x2000"
+  counter_initial: 0
+  expected_total: 64
+  initiator_dispatch_delay_ps: 0
+  target_execution_delay_ps: 0
+  initiator_completion_visibility_delay_ps: 0
+  time_resolution: ps
+  process_isolation: one_process_per_case
+  other_parameters: identical_runtime_values_recorded_in_resolved_parameters
+cases:
+  - case_id: control
+    block_id: roi-counter
+    role: control
+    case_dir: cases/control
+    changed_variable: RO_WRITE_data_then_SO_WRITE_post
+    fixed_controls: *fixed_controls
+    prediction: propagation_only_B_3us_A_4us_plus_measured_overheads
+    reason: SO_post_waits_for_prior_RO_data_TAACK
+    falsification_signal: missing_RO_SO_dependency_or_invalid_target_readiness
+    metric_checks:
+      - valid_input_and_actual_post_payload
+      - committed_data_before_first_counter_equals_64
+      - one_data_packet_two_target_executions_two_A_completions
+      - post_tx_after_data_taack_rx
+      - b_ready_latency_ps
+      - a_completion_latency_ps
+    expected_artifacts:
+      - output/events.csv
+      - output/summary.json
+      - output/resolved-parameters.json
+      - output/console.log
+    parallel_group: serial
+    checkpoint_ids: [control-evidence]
+  - case_id: treatment
+    block_id: roi-counter
+    role: treatment
+    case_dir: cases/treatment
+    changed_variable: RO_WRITE_WITH_ATOMIC_STORE_ADD
+    fixed_controls: *fixed_controls
+    prediction: B_latency_reduced_by_about_2us_relative_to_control
+    reason: data_commit_and_decoded_notify_add_without_separate_post_wait
+    falsification_signal: no_speedup_or_difference_unexplained_by_removed_wait_and_observed_overheads
+    metric_checks:
+      - decoded_notify_address_and_data
+      - committed_data_before_first_counter_equals_64
+      - one_data_packet_one_target_execution_one_A_completion
+      - fixed_parameters_match_control
+      - b_ready_latency_ps
+      - a_completion_latency_ps
+    expected_artifacts:
+      - output/events.csv
+      - output/summary.json
+      - output/resolved-parameters.json
+      - output/console.log
+    parallel_group: serial
+    checkpoint_ids: [treatment-evidence]
