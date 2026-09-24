@@ -13,6 +13,7 @@
 #include "ns3/ub-link.h"
 #include "ns3/ub-network-address.h"
 #include "ns3/ub-next-hop-index.h"
+#include "ns3/ub-rule-routing.h"
 #include "ns3/ub-port.h"
 #include "ns3/ub-reliable-rerouting.h"
 #include "ns3/ub-switch.h"
@@ -2203,6 +2204,23 @@ class UbReroutingRoutingRepresentationTest : public TestCase
                                   "a disallowed detour is not used as a fallback");
             NS_TEST_ASSERT_MSG_EQ(routing->LastFailureExcludedAllCandidates(), true,
                                   "disallowed-detour case is failure-aware");
+            RoutingKey recoveryKey = MakeKey();
+            NS_TEST_ASSERT_MSG_EQ(routing->GetOutPortAfterFailure(recoveryKey, selectedShortestPath, 0),
+                                  2, "explicit failure entry permits configured detour");
+            NS_TEST_ASSERT_MSG_EQ(selectedShortestPath, false, "detour is recorded");
+            RoutingKey ingressBlocked = MakeKey();
+            NS_TEST_ASSERT_MSG_EQ(routing->GetOutPortAfterFailure(ingressBlocked, selectedShortestPath, 1),
+                                  -1, "ingress exclusion cannot authorize a detour");
+            const std::vector<uint16_t> onlyDetour{2};
+            RoutingKey denied = MakeKey();
+            NS_TEST_ASSERT_MSG_EQ(routing->GetOutPortAfterFailure(denied, selectedShortestPath, 0,
+                                                                  false, &onlyDetour),
+                                  -1, "allow-list excluded shortest before failure");
+            RoutingKey missingEndpoint = MakeKey();
+            missingEndpoint.dip = utils::NodeIdToIp(3, 9).Get();
+            NS_TEST_ASSERT_MSG_EQ(routing->GetOutPortAfterFailure(missingEndpoint, selectedShortestPath,
+                                                                  0, true),
+                                  -1, "exact missing endpoint cannot fall back to device route");
             // With an all-paths routing type the same detour is legal again.
             RoutingKey allPathsKey = MakeKey();
             allPathsKey.routingType = RoutingType::PER_FLOW_ALL_PATHS;
@@ -2476,12 +2494,179 @@ class UbReroutingLastAckCodecTest : public TestCase
     }
 };
 
+class UbReroutingFailureRepresentationsTest : public TestCase
+{
+  public:
+    UbReroutingFailureRepresentationsTest() : TestCase("Failure detours preserve table index rule endpoint constraints") {}
+    void DoRun() override
+    {
+        for (uint32_t representation = 0; representation < 3; ++representation)
+        {
+            auto routing = CreateObject<UbRoutingProcess>();
+            routing->SetNodeId(1);
+            const uint32_t destination = utils::NodeIdToIp(3, 0).Get();
+            if (representation == 0)
+            {
+                routing->GetRoutingTable().AddShortestRoute(destination, {1});
+                routing->GetRoutingTable().AddOtherRoute(destination, {2});
+            }
+            else if (representation == 1)
+            {
+                UbNextHopIndexBuilder builder(4, 1);
+                builder.AddRoute({1, 3, 0, {1}, {2}});
+                routing->SetNextHopIndex(builder.Build());
+            }
+            else
+            {
+                auto rules = std::make_shared<UbRuleRoutingTable>();
+                rules->AddPortGroup({1, 10, {1}});
+                rules->AddPortGroup({1, 11, {2}});
+                rules->AddRule({1, {3, 0}, {10}, {11}});
+                rules->PrepareForLookup();
+                routing->SetRuleRoutingTable(rules);
+            }
+            RoutingKey key{};
+            key.dip = destination;
+            key.routingType = RoutingType::PER_FLOW_SHORTEST_PATHS;
+            bool shortest = false;
+            NS_TEST_ASSERT_MSG_EQ(routing->GetOutPortAfterFailure(key, shortest, 0, true), 1,
+                                  "healthy shortest preserved");
+            routing->SetOutputUnavailable(1);
+            NS_TEST_ASSERT_MSG_EQ(routing->GetOutPortForEndpoint(key, shortest, 0), -1,
+                                  "ordinary API still rejects detour");
+            NS_TEST_ASSERT_MSG_EQ(routing->GetOutPortAfterFailure(key, shortest, 0, true), 2,
+                                  "same failure detour for each representation");
+            NS_TEST_ASSERT_MSG_EQ(shortest, false, "selected nonshortest");
+            NS_TEST_ASSERT_MSG_EQ(routing->GetOutPortAfterFailure(key, shortest, 2, true), -1,
+                                  "final selector cannot use ingress");
+            const std::vector<uint16_t> onlyShortest{1};
+            const std::vector<uint16_t> onlyDetour{2};
+            NS_TEST_ASSERT_MSG_EQ(routing->GetOutPortAfterFailure(key, shortest, 0, true, &onlyShortest),
+                                  -1, "allow-list forbids detour");
+            NS_TEST_ASSERT_MSG_EQ(routing->GetOutPortAfterFailure(key, shortest, 0, true, &onlyDetour),
+                                  -1, "allow-list forbids original shortest");
+            key.dip = utils::NodeIdToIp(3, 1).Get();
+            NS_TEST_ASSERT_MSG_EQ(routing->GetOutPortAfterFailure(key, shortest, 0, true), -1,
+                                  "exact endpoint has no primary fallback");
+        }
+        Simulator::Destroy();
+    }
+};
+
+/** Three leaves and two spines, with hosts on two leaves and no parallel backup links. */
+class UbReroutingClosHandshakeTest : public TestCase
+{
+  public:
+    UbReroutingClosHandshakeTest() : TestCase("Reliable rerouting - real Clos three-hop handshake") {}
+    void DoRun() override
+    {
+        auto h0 = CreateObject<Node>();
+        auto h1 = CreateObject<Node>();
+        auto l0 = CreateObject<Node>();
+        auto l1 = CreateObject<Node>();
+        auto l2 = CreateObject<Node>();
+        auto s0 = CreateObject<Node>();
+        auto s1 = CreateObject<Node>();
+        InitReroutingNode(h0, UB_DEVICE, 1);
+        InitReroutingNode(h1, UB_DEVICE, 1);
+        for (auto leaf : {l0, l1, l2}) InitReroutingNode(leaf, UB_SWITCH, 3);
+        for (auto spine : {s0, s1}) InitReroutingNode(spine, UB_SWITCH, 3);
+        const auto port = [](Ptr<Node> node, uint32_t id) {
+            return DynamicCast<UbPort>(node->GetDevice(id));
+        };
+        ConnectPorts(port(h0, 0), port(l0, 0), true, NanoSeconds(20));
+        ConnectPorts(port(h1, 0), port(l1, 0), true, NanoSeconds(20));
+        auto failed = ConnectPorts(port(l0, 1), port(s0, 0), true, NanoSeconds(200), MicroSeconds(1));
+        ConnectPorts(port(l0, 2), port(s1, 0), true, NanoSeconds(20));
+        ConnectPorts(port(l1, 1), port(s0, 1), true, NanoSeconds(20));
+        ConnectPorts(port(l1, 2), port(s1, 1), true, NanoSeconds(20));
+        ConnectPorts(port(l2, 1), port(s0, 2), true, NanoSeconds(20));
+        ConnectPorts(port(l2, 2), port(s1, 2), true, NanoSeconds(20));
+        for (auto leaf : {l0, l1, l2})
+        {
+            AddRoute(leaf, s0->GetId(), {1});
+            AddRoute(leaf, s1->GetId(), {2});
+            auto routing = leaf->GetObject<UbSwitch>()->GetRoutingProcess();
+            routing->GetRoutingTable().AddOtherRoute(utils::NodeIdToIp(s0->GetId()).Get(), {2});
+            routing->GetRoutingTable().AddOtherRoute(utils::NodeIdToIp(s1->GetId()).Get(), {1});
+            for (auto destination : {l0, l1, l2})
+            {
+                if (leaf != destination) AddRoute(leaf, destination->GetId(), {1, 2});
+            }
+            AddRoute(leaf, h0->GetId(), leaf == l0 ? std::vector<uint16_t>{0} : std::vector<uint16_t>{1, 2});
+            AddRoute(leaf, h1->GetId(), leaf == l1 ? std::vector<uint16_t>{0} : std::vector<uint16_t>{1, 2});
+        }
+        for (auto spine : {s0, s1})
+        {
+            auto routing = spine->GetObject<UbSwitch>()->GetRoutingProcess();
+            for (auto destination : {l0, h0})
+            {
+                AddRoute(spine, destination->GetId(), {0});
+                routing->GetRoutingTable().AddOtherRoute(utils::NodeIdToIp(destination->GetId()).Get(), {1, 2});
+            }
+            for (auto destination : {l1, h1})
+            {
+                AddRoute(spine, destination->GetId(), {1});
+                routing->GetRoutingTable().AddOtherRoute(utils::NodeIdToIp(destination->GetId()).Get(), {0, 2});
+            }
+            AddRoute(spine, l2->GetId(), {2});
+            AddRoute(spine, (spine == s0 ? s1 : s0)->GetId(), {0, 1, 2});
+        }
+        uint32_t serializations = 0;
+        for (auto sw : {l0, l1, l2, s0, s1})
+        {
+            sw->GetObject<UbSwitch>()->GetRoutingProcess()->SetAttribute(
+                "MultipathSelector", EnumValue(MultipathSelector::INGRESS_PORT_STRIPE));
+            for (uint32_t id = 0; id < sw->GetNDevices(); ++id)
+            {
+                port(sw, id)->TraceConnectWithoutContext("TraComEventNotify",
+                    MakeBoundCallback(&CountLastAckSerialization, &serializations));
+            }
+        }
+        PacketSink sink0, sink1;
+        port(h0, 0)->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sink0));
+        port(h1, 0)->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sink1));
+        TransferWatcher left, right;
+        port(l0, 1)->GetReliableRerouting()->TraceConnectWithoutContext("Rerouting",
+            MakeBoundCallback(&WatchReroutingEvent, &left));
+        port(s0, 0)->GetReliableRerouting()->TraceConnectWithoutContext("Rerouting",
+            MakeBoundCallback(&WatchReroutingEvent, &right));
+        for (uint32_t copy = 0; copy < 2; ++copy)
+        {
+            const Time when = copy == 0 ? NanoSeconds(10) : NanoSeconds(1150);
+            auto forward = BuildUrmaPacket(1024, h0->GetId(), h1->GetId(), kPriority,
+                                            RoutingType::PER_FLOW_SHORTEST_PATHS, copy);
+            auto reverse = BuildUrmaPacket(1024, h1->GetId(), h0->GetId(), kPriority,
+                                            RoutingType::PER_FLOW_SHORTEST_PATHS, copy);
+            Simulator::Schedule(when, &UbSwitch::SwitchHandlePacket, l0->GetObject<UbSwitch>(), port(l0, 0), forward);
+            Simulator::Schedule(when, &UbSwitch::SwitchHandlePacket, l1->GetObject<UbSwitch>(), port(l1, 0), reverse);
+        }
+        Simulator::Schedule(NanoSeconds(100), &UbLink::Fail, failed);
+        Simulator::Stop(MicroSeconds(30));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(serializations, 18u, "six messages each serialize on three real hops");
+        NS_TEST_ASSERT_MSG_EQ(left.validCopies, 1u, "leaf receives exactly one first valid copy");
+        NS_TEST_ASSERT_MSG_EQ(right.validCopies, 1u, "spine receives exactly one first valid copy");
+        NS_TEST_ASSERT_MSG_GT(left.transferTime, Time(0), "leaf retains failure traffic");
+        NS_TEST_ASSERT_MSG_GT(right.transferTime, Time(0), "spine retains failure traffic");
+        NS_TEST_ASSERT_MSG_EQ(sink0.packets.size(), 2u, "reverse retained and new traffic delivered once");
+        NS_TEST_ASSERT_MSG_EQ(sink1.packets.size(), 2u, "forward retained and new traffic delivered once");
+        NS_TEST_ASSERT_MSG_EQ(port(l0, 1)->GetReliableRerouting()->GetState(),
+                              UbReliableRerouting::State::DRAINED, "leaf drained");
+        NS_TEST_ASSERT_MSG_EQ(port(s0, 0)->GetReliableRerouting()->GetState(),
+                              UbReliableRerouting::State::DRAINED, "spine drained");
+        Simulator::Destroy();
+    }
+};
+
 class UbReliableReroutingSuite : public TestSuite
 {
   public:
     UbReliableReroutingSuite()
         : TestSuite("unified-bus-reliable-rerouting", Type::UNIT)
     {
+        AddTestCase(new UbReroutingFailureRepresentationsTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingClosHandshakeTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingWireHandshakeTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingWireHandshakeTest(2), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingWireHandshakeTest(0, true), TestCase::Duration::QUICK);

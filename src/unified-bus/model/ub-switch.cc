@@ -1103,11 +1103,8 @@ UbSwitch::ResolveURMAOutput(Ptr<Packet> packet,
 {
     GetURMARoutingKey(headers, rtKey);
     const bool hasExplicitDestinationPort = (rtKey.dip & 0xff) != 0;
-    const int outPort = hasExplicitDestinationPort
-                            ? m_routingProcess->GetOutPortForEndpoint(rtKey,
-                                                                      selectedShortestPath,
-                                                                      inPort)
-                            : m_routingProcess->GetOutPort(rtKey, selectedShortestPath, inPort);
+    const int outPort = m_routingProcess->GetOutPortAfterFailure(
+        rtKey, selectedShortestPath, inPort, hasExplicitDestinationPort);
 
     // If packet routed via non-shortest path, force subsequent hops to use shortest path
     if (outPort >= 0 && !selectedShortestPath) {
@@ -1128,11 +1125,8 @@ UbSwitch::ResolveLdstOutput(Ptr<Packet> packet,
 {
     GetLdstRoutingKey(headers, rtKey);
     const bool hasExplicitDestinationPort = headers.network.destination.hasPort;
-    const int outPort = hasExplicitDestinationPort
-                            ? m_routingProcess->GetOutPortForEndpoint(rtKey,
-                                                                      selectedShortestPath,
-                                                                      inPort)
-                            : m_routingProcess->GetOutPort(rtKey, selectedShortestPath, inPort);
+    const int outPort = m_routingProcess->GetOutPortAfterFailure(
+        rtKey, selectedShortestPath, inPort, hasExplicitDestinationPort);
 
     if (outPort >= 0 && !selectedShortestPath) {
         ForceShortestPathRouting(packet, headers.datalinkPacketHeader);
@@ -1186,11 +1180,8 @@ UbSwitch::ResolveCtpOutput(Ptr<Packet> packet,
         rtKey.dip = utils::NodeIdToIp(destinationNodeId, destinationPort).Get();
         rtKey.dport = destinationPort;
     }
-    const int outPort = hasExplicitDestinationPort || hasCompactEntityId
-                            ? m_routingProcess->GetOutPortForEndpoint(rtKey,
-                                                                      selectedShortestPath,
-                                                                      inPort)
-                            : m_routingProcess->GetOutPort(rtKey, selectedShortestPath, inPort);
+    const int outPort = m_routingProcess->GetOutPortAfterFailure(
+        rtKey, selectedShortestPath, inPort, hasExplicitDestinationPort || hasCompactEntityId);
 
     if (outPort >= 0 && !selectedShortestPath) {
         ForceShortestPathRouting(packet, headers.datalinkPacketHeader);
@@ -1362,7 +1353,7 @@ UbSwitch::SendLastAck(Ptr<Packet> packet)
     key.priority = 1;
     key.routingType = RoutingType::PER_FLOW_SHORTEST_PATHS;
     bool shortest = false;
-    const int output = m_routingProcess->GetOutPort(key, shortest);
+    const int output = m_routingProcess->GetOutPortAfterFailure(key, shortest);
     NS_ABORT_MSG_IF(output < 0, "Reliable rerouting has no legal LastAck output");
     GetOrCreateVoq(output, 1, output)->Push(packet);
     TraceReliableReroutingLastAck(packet, GetObject<Node>()->GetId(), output, "lastack_submit");
@@ -1409,7 +1400,7 @@ UbSwitch::HandleLastAck(Ptr<UbPort> port, Ptr<Packet> packet)
     key.priority = 1;
     key.routingType = RoutingType::PER_FLOW_SHORTEST_PATHS;
     bool shortest = false;
-    const int output = m_routingProcess->GetOutPort(key, shortest, port->GetIfIndex());
+    const int output = m_routingProcess->GetOutPortAfterFailure(key, shortest, port->GetIfIndex());
     NS_ABORT_MSG_IF(output < 0, "Reliable rerouting has no legal LastAck forwarding output");
     if (!m_queueManager->CheckInPortSpace(port->GetIfIndex(), 1, packet->GetSize()))
     {

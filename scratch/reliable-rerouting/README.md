@@ -12,3 +12,13 @@ python3 scratch/reliable-rerouting/2nodes_reliable-rerouting/check_results.py --
 ```
 
 Each case owns its configuration, `runlog/`, and `output/` directories.
+
+Before running a CSV case, validate the configured post-failure candidate paths:
+
+```bash
+python3 scratch/reliable-rerouting/validate_routes.py scratch/reliable-rerouting/2nodes_reliable-rerouting
+```
+
+This preparation check currently accepts single-port hosts with explicit destination-port0 route
+rows. It checks all candidates under ingress exclusion and the configured bidirectional fault.
+Runtime LastAck hop evidence remains necessary.
