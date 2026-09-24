@@ -2299,7 +2299,7 @@ UbUtils::ReliableReroutingNotify(const UbReliableReroutingEvent& record)
 
     constexpr const char* header =
         "time_ps,node_id,port_id,event,attempt_id,old_output,new_output,retry_packets,retry_bytes,"
-        "pending_packets,pending_bytes,source_node,source_port,destination_node,destination_port,receive_next,copy,owner";
+        "pending_packets,pending_bytes,source_node,source_port,destination_node,destination_port,receive_next,copy,owner,processing_packets";
     const auto outputField = [](uint32_t outPort) {
         return outPort == UB_REROUTING_NO_OUTPUT ? std::string("na") : std::to_string(outPort);
     };
@@ -2311,7 +2311,7 @@ UbUtils::ReliableReroutingNotify(const UbReliableReroutingEvent& record)
         << ',' << record.pendingPackets << ',' << record.pendingBytes
         << ',' << outputField(record.sourceNode) << ',' << outputField(record.sourcePort)
         << ',' << outputField(record.destinationNode) << ',' << outputField(record.destinationPort)
-        << ',' << outputField(record.receiveNext) << ',' << record.copy << ',' << record.owner;
+        << ',' << outputField(record.receiveNext) << ',' << record.copy << ',' << record.owner << ',' << record.processingPackets;
     AppendCsvRow(trace_path + "output/reliable_rerouting.csv", header, row.str());
 }
 

@@ -579,6 +579,8 @@ struct TransferWatcher
 {
     Time transferTime;
     Time validLastAckTime;
+    Time firstDrainTime;
+    uint32_t admissionBlocks{0};
     uint32_t validCopies{0};
     uint32_t duplicateCopies{0};
     bool sawDrain{false};
@@ -621,8 +623,13 @@ WatchReroutingEvent(TransferWatcher* watcher, const UbReliableReroutingEvent& re
     {
         watcher->sawControlFrameDiscard = true;
     }
+    if (record.event == "admission_block")
+    {
+        ++watcher->admissionBlocks;
+    }
     if (record.event == "state:DRAINED")
     {
+        if (!watcher->sawDrain) watcher->firstDrainTime = Simulator::Now();
         watcher->sawDrain = true;
     }
 }
@@ -1054,11 +1061,6 @@ class UbReroutingHealthyBackupTest : public TestCase
     void DoRun() override
     {
         ReroutingTopology topo(m_enabled, m_retained ? MilliSeconds(10) : NanoSeconds(20));
-        if (m_retained)
-        {
-            // This boundary test isolates the >16-bit window from ticket 02 capacity wakeups.
-            topo.Switch(topo.swB)->GetQueueManager()->SetReservePerQueueBytes(16 * 1024 * 1024);
-        }
         PacketSink sink;
         topo.d0->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sink));
 
@@ -1505,7 +1507,7 @@ class UbReroutingDelayedProcessingTest : public TestCase
     {
         const Time detectionDelay = MicroSeconds(1);
         const Time lastAckPathDelay = MicroSeconds(2);
-        const Time processingDelay = m_readyBeforeLastAck ? MicroSeconds(1) : MicroSeconds(10);
+        const Time processingDelay = m_readyBeforeLastAck ? MicroSeconds(3) : MicroSeconds(10);
         ReroutingTopology topo(true, NanoSeconds(20), detectionDelay, lastAckPathDelay);
         topo.Switch(topo.swB)->SetAttribute("InPortProcessingDelay", TimeValue(processingDelay));
 
@@ -1529,6 +1531,15 @@ class UbReroutingDelayedProcessingTest : public TestCase
                             packet);
         Simulator::Schedule(MicroSeconds(1), &UbLink::Fail, PeekPointer(topo.failedLink));
 
+        // A normal healthy-output packet releases the same ingress/VL after the failed
+        // packet is ready but before the peer LastAck returns.
+        if (m_readyBeforeLastAck)
+        {
+            Simulator::Schedule(NanoSeconds(3100), [&, packet]() {
+                topo.Switch(topo.swB)->SetAttribute("InPortProcessingDelay", TimeValue(NanoSeconds(0)));
+                topo.Switch(topo.swB)->SwitchHandlePacket(topo.b0, packet->Copy());
+            });
+        }
         Simulator::Stop(MicroSeconds(80));
         Simulator::Run();
         const auto stateB = topo.State(1);
@@ -1540,7 +1551,8 @@ class UbReroutingDelayedProcessingTest : public TestCase
         const Time expected = std::max(lastAck, ready);
         NS_TEST_ASSERT_MSG_EQ(transfers.transferTime, expected,
                               "admission waits for both readiness and LastAck");
-        NS_TEST_ASSERT_MSG_EQ(sink.packets.size(), 1, "delayed packet arrives once");
+        NS_TEST_ASSERT_MSG_EQ(sink.packets.size(), (m_readyBeforeLastAck ? 2 : 1), "each packet arrives once");
+        NS_TEST_ASSERT_MSG_EQ(transfers.firstDrainTime, expected, "first drain waits for processing");
         NS_TEST_ASSERT_MSG_EQ(stateB, UbReliableRerouting::State::DRAINED, "local drain reached");
     }
 
@@ -1553,8 +1565,9 @@ class UbReroutingDelayedProcessingTest : public TestCase
 class UbReroutingBlockedAdmissionTest : public TestCase
 {
   public:
-    UbReroutingBlockedAdmissionTest()
-        : TestCase("Reliable rerouting - blocked admission resumes without drop or busy loop")
+    explicit UbReroutingBlockedAdmissionTest(bool shared = false)
+        : TestCase(std::string("Reliable rerouting - blocked admission resumes ") +
+                   (shared ? "cross ingress shared pool" : "retry only")), m_shared(shared)
     {
     }
 
@@ -1601,17 +1614,24 @@ class UbReroutingBlockedAdmissionTest : public TestCase
 
         // Occupy the only ingress admission slot for the whole blocked window, then release it well
         // after LastAck. Real occupancy release is the single wakeup source.
-        const Time blockStart = MicroSeconds(3);
+        queueManager->SetReservePerQueueBytes(m_shared ? 0 : packet->GetSize());
+        queueManager->SetAttribute("SharedPoolBytes", UintegerValue(m_shared ? packet->GetSize() : 0));
+        queueManager->SetAttribute("HeadroomPerPortBytes", UintegerValue(0));
+        queueManager->SetAttribute("AlphaShift", UintegerValue(0));
+        const uint32_t blockerIngress = m_shared ? 2 : 0;
+        const uint32_t blockerPriority = m_shared ? 6 : kPriority;
+        const uint32_t blockerBytes = packet->GetSize();
+        const Time blockStart = NanoSeconds(100);
         const Time release = MicroSeconds(20);
-        Simulator::Schedule(blockStart, [queueManager]() {
-            queueManager->PushToVoq(0, 2, kPriority, 4096);
+        Simulator::Schedule(blockStart, [=]() {
+            queueManager->PushToVoq(blockerIngress, 2, blockerPriority, blockerBytes);
         });
         Time blockedPendingProbe;
         Simulator::Schedule(release - MicroSeconds(1), [&]() {
             blockedPendingProbe = Simulator::Now();
         });
-        Simulator::Schedule(release, [queueManager]() {
-            queueManager->PopFromVoq(0, 2, kPriority, 4096);
+        Simulator::Schedule(release, [=]() {
+            queueManager->PopFromVoq(blockerIngress, 2, blockerPriority, blockerBytes);
         });
 
         const uint64_t eventsBeforeRun = Simulator::GetEventCount();
@@ -1629,8 +1649,12 @@ class UbReroutingBlockedAdmissionTest : public TestCase
                               "blocked window observed");
         NS_TEST_ASSERT_MSG_EQ(sink.packets.size(), 1,
                               "retained packet arrives after capacity is released");
-        NS_TEST_ASSERT_MSG_EQ(HexOf(sink.packets[0]), HexOf(bytes),
-                              "blocked recovery keeps its bytes");
+        if (!sink.packets.empty())
+        {
+            NS_TEST_ASSERT_MSG_EQ(HexOf(sink.packets[0]), HexOf(bytes), "blocked bytes preserved");
+        }
+        NS_TEST_ASSERT_MSG_GT(transfers.admissionBlocks, 0u, "real capacity block exercised");
+        NS_TEST_ASSERT_MSG_EQ(transfers.transferTime, release, "release resumes retained owner");
         NS_TEST_ASSERT_MSG_EQ(dropCount, 0u, "blocked admission never drops the packet");
         NS_TEST_ASSERT_MSG_EQ(stateB, UbReliableRerouting::State::DRAINED, "local drain reached");
         NS_TEST_ASSERT_MSG_EQ(resolutions, 1u,
@@ -1640,6 +1664,7 @@ class UbReroutingBlockedAdmissionTest : public TestCase
         NS_TEST_ASSERT_MSG_LT(eventsAfterRun - eventsBeforeRun, 200u,
                               "blocked admission does not schedule a zero-time polling loop");
     }
+    bool m_shared;
 };
 
 /**
@@ -2482,6 +2507,7 @@ class UbReliableReroutingSuite : public TestSuite
         AddTestCase(new UbReroutingDelayedProcessingTest(true), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingDelayedProcessingTest(false), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingBlockedAdmissionTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingBlockedAdmissionTest(true), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingCbfcCreditTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingControlFrameDisposalTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingPfcReleaseTest(), TestCase::Duration::QUICK);

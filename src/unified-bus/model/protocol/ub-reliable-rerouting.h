@@ -88,6 +88,7 @@ struct UbReliableReroutingEvent
     uint64_t retryBytes{0};
     uint64_t pendingPackets{0};
     uint64_t pendingBytes{0};
+    uint64_t processingPackets{0};
     uint32_t sourceNode{UB_REROUTING_NO_OUTPUT};
     uint32_t sourcePort{UB_REROUTING_NO_OUTPUT};
     uint32_t destinationNode{UB_REROUTING_NO_OUTPUT};
@@ -197,7 +198,7 @@ class UbReliableRerouting : public Object
     void ResumeRetryBacklog();
 
     /** Switch reports how much retained work it currently owns for this output. */
-    void SetPendingRecoveryCounters(uint64_t packets, uint64_t bytes);
+    void SetPendingRecoveryCounters(uint64_t packets, uint64_t bytes, uint64_t processing);
 
     /**
      * @brief Publish an evidence record for switch-owned retained work.
@@ -256,6 +257,7 @@ class UbReliableRerouting : public Object
     uint64_t m_peakRetryPackets{0};
     uint64_t m_pendingPackets{0};
     uint64_t m_pendingBytes{0};
+    uint64_t m_processingPackets{0};
     bool m_backlogFinished{false};
 };
 

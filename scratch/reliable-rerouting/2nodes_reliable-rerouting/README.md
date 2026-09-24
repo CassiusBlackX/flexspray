@@ -50,8 +50,8 @@ python3 scratch/reliable-rerouting/2nodes_reliable-rerouting/check_results.py --
 ```
 
 The second command validates the positive run. The third checks the positive evidence and
-12 mutations, including missing actual sends, impossible paths, unknown copy/source-port identity,
-changed receive boundary, missing tasks, early recovery, duplicate transfer and false drain.
+13 mutations, including missing actual sends, impossible paths, unknown copy/source-port identity,
+changed receive boundary, missing tasks, early recovery, duplicate transfer and false drain (including unfinished input processing).
 
 ## Verified real-handshake run (2026-09-24)
 

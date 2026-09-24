@@ -468,10 +468,11 @@ UbReliableRerouting::PublishBacklogEvent(const std::string& event,
 }
 
 void
-UbReliableRerouting::SetPendingRecoveryCounters(uint64_t packets, uint64_t bytes)
+UbReliableRerouting::SetPendingRecoveryCounters(uint64_t packets, uint64_t bytes, uint64_t processing)
 {
     m_pendingPackets = packets;
     m_pendingBytes = bytes;
+    m_processingPackets = processing;
     if (packets != 0)
     {
         m_backlogFinished = false;
@@ -490,7 +491,7 @@ UbReliableRerouting::UpdateDrainState()
     // storage, and no egress backlog still owned by the failed output.
     const bool egressBacklog = m_port != nullptr && m_port->GetUbQueue() != nullptr &&
                                !m_port->GetUbQueue()->IsEmpty();
-    if (!m_attempts.empty() || m_pendingPackets != 0 || egressBacklog)
+    if (!m_attempts.empty() || m_pendingPackets != 0 || m_processingPackets != 0 || egressBacklog)
     {
         return;
     }
@@ -518,6 +519,7 @@ UbReliableRerouting::Publish(const std::string& event,
     record.retryBytes = GetRetryByteCount();
     record.pendingPackets = m_pendingPackets;
     record.pendingBytes = m_pendingBytes;
+    record.processingPackets = m_processingPackets;
     FillLastAckIdentity(record, message);
     m_traceRerouting(record);
 }
@@ -531,6 +533,7 @@ UbReliableRerouting::DoDispose()
     m_attempts.clear();
     m_pendingPackets = 0;
     m_pendingBytes = 0;
+    m_processingPackets = 0;
     m_link = nullptr;
     m_port = nullptr;
     m_state = State::DISABLED;

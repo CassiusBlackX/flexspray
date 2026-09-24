@@ -39,7 +39,7 @@ EXPECTED_EVIDENCE_HEADER = [
     "pending_packets",
     "pending_bytes",
     "source_node", "source_port", "destination_node", "destination_port",
-    "receive_next", "copy", "owner",
+    "receive_next", "copy", "owner", "processing_packets",
 ]
 EXPECTED_LINK_FAULT_HEADER = ["nodeId", "portId", "failTimeNs"]
 
@@ -335,10 +335,10 @@ def check(case_dir: Path) -> None:
         last_drain = drain[0]
         if int(last_drain["time_ps"]) < max(int(row["time_ps"]) for row in transfers):
             raise CheckFailure(f"node {node_id}: drain precedes final ownership transfer")
-        if int(last_drain["retry_packets"]) != 0 or int(last_drain["pending_packets"]) != 0:
+        if any(int(last_drain[field]) != 0 for field in ("retry_packets", "pending_packets", "processing_packets")):
             raise CheckFailure(
                 f"node {node_id}: claimed drain with outstanding recovery work "
-                f"(retry={last_drain['retry_packets']}, pending={last_drain['pending_packets']})"
+                f"(retry={last_drain['retry_packets']}, pending={last_drain['pending_packets']}, processing={last_drain['processing_packets']})"
             )
 
     if not fault_time_seen:
@@ -484,6 +484,20 @@ def self_test(case_dir: Path) -> None:
                 writer.writeheader()
                 writer.writerows(rows)
 
+        def unfinished_processing(target):
+            path = target / "output/reliable_rerouting.csv"
+            with path.open() as handle:
+                rows = list(csv.DictReader(handle))
+            for row in rows:
+                if row["event"] == "state:DRAINED":
+                    row["processing_packets"] = "1"
+                    break
+            with path.open("w", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=EXPECTED_EVIDENCE_HEADER)
+                writer.writeheader()
+                writer.writerows(rows)
+
+        expect_rejection("drain-with-processing", unfinished_processing)
         expect_rejection("unknown-copy", lambda target: corrupt_valid(target, "copy", "0"))
         expect_rejection("unknown-source-port", lambda target: corrupt_valid(target, "source_port", "65535"))
         expect_rejection("changed-receive-boundary", lambda target: corrupt_valid(target, "receive_next", "65535"))
@@ -496,7 +510,7 @@ def self_test(case_dir: Path) -> None:
         expect_rejection("zero-recovery-in-one-direction", zero_direction)
         expect_rejection("duplicate-transfer", duplicate_transfer)
         expect_rejection("drain-with-outstanding-work", drain_with_work)
-    print("PASS: checker self-test exercised the positive run and 12 rejection paths")
+    print("PASS: checker self-test exercised the positive run and 13 rejection paths")
 
 
 def main(argv: list[str]) -> int:

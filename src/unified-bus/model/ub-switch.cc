@@ -1643,7 +1643,7 @@ UbSwitch::TransferOnePendingEntry(PendingRecoveryEntry& entry)
 void
 UbSwitch::TryTransferPendingRecovery()
 {
-    if (m_pendingRecovery.empty())
+    if (!m_recoveryBacklogMigrated || m_recoveryDisposed || m_pendingRecovery.empty())
     {
         return;
     }
@@ -1711,17 +1711,14 @@ UbSwitch::RunRecoveryWakeup()
 void
 UbSwitch::OnIngressSpaceReleased(uint32_t inPort, uint32_t priority)
 {
-    if (m_pendingRecovery.empty())
+    // Any ingress/VL can release global shared capacity. The existing selected-output map
+    // also represents blocked retry owners when the switch pending container is empty.
+    (void)inPort;
+    (void)priority;
+    if (m_recoveryBacklogMigrated &&
+        (!m_pendingRecovery.empty() || !m_blockedRetryOutput.empty()))
     {
-        return;
-    }
-    for (const auto& entry : m_pendingRecovery)
-    {
-        if (entry.inPort == inPort && entry.priority == priority)
-        {
-            ScheduleRecoveryWakeup();
-            return;
-        }
+        ScheduleRecoveryWakeup();
     }
 }
 
@@ -1945,8 +1942,17 @@ UbSwitch::PublishRecoveryBacklogCounters(uint32_t outPort)
     {
         return;
     }
+    uint64_t processing = 0;
+    for (const auto& pending : m_inPortProcessingEvents)
+    {
+        if (pending.outPort == outPort && pending.event.IsPending())
+        {
+            ++processing;
+        }
+    }
     port->GetReliableRerouting()->SetPendingRecoveryCounters(GetPendingRecoveryPacketCount(outPort),
-                                                             GetPendingRecoveryByteCount(outPort));
+                                                             GetPendingRecoveryByteCount(outPort),
+                                                             processing);
 }
 
 Ptr<UbReliableRerouting>
