@@ -1202,6 +1202,8 @@ void ReportResult(const QuickExampleOptions& options,
             .count();
 
     UbUtils::Get()->PrintTimestamp("[summary] Program finished.");
+    UbUtils::Get()->PrintTimestamp("[summary] Runtime packet drops: " +
+                                  std::to_string(UbUtils::Get()->GetRuntimePacketDropCount()));
     UbUtils::Get()->PrintTimestamp("[summary] Wall-clock:");
     UbUtils::Get()->PrintTimestamp(FormatSummaryLine("config", config_wall_us));
     UbUtils::Get()->PrintTimestamp(FormatSummaryLine("run", run_wall_us));

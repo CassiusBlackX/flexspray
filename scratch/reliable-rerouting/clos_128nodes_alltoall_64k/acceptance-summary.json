@@ -1,0 +1,200 @@
+{
+  "128:8": {
+    "state:DETECTION_PENDING": [
+      {
+        "time_ps": 100000000,
+        "retry": 1,
+        "pending": 0,
+        "processing": 0
+      }
+    ],
+    "state:WAIT_LAST_ACK": [
+      {
+        "time_ps": 105000000,
+        "retry": 116,
+        "pending": 0,
+        "processing": 0
+      }
+    ],
+    "lastack_valid": [
+      {
+        "time_ps": 105164520,
+        "retry": 116,
+        "pending": 0,
+        "processing": 0
+      }
+    ],
+    "state:DRAINED": [
+      {
+        "time_ps": 105164520,
+        "retry": 0,
+        "pending": 0,
+        "processing": 0
+      }
+    ],
+    "transfers": 116
+  },
+  "144:0": {
+    "state:DETECTION_PENDING": [
+      {
+        "time_ps": 100000000,
+        "retry": 1,
+        "pending": 0,
+        "processing": 0
+      }
+    ],
+    "state:WAIT_LAST_ACK": [
+      {
+        "time_ps": 105000000,
+        "retry": 117,
+        "pending": 0,
+        "processing": 0
+      }
+    ],
+    "lastack_valid": [
+      {
+        "time_ps": 105225480,
+        "retry": 117,
+        "pending": 0,
+        "processing": 0
+      }
+    ],
+    "state:DRAINED": [
+      {
+        "time_ps": 105225480,
+        "retry": 0,
+        "pending": 0,
+        "processing": 0
+      }
+    ],
+    "transfers": 117
+  },
+  "tasks": 16256,
+  "last_task_complete_us": 417.78376,
+  "run_wall_seconds": 37.6651451587677,
+  "total_payload_bytes": 1065353216,
+  "runtime_packet_drops": 0,
+  "lastack_source_copies": 6,
+  "lastack_hop_serializations": 18,
+  "run_provenance": {
+    "command": [
+      "python3.12",
+      "./ns3",
+      "run",
+      "--no-build",
+      "scratch/ub-quick-example --case-path=scratch/reliable-rerouting/clos_128nodes_alltoall_64k"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 37.6651451587677,
+    "source_commit": "6d071472423bfa3f7b13af3f788e3da24e5316dd",
+    "working_diff_sha256": "b7f15f074156b4ffe2910989b281088a7460035d67cab8c8006ab6b9f7967aa3",
+    "scripts_sha256": {
+      "scratch/reliable-rerouting/clos_128nodes_alltoall_64k/generate_case.py": "78a0c18e2259aba979257087f04ac624a0e9f520de23591b4373345855f09ff7",
+      "scratch/reliable-rerouting/clos_128nodes_alltoall_64k/check_results.py": "0b09a81c6d804d47eabc146fe1acfba37a6899b3b10df8fe6024a0fd79ae6509",
+      "scratch/reliable-rerouting/clos_128nodes_alltoall_64k/generate_topology.py": "84f7d12d16de52539f49ef1972dd0aa4373959c06c5f427f62dd988ee3989391",
+      "scratch/reliable-rerouting/run_case.py": "cc46c1f864c542d109e64955fcbc457de21487a689bd2a616846c9678296169c",
+      "scratch/reliable-rerouting/2nodes_reliable-rerouting/check_results.py": "f19b36f01d666e6c7af6cee7a2d2aad587829008c0d323ee96c6266cb5f1c166",
+      "scratch/reliable-rerouting/validate_routes.py": "e6a08e15f0f1d4c0b0611eeaa59f5dbcde296622992fdab71e490167dbefee30"
+    },
+    "binary_sha256": {
+      "build/scratch/ns3.44-ub-quick-example": "5e2967de7151bea71dc3db7d1df90dad0afec69cefb78f1c78294f1057068e2e",
+      "build/lib/libns3.44-unified-bus.so": "57e05e42a989f1cf0be203294e0a1bd01b44ce6961b9a6b060c463cec744f649"
+    },
+    "inputs_unchanged": true,
+    "inputs_sha256": {
+      "link_fault.csv": "fee40cd96b105a7a759a7213f8a6a52a6ba2aeff657125b247d438ce73097e24",
+      "network_attribute.txt": "1d8f9dd38f1adadcd67742002eb8760697a4cd40244e1954f90ef9d82e48ba92",
+      "node.csv": "279f7155d515406859c83add45eb95aed9eb02161c5d247ef600583f6052d342",
+      "routing_port_groups.csv": "d21d4e65c2d9bb42a1d4ec185d7c68b8c59b1f227248245500d0dc4776281601",
+      "routing_rule_ranges.csv": "fd5a26a74e5d8dd1226719fc09a39a98d8875195e1d3384aac02cf2b9f92e645",
+      "routing_rules.csv": "aed9bfccf5f7bbb5ea82aeda5a9e5f5a9464b13316984235ab898755271c0175",
+      "routing_table.csv": "dd3e6c0b62c9efaf89f01c48533648e9f35142c9454d7fe2c8dc899d01b6ccb4",
+      "routing_topology_rules.csv": "2f9c78b466eebfbe025965251214949ef28252da5800573b7510afcb7283cbe4",
+      "topology.csv": "49262b202bfc42c2981e189386b7692a774b85cf80878bbd1b34d18867fbac19",
+      "traffic.csv": "6218b74a620163f00d0ac856e11431c40a49f067b57cd280a99f9019792fd91d"
+    },
+    "outputs_sha256": {
+      "execution.log": "f9b734f12aaff27d3cbb2e8e625ad996aa0273cfe3f0e32f075b19de737cb108",
+      "reliable_rerouting.csv": "8710d53cb52ac8f562999f3f20c029928403c375823fd0e543b1ca593b72719d",
+      "throughput.csv": "116ef74653a371e431d36a1709981240be4c3ead97f08cf07c9f4c4fc45c73e0",
+      "task_statistics.csv": "fa049d98dd5150a933c72c2062065c534e59a527349c09aadf4d9db359e2e912"
+    }
+  },
+  "route_preflight": {
+    "status": "PASS",
+    "failed_endpoints": [
+      [
+        128,
+        8
+      ],
+      [
+        144,
+        0
+      ]
+    ],
+    "task_pairs": 16256,
+    "lastack_max_hops": {
+      "128:8->144": 3,
+      "144:0->128": 3
+    },
+    "validated_states": 49272
+  },
+  "case_gate": {
+    "casePath": "/home/luosichen/workspace/worktree/ub-2.1/scratch/reliable-rerouting/clos_128nodes_alltoall_64k",
+    "files": [
+      "node.csv",
+      "topology.csv"
+    ],
+    "format": "csv",
+    "routing": {
+      "routingTableRows": 22952,
+      "topologyRuleRows": 0
+    },
+    "topology": {
+      "devices": 128,
+      "links": 256,
+      "nodes": 152,
+      "switches": 24
+    },
+    "trafficTasks": 16256,
+    "valid": true
+  },
+  "regenerated_inputs_equal": {
+    "link_fault.csv": true,
+    "node.csv": true,
+    "routing_rules.csv": true,
+    "routing_table.csv": true,
+    "routing_port_groups.csv": true,
+    "routing_rule_ranges.csv": true,
+    "topology.csv": true,
+    "traffic.csv": true,
+    "routing_topology_rules.csv": true,
+    "network_attribute.txt": true
+  },
+  "repeated_outputs": {
+    "task_statistics.csv": {
+      "equal": true,
+      "sha256": "fa049d98dd5150a933c72c2062065c534e59a527349c09aadf4d9db359e2e912",
+      "bytes": 1304393
+    },
+    "reliable_rerouting.csv": {
+      "equal": true,
+      "sha256": "8710d53cb52ac8f562999f3f20c029928403c375823fd0e543b1ca593b72719d",
+      "bytes": 41397
+    },
+    "throughput.csv": {
+      "equal": true,
+      "sha256": "116ef74653a371e431d36a1709981240be4c3ead97f08cf07c9f4c4fc45c73e0",
+      "bytes": 92
+    }
+  },
+  "validation": {
+    "focused_cpp_tests": 70,
+    "macro_negative_checks": 17,
+    "small_negative_checks": 13,
+    "full_build": "PASS",
+    "repository_test_py": "not run",
+    "standards_review": "no remaining blocking findings",
+    "spec_review": "no remaining blocking findings"
+  }
+}

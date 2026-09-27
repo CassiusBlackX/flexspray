@@ -1,0 +1,16 @@
+{
+  "baselineLookupCount": 19328,
+  "cacheHit": false,
+  "cacheKey": "23ca6afc82380449af07e08ff0e34304a27f4f47af57b6ba7b7086ee04add689",
+  "compilerVersion": 8,
+  "effectiveRoutingMode": "table",
+  "portGroupCount": 0,
+  "protocolVersion": 4,
+  "routeGeneration": "full",
+  "routingRangeRuleCount": 0,
+  "routingRuleCount": 0,
+  "ruleCoverage": 0.0,
+  "ruleLookupCount": 0,
+  "tableLookupCount": 19328,
+  "topologyRuleCount": 0
+}

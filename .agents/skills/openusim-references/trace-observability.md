@@ -28,7 +28,9 @@ Do not hardcode switch names in experiment specs or agent logic.
 - `UB_QUEUE_TRACE_ENABLE` gates queue trace files such as `QueueTrace_*` from queue events and periodic sampling.
 - `QueueTrace` includes processing residency in output-port occupancy; DCQCN/CAQM Queue Backlog includes only VOQ and egress queued bytes.
 - `UB_PACKET_TRACE_ENABLE` gates packet timing files such as `PacketTrace_node_*.csv`,
-  including CTP first-send and last-ACK rows.
+  including CTP first-send and last-ACK rows. It also gates the targeted
+  `output/reliable_rerouting.csv` state/ownership/LastAck-hop evidence independently of
+  `UB_PORT_TRACE_ENABLE`; full per-port packet logs are not required for recovery acceptance.
 - New trace producers use fixed-header CSV files and integer `time_ps` columns so the
   sub-nanosecond precision of the old timestamp rendering is retained without prose parsing.
   The task and throughput parsers still accept legacy `.tr` fixtures for migration and replay.

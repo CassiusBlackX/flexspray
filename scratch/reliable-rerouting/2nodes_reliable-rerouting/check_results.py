@@ -228,6 +228,9 @@ def validate_handshakes(case_dir, evidence, detection_time, deadline):
                     raise CheckFailure(f"{key}: inconsistent message destination")
 
 
+    return endpoints
+
+
 def check(case_dir: Path) -> None:
     schedule = _read_link_fault(case_dir)
     detection_ps, last_ack_ps = _read_delays(case_dir)
@@ -258,15 +261,29 @@ def check(case_dir: Path) -> None:
     if missing:
         raise CheckFailure(f"tasks did not complete: {sorted(missing)}")
 
+    with (case_dir / "traffic.csv").open(newline="") as handle:
+        inputs = list(csv.DictReader(handle))
+    inputs_by_id = {row["taskId"]: row for row in inputs}
+    output_ids = [row["taskId"] for row in task_rows]
+    if len(inputs_by_id) != len(inputs) or len(set(output_ids)) != len(output_ids) or set(output_ids) != set(inputs_by_id):
+        raise CheckFailure("task identity set is duplicated or differs from input")
+    import math
+    for row in task_rows:
+        if any(row.get(key) != value for key, value in inputs_by_id[row["taskId"]].items()):
+            raise CheckFailure("completed task metadata differs from input")
+        start = float(row["taskStartTime(us)"])
+        end = float(row["taskCompletesTime(us)"])
+        if not math.isfinite(start) or not math.isfinite(end) or end <= start:
+            raise CheckFailure("invalid task completion timing")
+
     # Recovery evidence.
     evidence = _read_rows(case_dir / "output" / "reliable_rerouting.csv", EXPECTED_EVIDENCE_HEADER)
     if not evidence:
         raise CheckFailure("output/reliable_rerouting.csv contains no recovery evidence rows")
 
-    failed_output = schedule.port_id
     detection_time = schedule.fail_time_ps + detection_ps
     receive_deadline = detection_time + last_ack_ps
-    validate_handshakes(case_dir, evidence, detection_time, receive_deadline)
+    endpoints = validate_handshakes(case_dir, evidence, detection_time, receive_deadline)
 
     def rows_for(event: str, node_id: int, port_id: int) -> list[dict[str, str]]:
         return [
@@ -279,7 +296,7 @@ def check(case_dir: Path) -> None:
 
     fault_time_seen = False
     transfers_per_direction: dict[int, list[dict[str, str]]] = {}
-    for node_id in sorted({int(row["node_id"]) for row in evidence}):
+    for node_id, failed_output in sorted(endpoints):
         detection = rows_for("state:DETECTION_PENDING", node_id, failed_output)
         if not detection:
             continue
@@ -373,7 +390,7 @@ def check(case_dir: Path) -> None:
 def _mutate(source: Path, target: Path, mutate) -> Path:
     if target.exists():
         shutil.rmtree(target)
-    shutil.copytree(source, target)
+    shutil.copytree(source, target, ignore=shutil.ignore_patterns("runlog", "__pycache__"))
     mutate(target)
     return target
 
@@ -425,10 +442,13 @@ def self_test(case_dir: Path) -> None:
         def zero_direction(target: Path) -> None:
             path = target / "output" / "reliable_rerouting.csv"
             lines = path.read_text(encoding="utf-8").splitlines()
+            scheduled = _read_link_fault(target).node_id
+            reverse = next(row["node_id"] for row in csv.DictReader(lines)
+                           if row["event"] == "state:DETECTION_PENDING" and int(row["node_id"]) != scheduled)
             kept = []
             for line in lines:
                 fields = line.split(",")
-                if len(fields) > 2 and fields[1] == "3":
+                if len(fields) > 2 and fields[1] == reverse:
                     # Drop every evidence row that belongs to the reverse endpoint.
                     continue
                 kept.append(line)

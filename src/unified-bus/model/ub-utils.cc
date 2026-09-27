@@ -5026,14 +5026,16 @@ void UbUtils::TopoTraceConnect()
             }
         }
 
-        if (PortTraceEnable) {
+        if (PortTraceEnable || PacketTraceEnable) {
             uint32_t DevicesNum = node->GetNDevices();
             for (uint32_t i = 0; i < DevicesNum; i++) { // 设置 port的trace callback
                 Ptr<UbPort> port = DynamicCast<UbPort>(node->GetDevice(i));
                 if (port) {
-                    port->TraceConnectWithoutContext("PortTxNotify", MakeCallback(PortTxNotify));
-                    port->TraceConnectWithoutContext("PortRxNotify", MakeCallback(PortRxNotify));
-                    if (port->GetReliableRerouting() != nullptr) {
+                    if (PortTraceEnable) {
+                        port->TraceConnectWithoutContext("PortTxNotify", MakeCallback(PortTxNotify));
+                        port->TraceConnectWithoutContext("PortRxNotify", MakeCallback(PortRxNotify));
+                    }
+                    if (PacketTraceEnable && port->GetReliableRerouting() != nullptr) {
                         port->GetReliableRerouting()->TraceConnectWithoutContext(
                             "Rerouting",
                             MakeCallback(&UbUtils::ReliableReroutingNotify));

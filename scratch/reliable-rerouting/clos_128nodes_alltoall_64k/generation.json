@@ -1,0 +1,52 @@
+{
+  "snapshot": {
+    "path": "/home/luosichen/workspace/worktree/ub-2.1/scratch/reliable-rerouting/clos_128nodes_alltoall_64k/network_attribute.txt",
+    "resolution_mode": "full-catalog-snapshot",
+    "parameter_catalog_source": "/home/luosichen/workspace/worktree/ub-2.1/.openusim/project/parameter-catalog.json",
+    "required_project_pins": {
+      "UB_PYTHON_SCRIPT_PATH": "scratch/ns-3-ub-tools/trace_analysis/parse_trace.py"
+    },
+    "resolved_entry_count": 144,
+    "applied_overrides": {
+      "UB_TRACE_PRESET": "custom",
+      "UB_LIFECYCLE_TRACE_LEVEL": "SUMMARY",
+      "UB_TRACE_ENABLE": "true",
+      "UB_TASK_TRACE_ENABLE": "true",
+      "UB_PACKET_TRACE_ENABLE": "true",
+      "UB_PORT_TRACE_ENABLE": "false",
+      "UB_QUEUE_TRACE_ENABLE": "false",
+      "UB_RECORD_PKT_TRACE": "false",
+      "UB_PARSE_TRACE_ENABLE": "true",
+      "ns3::UbLink::EnableReliableRerouting": "true",
+      "ns3::UbLink::FailureDetectionDelay": "+5us",
+      "ns3::UbLink::LastAckTimeout": "+1s",
+      "ns3::UbApp::TransportMode": "RTP",
+      "ns3::UbApp::RoutingType": "PER_FLOW_SHORTEST_PATHS",
+      "ns3::UbTransportChannel::RoutingType": "PER_FLOW_SHORTEST_PATHS",
+      "ns3::UbTransportChannel::EnableRetrans": "false",
+      "ns3::UbTransportChannel::EnableFastRetrans": "false",
+      "ns3::UbRoutingProcess::MultipathSelector": "INGRESS_PORT_STRIPE",
+      "ns3::UbSwitch::FlowControl": "CBFC",
+      "ns3::UbQueueManager::ReservePerQueueBytes": "8388608",
+      "ns3::UbQueueManager::SharedPoolBytes": "0",
+      "ns3::UbQueueManager::HeadroomPerPortBytes": "0",
+      "UB_CC_ENABLED": "false"
+    },
+    "validation_mode": "runtime-addattribute-and-global-catalog"
+  },
+  "tools_commit": "0fec3aedb7fe778b8282a5a1257a262a80d3029d",
+  "route_representation": "CSV, full host routes plus bounded failure candidates",
+  "task_count": 16256,
+  "total_bytes": 1065353216,
+  "inputs_sha256": {
+    "link_fault.csv": "fee40cd96b105a7a759a7213f8a6a52a6ba2aeff657125b247d438ce73097e24",
+    "node.csv": "279f7155d515406859c83add45eb95aed9eb02161c5d247ef600583f6052d342",
+    "routing_rules.csv": "aed9bfccf5f7bbb5ea82aeda5a9e5f5a9464b13316984235ab898755271c0175",
+    "routing_table.csv": "dd3e6c0b62c9efaf89f01c48533648e9f35142c9454d7fe2c8dc899d01b6ccb4",
+    "routing_port_groups.csv": "d21d4e65c2d9bb42a1d4ec185d7c68b8c59b1f227248245500d0dc4776281601",
+    "routing_rule_ranges.csv": "fd5a26a74e5d8dd1226719fc09a39a98d8875195e1d3384aac02cf2b9f92e645",
+    "topology.csv": "49262b202bfc42c2981e189386b7692a774b85cf80878bbd1b34d18867fbac19",
+    "traffic.csv": "6218b74a620163f00d0ac856e11431c40a49f067b57cd280a99f9019792fd91d",
+    "routing_topology_rules.csv": "2f9c78b466eebfbe025965251214949ef28252da5800573b7510afcb7283cbe4"
+  }
+}
