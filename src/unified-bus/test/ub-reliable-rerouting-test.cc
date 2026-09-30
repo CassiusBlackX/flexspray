@@ -1258,6 +1258,70 @@ class UbReroutingDetectionCreditTest : public TestCase
     }
 };
 
+class UbReroutingBacklogOrderTest : public TestCase
+{
+  public:
+    UbReroutingBacklogOrderTest()
+        : TestCase("Reliable rerouting - append retry then egress then old VOQ after LastAck")
+    {
+    }
+    void DoRun() override
+    {
+        ReroutingTopology topo(true, MicroSeconds(10), NanoSeconds(0), MicroSeconds(5),
+                              FcType::CBFC);
+        topo.b1->SetAttribute("UbInterframeGap", TimeValue(MicroSeconds(20)));
+        topo.b2->GetUbQueue()->SetAttribute("MaxEgressBytes", UintegerValue(16));
+        PacketSink sink;
+        topo.d0->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sink));
+        std::vector<Ptr<Packet>> packets;
+        for (uint32_t i = 0; i < 5; ++i)
+        {
+            packets.push_back(BuildUrmaPacket(256, topo.hostA->GetId(), topo.hostD->GetId(),
+                                              kPriority, RoutingType::PER_FLOW_SHORTEST_PATHS, i));
+        }
+        const uint32_t bytes = packets[0]->GetSize();
+        topo.b1->GetUbQueue()->SetAttribute("MaxEgressBytes", UintegerValue(bytes));
+        for (uint32_t i = 0; i < 4; ++i)
+        {
+            Simulator::Schedule(NanoSeconds(10 + i * 100), &UbSwitch::SwitchHandlePacket,
+                                topo.Switch(topo.swB), topo.b0, packets[i]);
+        }
+        Simulator::Schedule(MicroSeconds(1), &UbLink::Fail, topo.failedLink);
+        Simulator::Schedule(MicroSeconds(2), &UbSwitch::SwitchHandlePacket,
+                            topo.Switch(topo.swB), topo.b0, packets[4]);
+        Simulator::Schedule(MicroSeconds(3), [&]() {
+            NS_TEST_ASSERT_MSG_EQ(topo.Rerouting(1)->GetRetryPacketCount(), 1u, "retry waits");
+            NS_TEST_ASSERT_MSG_EQ(topo.b1->GetUbQueue()->GetCurrentBytes(), bytes, "egress waits");
+            NS_TEST_ASSERT_MSG_EQ(topo.Switch(topo.swB)->GetVoqPacketCountForTest(1, kPriority, 0),
+                                  2u, "both old VOQ entries wait");
+            NS_TEST_ASSERT_MSG_EQ(topo.Switch(topo.swB)->GetVoqPacketCountForTest(2, kPriority, 0),
+                                  1u, "only post-detection new traffic selected the healthy VOQ");
+        });
+        Simulator::Schedule(MicroSeconds(15), [&]() {
+            NS_TEST_ASSERT_MSG_EQ(topo.Switch(topo.swB)->GetVoqPacketCountForTest(2, kPriority, 0),
+                                  5u, "all categories appended after actual LastAck");
+            NS_TEST_ASSERT_MSG_EQ(topo.Switch(topo.swB)->GetQueueManager()->
+                                      GetQueueIngressTotalBytes(0, kPriority),
+                                  3u * bytes, "new and old VOQ keep ordinary reservations");
+        });
+        Simulator::Schedule(MicroSeconds(20), [&]() {
+            topo.b2->GetUbQueue()->SetAttribute("MaxEgressBytes", UintegerValue(65536));
+            topo.b2->TriggerTransmit();
+        });
+        Simulator::Stop(MicroSeconds(80));
+        Simulator::Run();
+        const uint32_t expected[] = {4, 0, 1, 2, 3};
+        NS_TEST_ASSERT_MSG_EQ(sink.identities.size(), 5u, "all originals reach the destination once");
+        for (uint32_t i = 0; i < std::min<size_t>(5, sink.identities.size()); ++i)
+        {
+            NS_TEST_ASSERT_MSG_EQ(sink.identities[i], PeekPointer(packets[expected[i]]),
+                                  "existing target precedes retry, egress and FIFO old VOQ");
+        }
+        NS_TEST_ASSERT_MSG_EQ(topo.State(1), UbReliableRerouting::State::DRAINED, "handoff closed");
+        Simulator::Destroy();
+    }
+};
+
 class UbReroutingNoLegalOutputTest : public TestCase
 {
   public:
@@ -2912,6 +2976,7 @@ class UbReliableReroutingSuite : public TestSuite
         AddTestCase(new UbReroutingOriginalPacketTest(true, true), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingOriginalPacketTest(true, true, true), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingDetectionCreditTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingBacklogOrderTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingNoLegalOutputTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingLastAckGateTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingDisposalTest(), TestCase::Duration::QUICK);

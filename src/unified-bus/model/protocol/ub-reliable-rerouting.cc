@@ -405,10 +405,10 @@ UbReliableRerouting::OnLastAck()
     TransitionTo(State::RECOVERING);
     Ptr<UbSwitch> sw = m_port->GetNode()->GetObject<UbSwitch>();
     NS_ABORT_MSG_IF(sw == nullptr, "Reliable rerouting requires a switch on the port node");
-    // The switch migrates its own retained backlog (VOQ, egress, delayed processing) before the
-    // endpoint replays its retry attempts, so the LastAck gate applies to both owners.
-    sw->StartOutputRecovery(m_port->GetIfIndex());
+    // All categories share this LastAck gate. Existing target contents stay ahead of the
+    // appended retry, failed-egress, then old-VOQ work.
     TransferRetryBacklog();
+    sw->StartOutputRecovery(m_port->GetIfIndex());
 }
 
 void
@@ -470,7 +470,7 @@ UbReliableRerouting::SetPendingRecoveryCounters(uint64_t packets, uint64_t bytes
     m_pendingPackets = packets;
     m_pendingBytes = bytes;
     m_processingPackets = processing;
-    if (packets != 0)
+    if (packets != 0 || processing != 0)
     {
         m_backlogFinished = false;
     }
@@ -488,7 +488,8 @@ UbReliableRerouting::UpdateDrainState()
     // storage, and no egress backlog still owned by the failed output.
     const bool egressBacklog = m_port != nullptr && m_port->GetUbQueue() != nullptr &&
                                !m_port->GetUbQueue()->IsEmpty();
-    if (!m_attempts.empty() || m_pendingPackets != 0 || m_processingPackets != 0 || egressBacklog)
+    if (!m_backlogFinished || !m_attempts.empty() || m_pendingPackets != 0 ||
+        m_processingPackets != 0 || egressBacklog)
     {
         return;
     }

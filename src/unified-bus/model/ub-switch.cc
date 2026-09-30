@@ -1462,7 +1462,36 @@ UbSwitch::StartOutputRecovery(uint32_t outPort)
 
     Ptr<Node> node = GetObject<Node>();
 
-    // 1. VOQ backlog: packets already admitted at the original ingress keep their reservation and
+    // Already-ready processing packets still hold their ingress reservations. Keep them after
+    // packets that had reached the old VOQ earlier, without waiting for future ready callbacks.
+    auto readyProcessing = std::move(m_pendingRecovery);
+    m_pendingRecovery.clear();
+
+    // Failed-egress backlog moves to recovery storage, then the shared VOQ without ingress admission.
+    Ptr<UbPort> failedPort = DynamicCast<UbPort>(node->GetDevice(outPort));
+    NS_ABORT_MSG_IF(failedPort == nullptr, "Detected failed output has no port");
+    Ptr<UbEgressQueue> egressQueue = failedPort->GetUbQueue();
+    while (!egressQueue->IsEmpty())
+    {
+        const PacketEntry entry = egressQueue->DoDequeue();
+        Ptr<Packet> packet = std::get<2>(entry);
+        if (packet == nullptr)
+        {
+            break;
+        }
+        const uint32_t inPort = std::get<0>(entry);
+        const uint32_t priority = std::get<1>(entry);
+        const uint32_t packetBytes = packet->GetSize();
+        m_queueManager->RemoveEgressBufferedBytes(packetBytes);
+        if (GetPacketType(packet) == UB_CONTROL_FRAME)
+        {
+            continue;
+        }
+        m_queueManager->AddPendingRecoveryBytes(inPort, priority, packetBytes);
+        ParkRecoveryPacket(packet, inPort, priority, /*ingressHeld=*/false);
+    }
+
+    // Old VOQ backlog: packets already admitted at the original ingress keep their reservation and
     //    only change output association.
     for (uint32_t priority = 0; priority < m_vlNum; ++priority)
     {
@@ -1497,28 +1526,9 @@ UbSwitch::StartOutputRecovery(uint32_t outPort)
         }
     }
 
-    // 2. Egress backlog moves to recovery storage, then the shared VOQ without ingress admission.
-    Ptr<UbPort> failedPort = DynamicCast<UbPort>(node->GetDevice(outPort));
-    NS_ABORT_MSG_IF(failedPort == nullptr, "Detected failed output has no port");
-    Ptr<UbEgressQueue> egressQueue = failedPort->GetUbQueue();
-    while (!egressQueue->IsEmpty())
+    for (auto& entry : readyProcessing)
     {
-        const PacketEntry entry = egressQueue->DoDequeue();
-        Ptr<Packet> packet = std::get<2>(entry);
-        if (packet == nullptr)
-        {
-            break;
-        }
-        const uint32_t inPort = std::get<0>(entry);
-        const uint32_t priority = std::get<1>(entry);
-        const uint32_t packetBytes = packet->GetSize();
-        m_queueManager->RemoveEgressBufferedBytes(packetBytes);
-        if (GetPacketType(packet) == UB_CONTROL_FRAME)
-        {
-            continue;
-        }
-        m_queueManager->AddPendingRecoveryBytes(inPort, priority, packetBytes);
-        ParkRecoveryPacket(packet, inPort, priority, /*ingressHeld=*/false);
+        m_pendingRecovery.push_back(std::move(entry));
     }
 
     PublishRecoveryBacklogCounters(outPort);
@@ -1617,7 +1627,7 @@ UbSwitch::TransferOnePendingEntry(PendingRecoveryEntry& entry)
 void
 UbSwitch::TryTransferPendingRecovery()
 {
-    if (!m_recoveryBacklogMigrated || m_recoveryDisposed || m_pendingRecovery.empty())
+    if (!m_recoveryBacklogMigrated || m_recoveryDisposed)
     {
         return;
     }
