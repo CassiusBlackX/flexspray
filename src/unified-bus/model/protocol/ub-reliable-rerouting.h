@@ -105,8 +105,8 @@ void TraceReliableReroutingLastAck(Ptr<const Packet> packet,
 /**
  * @brief Direction-local reliable rerouting state for one UB port.
  *
- * The component keeps whole-packet transmit backups for one link direction, releases them when the
- * peer reports a complete receipt, and turns a physical link failure into the model's
+ * The component retains original whole packets for one link direction until complete peer receipt,
+ * and turns a physical link failure into the model's
  * detect / wait-for-LastAck / recover / drained progression. It owns the modeled timers and asks
  * the owning switch to migrate retained work; it never mutates switch queues itself.
  */
@@ -116,7 +116,7 @@ class UbReliableRerouting : public Object
     enum class State
     {
         DISABLED,           //!< Feature not armed on this port.
-        HEALTHY,            //!< Link healthy, backups released by peer receipt.
+        HEALTHY,            //!< Link healthy, in-flight references released by peer receipt.
         DETECTION_PENDING,  //!< Physical failure seen, endpoint has not detected it yet.
         WAIT_LAST_ACK,      //!< Output detected as failed; backlog frozen until LastAck.
         RECOVERING,         //!< LastAck received; retained work can move to healthy outputs.
@@ -144,22 +144,23 @@ class UbReliableRerouting : public Object
     /** The detected failed output must not be used for routing or transmission. */
     bool IsOutputBlocked() const
     {
-        return m_state == State::WAIT_LAST_ACK || m_state == State::RECOVERING;
+        return m_state == State::WAIT_LAST_ACK || m_state == State::RECOVERING ||
+               m_state == State::DRAINED;
     }
 
     Time GetDetectionDelay() const { return m_detectionDelay; }
     Time GetLastAckTimeout() const { return m_lastAckTimeout; }
 
-    // ---- Backup lifecycle -------------------------------------------------
+    // ---- Original packet lifecycle ----------------------------------------
 
     /**
-     * @brief Retain an independent copy of an eligible transmit attempt.
+     * @brief Retain the original packet of an eligible transmit attempt.
      * @param packet Packet handed to the link.
      * @param inPort Original ingress port identity.
      * @param priority Original VL/priority.
      * @return Local monotonic attempt token; never zero.
      */
-    uint64_t CreateAttempt(Ptr<const Packet> packet, uint32_t inPort, uint32_t priority);
+    uint64_t CreateAttempt(Ptr<Packet> packet, uint32_t inPort, uint32_t priority);
 
     /**
      * @brief Release the attempt that the peer completely received.
@@ -172,7 +173,10 @@ class UbReliableRerouting : public Object
     uint64_t GetReceiveNext() const { return m_receiveNext; }
 
     uint64_t GetRetryPacketCount() const { return static_cast<uint64_t>(m_attempts.size()); }
-    uint64_t GetRetryByteCount() const;
+    uint64_t GetRetryByteCount() const { return m_retryBytes; }
+    uint64_t GetInFlightPacketCount() const { return m_inFlight.size(); }
+    uint64_t GetInFlightByteCount() const { return m_inFlightBytes; }
+    uint64_t GetPeakInFlightPacketCount() const { return m_peakInFlightPackets; }
     uint64_t GetPeakRetryPacketCount() const { return m_peakRetryPackets; }
 
     // ---- Failure progression ---------------------------------------------
@@ -253,7 +257,11 @@ class UbReliableRerouting : public Object
     uint64_t m_nextAttemptToken{1};
     uint64_t m_confirmedNext{0};
     uint64_t m_receiveNext{0};
+    std::deque<Attempt> m_inFlight;
     std::deque<Attempt> m_attempts;
+    uint64_t m_inFlightBytes{0};
+    uint64_t m_retryBytes{0};
+    uint64_t m_peakInFlightPackets{0};
     uint64_t m_peakRetryPackets{0};
     uint64_t m_pendingPackets{0};
     uint64_t m_pendingBytes{0};

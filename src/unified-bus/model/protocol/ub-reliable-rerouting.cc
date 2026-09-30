@@ -177,26 +177,31 @@ UbReliableRerouting::TransitionTo(State state)
 }
 
 uint64_t
-UbReliableRerouting::CreateAttempt(Ptr<const Packet> packet, uint32_t inPort, uint32_t priority)
+UbReliableRerouting::CreateAttempt(Ptr<Packet> packet, uint32_t inPort, uint32_t priority)
 {
     if (m_state == State::DISABLED || packet == nullptr)
     {
         return 0;
     }
 
-    // An independent whole-packet copy: recovery must never race the live transmission.
+    NS_ABORT_MSG_IF(IsOutputBlocked(), "Cannot transmit after local failure detection");
+    // Delivery on the failed link is invalidated before this original can be recovered.
     Attempt attempt;
     attempt.token = m_nextAttemptToken++;
-    attempt.packet = packet->Copy();
+    attempt.packet = packet;
     attempt.inPort = inPort;
     attempt.priority = priority;
-    m_attempts.push_back(attempt);
-    m_peakRetryPackets = std::max<uint64_t>(m_peakRetryPackets, m_attempts.size());
-    NS_LOG_DEBUG("[UbReliableRerouting] retained attempt " << attempt.token << " ("
-                                                           << attempt.packet->GetSize()
-                                                           << " bytes) retry=" << m_attempts.size());
-    if (m_state != State::HEALTHY)
+    if (m_state == State::HEALTHY)
     {
+        m_inFlight.push_back(attempt);
+        m_inFlightBytes += packet->GetSize();
+        m_peakInFlightPackets = std::max<uint64_t>(m_peakInFlightPackets, m_inFlight.size());
+    }
+    else
+    {
+        m_attempts.push_back(attempt);
+        m_retryBytes += packet->GetSize();
+        m_peakRetryPackets = std::max<uint64_t>(m_peakRetryPackets, m_attempts.size());
         Publish("attempt_start", attempt.token, m_port->GetIfIndex());
     }
     return attempt.token;
@@ -209,19 +214,17 @@ UbReliableRerouting::ConfirmAttempt(uint64_t token)
     {
         return;
     }
-    const auto it = std::find_if(m_attempts.begin(), m_attempts.end(), [token](const Attempt& a) {
-        return a.token == token;
-    });
-    if (it == m_attempts.end())
+    // Complete receipts on one physical direction are ordered. Failure removes the entire
+    // in-flight set, and the link suppresses its old delivery callbacks before they get here.
+    if (m_inFlight.empty())
     {
-        // Detached/unarmed senders and already-transferred attempts legitimately confirm nothing.
-        NS_LOG_DEBUG("[UbReliableRerouting] confirmation for unknown attempt " << token);
         return;
     }
-    NS_ABORT_MSG_IF(token != m_confirmedNext + 1,
+    NS_ABORT_MSG_IF(m_inFlight.front().token != token || token != m_confirmedNext + 1,
                     "Reliable rerouting requires ordered complete link confirmations");
     m_confirmedNext = token;
-    m_attempts.erase(it);
+    m_inFlightBytes -= m_inFlight.front().packet->GetSize();
+    m_inFlight.pop_front();
 }
 
 void
@@ -236,17 +239,6 @@ UbReliableRerouting::ReceiveAttempt(uint64_t token)
     m_receiveNext = token;
 }
 
-uint64_t
-UbReliableRerouting::GetRetryByteCount() const
-{
-    uint64_t bytes = 0;
-    for (const auto& attempt : m_attempts)
-    {
-        bytes += attempt.packet->GetSize();
-    }
-    return bytes;
-}
-
 void
 UbReliableRerouting::OnPhysicalFailure()
 {
@@ -255,6 +247,10 @@ UbReliableRerouting::OnPhysicalFailure()
         NS_LOG_DEBUG("[UbReliableRerouting] ignoring repeated physical failure notification");
         return;
     }
+    m_attempts.swap(m_inFlight);
+    m_retryBytes = m_inFlightBytes;
+    m_inFlightBytes = 0;
+    m_peakRetryPackets = std::max<uint64_t>(m_peakRetryPackets, m_attempts.size());
     TransitionTo(State::DETECTION_PENDING);
     m_detectionEvent = Simulator::Schedule(m_detectionDelay,
                                            &UbReliableRerouting::OnDetection,
@@ -430,10 +426,12 @@ UbReliableRerouting::TransferRetryBacklog()
         {
             // Link-local credit/PFC frames are not rerouted; their disposal is not data loss.
             Publish("control_frame_discarded", token, outPort);
+            m_retryBytes -= packet->GetSize();
             m_attempts.pop_front();
             continue;
         }
         Publish("transfer", token, outPort, sw->GetLastRecoveryOutput());
+        m_retryBytes -= packet->GetSize();
         m_attempts.pop_front();
     }
     UpdateDrainState();
@@ -530,7 +528,10 @@ UbReliableRerouting::DoDispose()
     m_detectionEvent.Cancel();
     m_lastAckEvent.Cancel();
     m_lastAckSendEvent.Cancel();
+    m_inFlight.clear();
+    m_inFlightBytes = 0;
     m_attempts.clear();
+    m_retryBytes = 0;
     m_pendingPackets = 0;
     m_pendingBytes = 0;
     m_processingPackets = 0;

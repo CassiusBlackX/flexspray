@@ -822,11 +822,11 @@ void UbPort::TransmitPacket(Ptr<Packet> packet, Time delay)
     // changes this packet's own serialization time.
     Time txCompleteTime = txTime + m_tInterframeGap + ComputePacketRateNobTime(packet);
 
-    // Retain an independent whole-packet copy at the actual send boundary so a failed link can
+    // Retain the original whole packet at the actual send boundary so a failed link can
     // recover an attempt that the peer never completely received. The token is local simulator
     // metadata; it is never serialized and is unrelated to TCP-style PSNs or Packet::GetUid().
     const uint64_t attemptToken =
-        m_rerouting != nullptr
+        m_rerouting != nullptr && m_rerouting->IsArmed()
             ? m_rerouting->CreateAttempt(packet, m_currentInPortId, m_currentPriority)
             : 0;
 
@@ -1186,7 +1186,11 @@ void UbPort::DoDispose()
     m_ubEQ = nullptr;
     m_channel = nullptr;
     m_currentPkt = nullptr;
-    m_rerouting = nullptr;
+    if (m_rerouting != nullptr)
+    {
+        m_rerouting->Dispose();
+        m_rerouting = nullptr;
+    }
     m_outputBlocked = false;
     m_datalink = nullptr;
     m_flowControl = nullptr;

@@ -436,6 +436,7 @@ struct ReroutingTopology
 struct PacketSink
 {
     std::vector<std::vector<uint8_t>> packets;
+    std::vector<const Packet*> identities;
     /** Packets that leaked a switch-local recovery marker into a later hop. */
     uint32_t taggedPackets{0};
 };
@@ -464,6 +465,7 @@ CaptureDeliveredPacket(PacketSink* sink, Ptr<UbPort>, Ptr<Packet> packet)
     {
         ++sink->taggedPackets;
     }
+    sink->identities.push_back(PeekPointer(packet));
     sink->packets.push_back(PacketBytes(packet));
 }
 
@@ -1119,9 +1121,9 @@ class UbReroutingHealthyBackupTest : public TestCase
                                   "packet bytes and receive order preserved");
         }
         NS_TEST_ASSERT_MSG_EQ(retryB, 0, "healthy backups return to zero");
-        if (m_enabled)
+        if (m_enabled && !m_retained)
         {
-            NS_TEST_ASSERT_MSG_GT(peakRetryB, 0, "enabled run retained and released backups");
+            NS_TEST_ASSERT_MSG_EQ(peakRetryB, 0, "confirmed healthy packets never occupy retry");
         }
     }
 
@@ -1140,6 +1142,122 @@ class UbReroutingHealthyBackupTest : public TestCase
  * The scenario keeps a single legal candidate, so after detection no legal output remains and the
  * switch must abort with the failed-output diagnostic instead of dropping the packet.
  */
+/** Original objects survive propagation, early recovery and late invalid delivery events. */
+class UbReroutingOriginalPacketTest : public TestCase
+{
+  public:
+    UbReroutingOriginalPacketTest(bool enabled, bool fail, bool longIfg = false)
+        : TestCase("Original packet retention enabled=" + std::to_string(enabled) +
+                   " failure=" + std::to_string(fail) + " long-ifg=" + std::to_string(longIfg)),
+          m_enabled(enabled), m_fail(fail), m_longIfg(longIfg)
+    {
+    }
+
+  private:
+    void DoRun() override
+    {
+        ReroutingTopology topo(m_enabled, m_longIfg ? NanoSeconds(20) : MicroSeconds(10));
+        if (m_longIfg)
+        {
+            topo.b1->SetAttribute("UbInterframeGap", TimeValue(MicroSeconds(20)));
+        }
+        PacketSink sink;
+        topo.d0->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sink));
+        std::vector<Ptr<Packet>> originals;
+        const uint32_t count = m_longIfg ? 1 : 4;
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            auto packet = BuildUrmaPacket(64, topo.hostA->GetId(), topo.hostD->GetId(),
+                                          kPriority, RoutingType::PER_FLOW_SHORTEST_PATHS, i);
+            originals.push_back(packet);
+            Simulator::Schedule(NanoSeconds(10 + i * 100), &UbSwitch::SwitchHandlePacket,
+                                topo.Switch(topo.swB), topo.b0, packet);
+        }
+        Simulator::Schedule(MicroSeconds(1), [&]() {
+            NS_TEST_ASSERT_MSG_EQ(topo.Rerouting(1)->GetRetryPacketCount(), 0u,
+                                  "healthy propagation is not retry storage");
+            NS_TEST_ASSERT_MSG_EQ(topo.Rerouting(1)->GetInFlightPacketCount(),
+                                  (m_enabled && !m_longIfg ? count : 0u),
+                                  "only armed endpoints retain unreceived originals");
+            NS_TEST_ASSERT_MSG_EQ(topo.b0->GetReliableRerouting()->GetInFlightPacketCount(), 0u,
+                                  "ineligible access links have no in-flight records");
+            if (m_fail)
+            {
+                topo.failedLink->Fail();
+                NS_TEST_ASSERT_MSG_EQ(topo.Rerouting(1)->GetRetryPacketCount(),
+                                      (m_longIfg ? 0u : count),
+                                      "failure retains all unreceived packets, not the IFG pointer");
+            }
+        });
+        Simulator::Stop(MicroSeconds(30));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(sink.identities.size(), count, "each original delivered once");
+        for (uint32_t i = 0; i < std::min<size_t>(count, sink.identities.size()); ++i)
+        {
+            NS_TEST_ASSERT_MSG_EQ(sink.identities[i], PeekPointer(originals[i]),
+                                  "recovery hands off the original object, not a same-UID copy");
+        }
+        NS_TEST_ASSERT_MSG_EQ(topo.Rerouting(1)->GetRetryPacketCount(), 0u,
+                              "late old-link delivery events cannot resurrect retry entries");
+        Simulator::Destroy();
+        for (const auto& packet : originals)
+        {
+            NS_TEST_ASSERT_MSG_EQ(packet->GetReferenceCount(), 1u,
+                                  "completed events and owners released their references");
+        }
+    }
+    bool m_enabled;
+    bool m_fail;
+    bool m_longIfg;
+};
+
+class UbReroutingDetectionCreditTest : public TestCase
+{
+  public:
+    UbReroutingDetectionCreditTest()
+        : TestCase("Reliable rerouting - detection window remains credit limited")
+    {
+    }
+    void DoRun() override
+    {
+        ReroutingTopology topo(true, MicroSeconds(10), MicroSeconds(5), MicroSeconds(20),
+                              FcType::CBFC);
+        // Exactly two one-cell packets may leave this output before credit is exhausted.
+        topo.b1->SetAttribute("CbfcFlitsPerCell", UintegerValue(16));
+        topo.b1->SetAttribute("CbfcInitCreditCell", IntegerValue(2));
+        topo.b1->CreateAndInitFc(FcType::CBFC);
+        PacketSink sink;
+        topo.d0->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sink));
+        for (uint32_t i = 0; i < 4; ++i)
+        {
+            auto packet = BuildUrmaPacket(64, topo.hostA->GetId(), topo.hostD->GetId(),
+                                          kPriority, RoutingType::PER_FLOW_SHORTEST_PATHS, i);
+            Simulator::Schedule(NanoSeconds(10 + i * 100), &UbSwitch::SwitchHandlePacket,
+                                topo.Switch(topo.swB), topo.b0, packet);
+        }
+        Simulator::Schedule(NanoSeconds(80), [&]() {
+            topo.failedLink->Fail();
+            NS_TEST_ASSERT_MSG_EQ(topo.Rerouting(1)->GetRetryPacketCount(), 1u,
+                                  "physical failure captures first propagating original");
+        });
+        for (auto when : {MicroSeconds(1), MicroSeconds(6), MicroSeconds(15)})
+        {
+            Simulator::Schedule(when, [&]() {
+                NS_TEST_ASSERT_MSG_EQ(topo.Rerouting(1)->GetRetryPacketCount(), 2u,
+                                      "one later attempt consumes last credit, then no growth");
+                NS_TEST_ASSERT_MSG_EQ(topo.Switch(topo.swB)->GetVoqPacketCountForTest(
+                                          1, kPriority, 0), 2u,
+                                      "uncredited packets stay in failed VOQ until real LastAck");
+            });
+        }
+        Simulator::Stop(MicroSeconds(80));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(sink.packets.size(), 4u, "real LastAck recovers all four packets");
+        NS_TEST_ASSERT_MSG_EQ(topo.Rerouting(1)->GetRetryPacketCount(), 0u, "retry handed off");
+        Simulator::Destroy();
+    }
+};
+
 class UbReroutingNoLegalOutputTest : public TestCase
 {
   public:
@@ -1328,6 +1446,8 @@ class UbReroutingDisposalTest : public TestCase
                               UbReliableRerouting::State::WAIT_LAST_ACK,
                               "stopped during the LastAck wait");
         NS_TEST_ASSERT_MSG_EQ(retryBefore, 1, "retained attempt still owned at the early stop");
+        NS_TEST_ASSERT_MSG_EQ(retained->GetReferenceCount(), 1u,
+                              "destroy releases retained originals without claiming delivery");
     }
 };
 
@@ -2684,6 +2804,11 @@ class UbReliableReroutingSuite : public TestSuite
         AddTestCase(new UbReroutingHealthyBackupTest(true), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingHealthyBackupTest(true, true), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingHealthyBackupTest(true, true, true), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingOriginalPacketTest(false, false), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingOriginalPacketTest(true, false), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingOriginalPacketTest(true, true), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingOriginalPacketTest(true, true, true), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingDetectionCreditTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingNoLegalOutputTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingLastAckGateTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingDisposalTest(), TestCase::Duration::QUICK);
