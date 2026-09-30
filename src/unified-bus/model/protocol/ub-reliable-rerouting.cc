@@ -240,6 +240,25 @@ UbReliableRerouting::ReceiveAttempt(uint64_t token)
 }
 
 void
+UbReliableRerouting::EnqueueRecoveryVoq(uint32_t bytes)
+{
+    NS_ABORT_MSG_IF(!IsArmed(), "Recovery occupancy requires an armed origin");
+    ++m_recoveryVoqPackets;
+    m_recoveryVoqBytes += bytes;
+    m_peakRecoveryVoqPackets = std::max(m_peakRecoveryVoqPackets, m_recoveryVoqPackets);
+    m_peakRecoveryVoqBytes = std::max(m_peakRecoveryVoqBytes, m_recoveryVoqBytes);
+}
+
+void
+UbReliableRerouting::DequeueRecoveryVoq(uint32_t bytes)
+{
+    NS_ABORT_MSG_IF(m_recoveryVoqPackets == 0 || m_recoveryVoqBytes < bytes,
+                    "Recovery VOQ occupancy underflow");
+    --m_recoveryVoqPackets;
+    m_recoveryVoqBytes -= bytes;
+}
+
+void
 UbReliableRerouting::OnPhysicalFailure()
 {
     if (m_state != State::HEALTHY)
@@ -403,8 +422,8 @@ UbReliableRerouting::TransferRetryBacklog()
     NS_ABORT_MSG_IF(sw == nullptr, "Reliable rerouting requires a switch on the port node");
     const uint32_t outPort = m_port->GetIfIndex();
 
-    // Retained attempts keep recovery ownership until the switch confirms admission into a healthy
-    // VOQ, so a blocked attempt stays here and is retried on the next space-release wakeup.
+    // The shared VOQ accepts recovery storage independently of original ingress capacity.
+    // The endpoint releases its reference only after the switch has taken ownership.
     while (!m_attempts.empty())
     {
         Attempt& attempt = m_attempts.front();
@@ -414,14 +433,6 @@ UbReliableRerouting::TransferRetryBacklog()
         Ptr<Packet> packet = attempt.packet;
         const UbRecoverySubmitResult result =
             sw->SubmitRecoveryPacket(packet, inPort, priority, outPort, token);
-        if (result == UbRecoverySubmitResult::BLOCKED)
-        {
-            // No drop and no loss: the attempt stays owned here and is retried when real ingress
-            // capacity is released, keeping the alternate output the switch already selected.
-            m_retryBlocked = true;
-            Publish("admission_block", token, outPort);
-            break;
-        }
         if (result == UbRecoverySubmitResult::DISCARDED)
         {
             // Link-local credit/PFC frames are not rerouted; their disposal is not data loss.
@@ -435,18 +446,6 @@ UbReliableRerouting::TransferRetryBacklog()
         m_attempts.pop_front();
     }
     UpdateDrainState();
-}
-
-void
-UbReliableRerouting::ResumeRetryBacklog()
-{
-    if (m_state != State::RECOVERING || !m_retryBlocked)
-    {
-        return;
-    }
-    m_retryBlocked = false;
-    Publish("admission_resume");
-    TransferRetryBacklog();
 }
 
 void
@@ -532,6 +531,8 @@ UbReliableRerouting::DoDispose()
     m_inFlightBytes = 0;
     m_attempts.clear();
     m_retryBytes = 0;
+    m_recoveryVoqPackets = 0;
+    m_recoveryVoqBytes = 0;
     m_pendingPackets = 0;
     m_pendingBytes = 0;
     m_processingPackets = 0;

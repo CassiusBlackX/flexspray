@@ -1687,7 +1687,7 @@ class UbReroutingBlockedAdmissionTest : public TestCase
 {
   public:
     explicit UbReroutingBlockedAdmissionTest(bool shared = false)
-        : TestCase(std::string("Reliable rerouting - blocked admission resumes ") +
+        : TestCase(std::string("Reliable rerouting - recovery bypasses occupied ingress ") +
                    (shared ? "cross ingress shared pool" : "retry only")), m_shared(shared)
     {
     }
@@ -1769,13 +1769,14 @@ class UbReroutingBlockedAdmissionTest : public TestCase
         NS_TEST_ASSERT_MSG_GT(blockedPendingProbe.GetNanoSeconds(), 0,
                               "blocked window observed");
         NS_TEST_ASSERT_MSG_EQ(sink.packets.size(), 1,
-                              "retained packet arrives after capacity is released");
+                              "retained packet arrives despite occupied ingress");
         if (!sink.packets.empty())
         {
             NS_TEST_ASSERT_MSG_EQ(HexOf(sink.packets[0]), HexOf(bytes), "blocked bytes preserved");
         }
-        NS_TEST_ASSERT_MSG_GT(transfers.admissionBlocks, 0u, "real capacity block exercised");
-        NS_TEST_ASSERT_MSG_EQ(transfers.transferTime, release, "release resumes retained owner");
+        NS_TEST_ASSERT_MSG_EQ(transfers.admissionBlocks, 0u, "recovery does not reacquire ingress");
+        NS_TEST_ASSERT_MSG_EQ(transfers.transferTime, transfers.validLastAckTime,
+                              "LastAck transfers despite the still-occupied ingress");
         NS_TEST_ASSERT_MSG_EQ(dropCount, 0u, "blocked admission never drops the packet");
         NS_TEST_ASSERT_MSG_EQ(stateB, UbReliableRerouting::State::DRAINED, "local drain reached");
         NS_TEST_ASSERT_MSG_EQ(resolutions, 1u,
@@ -1791,6 +1792,108 @@ class UbReroutingBlockedAdmissionTest : public TestCase
 /**
  * @brief CBFC must not return the original upstream credit twice for a recovered packet.
  */
+/** Full ingress and small healthy egress exercise mixed ordinary/recovery VOQ ownership. */
+class UbReroutingMixedVoqTest : public TestCase
+{
+  public:
+    explicit UbReroutingMixedVoqTest(bool shared, bool dwrr = false, bool creditLimited = false)
+        : TestCase("Reliable rerouting - mixed VOQ isolates ingress shared=" +
+                   std::to_string(shared) + " dwrr=" + std::to_string(dwrr) +
+                   " credit=" + std::to_string(creditLimited)),
+          m_shared(shared), m_dwrr(dwrr), m_creditLimited(creditLimited)
+    {
+    }
+    void DoRun() override
+    {
+        Config::SetDefault("ns3::UbSwitch::VlScheduler", StringValue(m_dwrr ? "DWRR" : "SP"));
+        ReroutingTopology topo(true, MicroSeconds(10), NanoSeconds(0), MicroSeconds(5),
+                              m_shared ? FcType::CBFC_SHARED : FcType::CBFC);
+        Config::SetDefault("ns3::UbSwitch::VlScheduler", StringValue("SP"));
+        topo.b1->SetAttribute("UbInterframeGap", TimeValue(MicroSeconds(20)));
+        // LastAck fits; data cannot enter the egress yet. Existing allocator must retain it.
+        if (!m_creditLimited)
+        {
+            topo.b2->GetUbQueue()->SetAttribute("MaxEgressBytes", UintegerValue(16));
+        }
+        PacketSink sink;
+        topo.d0->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sink));
+        auto qm = topo.Switch(topo.swB)->GetQueueManager();
+        std::vector<Ptr<Packet>> packets;
+        for (uint32_t i = 0; i < 4; ++i)
+        {
+            packets.push_back(BuildUrmaPacket(256, topo.hostA->GetId(), topo.hostD->GetId(),
+                                              kPriority, RoutingType::PER_FLOW_SHORTEST_PATHS, i));
+        }
+        const uint32_t bytes = packets[0]->GetSize();
+        qm->SetReservePerQueueBytes(2 * bytes);
+        if (m_creditLimited)
+        {
+            // A real warmup transfer spends all data-VL credit. Three VL1 credits still allow
+            // the source LastAck copies; no data credit returns until the peer's control frame.
+            topo.b2->SetAttribute("CbfcInitCreditCell", IntegerValue((bytes + 159) / 160));
+            topo.b2->SetAttribute("CbfcSharedInitCreditCell", IntegerValue(0));
+            topo.b2->CreateAndInitFc(m_shared ? FcType::CBFC_SHARED : FcType::CBFC);
+            auto warmup = BuildUrmaPacket(256, topo.hostA->GetId(), topo.hostD->GetId(),
+                                          kPriority, RoutingType::PER_FLOW_SHORTEST_PATHS, 99);
+            topo.Switch(topo.swB)->SendPacket(warmup, 0, 2, kPriority);
+        }
+        const Time arrivals[] = {NanoSeconds(10), NanoSeconds(110), MicroSeconds(2), MicroSeconds(10)};
+        for (uint32_t i = 0; i < 4; ++i)
+        {
+            Simulator::Schedule(arrivals[i], &UbSwitch::SwitchHandlePacket,
+                                topo.Switch(topo.swB), topo.b0, packets[i]);
+        }
+        Simulator::Schedule(MicroSeconds(1), &UbLink::Fail, topo.failedLink);
+        Simulator::Schedule(MicroSeconds(15), [&]() {
+            NS_TEST_ASSERT_MSG_EQ(topo.Rerouting(1)->GetRetryPacketCount(), 0u,
+                                  "retry hands off even though original ingress is full");
+            NS_TEST_ASSERT_MSG_EQ(topo.Rerouting(1)->GetRecoveryVoqPacketCount(), 2u,
+                                  "retry and failed egress remain visible in the shared VOQ");
+            NS_TEST_ASSERT_MSG_EQ(topo.Rerouting(1)->GetRecoveryVoqByteCount(), 2u * bytes,
+                                  "both recovery origins use independent storage");
+            NS_TEST_ASSERT_MSG_EQ(qm->GetQueueIngressTotalBytes(0, kPriority), 2u * bytes,
+                                  "only the two ordinary packets consume ingress capacity");
+            NS_TEST_ASSERT_MSG_EQ(qm->GetOutPortQueueBacklogBytes(2), 4u * bytes,
+                                  "actual VOQ contains ordinary and recovery packets");
+            NS_TEST_ASSERT_MSG_EQ(qm->GetSwitchBufferOccupancy().recovery_voq_bytes, 2u * bytes,
+                                  "recovery is a subset of actual queued bytes");
+        });
+        Simulator::Schedule(MicroSeconds(20), [&]() {
+            if (m_creditLimited)
+            {
+                uint8_t credits[16] = {};
+                credits[kPriority] = 1;
+                topo.Switch(topo.swC)->SendControlFrame(
+                    UbDataLink::BuildControlCreditPacket(credits), 2);
+            }
+            else
+            {
+                topo.b2->GetUbQueue()->SetAttribute("MaxEgressBytes", UintegerValue(65536));
+                topo.b2->TriggerTransmit();
+            }
+        });
+        Simulator::Stop(MicroSeconds(80));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(sink.packets.size(), (m_creditLimited ? 5u : 4u), "all accepted packets delivered once");
+        NS_TEST_ASSERT_MSG_EQ(sink.taggedPackets, 0u, "local recovery marker never leaves owner");
+        NS_TEST_ASSERT_MSG_EQ(qm->GetQueueIngressTotalBytes(0, kPriority), 0u,
+                              "ordinary packets each release their reservation once");
+        NS_TEST_ASSERT_MSG_EQ(topo.Rerouting(1)->GetRecoveryVoqPacketCount(), 0u,
+                              "successful service releases recovery occupancy");
+        NS_TEST_ASSERT_MSG_EQ(UbUtils::Get()->GetRuntimePacketDropCount(), 0u,
+                              "legally arriving ordinary packets keep their promised capacity");
+        auto upstream = DynamicCast<UbCbfc>(topo.b0->GetFlowControl());
+        NS_TEST_ASSERT_MSG_EQ(upstream->GetCrdToReturn(kPriority),
+                              (m_creditLimited ? 5 : 4) * static_cast<int32_t>((bytes + 159) / 160),
+                              "ordinary admissions return credit once, recovery returns none");
+        Simulator::Destroy();
+    }
+  private:
+    bool m_shared;
+    bool m_dwrr;
+    bool m_creditLimited;
+};
+
 class UbReroutingCbfcCreditTest : public TestCase
 {
   public:
@@ -2818,6 +2921,14 @@ class UbReliableReroutingSuite : public TestSuite
         AddTestCase(new UbReroutingDelayedProcessingTest(false), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingBlockedAdmissionTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingBlockedAdmissionTest(true), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingMixedVoqTest(false), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingMixedVoqTest(true), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingMixedVoqTest(false, true), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingMixedVoqTest(true, true), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingMixedVoqTest(false, false, true), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingMixedVoqTest(true, false, true), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingMixedVoqTest(false, true, true), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingMixedVoqTest(true, true, true), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingCbfcCreditTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingControlFrameDisposalTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingPfcReleaseTest(), TestCase::Duration::QUICK);

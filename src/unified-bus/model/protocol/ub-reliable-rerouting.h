@@ -71,7 +71,6 @@ constexpr uint32_t UB_REROUTING_NO_OUTPUT = 0xffffffffu;
 enum class UbRecoverySubmitResult : uint8_t
 {
     TRANSFERRED,  //!< Packet entered a healthy VOQ; the caller may release ownership.
-    BLOCKED,      //!< Ingress admission is full; the caller keeps ownership and retries later.
     DISCARDED,    //!< Link-local control frame disposed locally instead of rerouted.
 };
 
@@ -179,6 +178,11 @@ class UbReliableRerouting : public Object
     uint64_t GetPeakInFlightPacketCount() const { return m_peakInFlightPackets; }
     uint64_t GetPeakRetryPacketCount() const { return m_peakRetryPackets; }
 
+    void EnqueueRecoveryVoq(uint32_t bytes);
+    void DequeueRecoveryVoq(uint32_t bytes);
+    uint64_t GetRecoveryVoqPacketCount() const { return m_recoveryVoqPackets; }
+    uint64_t GetRecoveryVoqByteCount() const { return m_recoveryVoqBytes; }
+
     // ---- Failure progression ---------------------------------------------
 
     /** Physical failure action (t0); arms the detection timer. */
@@ -193,13 +197,6 @@ class UbReliableRerouting : public Object
 
     /** Switch reports that retained backlog for this output finished recovery. */
     void NotifyBacklogFinished();
-
-    /**
-     * @brief Retry a blocked retained attempt after real ingress capacity was released.
-     *
-     * Called by the switch through its coalesced space-release wakeup.
-     */
-    void ResumeRetryBacklog();
 
     /** Switch reports how much retained work it currently owns for this output. */
     void SetPendingRecoveryCounters(uint64_t packets, uint64_t bytes, uint64_t processing);
@@ -240,7 +237,6 @@ class UbReliableRerouting : public Object
     void OnLastAckTimeout();
     void OnLastAckSendTimeout();
     void UpdateDrainState();
-    bool m_retryBlocked{false};
 
     Ptr<UbPort> m_port;
     Ptr<UbLink> m_link;
@@ -263,6 +259,10 @@ class UbReliableRerouting : public Object
     uint64_t m_retryBytes{0};
     uint64_t m_peakInFlightPackets{0};
     uint64_t m_peakRetryPackets{0};
+    uint64_t m_recoveryVoqPackets{0};
+    uint64_t m_recoveryVoqBytes{0};
+    uint64_t m_peakRecoveryVoqPackets{0};
+    uint64_t m_peakRecoveryVoqBytes{0};
     uint64_t m_pendingPackets{0};
     uint64_t m_pendingBytes{0};
     uint64_t m_processingPackets{0};

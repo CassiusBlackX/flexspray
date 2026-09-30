@@ -426,3 +426,22 @@ void CheckPfcCondition(uint32_t inPort, uint32_t priority)
 | `src/unified-bus/model/ub-switch.cc` | 包处理和调度逻辑 |
 | `src/unified-bus/model/ub-port.h` | UbPort 和 EgressQueue 定义 |
 | `src/unified-bus/model/protocol/ub-caqm.cc` | CAQM 拥塞控制实现 |
+
+## Reliable rerouting storage
+
+With reliable rerouting armed, retry packets and unsent failed-egress packets have already released
+their original ingress reservation. They enter the existing healthy-output VOQ without checking or
+charging that ingress again. A switch-local recovery tag records the failed-output origin. The
+allocator captures it for credit handling, and switch dequeue consumes it for queue accounting
+before the packet leaves this switch. The healthy next hop uses ordinary credit accounting.
+
+Actual VOQ/output backlog includes both ordinary and recovery packets. Ingress admission includes
+only ordinary reserved work; `recovery_voq_bytes` is a subset of actual buffered bytes, not a quantity
+to add again. Paper-dynamic PFC excludes this independently backed subset when computing capacity
+thresholds, while congestion-control output backlog remains inclusive. Old VOQ and delayed input
+processing packets retain their existing ingress reservation and return upstream credit once.
+
+Recovery has no separate scheduler or strict priority. Existing FIFO, VL/RR/DWRR, egress capacity
+checks and downstream credit remain authoritative. A blocked healthy egress leaves recovery in the
+shared VOQ. Draining the retry owner does not establish destination delivery or empty recovery VOQs.
+See ADR 0029 and `reliable-rerouting-buffer-accounting-validation.md` for validation.

@@ -231,9 +231,6 @@ void UbSwitch::InitQueueManager(Ptr<Node> node)
     m_queueManager->SetPaperDynamicAdmissionEnabled(m_flowControlType == FcType::PFC_DYNAMIC_PAPER);
     ApplyLocalQueueManagerConfig();
     m_queueManager->Init();
-    // Real ingress releases wake blocked recovery through one coalesced event.
-    m_queueManager->SetIngressSpaceReleaseCallback(
-        MakeCallback(&UbSwitch::OnIngressSpaceReleased, this));
 }
 
 void UbSwitch::InitRoutingProcess(Ptr<Node> node)
@@ -277,9 +274,6 @@ void UbSwitch::DoDispose()
     {
         ClearRecoveryBacklogForOutput(m_detectedFailedOutput);
     }
-    m_recoveryWakeup.Cancel();
-    m_recoveryWakeupPending = false;
-    m_blockedRetryOutput.clear();
     PruneResolvedInPortEvents();
     m_forcedInPortEventResidue = 0;
     m_forcedInPortByteResidue = 0;
@@ -1503,8 +1497,7 @@ UbSwitch::StartOutputRecovery(uint32_t outPort)
         }
     }
 
-    // 2. Egress backlog: ownership moves to pending recovery, then it reacquires bounded ingress
-    //    admission before it can enter a healthy VOQ.
+    // 2. Egress backlog moves to recovery storage, then the shared VOQ without ingress admission.
     Ptr<UbPort> failedPort = DynamicCast<UbPort>(node->GetDevice(outPort));
     NS_ABORT_MSG_IF(failedPort == nullptr, "Detected failed output has no port");
     Ptr<UbEgressQueue> egressQueue = failedPort->GetUbQueue();
@@ -1557,11 +1550,10 @@ UbSwitch::ParkRecoveryPacket(Ptr<Packet> packet,
                                                      << ingressHeld);
 }
 
-bool
+void
 UbSwitch::TransferOnePendingEntry(PendingRecoveryEntry& entry)
 {
-    // The alternate output is selected once and then retained while admission is blocked, so a
-    // wakeup cannot advance a selector or consume a one-detour allowance again.
+    // Resolve once before transferring the retained packet to the shared VOQ.
     if (!entry.outputResolved)
     {
         uint16_t newOutput = UINT16_MAX;
@@ -1577,24 +1569,13 @@ UbSwitch::TransferOnePendingEntry(PendingRecoveryEntry& entry)
                                                entry.entryId,
                                                entry.oldOutput);
             }
-            return true;
+            return;
         }
         entry.selectedOutput = newOutput;
         entry.outputResolved = true;
     }
 
     const uint32_t packetBytes = entry.packet->GetSize();
-    if (!entry.ingressHeld &&
-        !m_queueManager->CheckInPortSpace(entry.inPort, entry.priority, packetBytes))
-    {
-        PublishRecoveryBacklogCounters(entry.oldOutput);
-        if (Ptr<UbReliableRerouting> rerouting = FailedOutputRerouting())
-        {
-            rerouting->PublishBacklogEvent("admission_block", entry.entryId, entry.oldOutput);
-        }
-        return false;
-    }
-
     // A recovered packet re-enters the healthy VOQ with no new input-processing delay and no repeated
     // receive/congestion effects, but with its original ingress identity and VL.
     ClearOldLinkPiggybackMetadata(entry.packet);
@@ -1602,7 +1583,9 @@ UbSwitch::TransferOnePendingEntry(PendingRecoveryEntry& entry)
     {
         // The original upstream credit was already returned when this packet left the ingress.
         UbRecoveredCreditTag creditTag;
+        creditTag.failedOutput = entry.oldOutput;
         entry.packet->AddPacketTag(creditTag);
+        FailedOutputRerouting()->EnqueueRecoveryVoq(packetBytes);
     }
     m_queueManager->AdmitPendingRecoveryToVoq(entry.inPort,
                                               entry.selectedOutput,
@@ -1628,7 +1611,7 @@ UbSwitch::TransferOnePendingEntry(PendingRecoveryEntry& entry)
                                                        << entry.inPort << " oldOutput "
                                                        << entry.oldOutput << " newOutput "
                                                        << entry.selectedOutput);
-    return true;
+    return;
 }
 
 void
@@ -1639,22 +1622,10 @@ UbSwitch::TryTransferPendingRecovery()
         return;
     }
 
-    bool progressed = true;
-    while (progressed)
+    while (!m_pendingRecovery.empty())
     {
-        progressed = false;
-        for (auto it = m_pendingRecovery.begin(); it != m_pendingRecovery.end();)
-        {
-            if (TransferOnePendingEntry(*it))
-            {
-                it = m_pendingRecovery.erase(it);
-                progressed = true;
-            }
-            else
-            {
-                ++it;
-            }
-        }
+        TransferOnePendingEntry(m_pendingRecovery.front());
+        m_pendingRecovery.erase(m_pendingRecovery.begin());
     }
 
     PublishRecoveryBacklogCounters(m_detectedFailedOutput);
@@ -1664,52 +1635,6 @@ UbSwitch::TryTransferPendingRecovery()
         {
             rerouting->NotifyBacklogFinished();
         }
-    }
-}
-
-void
-UbSwitch::ScheduleRecoveryWakeup()
-{
-    if (m_recoveryWakeupPending || m_recoveryDisposed)
-    {
-        return;
-    }
-    m_recoveryWakeupPending = true;
-    m_recoveryWakeup = Simulator::ScheduleNow(&UbSwitch::RunRecoveryWakeup, this);
-}
-
-void
-UbSwitch::RunRecoveryWakeup()
-{
-    m_recoveryWakeupPending = false;
-    if (m_recoveryDisposed)
-    {
-        return;
-    }
-    // Blocked admission resumes only when real capacity was released; the same wakeup also lets the
-    // endpoint retry its own retained attempts.
-    if (m_detectedFailedOutput != UINT32_MAX)
-    {
-        Ptr<UbPort> port = DynamicCast<UbPort>(GetObject<Node>()->GetDevice(m_detectedFailedOutput));
-        if (port != nullptr && port->GetReliableRerouting() != nullptr)
-        {
-            port->GetReliableRerouting()->ResumeRetryBacklog();
-        }
-    }
-    TryTransferPendingRecovery();
-}
-
-void
-UbSwitch::OnIngressSpaceReleased(uint32_t inPort, uint32_t priority)
-{
-    // Any ingress/VL can release global shared capacity. The existing selected-output map
-    // also represents blocked retry owners when the switch pending container is empty.
-    (void)inPort;
-    (void)priority;
-    if (m_recoveryBacklogMigrated &&
-        (!m_pendingRecovery.empty() || !m_blockedRetryOutput.empty()))
-    {
-        ScheduleRecoveryWakeup();
     }
 }
 
@@ -1733,8 +1658,6 @@ UbSwitch::ClearRecoveryBacklogForOutput(uint32_t outPort)
     {
         NS_LOG_DEBUG("[UbSwitch] released " << released << " retained recovery bytes on dispose");
     }
-    m_recoveryWakeup.Cancel();
-    m_recoveryWakeupPending = false;
 }
 
 void
@@ -1834,41 +1757,22 @@ UbSwitch::SubmitRecoveryPacket(Ptr<Packet> packet,
     }
 
     uint16_t newOutput = UINT16_MAX;
-    const auto blocked = m_blockedRetryOutput.find(entryId);
-    if (entryId != 0 && blocked != m_blockedRetryOutput.end())
-    {
-        // Space-release wakeups must not advance a selector or consume a one-detour allowance again
-        // for the same transfer, so a blocked attempt keeps its already selected alternate output.
-        newOutput = blocked->second;
-    }
-    else if (!ResolveRecoveryOutput(packet, inPort, oldOutput, newOutput))
+    if (!ResolveRecoveryOutput(packet, inPort, oldOutput, newOutput))
     {
         return UbRecoverySubmitResult::DISCARDED;
     }
 
     const uint32_t packetBytes = packet->GetSize();
-    if (!m_queueManager->CheckInPortSpace(inPort, priority, packetBytes))
-    {
-        if (entryId != 0)
-        {
-            m_blockedRetryOutput[entryId] = newOutput;
-        }
-        PublishRecoveryBacklogCounters(oldOutput);
-        return UbRecoverySubmitResult::BLOCKED;
-    }
-
     ClearOldLinkPiggybackMetadata(packet);
     // The original ingress credit was already returned when this attempt left the ingress, so the
-    // allocator must release the new occupancy without returning that credit again.
+    // allocator releases recovery storage without touching the original ingress reservation.
     UbRecoveredCreditTag creditTag;
+    creditTag.failedOutput = oldOutput;
     packet->AddPacketTag(creditTag);
-    m_queueManager->PushToVoq(inPort, newOutput, priority, packetBytes);
+    m_queueManager->PushToVoq(inPort, newOutput, priority, packetBytes, true);
+    FailedOutputRerouting()->EnqueueRecoveryVoq(packetBytes);
     GetOrCreateVoq(newOutput, priority, inPort)->Push(packet);
     FinalizeForwardedPacketEnqueue(packet, inPort, newOutput, priority, true);
-    if (entryId != 0)
-    {
-        m_blockedRetryOutput.erase(entryId);
-    }
     m_lastRecoveryOutput = newOutput;
     ++m_recoveryTransferCount;
     NS_LOG_DEBUG("[UbSwitch] recovery transfer node "
@@ -1959,7 +1863,14 @@ UbSwitch::FailedOutputRerouting()
 
 void UbSwitch::NotifySwitchDequeue(uint16_t inPortId, uint32_t outPort, uint32_t priority, Ptr<Packet> packet)
 {
-    m_queueManager->PopFromVoq(inPortId, outPort, priority, packet->GetSize());
+    UbRecoveredCreditTag recoveryTag;
+    const bool recovery = packet->RemovePacketTag(recoveryTag);
+    m_queueManager->PopFromVoq(inPortId, outPort, priority, packet->GetSize(), recovery);
+    if (recovery)
+    {
+        auto origin = DynamicCast<UbPort>(GetObject<Node>()->GetDevice(recoveryTag.failedOutput));
+        origin->GetReliableRerouting()->DequeueRecoveryVoq(packet->GetSize());
+    }
 
     // 只有数据报文触发拥塞控制
     UbPacketType_t packetType = GetPacketType(packet);

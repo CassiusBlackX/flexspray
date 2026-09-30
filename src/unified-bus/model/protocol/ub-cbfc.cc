@@ -148,7 +148,7 @@ void UbCbfc::OnIngressReleased(const UbFlowControlEventContext& context)
 {
     if (context.inPortId != context.outPortId) { // 转发的报文
         // A recovered packet whose upstream credit was already returned when it left the original
-        // ingress must release its new buffer occupancy without returning that credit twice.
+        // ingress releases recovery storage without returning that credit twice.
         if (!context.upstreamCreditAlreadyReturned) {
             AccumulateReturnedCredit(context.packet, m_portId);
         }
