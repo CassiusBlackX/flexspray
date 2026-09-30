@@ -52,3 +52,34 @@ small-case capacity. Tickets 03/04 cover migration order and occupancy output.
 - `doc/adr/0021-model-switch-allocation-as-wakeup-snapshot.md`: preserve allocation transactions.
 - `dev-knowledge/specification/`: UB specification baseline; this change remains packet-level and
   does not model flit retry memory, finite SRAM, or normal on-wire link ACKs.
+
+## Ticket 02: recovery VOQ and ingress isolation
+
+Baseline `0be480ef`; implementation `f7a1e709`. Both retained attempts and failed-egress packets
+enter the existing VOQ with a local origin tag and independent storage accounting. Actual queued
+bytes include recovery; ordinary ingress reservations exclude it on both enqueue and dequeue.
+Queue accounting and allocator credit context share the marker, which is removed before forwarding.
+Paper PFC capacity thresholds exclude the recovery subset. Obsolete ingress-capacity retry/cache
+and wakeup machinery is removed; healthy egress and credit backpressure use the existing allocator.
+
+Executed and passed, sequentially:
+
+- `python3.12 ./ns3 build -j 4` (all configured targets).
+- `build/utils/ns3.44-test-runner --suite=unified-bus-reliable-rerouting --verbose`.
+- `build/utils/ns3.44-test-runner --suite=unified-bus-switch-voq --verbose`.
+- `build/utils/ns3.44-test-runner --suite=unified-bus-flow-control --verbose`.
+
+Evidence: `evidence/02/acceptance-build.log` and `acceptance-<suite>.log`. The red fixture retained
+the prior occupied-ingress scenario and observed an unwanted wait until 20 us instead of the actual
+LastAck at 2.041 us. Eight real-network variants cover exclusive/shared CBFC, RR/DWRR, and healthy
+egress-full/credit-empty blocking. Retry and failed-egress packets coexist with ordinary packets,
+including an arrival after recovery handoff; two ordinary reservations coexist with two recovery
+packets in one four-packet VOQ. The credit-limited variants spend credit using a real warmup transfer
+and resume via a peer control frame carried over the healthy link. Delivery, no leaked marker,
+zero drops, exact upstream credit return, and final occupancy are asserted.
+
+Independent standards/spec review requested downstream-credit evidence and removal of unreachable
+old admission machinery; both are resolved. Intermediate build failure (vector API typo) and fixture
+configuration failure (typed enum value) were corrected before the final passing run; their logs
+remain in `evidence/02/`. No failed or unrun command is counted as passing. Existing PFC and flow
+control regression cases pass. Backlog order and final occupancy output remain tickets 03/04.

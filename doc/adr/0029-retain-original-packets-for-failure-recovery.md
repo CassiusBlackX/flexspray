@@ -1,7 +1,8 @@
 # Retain Original Packets for Failure Recovery
 
 Status: Accepted. Original packet retention implemented on 2026-09-30 (ticket 01);
-recovery admission, backlog ordering and occupancy reporting follow in tickets 02–04.
+recovery VOQ/ingress isolation implemented in ticket 02; backlog ordering and occupancy
+reporting follow in tickets 03–04.
 
 The proposed packet-level rerouting model tracks original packet references while they are in
 flight and retains those packets for recovery when their link fails. It avoids creating a separate
