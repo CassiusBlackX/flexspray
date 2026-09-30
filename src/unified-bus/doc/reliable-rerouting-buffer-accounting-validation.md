@@ -83,3 +83,27 @@ old admission machinery; both are resolved. Intermediate build failure (vector A
 configuration failure (typed enum value) were corrected before the final passing run; their logs
 remain in `evidence/02/`. No failed or unrun command is counted as passing. Existing PFC and flow
 control regression cases pass. Backlog order and final occupancy output remain tickets 03/04.
+
+## Ticket 03: detection routing and backlog order
+
+Baseline `f2a0cd55`; implementation `8e4c4115`. New route selection already excluded detected failed
+outputs through ADR 0028 and remains on that path. Valid LastAck now hands off retry attempts before
+switch backlog; the switch collects failed egress before old VOQ, then already-ready processing.
+Later processing completion keeps its existing reservation and migrates when ready. An explicit
+switch-handoff completion gate prevents an empty retry owner from prematurely reporting DRAINED.
+
+Executed: `python3.12 ./ns3 build -j 4`, followed sequentially by
+`build/utils/ns3.44-test-runner --suite=unified-bus-<suite> --verbose` for
+`reliable-rerouting`, `link-fault-input`, `switch-voq`, `congestion-control`: all PASS.
+Evidence: `evidence/03/green-build.log` and `acceptance-<suite>.log`.
+
+The new real-network order fixture first failed on the old category ordering (`red.log`). It checks
+retry, failed egress and two old VOQ packets remain frozen before actual LastAck, while a newcomer
+already selects the healthy VOQ. Under egress backpressure all five coexist, retaining precisely
+three ordinary ingress reservations. Destination object identities then prove FIFO append order:
+existing newcomer, retry, failed egress, first old VOQ, second old VOQ. Existing tests additionally
+verify actual newcomer transmission before LastAck, cancelled grants, late processing on both sides
+of LastAck, bilateral recovery, route constraints/representations, and no-legal-route errors.
+
+Independent read-only standards and spec reviews both reported zero findings. No scenario output was
+overwritten; final small/Clos integration and occupancy CSV validation remain ticket 04.
