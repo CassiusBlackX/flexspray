@@ -1,7 +1,7 @@
 # Reliable rerouting storage and admission validation
 
-The implementation follows ADR 0029. This record distinguishes completed slices from remaining
-work; local commands/logs live under `.scratch/ub21-reliable-rerouting-buffer-accounting/evidence/`.
+All four implementation tickets are complete under ADR 0029. This record preserves per-ticket
+validation and the final integration limitation; local commands/logs live under `.scratch/ub21-reliable-rerouting-buffer-accounting/evidence/`.
 All builds and tests run sequentially on `ub-2.1-dev`, release profile, tests enabled, MPI/MTP off.
 
 ## Ticket 01: original packet retention
@@ -107,3 +107,77 @@ of LastAck, bilateral recovery, route constraints/representations, and no-legal-
 
 Independent read-only standards and spec reviews both reported zero findings. No scenario output was
 overwritten; final small/Clos integration and occupancy CSV validation remain ticket 04.
+
+
+## Ticket 04: occupancy output and final acceptance
+
+Baseline `ba098bab`; implementation `99b903a4`. `GetOccupancy(stage)` and both CSV outputs read
+one authoritative current/peak packet/byte counter set for `in_flight`, `retry`, `failed_egress`,
+and `recovery_voq`. Source-to-VOQ handoff transfers counts after successful insertion; service
+removes the recovery subset without adding it twice to physical VOQ occupancy. Pending recovery
+uses maintained totals; processing work is counted once at detection and decremented on completion.
+No per-handoff queue scan or extra disabled-path per-packet accounting is introduced.
+
+Default output is `output/reliable_rerouting_occupancy_summary.csv`; opt-in
+`ns3::UbReliableRerouting::TraceOccupancyEvents` adds `reliable_rerouting_occupancy_events.csv`.
+Both sample the same counters with integer `time_ps`, explicit handoff `source`, and origin port.
+Summary sampling precedes cleanup and is independent of master/packet trace gates. Disabled and
+ineligible endpoints emit no rows. DRAINED means failed-output handoff completion, not delivery.
+
+Executed sequentially with the current-source build:
+
+- `python3.12 ./ns3 build -j 4`: PASS, all configured targets (`evidence/04/final-build.log`).
+- `build/utils/ns3.44-test-runner --suite=unified-bus-<suite> --verbose`: all six PASS:
+  `reliable-rerouting`, `link-fault-input`, `switch-voq`, `flow-control`, `congestion-control`,
+  `trace-writer` (`acceptance-<suite>.log`). Real-network fixtures cover query/CSV equality,
+  current/peak counts, both handoff sources, and early stop with retry zero and recovery VOQ nonzero.
+- `python3.12 -m unittest tests.openusim_skills.test_skill_docs`: 20/20 PASS
+  (`docs-tests-final.log`). The initial missing Contents failure was fixed; the failed log is retained.
+- `python3.12 test.py --no-build --jobs 1 --text <evidence/04/full-tests>`:
+  **181/182 passed; one failed**, `pcap-file`, because `src/network/test/known.pcap` is missing.
+  `git ls-tree f992c11d src/network/test/known.pcap` also returns no entry. This unrelated baseline
+  fixture remains unresolved; the full suite is not reported as passing. See `full-tests.txt`,
+  `full-tests-console.log`, and `baseline-pcap-limitation.txt`. Examples and MPI/MTP were disabled;
+  no claim is made for those configurations.
+- `python3.12 scratch/reliable-rerouting/validate_routes.py <isolated-Clos>`: PASS,
+  16,256 task pairs, 49,272 route states and both three-hop LastAck paths (`clos-route-preflight.log`).
+- `python3.12 scratch/reliable-rerouting/run_case.py <isolated-case>`: final small/default,
+  detail, no-fault enabled/disabled, master-trace-off, and full Clos runs all exit 0.
+- `python3.12 <isolated-small-or-Clos>/check_results.py --self-test`: small/default and detail each
+  pass the positive run plus 15 rejection paths; Clos passes those plus four provenance/configuration
+  rejection paths (`2nodes_reliable-rerouting-checker.log`, `small-detail-checker.log`,
+  `clos-checker.log`). Missing summaries and retry-zero/nonempty-VOQ mutations are rejected.
+- The evidence-local `run_extra.py` reuses the existing runner with only its root location and driver
+  command suffix adapted. It invokes existing `--canonical-output` and `--stop-ms=1` options for
+  two trace-gate canonical runs and the early-stop run; all exit 0 with unchanged runtime fingerprints.
+- `python3.12 <evidence/04>/check_variants.py`: PASS (`variant-checks.log`). All nine final scenarios
+  have exit-zero manifests binding inputs, source state, scripts, binary and output hashes.
+
+All scenarios use fresh `evidence/04/cases-final/` directories. Preliminary `evidence/04/cases/`
+and preexisting checked-in results are preserved. The full test suite's generated smoke files were
+moved to `evidence/04/full-suite-generated-smoke-test/`, not added to the source change.
+
+| Scenario / comparison | Observed result |
+| --- | --- |
+| Small failure, default/detail | Four tasks, 382 recovery transfers, zero runtime drops; 28 protocol result files byte-identical |
+| No fault, feature enabled/disabled | 24 packet/lifecycle/port/task/throughput result files byte-identical; disabled emits no occupancy output |
+| Master trace on/off | Canonical START/COMPLETE_VISIBLE bytes identical, all four tasks complete; occupancy summary bytes identical |
+| Controlled stop at 1 ms | Workload starts 990 us, physical fault 999 us; both directions retain 46 retry packets / 159,108 bytes, DETECTION_PENDING; no completed tasks |
+| 128-host Clos | 16,256 unique 64 KiB tasks / 1,065,353,216 bytes complete; 233 transfers; six actual three-hop LastAck sends; zero runtime drops; TP retransmission disabled |
+
+Clos latest task completion is **417.783760 us**. Failed endpoints `(128,8)` and `(144,0)` have
+retry/recovery-VOQ peaks of **116 packets / 225,128 bytes** and **117 packets / 229,302 bytes**,
+respectively; failed-egress peaks are **2 packets / 4,174 bytes** per endpoint. Completed runs end
+with all four current stages zero. Stage peaks occur independently and should not be summed as
+simultaneous occupancy.
+
+The Clos wrapper measured **41.613059 s** wall time; the driver reported **40.489697 s** simulation
+execution and **0.586056 s** trace parsing. These are observations from one run, not a speedup claim
+or simulated throughput measurement. Reporting-toggle comparisons establish behavior parity, not
+a statistically controlled overhead benchmark.
+
+Independent read-only standards/spec reviews closed three findings: invoke the occupancy checker,
+label each handoff source, and remove repeated processing scans. Both final reviews report zero
+outstanding findings (`independent-review.md`). The root agent also reviewed ownership, disabled
+paths, cleanup sampling, marker consumption and preserved scheduler/credit/routing behavior.
+No feature requirement remains unresolved; the missing base-module pcap fixture is recorded above.

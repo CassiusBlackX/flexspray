@@ -1,10 +1,11 @@
 # Retain Original Packets for Failure Recovery
 
-Status: Accepted. Original packet retention implemented on 2026-09-30 (ticket 01);
-recovery VOQ/ingress isolation implemented in ticket 02 and backlog ordering in ticket 03.
-Occupancy reporting and final integrated acceptance follow in ticket 04.
+Status: Accepted and implemented. All four tickets completed on 2026-10-01: original packet
+retention, recovery VOQ/ingress isolation, backlog ordering, and occupancy reporting.
+See [validation](../../src/unified-bus/doc/reliable-rerouting-buffer-accounting-validation.md)
+for commits, executed checks, integrated evidence, and the unrelated missing pcap fixture.
 
-The proposed packet-level rerouting model tracks original packet references while they are in
+The packet-level rerouting model tracks original packet references while they are in
 flight and retains those packets for recovery when their link fails. It avoids creating a separate
 `Packet::Copy()` object for every normal transmission. Tracking must cover every unconfirmed packet
 in a link direction, including packets still propagating after the port clears its current transmit
@@ -99,7 +100,7 @@ packet, and transfer responsibility without dropping the last reference. Removin
 releases that store's reference; it does not destroy a packet that another queue or event still
 holds. Retry occupancy describes retained packet bytes, not host memory allocated by the simulator.
 
-This proposal revises the normal-transmission backup representation described in ADR 0027 while
+This decision revises the normal-transmission backup representation described in ADR 0027 while
 preserving its packet-level, idealized-acknowledgement scope and detection-time output shutdown.
 All retained-backlog categories preserve ADR 0027's LastAck migration gate, whereas new route
 selections avoid the failed output immediately at detection. These rules supplement ADR 0027's
