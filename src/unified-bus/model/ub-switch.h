@@ -367,6 +367,9 @@ private:
 
     // Retained work that the switch itself owns during recovery (never a live transmission).
     std::vector<PendingRecoveryEntry> m_pendingRecovery;
+    uint64_t m_pendingRecoveryPackets{0};
+    uint64_t m_pendingRecoveryBytes{0};
+    uint64_t m_pendingFailedProcessing{0};
     bool m_recoveryBacklogMigrated{false};
     bool m_recoveryDisposed{false};
     uint64_t m_nextRecoveryEntryId{0};

@@ -40,6 +40,8 @@ EXPECTED_EVIDENCE_HEADER = [
     "pending_bytes",
     "source_node", "source_port", "destination_node", "destination_port",
     "receive_next", "copy", "owner", "processing_packets",
+    "in_flight_packets", "in_flight_bytes", "failed_egress_packets", "failed_egress_bytes",
+    "recovery_voq_packets", "recovery_voq_bytes",
 ]
 EXPECTED_LINK_FAULT_HEADER = ["nodeId", "portId", "failTimeNs"]
 
@@ -278,6 +280,7 @@ def check(case_dir: Path) -> None:
 
     # Recovery evidence.
     evidence = _read_rows(case_dir / "output" / "reliable_rerouting.csv", EXPECTED_EVIDENCE_HEADER)
+    check_occupancy(case_dir, evidence)
     if not evidence:
         raise CheckFailure("output/reliable_rerouting.csv contains no recovery evidence rows")
 
@@ -352,7 +355,7 @@ def check(case_dir: Path) -> None:
         last_drain = drain[0]
         if int(last_drain["time_ps"]) < max(int(row["time_ps"]) for row in transfers):
             raise CheckFailure(f"node {node_id}: drain precedes final ownership transfer")
-        if any(int(last_drain[field]) != 0 for field in ("retry_packets", "pending_packets", "processing_packets")):
+        if any(int(last_drain[field]) != 0 for field in ("retry_packets", "pending_packets", "processing_packets", "failed_egress_packets")):
             raise CheckFailure(
                 f"node {node_id}: claimed drain with outstanding recovery work "
                 f"(retry={last_drain['retry_packets']}, pending={last_drain['pending_packets']}, processing={last_drain['processing_packets']})"
@@ -385,6 +388,58 @@ def check(case_dir: Path) -> None:
             tasks=len(completed),
         )
     )
+
+
+OCCUPANCY_HEADER = ["time_ps", "node_id", "failed_port", "stage", "packets", "bytes",
+                    "peak_packets", "peak_bytes", "state", "event", "source"]
+STAGES = {"in_flight", "retry", "failed_egress", "recovery_voq"}
+
+
+def check_occupancy(case_dir: Path, evidence: list[dict[str, str]]) -> None:
+    """Completed-case contract: query-backed summaries converge independently of retry drain."""
+    rows = _read_rows(case_dir / "output/reliable_rerouting_occupancy_summary.csv", OCCUPANCY_HEADER)
+    groups = {}
+    for row in rows:
+        key = (row["node_id"], row["failed_port"])
+        stage = row["stage"]
+        if stage not in STAGES or stage in groups.setdefault(key, {}):
+            raise CheckFailure("unknown or duplicate occupancy stage")
+        groups[key][stage] = row
+        values = [int(row[name]) for name in ("time_ps", "packets", "bytes", "peak_packets", "peak_bytes")]
+        if any(value < 0 for value in values) or values[1] > values[3] or values[2] > values[4]:
+            raise CheckFailure("invalid occupancy current/peak counters")
+        if values[1] or values[2]:
+            raise CheckFailure("completed workload retains recovery or in-flight occupancy")
+        if row["event"] != "summary":
+            raise CheckFailure("summary contains non-summary record")
+    if not groups or any(set(group) != STAGES for group in groups.values()):
+        raise CheckFailure("missing occupancy stages")
+    for row in evidence:
+        if row["event"] == "state:DETECTION_PENDING":
+            group = groups.get((row["node_id"], row["port_id"]), {})
+            if not group or group["retry"]["state"] != "DRAINED":
+                raise CheckFailure("failed endpoint lacks drained occupancy summary")
+            if int(group["retry"]["peak_packets"]) <= 0 or int(group["recovery_voq"]["peak_packets"]) <= 0:
+                raise CheckFailure("failed endpoint lacks retained and VOQ recovery evidence")
+    detail_path = case_dir / "output/reliable_rerouting_occupancy_events.csv"
+    if detail_path.exists():
+        last = {}
+        for row in _read_rows(detail_path, OCCUPANCY_HEADER):
+            key = (row["node_id"], row["failed_port"], row["stage"])
+            if row["stage"] not in STAGES or int(row["time_ps"]) < 0:
+                raise CheckFailure("invalid occupancy event identity/time")
+            if row["event"] == "voq_handoff" and row["source"] not in {"retry", "failed_egress"}:
+                raise CheckFailure("VOQ handoff missing explicit source")
+            old = last.get(key)
+            if old and int(row["time_ps"]) < int(old["time_ps"]):
+                raise CheckFailure("occupancy event time moved backwards")
+            last[key] = row
+        for (node, port), group in groups.items():
+            for stage, summary in group.items():
+                event = last.get((node, port, stage))
+                if event and any(event[field] != summary[field] for field in
+                                 ("packets", "bytes", "peak_packets", "peak_bytes")):
+                    raise CheckFailure("event/query summary occupancy disagree")
 
 
 def _mutate(source: Path, target: Path, mutate) -> Path:
@@ -530,7 +585,22 @@ def self_test(case_dir: Path) -> None:
         expect_rejection("zero-recovery-in-one-direction", zero_direction)
         expect_rejection("duplicate-transfer", duplicate_transfer)
         expect_rejection("drain-with-outstanding-work", drain_with_work)
-    print("PASS: checker self-test exercised the positive run and 13 rejection paths")
+        def outstanding_voq(target: Path) -> None:
+            path = target / "output/reliable_rerouting_occupancy_summary.csv"
+            rows = _read_rows(path, OCCUPANCY_HEADER)
+            for row in rows:
+                if row["stage"] == "recovery_voq":
+                    row["packets"] = "1"
+                    row["bytes"] = "1"
+                    break
+            with path.open("w", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=OCCUPANCY_HEADER)
+                writer.writeheader()
+                writer.writerows(rows)
+        expect_rejection("missing-occupancy-summary", lambda target:
+                         (target / "output/reliable_rerouting_occupancy_summary.csv").unlink())
+        expect_rejection("retry-zero-but-voq-not-empty", outstanding_voq)
+    print("PASS: checker self-test exercised the positive run and 15 rejection paths")
 
 
 def main(argv: list[str]) -> int:

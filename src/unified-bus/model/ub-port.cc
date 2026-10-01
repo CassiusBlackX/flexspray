@@ -107,6 +107,10 @@ UbPort::EnqueueToEgress(PacketEntry packetEntry)
     {
         ubSwitch->GetQueueManager()->AddEgressBufferedBytes(pktSize);
     }
+    if (m_rerouting != nullptr && m_rerouting->IsArmed())
+    {
+        m_rerouting->FailedEgressEnqueued(pktSize);
+    }
     return true;
 }
 
@@ -563,6 +567,10 @@ void UbPort::DequeuePacket(void)
         ubSwitch->GetQueueManager()->RemoveEgressBufferedBytes(packet->GetSize());
     }
 
+    if (m_rerouting != nullptr && m_rerouting->IsArmed())
+    {
+        m_rerouting->FailedEgressDequeued(packet->GetSize());
+    }
     m_currentPkt = packet;
     m_currentInPortId = inPortId;
     m_currentPriority = priority;

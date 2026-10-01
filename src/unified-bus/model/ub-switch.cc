@@ -535,6 +535,8 @@ UbSwitch::CompleteInPortProcessing(Ptr<Packet> packet,
 
     if (outPort == m_detectedFailedOutput)
     {
+        NS_ABORT_MSG_IF(m_pendingFailedProcessing == 0, "Failed processing count underflow");
+        --m_pendingFailedProcessing;
         // The packet keeps its original ready time and ingress reservation, but it may enter a
         // healthy VOQ only after the modeled LastAck.
         m_queueManager->MoveProcessingToPendingRecovery(inPort, outPort, priority, packet->GetSize());
@@ -1434,6 +1436,14 @@ UbSwitch::NotifyOutputDetectedFailed(uint32_t outPort)
                     "Version one supports one detected failed output per switch");
 
     m_detectedFailedOutput = outPort;
+    // Snapshot once at detection; subsequent completions update the count directly. New arrivals
+    // already avoid this output, so recovery handoffs never need to scan processing events.
+    m_pendingFailedProcessing = std::count_if(
+        m_inPortProcessingEvents.begin(),
+        m_inPortProcessingEvents.end(),
+        [outPort](const InPortProcessingEvent& pending) {
+            return pending.outPort == outPort && pending.event.IsPending();
+        });
     m_routingProcess->SetOutputUnavailable(static_cast<uint16_t>(outPort));
 
     // Detection stops new allocations and invalidates pending grants/notifications for the output
@@ -1485,6 +1495,7 @@ UbSwitch::StartOutputRecovery(uint32_t outPort)
         m_queueManager->RemoveEgressBufferedBytes(packetBytes);
         if (GetPacketType(packet) == UB_CONTROL_FRAME)
         {
+            failedPort->GetReliableRerouting()->DiscardFailedEgress(packetBytes);
             continue;
         }
         m_queueManager->AddPendingRecoveryBytes(inPort, priority, packetBytes);
@@ -1555,6 +1566,8 @@ UbSwitch::ParkRecoveryPacket(Ptr<Packet> packet,
     entry.entryId = ++m_nextRecoveryEntryId;
     entry.ingressHeld = ingressHeld;
     m_pendingRecovery.push_back(entry);
+    ++m_pendingRecoveryPackets;
+    m_pendingRecoveryBytes += packet->GetSize();
     NS_LOG_DEBUG("[UbSwitch] parked recovery entry " << entry.entryId << " inPort " << inPort
                                                      << " pri " << priority << " ingressHeld "
                                                      << ingressHeld);
@@ -1573,6 +1586,13 @@ UbSwitch::TransferOnePendingEntry(PendingRecoveryEntry& entry)
             m_queueManager->RemovePendingRecoveryBytes(entry.inPort,
                                                        entry.priority,
                                                        entry.packet->GetSize());
+            --m_pendingRecoveryPackets;
+            m_pendingRecoveryBytes -= entry.packet->GetSize();
+            if (!entry.ingressHeld)
+            {
+                FailedOutputRerouting()->DiscardFailedEgress(entry.packet->GetSize());
+            }
+            PublishRecoveryBacklogCounters(entry.oldOutput);
             if (Ptr<UbReliableRerouting> rerouting = FailedOutputRerouting())
             {
                 rerouting->PublishBacklogEvent("control_frame_discarded",
@@ -1595,7 +1615,6 @@ UbSwitch::TransferOnePendingEntry(PendingRecoveryEntry& entry)
         UbRecoveredCreditTag creditTag;
         creditTag.failedOutput = entry.oldOutput;
         entry.packet->AddPacketTag(creditTag);
-        FailedOutputRerouting()->EnqueueRecoveryVoq(packetBytes);
     }
     m_queueManager->AdmitPendingRecoveryToVoq(entry.inPort,
                                               entry.selectedOutput,
@@ -1603,6 +1622,13 @@ UbSwitch::TransferOnePendingEntry(PendingRecoveryEntry& entry)
                                               packetBytes,
                                               entry.ingressHeld);
     GetOrCreateVoq(entry.selectedOutput, entry.priority, entry.inPort)->Push(entry.packet);
+    --m_pendingRecoveryPackets;
+    m_pendingRecoveryBytes -= packetBytes;
+    if (!entry.ingressHeld)
+    {
+        FailedOutputRerouting()->EnqueueRecoveryVoq(packetBytes, UbRecoveryStage::FAILED_EGRESS);
+    }
+    PublishRecoveryBacklogCounters(entry.oldOutput);
     FinalizeForwardedPacketEnqueue(entry.packet,
                                    entry.inPort,
                                    entry.selectedOutput,
@@ -1657,6 +1683,8 @@ UbSwitch::ClearRecoveryBacklogForOutput(uint32_t outPort)
         if (it->oldOutput == outPort)
         {
             released += it->packet->GetSize();
+            --m_pendingRecoveryPackets;
+            m_pendingRecoveryBytes -= it->packet->GetSize();
             it = m_pendingRecovery.erase(it);
         }
         else
@@ -1780,8 +1808,8 @@ UbSwitch::SubmitRecoveryPacket(Ptr<Packet> packet,
     creditTag.failedOutput = oldOutput;
     packet->AddPacketTag(creditTag);
     m_queueManager->PushToVoq(inPort, newOutput, priority, packetBytes, true);
-    FailedOutputRerouting()->EnqueueRecoveryVoq(packetBytes);
     GetOrCreateVoq(newOutput, priority, inPort)->Push(packet);
+    FailedOutputRerouting()->EnqueueRecoveryVoq(packetBytes, UbRecoveryStage::RETRY);
     FinalizeForwardedPacketEnqueue(packet, inPort, newOutput, priority, true);
     m_lastRecoveryOutput = newOutput;
     ++m_recoveryTransferCount;
@@ -1809,29 +1837,13 @@ UbSwitch::AbortNoRecoveryRoute(const RoutingKey& key,
 uint64_t
 UbSwitch::GetPendingRecoveryPacketCount(uint32_t outPort) const
 {
-    uint64_t count = 0;
-    for (const auto& entry : m_pendingRecovery)
-    {
-        if (entry.oldOutput == outPort)
-        {
-            ++count;
-        }
-    }
-    return count;
+    return outPort == m_detectedFailedOutput ? m_pendingRecoveryPackets : 0;
 }
 
 uint64_t
 UbSwitch::GetPendingRecoveryByteCount(uint32_t outPort) const
 {
-    uint64_t bytes = 0;
-    for (const auto& entry : m_pendingRecovery)
-    {
-        if (entry.oldOutput == outPort)
-        {
-            bytes += entry.packet->GetSize();
-        }
-    }
-    return bytes;
+    return outPort == m_detectedFailedOutput ? m_pendingRecoveryBytes : 0;
 }
 
 void
@@ -1847,17 +1859,9 @@ UbSwitch::PublishRecoveryBacklogCounters(uint32_t outPort)
     {
         return;
     }
-    uint64_t processing = 0;
-    for (const auto& pending : m_inPortProcessingEvents)
-    {
-        if (pending.outPort == outPort && pending.event.IsPending())
-        {
-            ++processing;
-        }
-    }
     port->GetReliableRerouting()->SetPendingRecoveryCounters(GetPendingRecoveryPacketCount(outPort),
                                                              GetPendingRecoveryByteCount(outPort),
-                                                             processing);
+                                                             m_pendingFailedProcessing);
 }
 
 Ptr<UbReliableRerouting>

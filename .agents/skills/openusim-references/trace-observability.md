@@ -6,6 +6,16 @@
 <keywords>trace, debug, minimal, balanced, detailed, observability</keywords>
 </reference-hint>
 
+## Contents
+
+- [Tier Definitions](#tier-definitions)
+- [Hard Facts](#hard-facts)
+- [Non-Implications](#non-implications)
+- [Safe Wording](#safe-wording)
+- [Unsafe Wording](#unsafe-wording)
+- [Authority](#authority)
+- [Reliable rerouting occupancy](#reliable-rerouting-occupancy)
+
 ## Tier Definitions
 
 | Tier | Intent | Post-processing output |
@@ -76,3 +86,29 @@ Do not hardcode switch names in experiment specs or agent logic.
 
 - `code/doc fact`: trace/debug is modeled as attribute overrides on `network_attribute.txt`
 - `maintainer fact`: detailed trace affects runtime cost and observability, not simulated throughput semantics by itself
+
+## Reliable rerouting occupancy
+
+Armed switch-to-switch endpoints maintain four authoritative packet/byte stages: `in_flight`,
+`retry`, `failed_egress`, and `recovery_voq`. `UbReliableRerouting::GetOccupancy(stage)` returns current
+and peak packets/bytes. Retry means failure-retained attempts; healthy propagation is `in_flight`.
+Recovery VOQ bytes are a subset of actual VOQ bytes, not additional occupancy to sum with that total.
+
+`output/reliable_rerouting_occupancy_summary.csv` is emitted by default for armed endpoints before
+simulator cleanup, independently of packet/port and master trace gates. Disabled/ineligible endpoints
+emit no rows and maintain no new per-packet retention counters. The `failed_port` column identifies
+the local origin port, including healthy endpoints whose state is `HEALTHY`.
+
+`ns3::UbReliableRerouting::TraceOccupancyEvents` defaults to `false`. Enabling this attribute writes
+`output/reliable_rerouting_occupancy_events.csv` from the same counters, independently of the ordinary
+trace category switches. Both outputs use:
+`time_ps,node_id,failed_port,stage,packets,bytes,peak_packets,peak_bytes,state,event,source`.
+Integer `time_ps` preserves simulator precision. Bytes describe modeled packet storage, not RSS.
+
+The existing `reliable_rerouting.csv` remains gated by packet trace and retains state/LastAck evidence.
+Its schema appends `in_flight_packets,in_flight_bytes,failed_egress_packets,failed_egress_bytes,
+recovery_voq_packets,recovery_voq_bytes`. `DRAINED` closes the original failed-output handoff; it does
+not promise destination delivery or zero recovery VOQ occupancy. Early-stop summaries preserve
+remaining work. Completed-case checkers additionally require all four occupancy stages to converge.
+
+Occupancy `source` explicitly labels VOQ handoffs as `retry` or `failed_egress`; other rows use `none`.

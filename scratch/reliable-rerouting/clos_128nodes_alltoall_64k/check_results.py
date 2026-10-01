@@ -73,7 +73,8 @@ def contract(case):
     require(set(manifest.get("inputs_sha256", {})) == runtime_inputs, "runtime input inventory changed")
     for name in runtime_inputs:
         require(manifest.get("inputs_sha256", {}).get(name) == hashlib.sha256((case / name).read_bytes()).hexdigest(), f"stale input evidence: {name}")
-    for name in ("execution.log", "task_statistics.csv", "reliable_rerouting.csv"):
+    for name in ("execution.log", "task_statistics.csv", "reliable_rerouting.csv",
+                 "reliable_rerouting_occupancy_summary.csv"):
         require(manifest.get("outputs_sha256", {}).get(name) == hashlib.sha256((case / "output" / name).read_bytes()).hexdigest(), f"stale output evidence: {name}")
     log = (case / "output/execution.log").read_text()
     require("[summary] Runtime packet drops: 0" in log and "[run] Simulation finished." in log, "missing clean runtime/drop summary")

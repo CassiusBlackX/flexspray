@@ -9,6 +9,7 @@
 #include "ns3/traced-callback.h"
 #include "ns3/tag.h"
 
+#include <array>
 #include <cstdint>
 #include <deque>
 #include <ostream>
@@ -74,6 +75,34 @@ enum class UbRecoverySubmitResult : uint8_t
     DISCARDED,    //!< Link-local control frame disposed locally instead of rerouted.
 };
 
+enum class UbRecoveryStage : uint8_t
+{
+    IN_FLIGHT,
+    RETRY,
+    FAILED_EGRESS,
+    RECOVERY_VOQ,
+    COUNT
+};
+
+struct UbRecoveryOccupancy
+{
+    uint64_t packets{0};
+    uint64_t bytes{0};
+    uint64_t peakPackets{0};
+    uint64_t peakBytes{0};
+};
+
+struct UbRecoveryOccupancyEvent
+{
+    uint32_t nodeId{0};
+    uint32_t portId{0};
+    std::string stage;
+    std::string state;
+    std::string event;
+    UbRecoveryOccupancy occupancy;
+    std::string source{"none"};
+};
+
 struct UbReliableReroutingEvent
 {
     uint32_t nodeId{0};
@@ -88,6 +117,12 @@ struct UbReliableReroutingEvent
     uint64_t pendingPackets{0};
     uint64_t pendingBytes{0};
     uint64_t processingPackets{0};
+    uint64_t inFlightPackets{0};
+    uint64_t inFlightBytes{0};
+    uint64_t failedEgressPackets{0};
+    uint64_t failedEgressBytes{0};
+    uint64_t recoveryVoqPackets{0};
+    uint64_t recoveryVoqBytes{0};
     uint32_t sourceNode{UB_REROUTING_NO_OUTPUT};
     uint32_t sourcePort{UB_REROUTING_NO_OUTPUT};
     uint32_t destinationNode{UB_REROUTING_NO_OUTPUT};
@@ -171,17 +206,22 @@ class UbReliableRerouting : public Object
     uint64_t GetConfirmedNext() const { return m_confirmedNext; }
     uint64_t GetReceiveNext() const { return m_receiveNext; }
 
-    uint64_t GetRetryPacketCount() const { return static_cast<uint64_t>(m_attempts.size()); }
-    uint64_t GetRetryByteCount() const { return m_retryBytes; }
-    uint64_t GetInFlightPacketCount() const { return m_inFlight.size(); }
-    uint64_t GetInFlightByteCount() const { return m_inFlightBytes; }
-    uint64_t GetPeakInFlightPacketCount() const { return m_peakInFlightPackets; }
-    uint64_t GetPeakRetryPacketCount() const { return m_peakRetryPackets; }
-
-    void EnqueueRecoveryVoq(uint32_t bytes);
+    const UbRecoveryOccupancy& GetOccupancy(UbRecoveryStage stage) const;
+    static const char* GetStageName(UbRecoveryStage stage);
+    uint64_t GetRetryPacketCount() const { return GetOccupancy(UbRecoveryStage::RETRY).packets; }
+    uint64_t GetRetryByteCount() const { return GetOccupancy(UbRecoveryStage::RETRY).bytes; }
+    uint64_t GetPeakRetryPacketCount() const { return GetOccupancy(UbRecoveryStage::RETRY).peakPackets; }
+    uint64_t GetInFlightPacketCount() const { return GetOccupancy(UbRecoveryStage::IN_FLIGHT).packets; }
+    uint64_t GetInFlightByteCount() const { return GetOccupancy(UbRecoveryStage::IN_FLIGHT).bytes; }
+    uint64_t GetPeakInFlightPacketCount() const { return GetOccupancy(UbRecoveryStage::IN_FLIGHT).peakPackets; }
+    uint64_t GetRecoveryVoqPacketCount() const { return GetOccupancy(UbRecoveryStage::RECOVERY_VOQ).packets; }
+    uint64_t GetRecoveryVoqByteCount() const { return GetOccupancy(UbRecoveryStage::RECOVERY_VOQ).bytes; }
+    void EnqueueRecoveryVoq(uint32_t bytes, UbRecoveryStage source);
     void DequeueRecoveryVoq(uint32_t bytes);
-    uint64_t GetRecoveryVoqPacketCount() const { return m_recoveryVoqPackets; }
-    uint64_t GetRecoveryVoqByteCount() const { return m_recoveryVoqBytes; }
+    void FailedEgressEnqueued(uint32_t bytes);
+    void FailedEgressDequeued(uint32_t bytes);
+    void DiscardFailedEgress(uint32_t bytes);
+    void WriteOccupancySummary();
 
     // ---- Failure progression ---------------------------------------------
 
@@ -225,6 +265,10 @@ class UbReliableRerouting : public Object
         uint32_t priority{0};
     };
 
+    void AddOccupancy(UbRecoveryStage stage, uint64_t packets, uint64_t bytes);
+    void RemoveOccupancy(UbRecoveryStage stage, uint64_t packets, uint64_t bytes);
+    void PublishOccupancy(const std::string& event, bool summary = false,
+                          UbRecoveryStage source = UbRecoveryStage::COUNT);
     void Publish(const std::string& event,
                  uint64_t attemptId = 0,
                  uint32_t oldOutput = UB_REROUTING_NO_OUTPUT,
@@ -255,14 +299,8 @@ class UbReliableRerouting : public Object
     uint64_t m_receiveNext{0};
     std::deque<Attempt> m_inFlight;
     std::deque<Attempt> m_attempts;
-    uint64_t m_inFlightBytes{0};
-    uint64_t m_retryBytes{0};
-    uint64_t m_peakInFlightPackets{0};
-    uint64_t m_peakRetryPackets{0};
-    uint64_t m_recoveryVoqPackets{0};
-    uint64_t m_recoveryVoqBytes{0};
-    uint64_t m_peakRecoveryVoqPackets{0};
-    uint64_t m_peakRecoveryVoqBytes{0};
+    std::array<UbRecoveryOccupancy, static_cast<size_t>(UbRecoveryStage::COUNT)> m_occupancy{};
+    bool m_traceOccupancyEvents{false};
     uint64_t m_pendingPackets{0};
     uint64_t m_pendingBytes{0};
     uint64_t m_processingPackets{0};

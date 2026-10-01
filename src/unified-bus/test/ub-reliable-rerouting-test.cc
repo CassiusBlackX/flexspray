@@ -22,9 +22,13 @@
 
 #include <algorithm>
 #include <csignal>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iomanip>
 #include <sstream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -1320,6 +1324,146 @@ class UbReroutingBacklogOrderTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(topo.State(1), UbReliableRerouting::State::DRAINED, "handoff closed");
         Simulator::Destroy();
     }
+};
+
+class UbReroutingOccupancyOutputTest : public TestCase
+{
+  public:
+    UbReroutingOccupancyOutputTest(bool detail, bool early, bool enabled = true)
+        : TestCase("Reliable rerouting - occupancy output detail=" + std::to_string(detail) +
+                   " early=" + std::to_string(early) + " enabled=" + std::to_string(enabled)),
+          m_detail(detail), m_early(early), m_enabled(enabled)
+    {
+    }
+    void DoRun() override
+    {
+        namespace fs = std::filesystem;
+        const auto dir = fs::temp_directory_path() /
+            ("ub-recovery-occupancy-" + std::to_string(
+                std::chrono::steady_clock::now().time_since_epoch().count()));
+        fs::create_directories(dir / "output");
+        UbUtils::Get()->Destroy();
+        UbUtils::SetTracePathForTest(dir.string());
+        ReroutingTopology topo(m_enabled, MicroSeconds(10), NanoSeconds(0), MicroSeconds(5));
+        topo.b1->SetAttribute("UbInterframeGap", TimeValue(MicroSeconds(20)));
+        topo.b2->GetUbQueue()->SetAttribute("MaxEgressBytes", UintegerValue(16));
+        topo.Rerouting(1)->SetAttribute("TraceOccupancyEvents", BooleanValue(m_detail));
+        PacketSink sink;
+        topo.d0->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sink));
+        uint32_t bytes = 0;
+        for (uint32_t i = 0; i < 2; ++i)
+        {
+            auto packet = BuildUrmaPacket(256, topo.hostA->GetId(), topo.hostD->GetId(),
+                                          kPriority, RoutingType::PER_FLOW_SHORTEST_PATHS, i);
+            bytes = packet->GetSize();
+            Simulator::Schedule(NanoSeconds(10 + i * 100), &UbSwitch::SwitchHandlePacket,
+                                topo.Switch(topo.swB), topo.b0, packet);
+        }
+        if (m_enabled)
+        {
+            Simulator::Schedule(MicroSeconds(1), &UbLink::Fail, topo.failedLink);
+        }
+        Simulator::Schedule(MicroSeconds(20), [&]() {
+            topo.b2->GetUbQueue()->SetAttribute("MaxEgressBytes", UintegerValue(65536));
+            topo.b2->TriggerTransmit();
+        });
+        Simulator::Stop(MicroSeconds(m_early ? 15 : 80));
+        Simulator::Run();
+        auto owner = topo.b1->GetReliableRerouting();
+        if (m_enabled)
+        {
+            NS_TEST_ASSERT_MSG_EQ(owner->GetOccupancy(UbRecoveryStage::RETRY).peakPackets, 1u,
+                                  "one attempted original retained");
+            NS_TEST_ASSERT_MSG_EQ(owner->GetOccupancy(UbRecoveryStage::FAILED_EGRESS).peakBytes,
+                                  bytes, "one unsent egress original retained");
+            NS_TEST_ASSERT_MSG_EQ(owner->GetOccupancy(UbRecoveryStage::RECOVERY_VOQ).peakBytes,
+                                  2u * bytes, "both origins coexist in healthy VOQ");
+            NS_TEST_ASSERT_MSG_EQ(owner->GetRetryPacketCount(), 0u, "retry handed off");
+            NS_TEST_ASSERT_MSG_EQ(owner->GetRecoveryVoqPacketCount(), (m_early ? 2u : 0u),
+                                  "early stop reports queued recovery even with retry zero");
+        }
+        UbUtils::Get()->Destroy();
+        const auto summary = dir / "output/reliable_rerouting_occupancy_summary.csv";
+        const auto events = dir / "output/reliable_rerouting_occupancy_events.csv";
+        NS_TEST_ASSERT_MSG_EQ(fs::exists(summary), m_enabled, "summary follows actual arming");
+        NS_TEST_ASSERT_MSG_EQ(fs::exists(events), (m_enabled && m_detail), "detail is opt-in");
+        if (m_enabled)
+        {
+            std::ifstream input(summary);
+            std::string line;
+            std::getline(input, line);
+            NS_TEST_ASSERT_MSG_EQ(line,
+                "time_ps,node_id,failed_port,stage,packets,bytes,peak_packets,peak_bytes,state,event,source",
+                "fixed occupancy CSV schema");
+            uint32_t matched = 0;
+            while (std::getline(input, line))
+            {
+                for (uint32_t i = 0; i < static_cast<uint32_t>(UbRecoveryStage::COUNT); ++i)
+                {
+                    auto stage = static_cast<UbRecoveryStage>(i);
+                    const auto& count = owner->GetOccupancy(stage);
+                    std::ostringstream expected;
+                    expected << Simulator::Now().GetPicoSeconds() << ',' << topo.swB->GetId()
+                             << ",1," << owner->GetStageName(stage) << ',' << count.packets << ','
+                             << count.bytes << ',' << count.peakPackets << ',' << count.peakBytes
+                             << ',' << owner->GetStateName(owner->GetState()) << ",summary,none";
+                    if (line == expected.str())
+                    {
+                        ++matched;
+                    }
+                }
+            }
+            NS_TEST_ASSERT_MSG_EQ(matched, 4u, "summary exactly matches all four query stages");
+            if (m_detail)
+            {
+                std::ifstream detail(events);
+                std::array<std::vector<std::string>, 4> last;
+                std::set<std::string> sources;
+                std::getline(detail, line);
+                while (std::getline(detail, line))
+                {
+                    std::istringstream row(line);
+                    std::vector<std::string> fields;
+                    std::string field;
+                    while (std::getline(row, field, ',')) fields.push_back(field);
+                    NS_TEST_ASSERT_MSG_EQ(fields.size(), 11u, "fixed-width event row");
+                    if (fields.size() != 11) continue;
+                    if (fields[9] == "voq_handoff") sources.insert(fields[10]);
+                    for (uint32_t i = 0; i < 4; ++i)
+                    {
+                        if (fields[1] == std::to_string(topo.swB->GetId()) && fields[2] == "1" &&
+                            fields[3] == owner->GetStageName(static_cast<UbRecoveryStage>(i)))
+                        {
+                            last[i] = fields;
+                        }
+                    }
+                }
+                NS_TEST_ASSERT_MSG_EQ(sources.count("retry"), 1u, "explicit retry source");
+                NS_TEST_ASSERT_MSG_EQ(sources.count("failed_egress"), 1u, "explicit egress source");
+                for (uint32_t i = 0; i < 4; ++i)
+                {
+                    NS_TEST_ASSERT_MSG_EQ(last[i].size(), 11u, "each stage has event evidence");
+                    if (last[i].size() != 11) continue;
+                    const auto& count = owner->GetOccupancy(static_cast<UbRecoveryStage>(i));
+                    NS_TEST_ASSERT_MSG_EQ(last[i][4], std::to_string(count.packets), "event packets match");
+                    NS_TEST_ASSERT_MSG_EQ(last[i][5], std::to_string(count.bytes), "event bytes match");
+                    NS_TEST_ASSERT_MSG_EQ(last[i][6], std::to_string(count.peakPackets), "event peak packets match");
+                    NS_TEST_ASSERT_MSG_EQ(last[i][7], std::to_string(count.peakBytes), "event peak bytes match");
+                }
+            }
+        }
+        if (!m_early)
+        {
+            NS_TEST_ASSERT_MSG_EQ(sink.packets.size(), 2u, "reporting preserves complete delivery");
+        }
+        Simulator::Destroy();
+        UbUtils::SetTracePathForTest("");
+        fs::remove_all(dir);
+    }
+  private:
+    bool m_detail;
+    bool m_early;
+    bool m_enabled;
 };
 
 class UbReroutingNoLegalOutputTest : public TestCase
@@ -2977,6 +3121,11 @@ class UbReliableReroutingSuite : public TestSuite
         AddTestCase(new UbReroutingOriginalPacketTest(true, true, true), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingDetectionCreditTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingBacklogOrderTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingOccupancyOutputTest(false, false), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingOccupancyOutputTest(true, false), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingOccupancyOutputTest(false, true), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingOccupancyOutputTest(true, true), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingOccupancyOutputTest(true, false, false), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingNoLegalOutputTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingLastAckGateTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingDisposalTest(), TestCase::Duration::QUICK);

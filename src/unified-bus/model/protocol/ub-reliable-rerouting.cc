@@ -2,6 +2,7 @@
 #include "ub-reliable-rerouting.h"
 
 #include "ns3/log.h"
+#include "ns3/boolean.h"
 #include "ns3/ub-header.h"
 #include "ns3/ub-network-address.h"
 #include "ns3/simulator.h"
@@ -112,6 +113,11 @@ UbReliableRerouting::GetTypeId()
             .SetParent<Object>()
             .SetGroupName("UnifiedBus")
             .AddConstructor<UbReliableRerouting>()
+            .AddAttribute("TraceOccupancyEvents",
+                          "Write optional recovery occupancy event CSV; summary is always available.",
+                          BooleanValue(false),
+                          MakeBooleanAccessor(&UbReliableRerouting::m_traceOccupancyEvents),
+                          MakeBooleanChecker())
             .AddTraceSource("Rerouting",
                             "Reliable rerouting state transitions and retained-work events.",
                             MakeTraceSourceAccessor(&UbReliableRerouting::m_traceRerouting),
@@ -174,6 +180,7 @@ UbReliableRerouting::TransitionTo(State state)
                                                << " port " << (m_port ? m_port->GetIfIndex() : 0)
                                                << " -> " << GetStateName(state));
     Publish(std::string("state:") + GetStateName(state));
+    PublishOccupancy("state");
 }
 
 uint64_t
@@ -194,14 +201,14 @@ UbReliableRerouting::CreateAttempt(Ptr<Packet> packet, uint32_t inPort, uint32_t
     if (m_state == State::HEALTHY)
     {
         m_inFlight.push_back(attempt);
-        m_inFlightBytes += packet->GetSize();
-        m_peakInFlightPackets = std::max<uint64_t>(m_peakInFlightPackets, m_inFlight.size());
+        AddOccupancy(UbRecoveryStage::IN_FLIGHT, 1, packet->GetSize());
+        PublishOccupancy("send");
     }
     else
     {
         m_attempts.push_back(attempt);
-        m_retryBytes += packet->GetSize();
-        m_peakRetryPackets = std::max<uint64_t>(m_peakRetryPackets, m_attempts.size());
+        AddOccupancy(UbRecoveryStage::RETRY, 1, packet->GetSize());
+        PublishOccupancy("failed_send");
         Publish("attempt_start", attempt.token, m_port->GetIfIndex());
     }
     return attempt.token;
@@ -223,8 +230,9 @@ UbReliableRerouting::ConfirmAttempt(uint64_t token)
     NS_ABORT_MSG_IF(m_inFlight.front().token != token || token != m_confirmedNext + 1,
                     "Reliable rerouting requires ordered complete link confirmations");
     m_confirmedNext = token;
-    m_inFlightBytes -= m_inFlight.front().packet->GetSize();
+    RemoveOccupancy(UbRecoveryStage::IN_FLIGHT, 1, m_inFlight.front().packet->GetSize());
     m_inFlight.pop_front();
+    PublishOccupancy("complete_receipt");
 }
 
 void
@@ -239,23 +247,116 @@ UbReliableRerouting::ReceiveAttempt(uint64_t token)
     m_receiveNext = token;
 }
 
+const UbRecoveryOccupancy&
+UbReliableRerouting::GetOccupancy(UbRecoveryStage stage) const
+{
+    return m_occupancy.at(static_cast<size_t>(stage));
+}
+
+const char*
+UbReliableRerouting::GetStageName(UbRecoveryStage stage)
+{
+    switch (stage)
+    {
+    case UbRecoveryStage::IN_FLIGHT: return "in_flight";
+    case UbRecoveryStage::RETRY: return "retry";
+    case UbRecoveryStage::FAILED_EGRESS: return "failed_egress";
+    case UbRecoveryStage::RECOVERY_VOQ: return "recovery_voq";
+    case UbRecoveryStage::COUNT: break;
+    }
+    NS_ABORT_MSG("Invalid recovery occupancy stage");
+    return "invalid";
+}
+
 void
-UbReliableRerouting::EnqueueRecoveryVoq(uint32_t bytes)
+UbReliableRerouting::AddOccupancy(UbRecoveryStage stage, uint64_t packets, uint64_t bytes)
 {
     NS_ABORT_MSG_IF(!IsArmed(), "Recovery occupancy requires an armed origin");
-    ++m_recoveryVoqPackets;
-    m_recoveryVoqBytes += bytes;
-    m_peakRecoveryVoqPackets = std::max(m_peakRecoveryVoqPackets, m_recoveryVoqPackets);
-    m_peakRecoveryVoqBytes = std::max(m_peakRecoveryVoqBytes, m_recoveryVoqBytes);
+    auto& count = m_occupancy.at(static_cast<size_t>(stage));
+    count.packets += packets;
+    count.bytes += bytes;
+    count.peakPackets = std::max(count.peakPackets, count.packets);
+    count.peakBytes = std::max(count.peakBytes, count.bytes);
+}
+
+void
+UbReliableRerouting::RemoveOccupancy(UbRecoveryStage stage, uint64_t packets, uint64_t bytes)
+{
+    auto& count = m_occupancy.at(static_cast<size_t>(stage));
+    NS_ABORT_MSG_IF(count.packets < packets || count.bytes < bytes, "Recovery occupancy underflow");
+    count.packets -= packets;
+    count.bytes -= bytes;
+}
+
+void
+UbReliableRerouting::EnqueueRecoveryVoq(uint32_t bytes, UbRecoveryStage source)
+{
+    RemoveOccupancy(source, 1, bytes);
+    AddOccupancy(UbRecoveryStage::RECOVERY_VOQ, 1, bytes);
+    PublishOccupancy("voq_handoff", false, source);
 }
 
 void
 UbReliableRerouting::DequeueRecoveryVoq(uint32_t bytes)
 {
-    NS_ABORT_MSG_IF(m_recoveryVoqPackets == 0 || m_recoveryVoqBytes < bytes,
-                    "Recovery VOQ occupancy underflow");
-    --m_recoveryVoqPackets;
-    m_recoveryVoqBytes -= bytes;
+    RemoveOccupancy(UbRecoveryStage::RECOVERY_VOQ, 1, bytes);
+    PublishOccupancy("voq_service");
+}
+
+void
+UbReliableRerouting::FailedEgressEnqueued(uint32_t bytes)
+{
+    if (m_state == State::DETECTION_PENDING)
+    {
+        AddOccupancy(UbRecoveryStage::FAILED_EGRESS, 1, bytes);
+        PublishOccupancy("failed_egress_enqueue");
+    }
+}
+
+void
+UbReliableRerouting::FailedEgressDequeued(uint32_t bytes)
+{
+    if (m_state == State::DETECTION_PENDING)
+    {
+        RemoveOccupancy(UbRecoveryStage::FAILED_EGRESS, 1, bytes);
+    }
+}
+
+void
+UbReliableRerouting::DiscardFailedEgress(uint32_t bytes)
+{
+    RemoveOccupancy(UbRecoveryStage::FAILED_EGRESS, 1, bytes);
+    PublishOccupancy("failed_egress_discard");
+}
+
+void
+UbReliableRerouting::WriteOccupancySummary()
+{
+    if (IsArmed())
+    {
+        PublishOccupancy("summary", true);
+    }
+}
+
+void
+UbReliableRerouting::PublishOccupancy(const std::string& event, bool summary, UbRecoveryStage source)
+{
+    if (!IsArmed() || (!summary && !m_traceOccupancyEvents))
+    {
+        return;
+    }
+    for (size_t index = 0; index < m_occupancy.size(); ++index)
+    {
+        UbRecoveryOccupancyEvent record;
+        record.nodeId = m_port->GetNode()->GetId();
+        record.portId = m_port->GetIfIndex();
+        record.stage = GetStageName(static_cast<UbRecoveryStage>(index));
+        record.state = GetStateName(m_state);
+        record.event = event;
+        record.occupancy = m_occupancy[index];
+        record.source = source == UbRecoveryStage::COUNT ? "none" : GetStageName(source);
+        utils::UbUtils::ReliableReroutingOccupancyNotify(record, summary);
+    }
 }
 
 void
@@ -267,9 +368,11 @@ UbReliableRerouting::OnPhysicalFailure()
         return;
     }
     m_attempts.swap(m_inFlight);
-    m_retryBytes = m_inFlightBytes;
-    m_inFlightBytes = 0;
-    m_peakRetryPackets = std::max<uint64_t>(m_peakRetryPackets, m_attempts.size());
+    const auto inFlight = GetOccupancy(UbRecoveryStage::IN_FLIGHT);
+    RemoveOccupancy(UbRecoveryStage::IN_FLIGHT, inFlight.packets, inFlight.bytes);
+    AddOccupancy(UbRecoveryStage::RETRY, inFlight.packets, inFlight.bytes);
+    AddOccupancy(UbRecoveryStage::FAILED_EGRESS, m_port->GetUbQueue()->m_egressQ.size(),
+                 m_port->GetUbQueue()->GetCurrentBytes());
     TransitionTo(State::DETECTION_PENDING);
     m_detectionEvent = Simulator::Schedule(m_detectionDelay,
                                            &UbReliableRerouting::OnDetection,
@@ -436,14 +539,14 @@ UbReliableRerouting::TransferRetryBacklog()
         if (result == UbRecoverySubmitResult::DISCARDED)
         {
             // Link-local credit/PFC frames are not rerouted; their disposal is not data loss.
-            Publish("control_frame_discarded", token, outPort);
-            m_retryBytes -= packet->GetSize();
+            RemoveOccupancy(UbRecoveryStage::RETRY, 1, packet->GetSize());
             m_attempts.pop_front();
+            PublishOccupancy("retry_discard");
+            Publish("control_frame_discarded", token, outPort);
             continue;
         }
-        Publish("transfer", token, outPort, sw->GetLastRecoveryOutput());
-        m_retryBytes -= packet->GetSize();
         m_attempts.pop_front();
+        Publish("transfer", token, outPort, sw->GetLastRecoveryOutput());
     }
     UpdateDrainState();
 }
@@ -518,6 +621,12 @@ UbReliableRerouting::Publish(const std::string& event,
     record.pendingPackets = m_pendingPackets;
     record.pendingBytes = m_pendingBytes;
     record.processingPackets = m_processingPackets;
+    record.inFlightPackets = GetInFlightPacketCount();
+    record.inFlightBytes = GetInFlightByteCount();
+    record.failedEgressPackets = GetOccupancy(UbRecoveryStage::FAILED_EGRESS).packets;
+    record.failedEgressBytes = GetOccupancy(UbRecoveryStage::FAILED_EGRESS).bytes;
+    record.recoveryVoqPackets = GetRecoveryVoqPacketCount();
+    record.recoveryVoqBytes = GetRecoveryVoqByteCount();
     FillLastAckIdentity(record, message);
     m_traceRerouting(record);
 }
@@ -529,11 +638,8 @@ UbReliableRerouting::DoDispose()
     m_lastAckEvent.Cancel();
     m_lastAckSendEvent.Cancel();
     m_inFlight.clear();
-    m_inFlightBytes = 0;
     m_attempts.clear();
-    m_retryBytes = 0;
-    m_recoveryVoqPackets = 0;
-    m_recoveryVoqBytes = 0;
+    m_occupancy = {};
     m_pendingPackets = 0;
     m_pendingBytes = 0;
     m_processingPackets = 0;
