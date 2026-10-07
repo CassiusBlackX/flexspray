@@ -151,10 +151,12 @@ class UbCtpTransportService : public Object
     bool HandleReceivedPacket(Ptr<Packet> packet);
     bool HandleReceivedPacket(Ptr<Packet> packet, uint32_t ingressPortId);
     bool SendSegment(Ptr<UbWqeSegment> segment, const UbCtpEntityKey& key);
-    void PrepareJetty(Ptr<UbJetty> jetty);
+    UbCtpPreparationResult PrepareJettyWithResult(Ptr<UbJetty> jetty,
+                                                  const UbCtpEntityKey& key);
     bool PrepareJetty(Ptr<UbJetty> jetty, const UbCtpEntityKey& key);
     bool HasJettyPreparation(uint32_t jettyNum) const;
     bool CanSubmitWqe(uint32_t jettyNum, Ptr<UbWqe> wqe) const;
+    bool CanSubmitWqe(uint32_t jettyNum, Ptr<UbWqe> wqe, const UbCtpEntityKey& key) const;
     bool SubmitPreparedWqe(uint32_t jettyNum, Ptr<UbWqe> wqe);
     bool NotifyJettyWork(uint32_t jettyNum);
     bool UnprepareJetty(uint32_t jettyNum);

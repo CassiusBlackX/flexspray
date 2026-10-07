@@ -954,6 +954,79 @@ UbTransaction::RunTrackedAdmitRtpWqeSegment(Ptr<UbWqeSegment> segment,
     GetFunction()->ResolveJettyEvent(jettyNum, eventToken);
 }
 
+UbCtpPreparationResult
+UbTransaction::PrepareCtpRequester(Ptr<UbJetty> jetty)
+{
+    UbLifecycleResourceIdentity identity;
+    if (jetty == nullptr || GetJetty(jetty->GetJettyNum()) != jetty ||
+        !GetFunction()->IsJettyAcceptingWqes(jetty->GetJettyNum()) ||
+        !GetFunction()->TryGetJettyLifecycleIdentity(jetty->GetJettyNum(), identity))
+    {
+        return {UbCtpPreparationStatus::JETTY_NOT_ACCEPTING, {}, "CTP Jetty is not active"};
+    }
+    if (!jetty->HasValidCtpWindow())
+    {
+        return {UbCtpPreparationStatus::INVALID_WINDOW, {},
+                "CTP inflight limit must be in 1..min(actual ACK capacity,32768)"};
+    }
+    if (auto rcid = GetCtpRequesterRcid(jetty->GetJettyNum()))
+    {
+        NS_ABORT_MSG_IF(*FindCtpRequester(*rcid) != identity,
+                        "CTP requester association references a different Jetty generation");
+        return {UbCtpPreparationStatus::PREPARED, rcid, {}};
+    }
+    if (m_nextCtpRcid == 0x100000)
+    {
+        return {UbCtpPreparationStatus::ID_SPACE_EXHAUSTED, {}, "CTP RCID space exhausted"};
+    }
+    const uint32_t rcid = m_nextCtpRcid++;
+    m_ctpRequesters.emplace(rcid, identity);
+    m_ctpRcidByJetty.emplace(jetty->GetJettyNum(), rcid);
+    return {UbCtpPreparationStatus::PREPARED, rcid, {}};
+}
+
+std::optional<uint32_t>
+UbTransaction::GetCtpRequesterRcid(uint32_t jettyNum) const
+{
+    const auto it = m_ctpRcidByJetty.find(jettyNum);
+    if (it == m_ctpRcidByJetty.end())
+    {
+        return {};
+    }
+    NS_ABORT_MSG_IF(FindCtpRequester(it->second) == nullptr,
+                    "CTP requester indexes disagree");
+    return it->second;
+}
+
+const UbLifecycleResourceIdentity*
+UbTransaction::FindCtpRequester(uint32_t rcid) const
+{
+    const auto it = m_ctpRequesters.find(rcid);
+    return it == m_ctpRequesters.end() ? nullptr : &it->second;
+}
+
+void
+UbTransaction::RetireCtpRequester(uint32_t jettyNum, const UbLifecycleResourceIdentity& identity)
+{
+    const auto rcid = GetCtpRequesterRcid(jettyNum);
+    if (!rcid)
+    {
+        return;
+    }
+    NS_ABORT_MSG_IF(*FindCtpRequester(*rcid) != identity || HasLifecycleOperationForJetty(jettyNum),
+                    "CTP requester retirement requires its exact drained Jetty generation");
+    m_ctpRequesters.erase(*rcid);
+    m_ctpRcidByJetty.erase(jettyNum);
+}
+
+void
+UbTransaction::SetNextCtpRcidForTest(uint32_t next)
+{
+    NS_ABORT_MSG_IF(next < m_nextCtpRcid || next > 0x100000,
+                    "CTP allocator test seam only advances toward exhaustion");
+    m_nextCtpRcid = next;
+}
+
 Ptr<UbWqeSegment>
 UbTransaction::PrepareNextCtpWqeSegment(Ptr<UbJetty> jetty, uint32_t maxSegmentBytes)
 {
@@ -2921,6 +2994,8 @@ UbTransaction::DoDispose()
     }
     m_remoteRtpWqeSegmentsByTpn.clear();
     m_ctpTransactionStates.clear();
+    m_ctpRequesters.clear();
+    m_ctpRcidByJetty.clear();
     m_nextCtpTaSsnByEntity.clear();
     m_tpRRIndex.clear();
     m_random = nullptr;

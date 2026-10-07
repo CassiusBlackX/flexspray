@@ -852,12 +852,6 @@ UbCtpTransportService::SendSegment(Ptr<UbWqeSegment> segment, const UbCtpEntityK
     return segment->IsSentCompleted();
 }
 
-void
-UbCtpTransportService::PrepareJetty(Ptr<UbJetty> jetty)
-{
-    NS_ABORT_MSG_IF(jetty == nullptr, "CTP send requires jetty");
-}
-
 UbCtpTransportConstraints
 UbCtpTransportService::GetTransactionConstraints() const
 {
@@ -867,46 +861,52 @@ UbCtpTransportService::GetTransactionConstraints() const
 bool
 UbCtpTransportService::PrepareJetty(Ptr<UbJetty> jetty, const UbCtpEntityKey& key)
 {
+    return PrepareJettyWithResult(jetty, key).IsSuccess();
+}
+
+UbCtpPreparationResult
+UbCtpTransportService::PrepareJettyWithResult(Ptr<UbJetty> jetty, const UbCtpEntityKey& key)
+{
     if (jetty == nullptr || m_node == nullptr || jetty->GetSrc() != m_node->GetId())
     {
-        return false;
+        return {UbCtpPreparationStatus::BINDING_MISMATCH, {}, "CTP Jetty/source mismatch"};
     }
-    if (jetty->HasBoundDest())
+    if ((jetty->HasBoundDest() && jetty->GetDest() != key.dstNodeId) ||
+        (!jetty->HasBoundDest() && !(MakeSourceGroupKeyForRequest(key) == key)))
     {
-        if (jetty->GetDest() != key.dstNodeId)
-        {
-            return false;
-        }
+        return {UbCtpPreparationStatus::BINDING_MISMATCH, {}, "CTP destination binding mismatch"};
     }
-    else if (!(MakeSourceGroupKeyForRequest(key) == key))
-    {
-        return false;
-    }
-
-    Ptr<UbController> controller = m_node == nullptr ? nullptr : m_node->GetObject<UbController>();
-    Ptr<UbTransaction> transaction =
-        controller == nullptr ? nullptr : controller->GetUbTransaction();
-    Ptr<UbFunction> function = controller == nullptr ? nullptr : controller->GetUbFunction();
+    auto controller = m_node->GetObject<UbController>();
+    auto transaction = controller == nullptr ? nullptr : controller->GetUbTransaction();
+    auto function = controller == nullptr ? nullptr : controller->GetUbFunction();
     if (transaction == nullptr || function == nullptr ||
-        !function->IsJettyAcceptingWqes(jetty->GetJettyNum()) ||
-        transaction->HasJettyTpBinding(jetty->GetJettyNum()))
+        function->GetJetty(jetty->GetJettyNum()) != jetty ||
+        !function->IsJettyAcceptingWqes(jetty->GetJettyNum()))
     {
-        return false;
+        return {UbCtpPreparationStatus::JETTY_NOT_ACCEPTING, {}, "CTP Jetty is not active"};
     }
-
+    if (transaction->HasJettyTpBinding(jetty->GetJettyNum()))
+    {
+        return {UbCtpPreparationStatus::BINDING_MISMATCH, {}, "Jetty already has an RTP binding"};
+    }
     Ptr<UbJetty> preparedJetty;
     UbCtpEntityKey preparedKey;
-    if (TryGetJettyPreparation(jetty->GetJettyNum(), preparedJetty, preparedKey))
+    const bool prepared = TryGetJettyPreparation(jetty->GetJettyNum(), preparedJetty, preparedKey);
+    if (prepared && (preparedJetty != jetty || !(preparedKey == key)))
     {
-        return preparedJetty == jetty && preparedKey == key;
+        return {UbCtpPreparationStatus::BINDING_MISMATCH, {}, "CTP preparation key mismatch"};
     }
-
-    PrepareJetty(jetty);
+    // All recoverable checks precede RCID allocation; publication below invokes no callbacks.
+    auto result = transaction->PrepareCtpRequester(jetty);
+    if (!result.IsSuccess() || prepared)
+    {
+        return result;
+    }
     function->RegisterJettyCtpBinding(jetty->GetJettyNum(), Ptr<UbCtpTransportService>(this));
     m_keyJettys[key].push_back(jetty);
     UbCtpEntityState& state = GetOrCreateEntityState(key);
     state.Tx().routing.routingType = m_defaultRoutingPolicy.routingType;
-    return true;
+    return result;
 }
 
 bool
@@ -939,6 +939,18 @@ UbCtpTransportService::CanSubmitWqe(uint32_t jettyNum, Ptr<UbWqe> wqe) const
         return wqe->GetDest() == key.dstNodeId && wqe->GetDstEntityId() == key.dstEntityId;
     }
     return MakeSourceGroupKeyForRequest(key) == key;
+}
+
+bool
+UbCtpTransportService::CanSubmitWqe(uint32_t jettyNum,
+                                    Ptr<UbWqe> wqe,
+                                    const UbCtpEntityKey& key) const
+{
+    Ptr<UbJetty> jetty;
+    UbCtpEntityKey preparedKey;
+    return TryGetJettyPreparation(jettyNum, jetty, preparedKey) && preparedKey == key &&
+           GetTransactionOwner()->GetCtpRequesterRcid(jettyNum).has_value() &&
+           CanSubmitWqe(jettyNum, wqe);
 }
 
 bool
@@ -986,7 +998,7 @@ UbCtpTransportService::UnprepareJetty(uint32_t jettyNum)
 
     Ptr<UbController> controller = m_node == nullptr ? nullptr : m_node->GetObject<UbController>();
     Ptr<UbFunction> function = controller == nullptr ? nullptr : controller->GetUbFunction();
-    if (function == nullptr ||
+    if (function == nullptr || !function->IsJettyDrainReady(jettyNum) ||
         !function->UnregisterJettyCtpBinding(jettyNum, Ptr<UbCtpTransportService>(this)))
     {
         return false;
@@ -1008,7 +1020,11 @@ UbCtpTransportService::UnprepareJetty(uint32_t jettyNum)
 void
 UbCtpTransportService::StartJetty(Ptr<UbJetty> jetty, const UbCtpEntityKey& key)
 {
-    if (PrepareJetty(jetty, key))
+    Ptr<UbJetty> preparedJetty;
+    UbCtpEntityKey preparedKey;
+    if (jetty != nullptr &&
+        TryGetJettyPreparation(jetty->GetJettyNum(), preparedJetty, preparedKey) &&
+        preparedJetty == jetty && preparedKey == key)
     {
         NotifyJettyWork(jetty->GetJettyNum());
     }

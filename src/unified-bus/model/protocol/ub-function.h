@@ -40,6 +40,8 @@ namespace ns3 {
         TPG_NO_MEMBER = 9,
         INVALID_ATOMIC_REQUEST = 10,
         INVALID_TRANSACTION_REQUEST = 11,
+        CTP_NOT_PREPARED = 12,
+        INVALID_CTP_WINDOW = 13,
     };
 
     struct UbWqeSubmissionResult
@@ -340,6 +342,12 @@ namespace ns3 {
         uint8_t GetDport() const
         {
             return m_dport;
+        }
+
+        bool HasValidCtpWindow() const
+        {
+            return m_inflightMax > 0 && m_inflightMax <= 32768 &&
+                   m_inflightMax <= m_ssnAckWindow.GetWindowSize();
         }
 
         bool IsLimited()

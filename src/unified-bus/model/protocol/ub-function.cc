@@ -259,6 +259,19 @@ UbFunction::SubmitCtpWqe(Ptr<UbWqe> wqe,
     {
         return {UbWqeSubmissionStatus::JETTY_BINDING_MISMATCH, {}};
     }
+    auto service = NodeList::GetNode(m_nodeId)->GetObject<UbController>()->PeekCtpTransportService();
+    if (service == nullptr || !service->HasJettyPreparation(jettyNum))
+    {
+        return {UbWqeSubmissionStatus::CTP_NOT_PREPARED, {}};
+    }
+    if (!service->CanSubmitWqe(jettyNum, wqe, key))
+    {
+        return {UbWqeSubmissionStatus::JETTY_BINDING_MISMATCH, {}};
+    }
+    if (!jetty->HasValidCtpWindow())
+    {
+        return {UbWqeSubmissionStatus::INVALID_CTP_WINDOW, {}};
+    }
     UbTransactionFields fields = wqe->GetTransactionFields();
     if (wqe->GetType() == UbTransactionOpcode::ATOMIC_SYNC && !fields.taskId)
         fields.taskId = static_cast<uint16_t>(wqe->GetWqeId() & 0xffffu);
@@ -960,6 +973,7 @@ UbJettyManager::FinalizeDestroy(uint32_t jettyNum)
     {
         m_ctpService->ReleaseJetty(jettyNum);
     }
+    GetTransaction()->RetireCtpRequester(jettyNum, identity);
     Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
     coordinator->RecordSuccessfulTerminal(identity);
     coordinator->RetireResource(identity);

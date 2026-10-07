@@ -48,6 +48,23 @@ namespace ns3 {
         bool operator==(const UbCtpEntityKey& other) const;
     };
 
+    enum class UbCtpPreparationStatus : uint8_t
+    {
+        PREPARED,
+        ID_SPACE_EXHAUSTED,
+        INVALID_WINDOW,
+        BINDING_MISMATCH,
+        JETTY_NOT_ACCEPTING,
+    };
+
+    struct UbCtpPreparationResult
+    {
+        UbCtpPreparationStatus status{UbCtpPreparationStatus::BINDING_MISMATCH};
+        std::optional<uint32_t> rcid;
+        std::string message;
+        bool IsSuccess() const { return status == UbCtpPreparationStatus::PREPARED; }
+    };
+
     class UbCtpTransactionContext : public SimpleRefCount<UbCtpTransactionContext>
     {
       public:
@@ -241,6 +258,11 @@ namespace ns3 {
         void TryContinueJettyTransmission(Ptr<UbTransportGroup> tpGroup);
 
         // tp调用
+        std::optional<uint32_t> GetCtpRequesterRcid(uint32_t jettyNum) const;
+        const UbLifecycleResourceIdentity* FindCtpRequester(uint32_t rcid) const;
+        void RetireCtpRequester(uint32_t jettyNum, const UbLifecycleResourceIdentity& identity);
+        uint32_t GetNextCtpRcidForTest() const { return m_nextCtpRcid; }
+        void SetNextCtpRcidForTest(uint32_t next);
         Ptr<UbWqeSegment> PrepareNextCtpWqeSegment(Ptr<UbJetty> jetty,
                                                    uint32_t maxSegmentBytes);
         void CommitCtpWqeSegment(Ptr<UbWqeSegment> segment);
@@ -419,6 +441,12 @@ namespace ns3 {
 
 
     private:
+
+        friend class UbCtpTransportService;
+        UbCtpPreparationResult PrepareCtpRequester(Ptr<UbJetty> jetty);
+        uint32_t m_nextCtpRcid{0};
+        std::map<uint32_t, UbLifecycleResourceIdentity> m_ctpRequesters;
+        std::map<uint32_t, uint32_t> m_ctpRcidByJetty;
 
         void DoDispose() override;
 

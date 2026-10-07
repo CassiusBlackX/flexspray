@@ -18573,6 +18573,7 @@ class UbLifecycleCtpBindingDestroyTest : public TestCase
                                  .dstNodeId = topo.receiver->GetId(),
                                  .dstEntityId = 2,
                                  .vl = 3};
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(jetty, key), true, "prepare CTP binding");
         service->StartJetty(jetty, key);
         NS_TEST_ASSERT_MSG_EQ(service->HasJettyBindingForTest(kUrmaWriteRegressionJettyNum),
                               true,
@@ -28603,10 +28604,14 @@ class UbCtpReportsConstraintsWithoutMutatingJettyTest : public TestCase
         Ptr<Node> node = BuildSinglePortCtpNode();
         Ptr<UbCtpTransportService> service =
             node->GetObject<UbController>()->GetCtpTransportService();
-        Ptr<UbJetty> jetty = CreateObject<UbJetty>();
+        auto function = node->GetObject<UbController>()->GetUbFunction();
+        function->CreateJetty(node->GetId(), node->GetId() + 1, 29);
+        auto jetty = function->GetJetty(29);
         const uint32_t before = jetty->GetTaSegmentBytes();
 
-        service->PrepareJetty(jetty);
+        NS_TEST_ASSERT_MSG_EQ(
+            service->PrepareJetty(jetty, {1, node->GetId() + 1, 1, 7}), true,
+            "real keyed preparation preserves segment geometry");
         const UbCtpTransportConstraints constraints = service->GetTransactionConstraints();
 
         NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSegmentBytes(),
@@ -28868,6 +28873,104 @@ class UbJettyTransportPreparationExclusivityTest : public TestCase
                               false,
                               "CTP preparation must reject an RTP-bound Jetty");
 
+        Simulator::Destroy();
+    }
+};
+
+class UbCtpRequesterPreparationTest : public TestCase
+{
+  public:
+    UbCtpRequesterPreparationTest()
+        : TestCase("CTP keyed preparation owns non-reused RCIDs and rejects atomically")
+    {
+    }
+
+    void DoRun() override
+    {
+        auto node = BuildSinglePortCtpNode();
+        auto controller = node->GetObject<UbController>();
+        auto function = controller->GetUbFunction();
+        auto transaction = controller->GetUbTransaction();
+        auto service = controller->GetCtpTransportService();
+        const UbCtpEntityKey key{1, node->GetId() + 1, 1, 7};
+        constexpr uint32_t firstId = 0xabc;
+        constexpr uint32_t secondId = 0x100abc; // same low 20 bits, distinct legal caller IDs
+        function->CreateJetty(node->GetId(), key.dstNodeId, firstId);
+        auto first = function->GetJetty(firstId);
+        auto wqe = function->CreateWqe(node->GetId(), key.dstNodeId, 64, 19);
+        wqe->SetSrcEntityId(1);
+        wqe->SetDstEntityId(1);
+        wqe->SetPriority(7);
+        auto rejected = function->SubmitCtpWqe(wqe, firstId, key);
+        NS_TEST_ASSERT_MSG_NE(static_cast<int>(rejected.status),
+                              static_cast<int>(UbWqeSubmissionStatus::ACCEPTED),
+                              "unprepared direct UB submission is rejected");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetResidentOperationCount(), 0u, "no operation created");
+        NS_TEST_ASSERT_MSG_EQ(first->GetActiveWqeCount(), 0u, "no WQE accepted");
+        NS_TEST_ASSERT_MSG_EQ(first->GetTaSsnSndNxtForTest(), 0u, "no sequence consumed");
+        NS_TEST_ASSERT_MSG_EQ(wqe->GetOriginJettyNum(), UINT32_MAX, "no WQE identity assigned");
+        NS_TEST_ASSERT_MSG_EQ(wqe->IsLifecycleManaged(), false, "no WQE lifecycle created");
+        NS_TEST_ASSERT_MSG_EQ(function->IsJettyDrainReady(firstId), true, "no dispatch event retained");
+
+        for (uint32_t inflight : {0u, 2049u, 32769u})
+        {
+            first->SetAttribute("UbJettyInflightMax", UintegerValue(inflight));
+            auto invalid = service->PrepareJettyWithResult(first, key);
+            NS_TEST_ASSERT_MSG_EQ(static_cast<int>(invalid.status),
+                                  static_cast<int>(UbCtpPreparationStatus::INVALID_WINDOW),
+                                  "zero, actual-capacity and half-wire-space violations reject");
+            NS_TEST_ASSERT_MSG_EQ(transaction->GetNextCtpRcidForTest(), 0u,
+                                  "failure consumes no RCID");
+            NS_TEST_ASSERT_MSG_EQ(service->HasJettyPreparation(firstId), false, "no half binding");
+        }
+        first->SetAttribute("UbJettyInflightMax", UintegerValue(512));
+        auto otherKey = key;
+        ++otherKey.dstNodeId;
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJettyWithResult(first, otherKey).IsSuccess(), false,
+                              "binding mismatch cannot allocate");
+        auto prepared = service->PrepareJettyWithResult(first, key);
+        NS_TEST_ASSERT_MSG_EQ(prepared.IsSuccess(), true, "valid preparation");
+        NS_TEST_ASSERT_MSG_EQ(prepared.rcid.value_or(UINT32_MAX), 0u, "RCID zero is usable");
+        auto invalidWqe = function->CreateWqe(node->GetId(), key.dstNodeId, 0, 20);
+        invalidWqe->SetSrcEntityId(1);
+        invalidWqe->SetDstEntityId(1);
+        invalidWqe->SetPriority(7);
+        NS_TEST_ASSERT_MSG_NE(
+            static_cast<int>(function->SubmitCtpWqe(invalidWqe, firstId, key).status),
+            static_cast<int>(UbWqeSubmissionStatus::ACCEPTED), "invalid WQE is rejected");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetNextCtpRcidForTest(), 1u,
+                              "WQE rejection never rolls back committed preparation");
+        function->CreateJetty(node->GetId(), key.dstNodeId, secondId);
+        auto second = service->PrepareJettyWithResult(function->GetJetty(secondId), key);
+        NS_TEST_ASSERT_MSG_EQ(second.rcid.value_or(UINT32_MAX), 1u, "caller IDs do not alias");
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJettyWithResult(first, key).rcid.value_or(UINT32_MAX),
+                              0u, "repeat preparation retains RCID");
+        NS_TEST_ASSERT_MSG_EQ(service->UnprepareJetty(firstId), true, "idle unprepare");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetCtpRequesterRcid(firstId).value_or(UINT32_MAX), 0u,
+                              "unprepare retains requester identity");
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJettyWithResult(first, key).rcid.value_or(UINT32_MAX),
+                              0u, "idle reprepare retains RCID");
+        function->DestroyJetty(firstId);
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetCtpRequesterRcid(firstId).has_value(), false,
+                              "destroy retires the live association");
+        function->CreateJetty(node->GetId(), key.dstNodeId, firstId);
+        first = function->GetJetty(firstId);
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJettyWithResult(first, key).rcid.value_or(UINT32_MAX),
+                              2u, "new generation never reuses retired RCID");
+        transaction->SetNextCtpRcidForTest(0xfffff);
+        function->CreateJetty(node->GetId(), key.dstNodeId, 77);
+        NS_TEST_ASSERT_MSG_EQ(
+            service->PrepareJettyWithResult(function->GetJetty(77), key).rcid.value_or(UINT32_MAX),
+            0xfffffu, "maximum wire RCID remains allocatable");
+        function->CreateJetty(node->GetId(), key.dstNodeId, 78);
+        auto exhausted = service->PrepareJettyWithResult(function->GetJetty(78), key);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<int>(exhausted.status),
+                              static_cast<int>(UbCtpPreparationStatus::ID_SPACE_EXHAUSTED),
+                              "exhaustion is distinct and never wraps");
+        NS_TEST_ASSERT_MSG_EQ(service->HasJettyPreparation(78), false, "exhaustion is atomic");
+        NS_TEST_ASSERT_MSG_EQ(service->UnprepareJetty(firstId), true, "existing requester unprepares");
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJettyWithResult(first, key).rcid.value_or(UINT32_MAX),
+                              2u, "existing association works after namespace exhaustion");
         Simulator::Destroy();
     }
 };
@@ -30268,6 +30371,9 @@ class UbCtpWireTaAckCompletesJettyTest : public TestCase
         wqe->SetPriority(key.vl);
         wqe->SetSport(0);
         wqe->SetDport(CTP_WILDCARD_PORT);
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(jetty, key), true, "keyed preparation");
+        wqe->SetSrcEntityId(key.srcEntityId);
+        wqe->SetDstEntityId(key.dstEntityId);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->SubmitCtpWqe(wqe, kJettyNum, key).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
@@ -30347,6 +30453,9 @@ class UbCtpWireTaAckContinuesInflightLimitedWqeTest : public TestCase
         wqe->SetPriority(key.vl);
         wqe->SetSport(0);
         wqe->SetDport(CTP_WILDCARD_PORT);
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(jetty, key), true, "keyed preparation");
+        wqe->SetSrcEntityId(key.srcEntityId);
+        wqe->SetDstEntityId(key.dstEntityId);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->SubmitCtpWqe(wqe, kJettyNum, key).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
@@ -30451,6 +30560,9 @@ class UbCtpOutOfOrderWireTaAckCompletesContiguousJettyRangeTest : public TestCas
         wqe->SetPriority(key.vl);
         wqe->SetSport(0);
         wqe->SetDport(CTP_WILDCARD_PORT);
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(jetty, key), true, "keyed preparation");
+        wqe->SetSrcEntityId(key.srcEntityId);
+        wqe->SetDstEntityId(key.dstEntityId);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->SubmitCtpWqe(wqe, kJettyNum, key).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
@@ -30561,6 +30673,11 @@ class UbCtpTerminalRecoveryWithoutTaAckContinuesWaitingJettyWqeTest : public Tes
         first->SetDport(CTP_WILDCARD_PORT);
         second->SetSport(0);
         second->SetDport(CTP_WILDCARD_PORT);
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(jetty, key), true, "keyed preparation");
+        first->SetSrcEntityId(key.srcEntityId);
+        first->SetDstEntityId(key.dstEntityId);
+        second->SetSrcEntityId(key.srcEntityId);
+        second->SetDstEntityId(key.dstEntityId);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->SubmitCtpWqe(first, kJettyNum, key).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
@@ -30671,6 +30788,9 @@ class UbCtpOutOfOrderWireTaAckTracesArrivalTest : public TestCase
         wqe->SetPriority(key.vl);
         wqe->SetSport(0);
         wqe->SetDport(CTP_WILDCARD_PORT);
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(jetty, key), true, "keyed preparation");
+        wqe->SetSrcEntityId(key.srcEntityId);
+        wqe->SetDstEntityId(key.dstEntityId);
         NS_TEST_ASSERT_MSG_EQ(
             static_cast<uint32_t>(function->SubmitCtpWqe(wqe, kJettyNum, key).status),
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
@@ -33576,6 +33696,7 @@ static UbTestSuite g_ubTestSuite;
 UbCtpTransactionTestSuite::UbCtpTransactionTestSuite()
     : TestSuite("unified-bus-ctp-transaction", Type::UNIT)
 {
+    AddTestCase(new UbCtpRequesterPreparationTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpTransactionContextHolTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpReportsConstraintsWithoutMutatingJettyTest(),
                 TestCase::Duration::QUICK);
@@ -37113,7 +37234,7 @@ class UbAtomicAdmissionTest : public TestCase
         auto controller = topo.sender->GetObject<UbController>();
         auto function = controller->GetUbFunction();
         auto transaction = controller->GetUbTransaction();
-        const uint32_t jettyNum = 17;
+        uint32_t jettyNum = 17;
         function->CreateJetty(topo.sender->GetId(), topo.receiver->GetId(), jettyNum);
         auto jetty = function->GetJetty(jettyNum);
         NS_TEST_ASSERT_MSG_EQ(transaction->JettyBindTp(topo.sender->GetId(),
@@ -37126,6 +37247,14 @@ class UbAtomicAdmissionTest : public TestCase
         UbCtpEntityKey key{1, topo.receiver->GetId(), 1, 7};
         for (bool ctp : {false, true})
         {
+            if (ctp)
+            {
+                jettyNum = 18;
+                function->CreateJetty(topo.sender->GetId(), topo.receiver->GetId(), jettyNum);
+                jetty = function->GetJetty(jettyNum);
+                NS_TEST_ASSERT_MSG_EQ(controller->GetCtpTransportService()->PrepareJetty(jetty, key),
+                                      true, "prepare independent CTP validation fixture");
+            }
             for (uint32_t invalid = 0; invalid < 10; ++invalid)
             {
                 auto wqe = function->CreateWqe(topo.sender->GetId(),
@@ -37163,6 +37292,9 @@ class UbAtomicAdmissionTest : public TestCase
                         static_cast<TransactionServiceMode>(invalid - 6));
                 }
                 wqe->SetAtomicOptions(options);
+                wqe->SetSrcEntityId(1);
+                wqe->SetDstEntityId(1);
+                wqe->SetPriority(7);
                 auto result = ctp ? function->SubmitCtpWqe(wqe, jettyNum, key)
                                   : function->SubmitWqe(wqe, jettyNum);
                 NS_TEST_ASSERT_MSG_EQ(
@@ -37182,6 +37314,8 @@ class UbAtomicAdmissionTest : public TestCase
                 transaction->SetTransactionServiceMode(jettyNum, TransactionServiceMode::ROI);
             }
         }
+        jettyNum = 17;
+        jetty = function->GetJetty(jettyNum);
         auto valid = function->CreateWqe(topo.sender->GetId(),
                                          topo.receiver->GetId(),
                                          8,
@@ -37602,6 +37736,7 @@ class UbAtomicCtpRoundTripTest : public TestCase
         m_key = {1, m_destination, 1, 7};
         function->CreateJetty(m_source, m_destination, 23);
         auto jetty = function->GetJetty(23);
+        NS_TEST_ASSERT_MSG_EQ(m_senderService->PrepareJetty(jetty, m_key), true, "prepare CTP");
         jetty->SetClientCallback(MakeCallback(&UbAtomicCtpRoundTripTest::OnComplete, this));
         NS_TEST_ASSERT_MSG_EQ(static_cast<bool>(topo.receiver->GetObject<UbController>()
                                                    ->GetUbTransaction() != nullptr),
@@ -37640,6 +37775,8 @@ class UbAtomicCtpRoundTripTest : public TestCase
                     wqe->SetSport(0);
                     wqe->SetDport(CTP_WILDCARD_PORT);
                     wqe->SetPriority(m_key.vl);
+                    wqe->SetSrcEntityId(m_key.srcEntityId);
+                    wqe->SetDstEntityId(m_key.dstEntityId);
                     NS_TEST_ASSERT_MSG_EQ(
                         static_cast<uint8_t>(function->SubmitCtpWqe(wqe, 23, m_key).status),
                         0u,
@@ -38292,6 +38429,11 @@ class UbTransactionExtensionsRoundTripTest : public TestCase
         topo.senderPort->SetFaultCallBack(MakeCallback(&UbTransactionExtensionsRoundTripTest::OnWire, this));
         topo.receiverPort->SetFaultCallBack(MakeCallback(&UbTransactionExtensionsRoundTripTest::OnWire, this));
         const UbCtpEntityKey key{1, topo.receiver->GetId(), 1, 7};
+        if (m_ctp)
+        {
+            NS_TEST_ASSERT_MSG_EQ(controller->GetCtpTransportService()->PrepareJetty(jetty, key),
+                                  true, "prepare CTP before WQE admission");
+        }
         for (uint32_t n : {1u, 2u, 4u, 8u, 16u, 32u, 64u})
         {
             const uint32_t task = m_sizes.size();
@@ -38301,6 +38443,8 @@ class UbTransactionExtensionsRoundTripTest : public TestCase
             wqe->SetSport(0);
             wqe->SetDport(CTP_WILDCARD_PORT);
             wqe->SetPriority(7);
+            wqe->SetSrcEntityId(1);
+            wqe->SetDstEntityId(1);
             const auto result = m_ctp ? function->SubmitCtpWqe(wqe, kUrmaWriteRegressionJettyNum, key)
                                      : function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum);
             NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(result.status), 0u, "public API admission");
@@ -38328,6 +38472,8 @@ class UbTransactionExtensionsRoundTripTest : public TestCase
                 wqe->SetSport(0);
                 wqe->SetDport(CTP_WILDCARD_PORT);
                 wqe->SetPriority(7);
+                wqe->SetSrcEntityId(1);
+                wqe->SetDstEntityId(1);
                 const auto result = m_ctp ? function->SubmitCtpWqe(wqe, kUrmaWriteRegressionJettyNum, key)
                                           : function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum);
                 NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(result.status), 0u,
@@ -38480,6 +38626,11 @@ class UbAtomicSyncRoundTripTest : public TestCase
                 Simulator::Schedule(NanoSeconds(200), [done, result]() { done(result); });
             }));
         const UbCtpEntityKey key{1, topo.receiver->GetId(), 1, 7};
+        if (m_ctp)
+        {
+            NS_TEST_ASSERT_MSG_EQ(controller->GetCtpTransportService()->PrepareJetty(jetty, key),
+                                  true, "prepare CTP before WQE admission");
+        }
         for (uint32_t index = 0; index < 7; ++index)
         {
             const uint32_t n = 1u << index;
@@ -38497,6 +38648,8 @@ class UbAtomicSyncRoundTripTest : public TestCase
             wqe->SetSport(0);
             wqe->SetDport(CTP_WILDCARD_PORT);
             wqe->SetPriority(7);
+            wqe->SetSrcEntityId(1);
+            wqe->SetDstEntityId(1);
             const auto result =
                 m_ctp ? function->SubmitCtpWqe(wqe, kUrmaWriteRegressionJettyNum, key)
                       : function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum);
