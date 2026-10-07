@@ -5,6 +5,7 @@
 #include "ns3/ub-datatype.h"
 #include "ns3/ub-header.h"
 #include "ns3/ub-transaction-rules.h"
+#include "ns3/packet.h"
 
 #include <array>
 
@@ -118,6 +119,46 @@ bool WriteTransactionExtension(const UbTransactionFields& fields,
 /** Read one decoded extension header into the normalized field set. */
 void ReadTransactionExtension(const UbTransactionExtensionHeader& header,
                               UbTransactionFields& fields);
+
+/** Full base header, preserving all response fields for the carrier's validation policy. */
+struct UbFullTaHeader
+{
+    bool isResponse{false};
+    UbTransactionHeader request;
+    UbAckTransactionHeader response;
+};
+
+enum class UbTaDecodeError
+{
+    NONE,
+    TRUNCATED_BASE,
+    TRUNCATED_EXTENSION,
+    INVALID_EXTENSION_LENGTH,
+};
+
+/** Structural failure only; transaction rules and the carrier own semantic rejection. */
+struct UbTaDecodeResult
+{
+    UbTaDecodeError error{UbTaDecodeError::NONE};
+    UbTransactionHeaderKind header{UbTransactionHeaderKind::BTAH};
+    bool IsSuccess() const { return error == UbTaDecodeError::NONE; }
+};
+
+uint32_t GetFullTaHeaderBytes(const UbTaHeaderPlan& plan, const UbTransactionFields& fields);
+
+/** Prepend full headers to carrier-owned payload without inspecting tags or owner state. */
+void PrependFullTaHeaders(Ptr<Packet> packet,
+                         const UbFullTaHeader& base,
+                         const UbTaHeaderPlan& plan,
+                         const UbMAExtTah& memory,
+                         const UbTransactionFields& fields);
+
+/** Decode the base before the caller resolves a request-dependent response layout. */
+UbTaDecodeResult DecodeFullTaBase(Ptr<Packet> packet, UbFullTaHeader& base);
+UbTaDecodeResult DecodeFullTaExtensions(Ptr<Packet> packet,
+                                      const UbTaHeaderPlan& plan,
+                                      UbMAExtTah& memory,
+                                      UbTransactionFields& fields);
 
 } // namespace ns3
 

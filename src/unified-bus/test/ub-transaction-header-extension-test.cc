@@ -471,12 +471,81 @@ class UbCtpRuleDrivenLayoutTest : public TestCase
     }
 };
 
+/** Full TA decode preserves response semantics and never reads beyond the wire unit. */
+class UbFullTaDecodeBoundsTest : public TestCase
+{
+  public:
+    UbFullTaDecodeBoundsTest()
+        : TestCase("full TA decode preserves ATAH fields and bounds every planned header")
+    {
+    }
+
+    void DoRun() override
+    {
+        // Independently specified full ATAH bytes: Atomic response, version 2, SV/poison,
+        // TASSN=0x1234, status=5/info=17, SQ type=1 and RCID=0xabcde.
+        const uint8_t wire[]{0x13, 0x8c, 0x12, 0x34, 0xb1, 0x1a, 0xbc, 0xde};
+        for (uint32_t length = 0; length < sizeof(wire); ++length)
+        {
+            auto packet = Create<Packet>(wire, length);
+            UbFullTaHeader decoded;
+            auto result = DecodeFullTaBase(packet, decoded);
+            NS_TEST_ASSERT_MSG_EQ(static_cast<int>(result.error),
+                                  static_cast<int>(UbTaDecodeError::TRUNCATED_BASE),
+                                  "a truncated base header is rejected before Deserialize");
+            NS_TEST_ASSERT_MSG_EQ(packet->GetSize(), length, "rejection does not consume bytes");
+        }
+        auto packet = Create<Packet>(wire, sizeof(wire));
+        UbFullTaHeader decoded;
+        NS_TEST_ASSERT_MSG_EQ(DecodeFullTaBase(packet, decoded).IsSuccess(), true,
+                              "a complete response header decodes");
+        NS_TEST_ASSERT_MSG_EQ(decoded.isResponse, true, "ATAH retains its response type");
+        NS_TEST_ASSERT_MSG_EQ(decoded.response.GetTaVersion(), 2, "TA version is retained");
+        NS_TEST_ASSERT_MSG_EQ(decoded.response.GetSV(), 1, "SV is retained");
+        NS_TEST_ASSERT_MSG_EQ(decoded.response.GetPoison(), true, "poison is retained");
+        NS_TEST_ASSERT_MSG_EQ(decoded.response.GetRspStatus(), 5, "status is retained");
+        NS_TEST_ASSERT_MSG_EQ(decoded.response.GetRspInfo(), 17, "aggregation info is retained");
+        NS_TEST_ASSERT_MSG_EQ(decoded.response.GetIniRcId(), 0xabcdeu, "20-bit RCID is retained");
+
+        const auto* rule = FindTransactionRule(UbTransactionOpcode::WRITE_WITH_BE);
+        NS_TEST_ASSERT_MSG_NE(rule, nullptr, "existing BE request rule");
+        const auto plan = UbTaHeaderPlan::ForRequest(*rule, {});
+        for (uint32_t payload : {64u, 128u, 256u, 512u, 1024u})
+        {
+            // Use production Header primitives, independently of the new full encoder.
+            UbMAExtTah ma;
+            ma.SetLength(payload);
+            ma.SetVirtualAddress(0x12340000);
+            auto complete = Create<Packet>(payload / 8);
+            complete->AddHeader(ma);
+            for (uint32_t length = 0; length < complete->GetSize(); ++length)
+            {
+                auto shortPacket = complete->CreateFragment(0, length);
+                UbMAExtTah memory;
+                UbTransactionFields fields;
+                auto result = DecodeFullTaExtensions(shortPacket, plan, memory, fields);
+                NS_TEST_ASSERT_MSG_EQ(result.IsSuccess(), false,
+                                      "truncated MAETAH or variable BEETAH must fail");
+            }
+            UbMAExtTah memory;
+            UbTransactionFields fields;
+            NS_TEST_ASSERT_MSG_EQ(
+                DecodeFullTaExtensions(complete, plan, memory, fields).IsSuccess(), true,
+                "complete variable-size BEETAH decodes");
+            NS_TEST_ASSERT_MSG_EQ(fields.byteEnable->bytes.size(), payload / 8,
+                                  "BEETAH consumes exactly its declared width");
+            NS_TEST_ASSERT_MSG_EQ(complete->GetSize(), 0u, "no header bytes leak as payload");
+        }
+    }
+};
+
 class UbTransactionExtensionCodecSuite : public TestSuite
 {
   public:
     UbTransactionExtensionCodecSuite()
         : TestSuite("unified-bus-transaction-header-codecs", Type::UNIT)
     {
+        AddTestCase(new UbFullTaDecodeBoundsTest, TestCase::Duration::QUICK);
         AddTestCase(new UbTransactionExtensionCodecTest, TestCase::Duration::QUICK);
         AddTestCase(new UbTaHeaderPlanTest, TestCase::Duration::QUICK);
         AddTestCase(new UbCtpRuleDrivenLayoutTest, TestCase::Duration::QUICK);

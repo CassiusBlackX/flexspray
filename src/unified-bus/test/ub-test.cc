@@ -32714,7 +32714,46 @@ class UbRtpRuleDrivenHeaderLayoutTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(estimatedSize,
                               packet->GetSize(),
                               "the packet size estimate equals the built packet size");
+        // Frozen from the pre-extraction RTP builder at a4e7025844dd.
+        const std::map<uint8_t, std::string> expectedTaBytes{
+            {3,
+             "03000000001000000000000000001000000042000000004000000000000000000000000000000000"
+             "00000000000000000000000000000000000000000000000000000000000000000000000000000000"
+             "0000000000000000"},
+            {6,
+             "060000000010000000000000000010000000420000000040"},
+            {8,
+             "0800000000100000000000000000100000004200000000080000000000000000"},
+            {0,
+             "00000000081000000211234500000000000000000000000000000000000000000000000000000000"
+             "00000000"},
+            {1,
+             "01000000081000000211234511121314151617180000009900000020000000000000000000000000"
+             "0000000000000000000000000000000000000000"},
+            {4,
+             "04000000081000000211234500000000000010000000420000000020111213141516171800000099"
+             "000000200000000000000000000000000000000000000000000000000000000000000000"},
+            {5,
+             "05000000001000000000000000001000000042000000002000000000000010000000420000000099"
+             "00000000000000ab0000000000000000000000000000000000000000000000000000000000000000"},
+            {16,
+             "10000000001000000200002000000000000000000000000000000000000000000000000000000000"
+             "00000000"},
+        };
+        auto taCopy = StripRtpCarrier(packet->Copy());
+        std::vector<uint8_t> captured(taCopy->GetSize());
+        taCopy->CopyData(captured.data(), captured.size());
+        std::ostringstream capturedHex;
+        for (auto byte : captured)
+        {
+            capturedHex << std::hex << std::setfill('0') << std::setw(2) << unsigned(byte);
+        }
+        NS_TEST_ASSERT_MSG_EQ(capturedHex.str(), expectedTaBytes.at(static_cast<uint8_t>(opcode)),
+                              "valid RTP TA and payload bytes preserve the frozen baseline");
         Ptr<Packet> decodeCopy = packet->Copy();
+        const uint32_t carrierBytes = packet->GetSize() - taCopy->GetSize();
+        auto carrierPrefix = packet->CreateFragment(0, carrierBytes);
+
 
         Ptr<Packet> body = StripRtpCarrier(packet);
         UbTransactionHeader taHeader;
@@ -32730,6 +32769,38 @@ class UbRtpRuleDrivenHeaderLayoutTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(body->GetSize(), payloadBytes,
                               "the declared headers never leak into the packet payload");
         NS_TEST_ASSERT_MSG_GT(extensionBytes, 0u, "the plan declares its extension bytes");
+
+        for (uint32_t length = 0; length < UB_TA_FULL_BASE_HEADER_BYTES + extensionBytes;
+             ++length)
+        {
+            auto truncated = decodeCopy->CreateFragment(0, carrierBytes + length);
+            UbTransportChannel::ReceivedDataPacketContext rejected;
+            NS_TEST_ASSERT_MSG_EQ(receiverTp->ParseReceivedDataPacketForTest(truncated, rejected),
+                                  false, "RTP caller rejects every truncated TA header prefix");
+        }
+        if (opcode == UbTransactionOpcode::WRITE)
+        {
+            UbAckTransactionHeader response;
+            response.SetUbTransactionOpcode(UbTransactionOpcode::TAACK);
+            response.SetRspStatus(5);
+            response.SetRspInfo(17);
+            response.SetSV(1);
+            auto responseBody = Create<Packet>();
+            responseBody->AddHeader(response);
+            carrierPrefix->AddAtEnd(responseBody);
+            UbTransportChannel::ReceivedDataPacketContext received;
+            NS_TEST_ASSERT_MSG_EQ(
+                receiverTp->ParseReceivedDataPacketForTest(carrierPrefix, received), true,
+                "RTP decoder exposes full ATAH for caller policy");
+            NS_TEST_ASSERT_MSG_EQ(received.ackTransactionHeader.has_value(), true,
+                                  "response header is preserved separately from the request view");
+            NS_TEST_ASSERT_MSG_EQ(received.ackTransactionHeader->GetRspStatus(), 5,
+                                  "RTP caller retains status");
+            NS_TEST_ASSERT_MSG_EQ(received.ackTransactionHeader->GetRspInfo(), 17,
+                                  "RTP caller retains response info");
+            NS_TEST_ASSERT_MSG_EQ(received.ackTransactionHeader->GetSV(), 1,
+                                  "RTP caller retains SV");
+        }
 
         UbTransportChannel::ReceivedDataPacketContext ctx;
         NS_TEST_ASSERT_MSG_EQ(receiverTp->ParseReceivedDataPacketForTest(decodeCopy, ctx), true,

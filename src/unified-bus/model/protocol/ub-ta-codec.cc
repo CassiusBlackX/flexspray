@@ -249,4 +249,115 @@ ReadTransactionExtension(const UbTransactionExtensionHeader& header, UbTransacti
     }
 }
 
+uint32_t
+GetFullTaHeaderBytes(const UbTaHeaderPlan& plan, const UbTransactionFields& fields)
+{
+    return UB_TA_FULL_BASE_HEADER_BYTES + plan.GetExtensionBytes(UB_TA_FULL_MAETAH_BYTES, fields);
+}
+
+void
+PrependFullTaHeaders(Ptr<Packet> packet,
+                     const UbFullTaHeader& base,
+                     const UbTaHeaderPlan& plan,
+                     const UbMAExtTah& memory,
+                     const UbTransactionFields& fields)
+{
+    // Extracted from BuildRtpDataPacket: AddHeader prepends, so emit the plan in reverse.
+    for (int index = static_cast<int>(plan.GetCount()) - 1; index >= 0; --index)
+    {
+        const auto kind = plan.GetKind(static_cast<uint8_t>(index));
+        if (kind == UbTransactionHeaderKind::MAETAH)
+        {
+            packet->AddHeader(memory);
+            continue;
+        }
+        UbTransactionExtensionHeader header(kind);
+        if (!WriteTransactionExtension(fields, header))
+        {
+            continue;
+        }
+        packet->AddHeader(header);
+    }
+    if (base.isResponse)
+    {
+        packet->AddHeader(base.response);
+    }
+    else
+    {
+        auto request = base.request;
+        request.SetTvEn(plan.GetPresence().tokenValue);
+        request.SetMtEn(plan.GetPresence().messageTarget);
+        request.SetUdFlg(plan.GetPresence().userData);
+        packet->AddHeader(request);
+    }
+}
+
+UbTaDecodeResult
+DecodeFullTaBase(Ptr<Packet> packet, UbFullTaHeader& base)
+{
+    if (packet == nullptr || packet->GetSize() < UB_TA_FULL_BASE_HEADER_BYTES)
+    {
+        return {UbTaDecodeError::TRUNCATED_BASE, K::BTAH};
+    }
+    UbTransactionHeader prefix;
+    packet->PeekHeader(prefix);
+    const auto opcode = static_cast<UbTransactionOpcode>(prefix.GetUbTransactionOpcode());
+    base = UbFullTaHeader{};
+    base.isResponse = opcode == UbTransactionOpcode::TAACK ||
+                      opcode == UbTransactionOpcode::READ_RESPONSE ||
+                      opcode == UbTransactionOpcode::ATOMIC_RESPONSE;
+    if (base.isResponse)
+    {
+        packet->RemoveHeader(base.response);
+    }
+    else
+    {
+        packet->RemoveHeader(base.request);
+    }
+    return {};
+}
+
+UbTaDecodeResult
+DecodeFullTaExtensions(Ptr<Packet> packet,
+                       const UbTaHeaderPlan& plan,
+                       UbMAExtTah& memory,
+                       UbTransactionFields& fields)
+{
+    for (uint8_t index = 0; index < plan.GetCount(); ++index)
+    {
+        const auto kind = plan.GetKind(index);
+        if (kind == K::MAETAH)
+        {
+            if (packet == nullptr || packet->GetSize() < memory.GetSerializedSize())
+            {
+                return {UbTaDecodeError::TRUNCATED_EXTENSION, kind};
+            }
+            packet->RemoveHeader(memory);
+            continue;
+        }
+        UbTransactionExtensionHeader extension(kind);
+        // The existing BE model supports P = 64, 128, 256, 512 or 1024 bytes.
+        // Validate the width before allocation or Deserialize, never round malformed lengths.
+        if (kind == K::BEETAH)
+        {
+            const uint32_t length = memory.GetLength();
+            if (length != 64 && length != 128 && length != 256 && length != 512 && length != 1024)
+            {
+                return {UbTaDecodeError::INVALID_EXTENSION_LENGTH, kind};
+            }
+            extension.SetRaw(std::vector<uint8_t>(length / 8, 0));
+        }
+        if (packet == nullptr || packet->GetSize() < extension.GetSerializedSize())
+        {
+            return {UbTaDecodeError::TRUNCATED_EXTENSION, kind};
+        }
+        if (packet->RemoveHeader(extension) == 0)
+        {
+            return {UbTaDecodeError::INVALID_EXTENSION_LENGTH, kind};
+        }
+        ReadTransactionExtension(extension, fields);
+    }
+    return {};
+}
+
 } // namespace ns3

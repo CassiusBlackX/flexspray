@@ -197,6 +197,7 @@ public:
         UdpHeader udpHeader;
         UbTransportHeader transportHeader;
         UbTransactionHeader transactionHeader;
+        std::optional<UbAckTransactionHeader> ackTransactionHeader;
         UbMAExtTah maExtHeader;
         UbFlowTag flowTag;
         bool hasTransactionCorrelation{false};
