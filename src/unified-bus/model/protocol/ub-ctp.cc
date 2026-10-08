@@ -293,13 +293,13 @@ UbCtpTxQueue::IsEmpty()
 Ptr<Packet>
 UbCtpTxQueue::GetNextPacket()
 {
-    std::queue<Ptr<Packet>>* queue = GetPriorityQueue();
+    UbCtpTxQueue::ClassQueue* queue = GetPriorityQueue();
     if (queue == nullptr)
     {
         return nullptr;
     }
 
-    Ptr<Packet> packet = queue->front();
+    Ptr<Packet> packet = queue->front().packet;
     queue->pop();
     if (!IsEmpty())
     {
@@ -312,8 +312,8 @@ UbCtpTxQueue::GetNextPacket()
 uint32_t
 UbCtpTxQueue::GetNextPacketSize()
 {
-    const std::queue<Ptr<Packet>>* queue = GetPriorityQueue();
-    return queue == nullptr ? 0 : queue->front()->GetSize();
+    const UbCtpTxQueue::ClassQueue* queue = GetPriorityQueue();
+    return queue == nullptr ? 0 : queue->front().packet->GetSize();
 }
 
 void
@@ -343,8 +343,8 @@ UbCtpTxQueue::Enqueue(Ptr<Packet> packet)
 Ptr<Packet>
 UbCtpTxQueue::PeekNextPacket() const
 {
-    const std::queue<Ptr<Packet>>* queue = GetPriorityQueue();
-    return queue == nullptr ? nullptr : queue->front();
+    const UbCtpTxQueue::ClassQueue* queue = GetPriorityQueue();
+    return queue == nullptr ? nullptr : queue->front().packet;
 }
 
 uint32_t
@@ -353,7 +353,7 @@ UbCtpTxQueue::GetQueuedPacketCountForTest() const
     return static_cast<uint32_t>(m_dataQueue.size() + m_ackQueue.size() + m_cnpQueue.size());
 }
 
-std::queue<Ptr<Packet>>&
+UbCtpTxQueue::ClassQueue&
 UbCtpTxQueue::QueueForClass(UbCtpQueueClass queueClass)
 {
     switch (queueClass)
@@ -368,7 +368,7 @@ UbCtpTxQueue::QueueForClass(UbCtpQueueClass queueClass)
     }
 }
 
-const std::queue<Ptr<Packet>>&
+const UbCtpTxQueue::ClassQueue&
 UbCtpTxQueue::QueueForClass(UbCtpQueueClass queueClass) const
 {
     switch (queueClass)
@@ -383,14 +383,14 @@ UbCtpTxQueue::QueueForClass(UbCtpQueueClass queueClass) const
     }
 }
 
-std::queue<Ptr<Packet>>*
+UbCtpTxQueue::ClassQueue*
 UbCtpTxQueue::GetPriorityQueue()
 {
-    return const_cast<std::queue<Ptr<Packet>>*>(
+    return const_cast<UbCtpTxQueue::ClassQueue*>(
         static_cast<const UbCtpTxQueue*>(this)->GetPriorityQueue());
 }
 
-const std::queue<Ptr<Packet>>*
+const UbCtpTxQueue::ClassQueue*
 UbCtpTxQueue::GetPriorityQueue() const
 {
     if (!m_cnpQueue.empty())
@@ -409,7 +409,8 @@ UbCtpTxQueue::GetPriorityQueue() const
 }
 
 void
-UbCtpTxQueue::EnqueueToClass(UbCtpQueueClass queueClass, Ptr<Packet> packet)
+UbCtpTxQueue::EnqueueToClass(UbCtpQueueClass queueClass, Ptr<Packet> packet,
+                             std::optional<UbLifecycleResourceIdentity> requester)
 {
     NS_ABORT_MSG_IF(packet == nullptr, "Cannot enqueue null CTP packet");
     const bool wasEmpty = IsEmpty();
@@ -417,11 +418,47 @@ UbCtpTxQueue::EnqueueToClass(UbCtpQueueClass queueClass, Ptr<Packet> packet)
     {
         m_headArrivalTime = Simulator::Now();
     }
-    QueueForClass(queueClass).push(packet);
+    QueueForClass(queueClass).push({packet, requester});
     if (wasEmpty)
     {
         RefreshAllocatorSummary();
     }
+}
+
+void
+UbCtpTxQueue::EnqueueRequest(Ptr<Packet> packet, const UbLifecycleResourceIdentity& owner)
+{
+    NS_ABORT_MSG_IF(owner.kind != UbLifecycleResourceKind::JETTY || owner.generation == 0,
+                    "CTP source request requires an exact local Jetty owner");
+    EnqueueToClass(UbCtpQueueClass::DATA, packet, owner);
+}
+
+void
+UbCtpTxQueue::RemoveRequesterPackets(const UbLifecycleResourceIdentity& owner)
+{
+    const auto oldHead = PeekNextPacket();
+    // Rotate the existing DATA queue once, preserving FIFO for every surviving entry.
+    const auto count = m_dataQueue.size();
+    for (size_t i = 0; i < count; ++i)
+    {
+        auto entry = std::move(m_dataQueue.front());
+        m_dataQueue.pop();
+        if (entry.requester != owner) m_dataQueue.push(std::move(entry));
+    }
+    if (!IsEmpty() && PeekNextPacket() != oldHead) m_headArrivalTime = Simulator::Now();
+    RefreshAllocatorSummary();
+}
+
+bool
+UbCtpTxQueue::HasRequesterPackets(const UbLifecycleResourceIdentity& owner) const
+{
+    auto entries = m_dataQueue;
+    while (!entries.empty())
+    {
+        if (entries.front().requester == owner) return true;
+        entries.pop();
+    }
+    return false;
 }
 
 TypeId
@@ -1001,7 +1038,9 @@ UbCtpTransportService::SendAdmittedFragment(Ptr<UbWqeSegment> segment,
     RegisterQueueIfNeeded(queue, outPort, packetKey.vl);
     Ptr<UbPort> port = DynamicCast<UbPort>(m_node->GetDevice(outPort));
     NS_ABORT_MSG_IF(port == nullptr, "CTP send selected a non-UB source port");
-    queue->EnqueueData(packet);
+    const auto* owner = GetTransactionOwner()->FindCtpRequester(*segment->GetCtpRcid());
+    NS_ABORT_MSG_IF(owner == nullptr, "Admitted CTP source packet lost its requester owner");
+    queue->EnqueueRequest(packet, *owner);
     segment->UpdateSentBytes(progressBytes);
     TraceWindowEvent(packetKey, "data-enqueued", taSsn,
                      *GetTransactionOwner()->GetJetty(segment->GetJettyNum()), outPort);
@@ -1715,8 +1754,12 @@ UbCtpTransportService::RunTrackedCompleteFromTaAck(UbLifecycleResourceIdentity o
     Ptr<UbCtpTransportService> keepAlive(this);
     if (!m_delayedTaAckEvents.Begin(owner, token)) return;
     // Keep the manager alive across a completion callback that may dispose this service.
-    Ptr<UbFunction> function = GetTransactionOwner()->GetFunction();
-    CompleteFromTaAckNow(key, taSsn, response);
+    auto transaction = GetTransactionOwner();
+    Ptr<UbFunction> function = transaction->GetFunction();
+    const auto* currentOwner = transaction->FindCtpRequester(*response->GetCtpRcid());
+    NS_ABORT_MSG_IF(currentOwner != nullptr && *currentOwner != owner,
+                    "Delayed CTP completion changed its exact requester generation");
+    if (currentOwner != nullptr) CompleteFromTaAckNow(key, taSsn, response);
     m_delayedTaAckEvents.Resolve(owner, token);
     function->NotifyJettyProgress(static_cast<uint32_t>(owner.localId));
 }
@@ -1733,10 +1776,15 @@ UbCtpTransportService::CompleteFromTaAckNow(const UbCtpEntityKey& key,
     auto transaction = GetTransactionOwner();
     auto request = transaction->FindCtpOutstanding(
         *response->GetCtpRcid(), static_cast<uint16_t>(taSsn), currentKey, reason);
-    if (request == nullptr || !(currentKey == key) || request->GetTaSsn() != taSsn ||
-        request->GetTransactionOperationIdentity() != response->GetTransactionOperationIdentity() ||
-        request->GetTransactionSegmentIdentity() != response->GetTransactionSegmentIdentity())
-        return;
+    // A resolved duplicate can outlive an entire wire sequence cycle. Its captured absolute
+    // sequence must never be reinterpreted as a later operation using the same wire16 value.
+    if (request == nullptr || request->GetTaSsn() != taSsn) return;
+    NS_ABORT_MSG_IF(!(currentKey == key) ||
+                        request->GetTransactionOperationIdentity() !=
+                            response->GetTransactionOperationIdentity() ||
+                        request->GetTransactionSegmentIdentity() !=
+                            response->GetTransactionSegmentIdentity(),
+                    "Delayed CTP completion contradicts live operation/segment identity");
     // The common completion seam validates the response before retiring the sole SegmentRecord
     // and marking the sole Jetty ACK bitmap. No Entity progress is maintained here.
     // Both wire ingress and the test response builder already validated this response. Preserve
@@ -1750,6 +1798,27 @@ UbCtpTransportService::CompleteFromTaAckNow(const UbCtpEntityKey& key,
     NS_ABORT_MSG_IF(afterTrace != request, "CTP ACK trace changed a live segment identity");
     NS_ABORT_MSG_IF(!transaction->ProcessInboundTaResponse(response),
                     "Validated CTP response contradicts its live operation/segment backing");
+}
+
+void
+UbCtpTransportService::RemoveRequesterPackets(const UbLifecycleResourceIdentity& owner)
+{
+    for (const auto& [key, queue] : m_queues)
+    {
+        (void)key;
+        queue->RemoveRequesterPackets(owner);
+    }
+}
+
+bool
+UbCtpTransportService::HasRequesterPackets(const UbLifecycleResourceIdentity& owner) const
+{
+    for (const auto& [key, queue] : m_queues)
+    {
+        (void)key;
+        if (queue->HasRequesterPackets(owner)) return true;
+    }
+    return false;
 }
 
 void

@@ -106,6 +106,9 @@ class UbCtpTxQueue : public UbIngressQueue
     bool IsEmpty() override;
     Ptr<Packet> GetNextPacket() override;
     uint32_t GetNextPacketSize() override;
+    void EnqueueRequest(Ptr<Packet> packet, const UbLifecycleResourceIdentity& owner);
+    void RemoveRequesterPackets(const UbLifecycleResourceIdentity& owner);
+    bool HasRequesterPackets(const UbLifecycleResourceIdentity& owner) const;
     void EnqueueData(Ptr<Packet> packet);
     void EnqueueAck(Ptr<Packet> packet);
     void EnqueueCnp(Ptr<Packet> packet);
@@ -114,15 +117,23 @@ class UbCtpTxQueue : public UbIngressQueue
     uint32_t GetQueuedPacketCountForTest() const;
 
   private:
-    std::queue<Ptr<Packet>>& QueueForClass(UbCtpQueueClass queueClass);
-    const std::queue<Ptr<Packet>>& QueueForClass(UbCtpQueueClass queueClass) const;
-    const std::queue<Ptr<Packet>>* GetPriorityQueue() const;
-    std::queue<Ptr<Packet>>* GetPriorityQueue();
-    void EnqueueToClass(UbCtpQueueClass queueClass, Ptr<Packet> packet);
+    struct Entry
+    {
+        Ptr<Packet> packet;
+        // Only locally admitted requests carry ownership. Wire RCID is never a cleanup key.
+        std::optional<UbLifecycleResourceIdentity> requester;
+    };
+    using ClassQueue = std::queue<Entry>;
+    ClassQueue& QueueForClass(UbCtpQueueClass queueClass);
+    const ClassQueue& QueueForClass(UbCtpQueueClass queueClass) const;
+    const ClassQueue* GetPriorityQueue() const;
+    ClassQueue* GetPriorityQueue();
+    void EnqueueToClass(UbCtpQueueClass queueClass, Ptr<Packet> packet,
+                        std::optional<UbLifecycleResourceIdentity> requester = std::nullopt);
 
-    std::queue<Ptr<Packet>> m_dataQueue;
-    std::queue<Ptr<Packet>> m_ackQueue;
-    std::queue<Ptr<Packet>> m_cnpQueue;
+    ClassQueue m_dataQueue;
+    ClassQueue m_ackQueue;
+    ClassQueue m_cnpQueue;
 };
 
 class UbCtpTransportService : public Object
@@ -159,6 +170,8 @@ class UbCtpTransportService : public Object
     void StartJetty(Ptr<UbJetty> jetty, const UbCtpEntityKey& key);
     void TryContinueJettyTransmission(const UbCtpEntityKey& entityKey);
     void ReleaseJetty(uint32_t jettyNum);
+    void RemoveRequesterPackets(const UbLifecycleResourceIdentity& owner);
+    bool HasRequesterPackets(const UbLifecycleResourceIdentity& owner) const;
     void CancelRequesterCompletionEvents(const UbLifecycleResourceIdentity& owner);
     bool HasJettyBindingForTest(uint32_t jettyNum) const;
     UbCtpEntityKey MakeSourceGroupKeyForRequest(const UbCtpEntityKey& key) const;

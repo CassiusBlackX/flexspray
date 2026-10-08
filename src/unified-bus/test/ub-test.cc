@@ -31169,6 +31169,8 @@ class UbCtpIdleReprepareKeepsJettyProgressTest : public TestCase
         auto jetty = SubmitCtpFixture(node, key);
         auto rcid = controller->GetUbTransaction()->GetCtpRequesterRcid(0);
         NS_TEST_ASSERT_MSG_EQ(service->UnprepareJetty(0), false, "active work prevents unprepare");
+        NS_TEST_ASSERT_MSG_NE(service->GetOrCreateQueue(key, 0, key.vl)->GetNextPacket(), nullptr,
+                              "model request handoff before injecting its response");
         service->CompleteFromTaAckForTest(0, 0);
         NS_TEST_ASSERT_MSG_EQ(controller->GetUbTransaction()->GetResidentSegmentCount(), 0u,
                               "sole segment backing retired");
@@ -31967,6 +31969,519 @@ class UbCtpRouteLossKeepsTransactionOutstandingTest : public TestCase
                               1u, "unresolved route loss retains Jetty window occupancy");
 
         Simulator::Destroy();
+    }
+};
+
+class UbCtpRequesterQueueRetirementTest : public TestCase
+{
+  public:
+    explicit UbCtpRequesterQueueRetirementTest(UbDestroyReason reason)
+        : TestCase(reason == UbDestroyReason::ERROR
+                       ? "CTP abort removes only exact requester source packets"
+                       : "CTP run-stop removes only exact requester source packets"),
+          m_reason(reason) {}
+
+    void DoRun() override
+    {
+        Config::Reset();
+        auto topo = BuildLocalTpTopology();
+        auto controller = topo.sender->GetObject<UbController>();
+        auto function = controller->GetUbFunction();
+        auto transaction = controller->GetUbTransaction();
+        auto service = controller->GetCtpTransportService();
+        const UbCtpEntityKey key{1, topo.receiver->GetId(), 1, 7};
+        topo.senderPort->GetUbQueue()->SetAttribute("MaxEgressBytes", UintegerValue(0));
+        for (uint32_t id : {0u, 1u})
+        {
+            function->CreateJetty(topo.sender->GetId(), key.dstNodeId, id);
+            auto jetty = function->GetJetty(id);
+            NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(jetty, key), true, "prepare requester");
+            jetty->SetWqeCompletionCallback(
+                MakeCallback(&UbCtpRequesterQueueRetirementTest::OnComplete, this));
+            auto wqe = CreateCtpWqeForKey(function, topo.sender->GetId(), key, id);
+            wqe->SetSport(0);
+            NS_TEST_ASSERT_MSG_EQ(static_cast<int>(function->SubmitCtpWqe(wqe, id, key).status),
+                                  0, "admit real request");
+        }
+        auto queue = service->GetOrCreateQueue(key, 0, key.vl);
+        auto firstRequest = queue->PeekNextPacket();
+        // A target response goes in the same source queue and echoes remote RCID0, which
+        // numerically collides with the local requester. It has no local requester ownership.
+        auto response = CreateCtpTaAckResponseSegment(0);
+        response->SetSrc(topo.sender->GetId());
+        response->SetDest(key.dstNodeId);
+        NS_TEST_ASSERT_MSG_EQ(service->SendResponseSegmentForTest(response, key), true,
+                              "enqueue reverse target ACK with the same numeric RCID");
+        auto ack = queue->PeekNextPacket();
+        response->SetType(UbTransactionOpcode::READ_RESPONSE);
+        response->SetRequestOpcode(UbTransactionOpcode::READ);
+        response->SetSize(64);
+        response->SetPayloadBytes(64);
+        NS_TEST_ASSERT_MSG_EQ(service->SendResponseSegmentForTest(response, key), true,
+                              "enqueue reverse response in DATA class too");
+        auto cnp = BuildCtpCnpPacket(topo.sender->GetId(), key);
+        queue->EnqueueCnp(cnp);
+        Simulator::Stop(NanoSeconds(100));
+        Simulator::Run();
+        NS_TEST_EXPECT_MSG_EQ(queue->GetQueuedPacketCountForTest(), 5u, "all packets retained");
+        UbLifecycleResourceIdentity oldOwner;
+        function->TryGetJettyLifecycleIdentity(0, oldOwner);
+        const auto oldRcid = *transaction->GetCtpRequesterRcid(0);
+        NS_TEST_EXPECT_MSG_EQ(static_cast<int>(function->DestroyJetty(0, m_reason)),
+                              static_cast<int>(UbDestroyStatus::COMPLETED), "abort drains locally");
+        NS_TEST_EXPECT_MSG_EQ(queue->GetQueuedPacketCountForTest(), 4u,
+                              "remove only the canceled local request");
+        NS_TEST_EXPECT_MSG_EQ(m_completions[0], 1u, "terminal exactly once");
+        NS_TEST_EXPECT_MSG_EQ(static_cast<int>(m_outcomes[0]),
+                              static_cast<int>(m_reason == UbDestroyReason::ERROR
+                                                   ? UbWorkOutcome::FAILED
+                                                   : UbWorkOutcome::FLUSHED),
+                              "preserve typed terminal");
+        NS_TEST_EXPECT_MSG_EQ(m_completions[1], 0u, "other requester still pending");
+        NS_TEST_EXPECT_MSG_EQ(queue->GetNextPacket(), cnp, "CNP remains highest priority");
+        NS_TEST_EXPECT_MSG_EQ(queue->GetNextPacket(), ack, "ACK remains ahead of DATA");
+        auto retained = queue->GetNextPacket();
+        NS_TEST_EXPECT_MSG_NE(retained, firstRequest, "DATA head belongs to other requester");
+        NS_TEST_EXPECT_MSG_NE(queue->GetNextPacket(), nullptr, "reverse DATA response retained");
+        while (!queue->IsEmpty()) queue->GetNextPacket(); // Keep RED cleanup bounded too.
+        auto snapshot = topo.sender->GetObject<UbLifecycleCoordinator>()->GetSnapshot(oldOwner);
+        NS_TEST_EXPECT_MSG_EQ(snapshot.retired, true, "old owner backing retired");
+        NS_TEST_EXPECT_MSG_EQ(snapshot.activeTrackedEventLeases, 0u, "no old event residue");
+        function->CreateJetty(topo.sender->GetId(), key.dstNodeId, 0);
+        auto replacement = function->GetJetty(0);
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(replacement, key), true, "recreate caller ID");
+        UbLifecycleResourceIdentity newOwner;
+        function->TryGetJettyLifecycleIdentity(0, newOwner);
+        NS_TEST_EXPECT_MSG_NE(newOwner.generation, oldOwner.generation, "fresh exact owner");
+        NS_TEST_EXPECT_MSG_NE(*transaction->GetCtpRequesterRcid(0), oldRcid, "RCID never reused");
+        auto fresh = CreateCtpWqeForKey(function, topo.sender->GetId(), key, 2);
+        fresh->SetSport(0);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<int>(function->SubmitCtpWqe(fresh, 0, key).status),
+                              0, "replacement owns a new queued request");
+        service->RemoveRequesterPackets(oldOwner);
+        NS_TEST_EXPECT_MSG_EQ(queue->GetQueuedPacketCountForTest(), 1u,
+                              "old generation cleanup cannot delete replacement request");
+        NS_TEST_EXPECT_MSG_EQ(service->HasRequesterPackets(newOwner), true, "exact new ownership");
+        Simulator::Destroy();
+        Config::Reset();
+    }
+  private:
+    void OnComplete(UbWqeCompletion completion)
+    {
+        ++m_completions[completion.wqeId];
+        m_outcomes[completion.wqeId] = completion.outcome;
+    }
+    UbDestroyReason m_reason;
+    std::map<uint32_t, uint32_t> m_completions;
+    std::map<uint32_t, UbWorkOutcome> m_outcomes;
+};
+
+class UbCtpDelayedRequesterRetirementTest : public TestCase
+{
+  public:
+    UbCtpDelayedRequesterRetirementTest(UbDestroyReason reason, bool running)
+        : TestCase("CTP delayed requester retirement reason=" +
+                   std::to_string(static_cast<int>(reason)) + (running ? " running" : " pending")),
+          m_reason(reason), m_running(running) {}
+
+    void DoRun() override
+    {
+        Config::Reset();
+        auto node = BuildSinglePortCtpNode();
+        auto peer = BuildSinglePortCtpNode();
+        auto controller = node->GetObject<UbController>();
+        m_function = controller->GetUbFunction();
+        auto transaction = controller->GetUbTransaction();
+        auto service = controller->GetCtpTransportService();
+        const UbCtpEntityKey key{1, peer->GetId(), 1, 7};
+        service->SetAttribute("DelayTaAckSrcNode", UintegerValue(node->GetId()));
+        service->SetAttribute("DelayTaAckDstNode", UintegerValue(key.dstNodeId));
+        service->SetAttribute("DelayTaAckSequence", UintegerValue(0));
+        service->SetAttribute("DelayTaAckTime", TimeValue(NanoSeconds(10)));
+        auto jetty = SubmitCtpFixture(node, key);
+        // The injected response models a request already handed off from the source queue.
+        auto queue = service->GetOrCreateQueue(key, 0, key.vl);
+        NS_TEST_ASSERT_MSG_NE(queue->GetNextPacket(), nullptr, "handoff before response");
+        jetty->SetWqeCompletionCallback(
+            MakeCallback(&UbCtpDelayedRequesterRetirementTest::OnComplete, this));
+        m_function->TryGetJettyLifecycleIdentity(0, m_owner);
+        m_coordinator = node->GetObject<UbLifecycleCoordinator>();
+        const auto oldRcid = *transaction->GetCtpRequesterRcid(0);
+        service->CompleteFromTaAckForTest(0, 0);
+        service->SetAttribute("DelayTaAckTime", TimeValue(NanoSeconds(20)));
+        service->CompleteFromTaAckForTest(0, 0); // Duplicate validated before either resolves.
+        NS_TEST_EXPECT_MSG_EQ(m_coordinator->GetSnapshot(m_owner).activeTrackedEventLeases,
+                              2u, "both callbacks lease exact requester");
+        if (m_running)
+        {
+            service->TraceConnectWithoutContext("LastPacketACKsNotify",
+                MakeCallback(&UbCtpDelayedRequesterRetirementTest::OnAck, this));
+        }
+        else
+        {
+            RequestDestroy();
+        }
+        Simulator::Stop(NanoSeconds(5));
+        Simulator::Run();
+        NS_TEST_EXPECT_MSG_EQ(m_completed, 0u, "completion delay must not be skipped");
+        if (m_reason == UbDestroyReason::EXPLICIT || m_running)
+            NS_TEST_EXPECT_MSG_NE(m_function->GetJetty(0), nullptr, "backing retained for delay");
+        Simulator::Stop(NanoSeconds(30));
+        Simulator::Run();
+        NS_TEST_EXPECT_MSG_EQ(m_function->GetJetty(0), nullptr, "retire after local obligations");
+        NS_TEST_EXPECT_MSG_EQ(m_terminals, 1u, "one typed terminal despite duplicate callback");
+        NS_TEST_EXPECT_MSG_EQ(m_completed, (m_reason == UbDestroyReason::EXPLICIT ? 1u : 0u),
+                              "grace completes, abort or force does not succeed");
+        NS_TEST_EXPECT_MSG_EQ(m_destroyed,
+                              (m_reason == UbDestroyReason::EXPLICIT || m_running ? 1u : 0u),
+                              "only asynchronous destroy invokes callback");
+        auto snapshot = m_coordinator->GetSnapshot(m_owner);
+        NS_TEST_EXPECT_MSG_EQ(snapshot.retired, true, "exact old owner retired");
+        NS_TEST_EXPECT_MSG_EQ(snapshot.activeTrackedEventLeases, 0u, "running lease resolved");
+        NS_TEST_EXPECT_MSG_EQ(transaction->GetActiveOperationCount(), 0u, "no operation residue");
+        m_function->CreateJetty(node->GetId(), key.dstNodeId, 0);
+        auto replacement = m_function->GetJetty(0);
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(replacement, key), true,
+                              "recreate after unwind");
+        NS_TEST_EXPECT_MSG_NE(*transaction->GetCtpRequesterRcid(0), oldRcid, "new wire identity");
+        service->SetAttribute("DelayTaAckTime", TimeValue(NanoSeconds(0)));
+        auto wqe = CreateCtpWqeForKey(m_function, node->GetId(), key, 44);
+        wqe->SetSport(0);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<int>(m_function->SubmitCtpWqe(wqe, 0, key).status),
+                              0, "new generation accepts new work");
+        auto oldAck = CreateCtpTaAckResponseSegment(0);
+        oldAck->SetCtpRequesterIdentity(oldRcid, 1);
+        const UbCtpEntityKey reverse{1, node->GetId(), 1, 7};
+        NS_TEST_EXPECT_MSG_EQ(service->HandleReceivedPacket(
+            BuildCtpResponsePacketFromNode(peer, oldAck, reverse), 0), false,
+            "retired RCID late wire response rejected");
+        Simulator::Stop(NanoSeconds(30));
+        Simulator::Run();
+        NS_TEST_EXPECT_MSG_EQ(replacement->GetTaSsnSndUna(), 0u,
+                              "old canceled callbacks and late wire cannot finish replacement");
+        NS_TEST_EXPECT_MSG_EQ(transaction->GetActiveOperationCount(), 1u, "new work still live");
+        Simulator::Destroy();
+        Config::Reset();
+    }
+  private:
+    void RequestDestroy()
+    {
+        auto result = m_function->DestroyJetty(0, m_reason,
+            MakeCallback(&UbCtpDelayedRequesterRetirementTest::OnDestroyed, this));
+        NS_TEST_EXPECT_MSG_EQ(static_cast<int>(result),
+            static_cast<int>(m_running || m_reason == UbDestroyReason::EXPLICIT
+                                 ? UbDestroyStatus::PENDING : UbDestroyStatus::COMPLETED),
+            "running callback retains backing until unwind");
+    }
+    void OnAck(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
+               uint32_t, uint32_t, uint32_t, uint32_t, uint32_t)
+    {
+        NS_TEST_EXPECT_MSG_EQ(m_coordinator->GetSnapshot(m_owner).activeTrackedEventLeases,
+                              2u, "one running and one pending completion");
+        RequestDestroy();
+        NS_TEST_EXPECT_MSG_NE(m_function->GetJetty(0), nullptr, "running callback pins owner");
+    }
+    void OnComplete(UbWqeCompletion completion)
+    {
+        ++m_terminals;
+        if (completion.outcome == UbWorkOutcome::COMPLETED) ++m_completed;
+        else NS_TEST_EXPECT_MSG_EQ(static_cast<int>(completion.outcome),
+            static_cast<int>(m_reason == UbDestroyReason::ERROR
+                                 ? UbWorkOutcome::FAILED : UbWorkOutcome::FLUSHED),
+                                 "typed failure");
+    }
+    void OnDestroyed(UbLifecycleResourceIdentity owner, UbDestroyStatus status)
+    {
+        NS_TEST_EXPECT_MSG_EQ(owner, m_owner, "callback identifies exact old generation");
+        NS_TEST_EXPECT_MSG_EQ(static_cast<int>(status),
+                              static_cast<int>(UbDestroyStatus::COMPLETED),
+                              "destroy succeeded");
+        NS_TEST_EXPECT_MSG_EQ(m_function->GetJetty(0), nullptr, "erase before callback");
+        ++m_destroyed;
+    }
+    UbDestroyReason m_reason;
+    bool m_running;
+    Ptr<UbFunction> m_function;
+    Ptr<UbLifecycleCoordinator> m_coordinator;
+    UbLifecycleResourceIdentity m_owner;
+    uint32_t m_terminals{0}, m_completed{0}, m_destroyed{0};
+};
+
+class UbCtpRequesterNetworkRetirementTest : public TestCase
+{
+  public:
+    UbCtpRequesterNetworkRetirementTest(UbDestroyReason reason, bool afterHandoff)
+        : TestCase("CTP network requester retirement reason=" +
+                   std::to_string(static_cast<int>(reason)) +
+                   (afterHandoff ? " after handoff" : " dispatch pending")),
+          m_reason(reason), m_afterHandoff(afterHandoff) {}
+
+    void DoRun() override
+    {
+        Config::Reset();
+        auto topo = BuildLocalTpTopology();
+        auto controller = topo.sender->GetObject<UbController>();
+        auto function = controller->GetUbFunction();
+        auto transaction = controller->GetUbTransaction();
+        auto service = controller->GetCtpTransportService();
+        controller->SetAttribute("InitiatorProtocolDispatchDelay", TimeValue(NanoSeconds(100)));
+        const UbCtpEntityKey key{1, topo.receiver->GetId(), 1, 7};
+        topo.receiver->GetObject<UbController>()->GetUbTransaction()->SetTargetExecutor(
+            UbTargetExecutor([this](Ptr<const UbWqeSegment> request, const UbTransactionRule&,
+                                   UbTargetCompletion done) {
+                ++m_requests[request->GetTaskId()];
+                m_held[request->GetTaskId()] = done;
+            }));
+        for (uint32_t id : {0u, 1u})
+        {
+            function->CreateJetty(topo.sender->GetId(), key.dstNodeId, id);
+            auto jetty = function->GetJetty(id);
+            NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(jetty, key), true,
+                                  "prepare live requester");
+            jetty->SetWqeCompletionCallback(
+                MakeCallback(&UbCtpRequesterNetworkRetirementTest::OnComplete, this));
+            auto wqe = CreateCtpWqeForKey(function, topo.sender->GetId(), key, 100 + id);
+            NS_TEST_ASSERT_MSG_EQ(static_cast<int>(function->SubmitCtpWqe(wqe, id, key).status),
+                                  0, "accepted before dispatch");
+        }
+        NS_TEST_EXPECT_MSG_EQ(service->GetQueuedPacketCountForTest(key), 0u, "dispatch delay kept");
+        const auto oldRcid = *transaction->GetCtpRequesterRcid(0);
+        if (m_afterHandoff)
+        {
+            Simulator::Stop(MicroSeconds(10));
+            Simulator::Run();
+            NS_TEST_ASSERT_MSG_EQ(m_requests[100], 1u, "old request already at target");
+        }
+        auto result = function->DestroyJetty(0, m_reason,
+            MakeCallback(&UbCtpRequesterNetworkRetirementTest::OnDestroyed, this));
+        NS_TEST_EXPECT_MSG_EQ(static_cast<int>(result),
+            static_cast<int>(m_reason == UbDestroyReason::EXPLICIT
+                                 ? UbDestroyStatus::PENDING : UbDestroyStatus::COMPLETED),
+            "grace waits, abort cancels local accepted obligations");
+        if (m_reason == UbDestroyReason::EXPLICIT)
+        {
+            auto rejected = CreateCtpWqeForKey(function, topo.sender->GetId(), key, 103);
+            NS_TEST_EXPECT_MSG_NE(static_cast<int>(function->SubmitCtpWqe(rejected, 0, key).status),
+                                  0, "grace closes admission");
+            Simulator::Stop(NanoSeconds(50));
+            Simulator::Run();
+            NS_TEST_EXPECT_MSG_EQ(m_requests[100], 0u, "grace cannot bypass dispatch delay");
+            Simulator::Stop(MicroSeconds(10));
+            Simulator::Run();
+            NS_TEST_ASSERT_MSG_EQ(m_requests[100], 1u, "accepted work dispatches while draining");
+            NS_TEST_ASSERT_MSG_EQ(m_requests[101], 1u, "other requester remains held");
+            m_held.at(100)(UbWorkExecutionResult{});
+            Simulator::Stop(MicroSeconds(10));
+            Simulator::Run();
+            NS_TEST_EXPECT_MSG_EQ(function->GetJetty(0), nullptr, "owner-local grace finishes");
+            NS_TEST_EXPECT_MSG_NE(function->GetJetty(1), nullptr, "unrelated requester still live");
+            NS_TEST_EXPECT_MSG_EQ(m_terminals[100], 1u, "grace terminal once");
+            NS_TEST_EXPECT_MSG_EQ(static_cast<int>(m_outcomes[100]),
+                                  static_cast<int>(UbWorkOutcome::COMPLETED), "grace succeeds");
+            NS_TEST_EXPECT_MSG_EQ(m_destroyed, 1u, "pending destruction callback once");
+            NS_TEST_EXPECT_MSG_EQ(m_terminals[101], 0u, "no dependency on unrelated target");
+        }
+        else
+        {
+            NS_TEST_EXPECT_MSG_EQ(m_terminals[100], 1u, "abort or force terminal once");
+            NS_TEST_EXPECT_MSG_EQ(static_cast<int>(m_outcomes[100]),
+                static_cast<int>(m_reason == UbDestroyReason::ERROR
+                                     ? UbWorkOutcome::FAILED : UbWorkOutcome::FLUSHED),
+                "preserve terminal outcome");
+            function->CreateJetty(topo.sender->GetId(), key.dstNodeId, 0);
+            auto replacement = function->GetJetty(0);
+            NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(replacement, key), true,
+                                  "recreate caller ID");
+            NS_TEST_EXPECT_MSG_NE(*transaction->GetCtpRequesterRcid(0), oldRcid, "fresh RCID");
+            replacement->SetWqeCompletionCallback(
+                MakeCallback(&UbCtpRequesterNetworkRetirementTest::OnComplete, this));
+            auto fresh = CreateCtpWqeForKey(function, topo.sender->GetId(), key, 102);
+            NS_TEST_ASSERT_MSG_EQ(static_cast<int>(function->SubmitCtpWqe(fresh, 0, key).status),
+                                  0, "new generation accepts work");
+            Simulator::Stop(NanoSeconds(50));
+            Simulator::Run();
+            NS_TEST_EXPECT_MSG_EQ(m_requests[102], 0u, "new dispatch delay preserved");
+            Simulator::Stop(MicroSeconds(10));
+            Simulator::Run();
+            NS_TEST_ASSERT_MSG_EQ(m_requests[102], 1u, "new request reaches common executor");
+            NS_TEST_EXPECT_MSG_EQ(m_requests[100], (m_afterHandoff ? 1u : 0u),
+                                  "cancel pending dispatch; handed-off request may execute");
+            if (m_afterHandoff)
+            {
+                m_held.at(100)(UbWorkExecutionResult{}); // Remote execution finishes after abort.
+                Simulator::Stop(MicroSeconds(10));
+                Simulator::Run();
+                NS_TEST_EXPECT_MSG_EQ(replacement->GetTaSsnSndUna(), 0u,
+                                      "late real wire ACK cannot finish new generation");
+                NS_TEST_EXPECT_MSG_EQ(m_terminals[102], 0u, "new work remains held");
+                NS_TEST_EXPECT_MSG_EQ(m_terminals[100], 1u, "old terminal remains once");
+            }
+            m_held.at(102)(UbWorkExecutionResult{});
+            Simulator::Stop(MicroSeconds(10));
+            Simulator::Run();
+            NS_TEST_EXPECT_MSG_EQ(m_terminals[102], 1u, "new response completes new work once");
+        }
+        NS_TEST_ASSERT_MSG_EQ(m_requests[101], 1u, "unrelated request survives cleanup");
+        m_held.at(101)(UbWorkExecutionResult{});
+        Simulator::Stop(MicroSeconds(10));
+        Simulator::Run();
+        NS_TEST_EXPECT_MSG_EQ(m_terminals[101], 1u, "unrelated requester completes once");
+        NS_TEST_EXPECT_MSG_EQ(transaction->GetActiveOperationCount(), 0u, "all local work drains");
+        NS_TEST_EXPECT_MSG_EQ(transaction->GetResidentSegmentCount(), 0u, "no resident segments");
+        Simulator::Destroy();
+        Config::Reset();
+    }
+  private:
+    void OnComplete(UbWqeCompletion completion)
+    {
+        ++m_terminals[completion.wqeId];
+        m_outcomes[completion.wqeId] = completion.outcome;
+    }
+    void OnDestroyed(UbLifecycleResourceIdentity, UbDestroyStatus status)
+    {
+        NS_TEST_EXPECT_MSG_EQ(static_cast<int>(status),
+                              static_cast<int>(UbDestroyStatus::COMPLETED),
+                              "local drain callback");
+        ++m_destroyed;
+    }
+    UbDestroyReason m_reason;
+    bool m_afterHandoff;
+    uint32_t m_destroyed{0};
+    std::map<uint32_t, uint32_t> m_requests, m_terminals;
+    std::map<uint32_t, UbWorkOutcome> m_outcomes;
+    std::map<uint32_t, UbTargetCompletion> m_held;
+};
+
+class UbCtpPendingCallbackRecreateTest : public TestCase
+{
+  public:
+    UbCtpPendingCallbackRecreateTest()
+        : TestCase("CTP canceled delayed callback cannot reach replacement before old deadline") {}
+
+    void DoRun() override
+    {
+        Config::Reset();
+        auto node = BuildSinglePortCtpNode();
+        auto peer = BuildSinglePortCtpNode();
+        auto controller = node->GetObject<UbController>();
+        auto function = controller->GetUbFunction();
+        auto service = controller->GetCtpTransportService();
+        auto transaction = controller->GetUbTransaction();
+        const UbCtpEntityKey key{1, peer->GetId(), 1, 7};
+        auto old = SubmitCtpFixture(node, key);
+        auto queue = service->GetOrCreateQueue(key, 0, key.vl);
+        queue->GetNextPacket();
+        service->SetAttribute("DelayTaAckSrcNode", UintegerValue(node->GetId()));
+        service->SetAttribute("DelayTaAckDstNode", UintegerValue(peer->GetId()));
+        service->SetAttribute("DelayTaAckSequence", UintegerValue(0));
+        service->SetAttribute("DelayTaAckTime", TimeValue(NanoSeconds(100)));
+        service->CompleteFromTaAckForTest(0, 0);
+        const auto oldRcid = *transaction->GetCtpRequesterRcid(0);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<int>(function->DestroyJetty(0, UbDestroyReason::ERROR)),
+                              static_cast<int>(UbDestroyStatus::COMPLETED), "cancel old event");
+        auto fresh = SubmitCtpFixture(node, key);
+        queue->GetNextPacket();
+        NS_TEST_EXPECT_MSG_NE(*transaction->GetCtpRequesterRcid(0), oldRcid, "fresh RCID");
+        Simulator::Stop(NanoSeconds(200));
+        Simulator::Run();
+        NS_TEST_EXPECT_MSG_EQ(fresh->GetTaSsnSndUna(), 0u, "old deadline cannot complete new work");
+        NS_TEST_EXPECT_MSG_EQ(transaction->GetResidentSegmentCount(), 1u, "new backing remains");
+        service->SetAttribute("DelayTaAckTime", TimeValue(NanoSeconds(0)));
+        service->CompleteFromTaAckForTest(0, 0);
+        NS_TEST_EXPECT_MSG_EQ(fresh->GetTaSsnSndUna(), 1u, "only new response completes it");
+        NS_TEST_EXPECT_MSG_EQ(transaction->GetActiveOperationCount(), 0u, "new work drains");
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+#ifndef _WIN32
+class UbCtpDelayedLiveIdentityMismatchTest : public TestCase
+{
+  public:
+    UbCtpDelayedLiveIdentityMismatchTest()
+        : TestCase("CTP delayed completion asserts contradictory live segment identity") {}
+
+    void DoRun() override
+    {
+        const int status = RunInChildProcess([]() {
+            auto node = BuildSinglePortCtpNode();
+            auto peer = BuildSinglePortCtpNode();
+            auto controller = node->GetObject<UbController>();
+            auto service = controller->GetCtpTransportService();
+            auto transaction = controller->GetUbTransaction();
+            const UbCtpEntityKey key{1, peer->GetId(), 1, 7};
+            SubmitCtpFixture(node, key);
+            service->GetOrCreateQueue(key, 0, key.vl)->GetNextPacket();
+            service->SetAttribute("DelayTaAckSrcNode", UintegerValue(node->GetId()));
+            service->SetAttribute("DelayTaAckDstNode", UintegerValue(peer->GetId()));
+            service->SetAttribute("DelayTaAckSequence", UintegerValue(0));
+            service->SetAttribute("DelayTaAckTime", TimeValue(NanoSeconds(10)));
+            service->CompleteFromTaAckForTest(0, 0);
+            UbCtpEntityKey matched;
+            std::string rejection;
+            auto request = transaction->FindCtpOutstanding(0, 0, matched, rejection);
+            auto corrupt = request->GetTransactionSegmentIdentity();
+            ++corrupt.generation;
+            request->SetTransactionCorrelation(request->GetTransactionOperationIdentity(), corrupt);
+            Simulator::Stop(NanoSeconds(20));
+            Simulator::Run();
+        });
+        NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status), 1,
+                              "live contradiction is not ordinary stale work");
+        if (WIFSIGNALED(status))
+            NS_TEST_EXPECT_MSG_EQ(WTERMSIG(status), SIGABRT, "explicit internal error");
+    }
+};
+#endif
+
+class UbCtpDelayedDuplicateAcrossWrapTest : public TestCase
+{
+  public:
+    UbCtpDelayedDuplicateAcrossWrapTest()
+        : TestCase("CTP delayed duplicate retains absolute TASSN across later wire reuse") {}
+
+    void DoRun() override
+    {
+        Config::Reset();
+        auto node = BuildSinglePortCtpNode();
+        auto peer = BuildSinglePortCtpNode();
+        auto controller = node->GetObject<UbController>();
+        auto service = controller->GetCtpTransportService();
+        auto function = controller->GetUbFunction();
+        auto transaction = controller->GetUbTransaction();
+        const UbCtpEntityKey key{1, peer->GetId(), 1, 7};
+        auto jetty = SubmitCtpFixture(node, key);
+        auto queue = service->GetOrCreateQueue(key, 0, key.vl);
+        queue->GetNextPacket();
+        service->SetAttribute("DelayTaAckSrcNode", UintegerValue(node->GetId()));
+        service->SetAttribute("DelayTaAckDstNode", UintegerValue(peer->GetId()));
+        service->SetAttribute("DelayTaAckSequence", UintegerValue(0));
+        service->SetAttribute("DelayTaAckTime", TimeValue(NanoSeconds(10)));
+        service->CompleteFromTaAckForTest(0, 0);
+        service->SetAttribute("DelayTaAckTime", TimeValue(NanoSeconds(20)));
+        service->CompleteFromTaAckForTest(0, 0);
+        Simulator::Stop(NanoSeconds(15));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(), 0u, "original WQE resolved");
+        // Position the empty Jetty at the next wire cycle, then admit a real operation.
+        // The still-pending duplicate belongs to logical0, never to logical65536.
+        jetty->SetTaSsnSendWindowForTest(65536, 65536);
+        auto next = CreateCtpWqeForKey(function, node->GetId(), key, 42);
+        next->SetSport(0);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<int>(function->SubmitCtpWqe(next, 0, key).status),
+                              0, "real accepted outstanding at repeated wire sequence");
+        queue->GetNextPacket();
+        Simulator::Stop(NanoSeconds(10));
+        Simulator::Run();
+        NS_TEST_EXPECT_MSG_EQ(jetty->GetTaSsnSndUna(), 65536u,
+                              "old callback leaves new work intact");
+        NS_TEST_EXPECT_MSG_EQ(transaction->GetResidentSegmentCount(), 1u, "new record still live");
+        service->SetAttribute("DelayTaAckTime", TimeValue(NanoSeconds(0)));
+        service->CompleteFromTaAckForTest(0, 65536);
+        NS_TEST_EXPECT_MSG_EQ(jetty->GetTaSsnSndUna(), 65537u, "exact new response completes");
+        Simulator::Destroy();
+        Config::Reset();
     }
 };
 
@@ -33641,6 +34156,31 @@ UbTestSuite::UbTestSuite()
                 TestCase::Duration::QUICK);
 #endif
     AddTestCase(new UbCtpSendSegmentRegistersAndTriggersPortTest(), TestCase::Duration::QUICK);
+    for (auto reason : {UbDestroyReason::EXPLICIT, UbDestroyReason::ERROR,
+                        UbDestroyReason::SIMULATION_STOP})
+    {
+        AddTestCase(new UbCtpDelayedRequesterRetirementTest(reason, false),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbCtpDelayedRequesterRetirementTest(reason, true),
+                    TestCase::Duration::QUICK);
+    }
+    AddTestCase(new UbCtpRequesterNetworkRetirementTest(UbDestroyReason::EXPLICIT, false),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpRequesterNetworkRetirementTest(UbDestroyReason::ERROR, false),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpRequesterNetworkRetirementTest(UbDestroyReason::ERROR, true),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpRequesterNetworkRetirementTest(UbDestroyReason::SIMULATION_STOP, false),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpDelayedDuplicateAcrossWrapTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpPendingCallbackRecreateTest(), TestCase::Duration::QUICK);
+#ifndef _WIN32
+    AddTestCase(new UbCtpDelayedLiveIdentityMismatchTest(), TestCase::Duration::QUICK);
+#endif
+    AddTestCase(new UbCtpRequesterQueueRetirementTest(UbDestroyReason::ERROR),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpRequesterQueueRetirementTest(UbDestroyReason::SIMULATION_STOP),
+                TestCase::Duration::QUICK);
     AddTestCase(new UbCtpQueueBackpressurePreservesPacketAndRegistrationTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbSwitchLdstRoutingKeyKeepsLegacySourcePortTest(), TestCase::Duration::QUICK);
@@ -33952,6 +34492,31 @@ UbCtpLifecycleTestSuite::UbCtpLifecycleTestSuite()
     AddTestCase(new UbCtpCompactQueueCarriesLocalGenerationMetadataTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbCtpSendSegmentRegistersAndTriggersPortTest(), TestCase::Duration::QUICK);
+    for (auto reason : {UbDestroyReason::EXPLICIT, UbDestroyReason::ERROR,
+                        UbDestroyReason::SIMULATION_STOP})
+    {
+        AddTestCase(new UbCtpDelayedRequesterRetirementTest(reason, false),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbCtpDelayedRequesterRetirementTest(reason, true),
+                    TestCase::Duration::QUICK);
+    }
+    AddTestCase(new UbCtpRequesterNetworkRetirementTest(UbDestroyReason::EXPLICIT, false),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpRequesterNetworkRetirementTest(UbDestroyReason::ERROR, false),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpRequesterNetworkRetirementTest(UbDestroyReason::ERROR, true),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpRequesterNetworkRetirementTest(UbDestroyReason::SIMULATION_STOP, false),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpDelayedDuplicateAcrossWrapTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpPendingCallbackRecreateTest(), TestCase::Duration::QUICK);
+#ifndef _WIN32
+    AddTestCase(new UbCtpDelayedLiveIdentityMismatchTest(), TestCase::Duration::QUICK);
+#endif
+    AddTestCase(new UbCtpRequesterQueueRetirementTest(UbDestroyReason::ERROR),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpRequesterQueueRetirementTest(UbDestroyReason::SIMULATION_STOP),
+                TestCase::Duration::QUICK);
     AddTestCase(new UbCtpQueueBackpressurePreservesPacketAndRegistrationTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbCtpDataAckLifecycleAndTransactionCleanupTest(),

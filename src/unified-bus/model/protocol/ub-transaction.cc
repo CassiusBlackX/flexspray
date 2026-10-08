@@ -960,8 +960,9 @@ UbTransaction::FindCtpOutstanding(uint32_t rcid,
         if (!it->second.ctp) continue;
         const auto found = it->second.segments.find(static_cast<uint32_t>(sequence));
         if (found == it->second.segments.end()) continue;
-        NS_ABORT_MSG_IF(found->second.segment == nullptr,
-                        "live CTP segment index has no backing");
+        NS_ABORT_MSG_IF(found->second.segment == nullptr ||
+                            found->second.segment->GetTaSsn() != sequence,
+                        "live CTP segment index contradicts its backing");
         key = it->second.ctpKey;
         return found->second.segment;
     }

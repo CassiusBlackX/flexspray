@@ -781,7 +781,8 @@ UbJettyManager::IsDrainReady(const JettyRecord& record) const
     return record.wqes.empty() && record.jetty->GetActiveWqeCount() == 0 &&
            !m_jettyEvents.HasEvents(record.identity) &&
            (!record.hasCtpBinding ||
-            m_coordinator->GetSnapshot(record.identity).activeTrackedEventLeases == 0) &&
+            (m_coordinator->GetSnapshot(record.identity).activeTrackedEventLeases == 0 &&
+             !m_ctpService->HasRequesterPackets(record.identity))) &&
            !GetTransaction()->HasLifecycleOperationForJetty(record.jetty->GetJettyNum());
 }
 
@@ -899,7 +900,10 @@ UbJettyManager::DestroyJetty(uint32_t jettyNum,
         it->second.cleanupMode == CleanupMode::FORCE)
     {
         if (it->second.hasCtpBinding && m_ctpService != nullptr)
+        {
             m_ctpService->CancelRequesterCompletionEvents(identity);
+            m_ctpService->RemoveRequesterPackets(identity);
+        }
         const UbWorkOutcome outcome = it->second.cleanupMode == CleanupMode::ABORT
                                           ? UbWorkOutcome::FAILED
                                           : UbWorkOutcome::FLUSHED;
