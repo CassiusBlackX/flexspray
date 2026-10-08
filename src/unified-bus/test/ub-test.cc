@@ -28760,6 +28760,83 @@ class UbCtpSequenceAndConfigurationBoundaryTest : public TestCase
     std::vector<UbTargetCompletion> m_held;
 };
 
+class UbCtpFullSequenceCycleRoundTripTest : public TestCase
+{
+  public:
+    UbCtpFullSequenceCycleRoundTripTest()
+        : TestCase("CTP real network drains a complete wire TASSN cycle from zero") {}
+
+    void DoRun() override
+    {
+        Config::Reset();
+        auto topo = BuildLocalTpTopology();
+        auto controller = topo.sender->GetObject<UbController>();
+        auto function = controller->GetUbFunction();
+        auto transaction = controller->GetUbTransaction();
+        auto service = controller->GetCtpTransportService();
+        const UbCtpEntityKey key{1, topo.receiver->GetId(), 1, 7};
+        function->CreateJetty(topo.sender->GetId(), key.dstNodeId, 0);
+        auto jetty = function->GetJetty(0);
+        jetty->SetTaSegmentBytes(64);
+        jetty->SetInflightMax(128);
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(jetty, key), true,
+                              "prepare zero-based requester");
+        const auto rcid = *transaction->GetCtpRequesterRcid(0);
+        jetty->SetClientCallback(
+            MakeCallback(&UbCtpFullSequenceCycleRoundTripTest::OnComplete, this));
+        topo.receiver->GetObject<UbController>()->GetUbTransaction()->SetTargetExecutor(
+            UbTargetExecutor([this, rcid](Ptr<const UbWqeSegment> request, const UbTransactionRule&,
+                                         UbTargetCompletion done) {
+                if (*request->GetCtpRcid() != rcid || request->GetTaSsn() >= m_wireCounts.size())
+                    m_badIdentity = true;
+                else
+                    ++m_wireCounts[request->GetTaSsn()];
+                ++m_requests;
+                done(UbWorkExecutionResult{});
+            }));
+        constexpr uint32_t segments = 65538;
+        auto wqe = function->CreateWqe(topo.sender->GetId(), key.dstNodeId,
+                                        segments * 64, 777, UbTransactionOpcode::WRITE);
+        wqe->SetSrcEntityId(key.srcEntityId);
+        wqe->SetDstEntityId(key.dstEntityId);
+        wqe->SetPriority(key.vl);
+        wqe->SetSport(CTP_WILDCARD_PORT);
+        wqe->SetDport(CTP_WILDCARD_PORT);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<int>(function->SubmitCtpWqe(wqe, 0, key).status),
+                              0, "accept full-cycle WQE through production admission");
+        Simulator::Stop(MilliSeconds(10));
+        Simulator::Run();
+        NS_TEST_EXPECT_MSG_EQ(m_badIdentity, false, "actual target sees expected RCID/wire16");
+        NS_TEST_EXPECT_MSG_EQ(m_requests, segments, "all actual wire requests reach target once");
+        for (uint32_t wire = 0; wire < m_wireCounts.size(); ++wire)
+            NS_TEST_EXPECT_MSG_EQ(m_wireCounts[wire], (wire < 2 ? 2u : 1u),
+                                  "complete wire cycle with exactly two post-wrap requests");
+        NS_TEST_EXPECT_MSG_EQ(m_completed, 1u, "one WQE completion across the entire cycle");
+        NS_TEST_EXPECT_MSG_EQ(jetty->GetTaSsnSndUna(), segments,
+                              "logical completion does not wrap");
+        NS_TEST_EXPECT_MSG_EQ(jetty->GetTaSsnSndNxt(), segments, "logical send does not wrap");
+        NS_TEST_EXPECT_MSG_EQ(*transaction->GetCtpRequesterRcid(0), rcid, "RCID unchanged at wrap");
+        NS_TEST_EXPECT_MSG_EQ(transaction->GetActiveOperationCount(), 0u, "no operation residue");
+        NS_TEST_EXPECT_MSG_EQ(transaction->GetResidentSegmentCount(), 0u, "no segment residue");
+        NS_TEST_EXPECT_MSG_EQ(service->GetQueuedPacketCountForTest(key), 0u,
+                              "source queue drained");
+        std::cout << "CTP-M5 full-cycle requests=" << m_requests << " una/nxt="
+                  << jetty->GetTaSsnSndUna() << "/" << jetty->GetTaSsnSndNxt()
+                  << " completions=" << m_completed << std::endl;
+        Simulator::Destroy();
+        Config::Reset();
+    }
+  private:
+    void OnComplete(uint32_t task, uint32_t)
+    {
+        NS_TEST_EXPECT_MSG_EQ(task, 777u, "expected task identity");
+        ++m_completed;
+    }
+    std::array<uint32_t, 65536> m_wireCounts{};
+    uint32_t m_requests{0}, m_completed{0};
+    bool m_badIdentity{false};
+};
+
 class UbCtpIndependentJettyRoundTripTest : public TestCase
 {
   public:
@@ -30897,11 +30974,11 @@ class UbCtpOutOfOrderWireTaAckCompletesContiguousJettyRangeTest : public TestCas
     bool m_completed{false};
 };
 
-class UbCtpTerminalRecoveryWithoutTaAckContinuesWaitingJettyWqeTest : public TestCase
+class UbCtpTerminalRetiresWaitingJettyWqesTest : public TestCase
 {
   public:
-    UbCtpTerminalRecoveryWithoutTaAckContinuesWaitingJettyWqeTest()
-        : TestCase("UnifiedBus - CTP terminal recovery without TAACK continues a waiting WQE")
+    UbCtpTerminalRetiresWaitingJettyWqesTest()
+        : TestCase("CTP abandonment retires waiting WQEs and requires a new requester")
     {
     }
 
@@ -30929,7 +31006,7 @@ class UbCtpTerminalRecoveryWithoutTaAckContinuesWaitingJettyWqeTest : public Tes
         jetty->SetAttribute("UbJettyInflightMax", UintegerValue(1));
         jetty->SetTaSegmentBytes(64);
         jetty->SetWqeCompletionCallback(
-            MakeCallback(&UbCtpTerminalRecoveryWithoutTaAckContinuesWaitingJettyWqeTest::
+            MakeCallback(&UbCtpTerminalRetiresWaitingJettyWqesTest::
                              OnCompletion,
                          this));
 
@@ -30974,43 +31051,37 @@ class UbCtpTerminalRecoveryWithoutTaAckContinuesWaitingJettyWqeTest : public Tes
                               2u,
                               "Both CTP WQEs should remain lifecycle-managed before terminal cleanup");
 
+        const auto oldRcid = *transaction->GetCtpRequesterRcid(kJettyNum);
         transaction->CompleteWqeOperation(kJettyNum, kFirstTaskId, UbWorkOutcome::CANCELED);
-
-        NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndNxtForTest(),
-                              2u,
-                              "CTP terminal progress should admit the waiting WQE without TAACK");
-        NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndUnaForTest(),
-                              1u,
-                              "CTP terminal progress should release exactly the first TASSN");
-        NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
-                              1u,
-                              "The waiting CTP WQE should remain as the only active operation");
-        NS_TEST_ASSERT_MSG_EQ((jetty->GetTaSsnSndNxtForTest() - jetty->GetTaSsnSndUnaForTest()),
-                              1u,
-                              "The continued CTP WQE should occupy one entity window slot");
-
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndNxt(), 1u,
+                              "abandonment cannot dispatch waiting work in the same generation");
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndUna(), 1u, "retire the admitted segment");
+        NS_TEST_ASSERT_MSG_EQ(function->GetJetty(kJettyNum), nullptr, "retire exact old requester");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(), 0u, "both WQEs retired");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetResidentSegmentCount(), 0u, "no old segment backing");
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetActiveWqeCount(), 0u, "remove both old WQEs");
+        NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(key), 0u,
+                              "remove the old unsent request");
+        NS_TEST_ASSERT_MSG_EQ(m_failedCompletions, 2u, "accepted WQEs fail exactly once");
         service->TryContinueJettyTransmission(key);
         service->TryContinueJettyTransmission(key);
-        NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndNxtForTest(),
-                              2u,
-                              "Repeated CTP continuation checks must not duplicate a segment");
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndNxt(), 1u, "no cleanup-induced resurrection");
 
-        transaction->CompleteWqeOperation(kJettyNum, kSecondTaskId, UbWorkOutcome::CANCELED);
-        NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndUnaForTest(),
-                              2u,
-                              "Terminal cleanup should release the continued CTP TASSN");
-        NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
-                              0u,
-                              "CTP terminal cleanup should retire both operations");
-        NS_TEST_ASSERT_MSG_EQ(transaction->GetResidentSegmentCount(),
-                              0u,
-                              "CTP terminal cleanup should retire both admitted segments");
-        NS_TEST_ASSERT_MSG_EQ(jetty->GetActiveWqeCount(),
-                              0u,
-                              "CTP terminal cleanup should remove both WQEs from the Jetty");
-        NS_TEST_ASSERT_MSG_EQ(m_canceledCompletions,
-                              2u,
-                              "Each CTP terminalized WQE should complete exactly once");
+        function->CreateJetty(node->GetId(), key.dstNodeId, kJettyNum);
+        auto replacement = function->GetJetty(kJettyNum);
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(replacement, key), true,
+                              "prepare new requester");
+        NS_TEST_ASSERT_MSG_NE(*transaction->GetCtpRequesterRcid(kJettyNum), oldRcid,
+                              "new generation uses fresh RCID");
+        auto next = CreateCtpWqeForKey(function, node->GetId(), key, kSecondTaskId + 1);
+        next->SetSport(0);
+        NS_TEST_ASSERT_MSG_EQ(static_cast<int>(function->SubmitCtpWqe(next, kJettyNum, key).status),
+                              0, "new generation can continue useful work");
+        service->GetOrCreateQueue(key, 0, key.vl)->GetNextPacket();
+        service->CompleteFromTaAckForTest(kJettyNum, 0);
+        NS_TEST_ASSERT_MSG_EQ(replacement->GetTaSsnSndUna(), 1u, "new work completes normally");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(), 0u, "all new backing drains");
+        NS_TEST_ASSERT_MSG_EQ(m_failedCompletions, 2u, "old terminals remain exactly once");
 
         Simulator::Destroy();
     }
@@ -31018,13 +31089,13 @@ class UbCtpTerminalRecoveryWithoutTaAckContinuesWaitingJettyWqeTest : public Tes
     void OnCompletion(UbWqeCompletion completion)
     {
         if ((completion.wqeId == kFirstTaskId || completion.wqeId == kSecondTaskId) &&
-            completion.outcome == UbWorkOutcome::CANCELED)
+            completion.outcome == UbWorkOutcome::FAILED)
         {
-            ++m_canceledCompletions;
+            ++m_failedCompletions;
         }
     }
 
-    uint32_t m_canceledCompletions{0};
+    uint32_t m_failedCompletions{0};
 };
 
 class UbCtpOutOfOrderWireTaAckTracesArrivalTest : public TestCase
@@ -34094,6 +34165,7 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbCtpSequenceAndConfigurationBoundaryTest(65535), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpSequenceAndConfigurationBoundaryTest(UINT32_MAX - 2),
                 TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpFullSequenceCycleRoundTripTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpIndependentJettyRoundTripTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpJettyHolTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpReportsConstraintsWithoutMutatingJettyTest(),
@@ -34128,7 +34200,7 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbCtpWireTaAckCompletesJettyTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpWireTaAckContinuesInflightLimitedWqeTest(),
                 TestCase::Duration::QUICK);
-    AddTestCase(new UbCtpTerminalRecoveryWithoutTaAckContinuesWaitingJettyWqeTest(),
+    AddTestCase(new UbCtpTerminalRetiresWaitingJettyWqesTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbCtpOutOfOrderWireTaAckCompletesContiguousJettyRangeTest(),
                 TestCase::Duration::QUICK);
@@ -34445,10 +34517,12 @@ static UbTestSuite g_ubTestSuite;
 UbCtpTransactionTestSuite::UbCtpTransactionTestSuite()
     : TestSuite("unified-bus-ctp-transaction", Type::UNIT)
 {
+    AddTestCase(new UbCtpTerminalRetiresWaitingJettyWqesTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpRequesterPreparationTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpSequenceAndConfigurationBoundaryTest(65535), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpSequenceAndConfigurationBoundaryTest(UINT32_MAX - 2),
                 TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpFullSequenceCycleRoundTripTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpIndependentJettyRoundTripTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpJettyHolTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpReportsConstraintsWithoutMutatingJettyTest(),
