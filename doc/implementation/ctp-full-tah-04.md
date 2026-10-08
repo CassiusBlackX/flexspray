@@ -1,5 +1,7 @@
 # CTP full TA ticket 04: independent requester progress
 
+Implementation: `8d99d10549fe9194e316e4acf548e2ef48c50304`. Ticket04 accepted; ticket05 follows.
+
 Baseline: `40df13d8dd376d6a1e5a5cb3cf12899fa8b430d3`.
 UbJetty is now the sole sequence/window/WQE-progress authority. Entity cursors, ACK bitmap,
 pending head and duplicate outstanding state are removed. The existing service round-robin admits
