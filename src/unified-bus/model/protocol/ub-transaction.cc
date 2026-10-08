@@ -1005,6 +1005,48 @@ UbTransaction::FindCtpRequester(uint32_t rcid) const
     return it == m_ctpRequesters.end() ? nullptr : &it->second;
 }
 
+Ptr<UbWqeSegment>
+UbTransaction::FindCtpOutstanding(uint32_t rcid,
+                                   uint16_t wireSsn,
+                                   UbCtpEntityKey& key,
+                                   std::string& rejection)
+{
+    const auto* identity = FindCtpRequester(rcid);
+    if (identity == nullptr)
+    {
+        rejection = rcid < m_nextCtpRcid ? "retired RCID" : "unallocated RCID";
+        return nullptr;
+    }
+    const uint32_t jettyNum = static_cast<uint32_t>(identity->localId);
+    auto jetty = GetJetty(jettyNum);
+    UbLifecycleResourceIdentity current;
+    NS_ABORT_MSG_IF(jetty == nullptr ||
+                    !GetFunction()->TryGetJettyLifecycleIdentity(jettyNum, current) ||
+                    current != *identity, "live CTP RCID has a stale Jetty generation");
+    const uint64_t una = jetty->GetTaSsnSndUnaForTest();
+    const uint64_t nxt = jetty->GetTaSsnSndNxtForTest();
+    uint64_t sequence = (una & ~uint64_t{0xffff}) | wireSsn;
+    if (sequence < una) sequence += 0x10000;
+    if (sequence >= nxt || sequence >= UINT32_MAX)
+    {
+        rejection = "TASSN outside active requester window";
+        return nullptr;
+    }
+    for (auto it = m_operations.lower_bound({jettyNum, 0});
+         it != m_operations.end() && it->first.first == jettyNum; ++it)
+    {
+        if (!it->second.ctp) continue;
+        const auto found = it->second.segments.find(static_cast<uint32_t>(sequence));
+        if (found == it->second.segments.end()) continue;
+        NS_ABORT_MSG_IF(found->second.segment == nullptr,
+                        "live CTP segment index has no backing");
+        key = it->second.ctpKey;
+        return found->second.segment;
+    }
+    rejection = "no outstanding segment in active requester window";
+    return nullptr;
+}
+
 void
 UbTransaction::RetireCtpRequester(uint32_t jettyNum, const UbLifecycleResourceIdentity& identity)
 {
@@ -1031,7 +1073,30 @@ Ptr<UbWqeSegment>
 UbTransaction::PrepareNextCtpWqeSegment(Ptr<UbJetty> jetty, uint32_t maxSegmentBytes)
 {
     NS_ABORT_MSG_IF(jetty == nullptr, "CTP segmentation requires a Jetty");
-    return jetty->PrepareNextWqeSegment(nullptr, maxSegmentBytes);
+    auto segment = jetty->PrepareNextWqeSegment(nullptr, maxSegmentBytes);
+    if (segment == nullptr) return nullptr;
+    const auto rcid = GetCtpRequesterRcid(jetty->GetJettyNum());
+    NS_ABORT_MSG_IF(!rcid, "CTP segmentation requires a prepared requester");
+    segment->SetCtpRequesterIdentity(*rcid, 1);
+    auto operation = m_operations.find({jetty->GetJettyNum(), segment->GetTaskId()});
+    NS_ABORT_MSG_IF(operation == m_operations.end() || !operation->second.ctp,
+                    "CTP segmentation requires its admitted operation");
+    auto wqe = operation->second.wqe;
+    auto fields = segment->GetTransactionFields();
+    if (fields.memoryAccess)
+    {
+        const auto& memory = *wqe->GetTransactionFields().memoryAccess;
+        const uint64_t offset = wqe->GetSize() - wqe->GetBytesLeft();
+        NS_ABORT_MSG_IF(offset > UINT64_MAX - memory.address,
+                        "CTP segment address overflows");
+        fields.memoryAccess = UbMemoryAccessFields{memory.address + offset,
+                                                   memory.tokenId,
+                                                   segment->GetLogicalBytes()};
+        segment->SetRemoteAddress(fields.memoryAccess->address);
+        segment->SetRemoteTokenId(fields.memoryAccess->tokenId);
+        segment->SetTransactionFields(fields);
+    }
+    return segment;
 }
 
 void
@@ -2096,6 +2161,8 @@ UbTransaction::BuildTransactionResponse(uint32_t localTpn,
     response->SetSrc(m_nodeId); response->SetDest(request->GetSrc()); response->SetSport(request->GetDport()); response->SetDport(request->GetSport());
     response->SetType(responseOpcode); response->SetSize(std::max(payload, 1u)); response->SetLogicalBytes(payload); response->SetPayloadBytes(payload); response->SetCarrierBytes(std::max(payload, 1u)); response->SetPriority(request->GetPriority());
     response->SetTaskId(request->GetTaskId()); response->SetWqeSize(request->GetWqeSize()); response->SetOrderType(request->GetOrderType()); response->SetJettyNum(request->GetOriginJettyNum()); response->SetTaMsn(0); response->SetTaSsn(request->GetRequestTassn()); response->SetSegmentKind(UbTransactionSegmentKind::RESPONSE); response->SetOriginJettyNum(request->GetOriginJettyNum()); response->SetRequestTassn(request->GetRequestTassn()); response->SetRequestOpcode(request->GetType()); response->SetResponseBytes(payload); response->SetRemoteAddress(request->GetRemoteAddress()); response->SetRemoteTokenId(request->GetRemoteTokenId()); response->SetNeedsTransactionResponse(false); response->SetTpn(localTpn); response->SetTransactionFields(request->GetTransactionFields());
+    if (request->GetCtpRcid())
+        response->SetCtpRequesterIdentity(*request->GetCtpRcid(), request->GetCtpRcType());
     if (request->HasTransactionResolved()) response->SetTransactionResolved(resolved);
     if (request->HasTransactionCorrelation()) response->SetTransactionCorrelation(request->GetTransactionCorrelation());
     if (request->HasResolvedTpIdentity()) response->SetResolvedTpIdentity(request->GetResolvedTpIdentity());
@@ -2130,15 +2197,13 @@ bool UbTransaction::ProcessInboundTaResponse(Ptr<UbWqeSegment> response)
         return false;
     }
     const auto request = segment->second.segment;
-    if (!operation->second.ctp &&
-        (response->GetSrc() != request->GetDest() || response->GetDest() != request->GetSrc()))
+    if (response->GetSrc() != request->GetDest() || response->GetDest() != request->GetSrc())
     {
         return false;
     }
-    if (!operation->second.ctp &&
-        (!request->HasTransactionCorrelation() || !response->HasTransactionCorrelation() ||
-         response->GetTransactionOperationIdentity() != request->GetTransactionOperationIdentity() ||
-         response->GetTransactionSegmentIdentity() != request->GetTransactionSegmentIdentity()))
+    if (!request->HasTransactionCorrelation() || !response->HasTransactionCorrelation() ||
+        response->GetTransactionOperationIdentity() != request->GetTransactionOperationIdentity() ||
+        response->GetTransactionSegmentIdentity() != request->GetTransactionSegmentIdentity())
     {
         return false;
     }
@@ -2169,11 +2234,6 @@ bool UbTransaction::ProcessInboundTaResponse(Ptr<UbWqeSegment> response)
                                         response->GetPayloadBytes()))
     {
         return false;
-    }
-    if (operation->second.ctp && request->HasTransactionCorrelation() &&
-        !response->HasTransactionCorrelation())
-    {
-        response->SetTransactionCorrelation(request->GetTransactionCorrelation());
     }
     response->SetRequestOpcode(request->GetType());
     return ProcessWqeSegmentComplete(response);

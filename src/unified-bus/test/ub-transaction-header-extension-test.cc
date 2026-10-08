@@ -289,7 +289,7 @@ class UbTaHeaderPlanTest : public TestCase
 class UbCtpRuleDrivenLayoutTest : public TestCase
 {
   public:
-    UbCtpRuleDrivenLayoutTest() : TestCase("compact carrier writes the planned transaction headers")
+    UbCtpRuleDrivenLayoutTest() : TestCase("CFG6 carrier writes the planned transaction headers")
     {
     }
 
@@ -347,10 +347,11 @@ class UbCtpRuleDrivenLayoutTest : public TestCase
         segment->SetRemoteAddress(0x1000);
         segment->SetRemoteTokenId(0x42);
         segment->SetTransactionFields(fields);
+        segment->SetCtpRequesterIdentity(0, 1);
         return segment;
     }
 
-    /** Strip the compact carrier wrapper down to the transaction unit. */
+    /** Strip the CFG6 carrier wrapper down to the transaction unit. */
     Ptr<Packet> StripCompactCarrier(Ptr<Packet> packet)
     {
         UbDatalinkPacketHeader dataLinkHeader;
@@ -363,6 +364,7 @@ class UbCtpRuleDrivenLayoutTest : public TestCase
         NS_TEST_EXPECT_MSG_NE(packet->RemoveHeader(ctpHeader), 0u, "CTP header");
         NS_TEST_EXPECT_MSG_NE(packet->RemoveHeader(upiHeader), 0u, "CTP UPI header");
         NS_TEST_EXPECT_MSG_NE(packet->RemoveHeader(eidHeader), 0u, "CTP EID header");
+        packet->RemoveAtEnd(ctpHeader.GetPadding());
         return packet;
     }
 
@@ -374,12 +376,12 @@ class UbCtpRuleDrivenLayoutTest : public TestCase
         {
             if (name == "MAETAH")
             {
-                UbCompactMAExtTah maHeader;
-                NS_TEST_EXPECT_MSG_NE(packet->RemoveHeader(maHeader), 0u, "compact MAETAH present");
-                NS_TEST_EXPECT_MSG_EQ(maHeader.GetSerializedSize(), UB_TA_COMPACT_MAETAH_BYTES,
-                                      "compact MAETAH size");
-                NS_TEST_EXPECT_MSG_EQ(maHeader.GetTokenId(), 0x42u, "compact MAETAH token");
-                bytes += UB_TA_COMPACT_MAETAH_BYTES;
+                UbMAExtTah maHeader;
+                NS_TEST_EXPECT_MSG_NE(packet->RemoveHeader(maHeader), 0u, "full MAETAH present");
+                NS_TEST_EXPECT_MSG_EQ(maHeader.GetSerializedSize(), UB_TA_FULL_MAETAH_BYTES,
+                                      "full MAETAH size");
+                NS_TEST_EXPECT_MSG_EQ(maHeader.GetTokenId(), 0x42u, "full MAETAH token");
+                bytes += UB_TA_FULL_MAETAH_BYTES;
                 continue;
             }
             UbTransactionExtensionHeader header(KindOf(name));
@@ -443,10 +445,10 @@ class UbCtpRuleDrivenLayoutTest : public TestCase
         NS_TEST_ASSERT_MSG_NE(packet, nullptr, "CTP packet is built");
 
         Ptr<Packet> body = StripCompactCarrier(packet);
-        UbCompactTransactionHeader taHeader;
-        NS_TEST_ASSERT_MSG_NE(body->RemoveHeader(taHeader), 0u, "compact TA header decodes");
+        UbTransactionHeader taHeader;
+        NS_TEST_ASSERT_MSG_NE(body->RemoveHeader(taHeader), 0u, "full TA header decodes");
         NS_TEST_ASSERT_MSG_EQ(taHeader.GetUbTransactionOpcode(), static_cast<uint8_t>(opcode),
-                              "compact TA header carries the segment opcode");
+                              "full TA header carries the segment opcode");
         const uint32_t extensionBytes = ConsumeExpected(body, expected);
         NS_TEST_ASSERT_MSG_EQ(body->GetSize(), payloadBytes,
                               "the declared headers never leak into the compact payload");

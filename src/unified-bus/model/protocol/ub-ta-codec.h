@@ -81,13 +81,13 @@ class UbTaHeaderPlan
     UbTaHeaderPresence m_presence{};
 };
 
-/** Serialized MAETAH size in bytes of the full (RTP) transaction header format. */
+/** Serialized MAETAH size in bytes of the full (RTP and CFG6 CTP) transaction header format. */
 constexpr uint32_t UB_TA_FULL_MAETAH_BYTES = 16;
-/** Serialized MAETAH size in bytes of the compact (CTP) transaction header format. */
+/** Serialized MAETAH size in bytes of the compact (LDST) transaction header format. */
 constexpr uint32_t UB_TA_COMPACT_MAETAH_BYTES = 12;
-/** Serialized BTAH/ATAH size in bytes of the full (RTP) transaction header format. */
+/** Serialized BTAH/ATAH size in bytes of the full (RTP and CFG6 CTP) transaction header format. */
 constexpr uint32_t UB_TA_FULL_BASE_HEADER_BYTES = 8;
-/** Serialized BTAH/ATAH size in bytes of the compact (CTP) transaction header format. */
+/** Serialized BTAH/ATAH size in bytes of the compact (LDST) transaction header format. */
 constexpr uint32_t UB_TA_COMPACT_BASE_HEADER_BYTES = 4;
 
 /**
@@ -100,7 +100,7 @@ UbTaHeaderPresence DeclareRequestHeaderPresence(const UbTransactionRule& rule,
                                                 const UbTransactionFields& fields);
 
 /**
- * The rule-owned header presence a compact (CTP) basic transaction header cannot flag.
+ * The rule-owned header presence a compact (LDST) basic transaction header cannot flag.
  *
  * The compact basic header has no MT_EN bit, so MTETAH is carried whenever the rule lists it.
  * UDETAH stays absent here; the compact UD flag supplies that presence at the carrier call site.

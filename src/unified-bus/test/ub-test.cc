@@ -122,6 +122,7 @@ CreateCtpWriteSegment(uint32_t taSsn = 0)
     segment->SetPayloadBytes(64);
     segment->SetResLenBytes(64);
     segment->SetRemoteAddress(0);
+    segment->SetCtpRequesterIdentity(0, 1);
     return segment;
 }
 
@@ -150,8 +151,8 @@ CreateCtpTaAckResponseSegment(uint32_t requestTaSsn)
     Ptr<UbWqeSegment> segment = CreateObject<UbWqeSegment>();
     segment->SetSrc(1);
     segment->SetDest(0);
-    segment->SetSport(CTP_WILDCARD_PORT);
-    segment->SetDport(CTP_WILDCARD_PORT);
+    segment->SetSport(0);
+    segment->SetDport(0);
     segment->SetPriority(7);
     segment->SetType(UbTransactionOpcode::TAACK);
     segment->SetSize(0);
@@ -162,6 +163,7 @@ CreateCtpTaAckResponseSegment(uint32_t requestTaSsn)
     segment->SetPayloadBytes(0);
     segment->SetResLenBytes(0);
     segment->SetRemoteAddress(0);
+    segment->SetCtpRequesterIdentity(0, 1);
     return segment;
 }
 
@@ -315,6 +317,28 @@ BuildSinglePortCtpNode()
     Ptr<Node> node = CreateObject<Node>(0);
     InitNode(node, UB_DEVICE, 1);
     return node;
+}
+
+// Reuse real keyed preparation and admission when a fixture needs a wire-matchable request.
+Ptr<UbJetty>
+SubmitCtpFixture(Ptr<Node> node, const UbCtpEntityKey& key,
+                 uint32_t bytes = 64, uint32_t firstSsn = 0)
+{
+    auto controller = node->GetObject<UbController>();
+    auto function = controller->GetUbFunction();
+    auto service = controller->GetCtpTransportService();
+    function->CreateJetty(node->GetId(), key.dstNodeId, 0);
+    auto jetty = function->GetJetty(0);
+    jetty->SetTaSsnSendWindowForTest(firstSsn, firstSsn);
+    service->GetOrCreateTransactionContext(key)->SetWindowForTest(firstSsn, firstSsn);
+    NS_ABORT_MSG_IF(!service->PrepareJetty(jetty, key), "fixture preparation failed");
+    auto wqe = CreateCtpWqeForKey(function, node->GetId(), key, 0);
+    wqe->SetSize(bytes);
+    wqe->SetSport(0);
+    NS_ABORT_MSG_IF(function->SubmitCtpWqe(wqe, 0, key).status != UbWqeSubmissionStatus::ACCEPTED,
+                    "fixture admission failed");
+    service->StartJetty(jetty, key);
+    return jetty;
 }
 
 LocalTpTopology
@@ -29429,7 +29453,7 @@ class UbCtpBuildDataPacketHeaderTest : public TestCase
 {
   public:
     UbCtpBuildDataPacketHeaderTest()
-        : TestCase("UnifiedBus - CTP data packet builds reference compact CTP header stack")
+        : TestCase("UnifiedBus - CTP data packet builds full CFG6 CTP header stack")
     {
     }
 
@@ -29439,17 +29463,28 @@ class UbCtpBuildDataPacketHeaderTest : public TestCase
         Ptr<UbCtpTransportService> service = CreateObject<UbCtpTransportService>();
         Ptr<Node> node = CreateObject<Node>();
         service->SetNode(node);
+        for (uint32_t oldValue : {0u, 128u})
+            NS_TEST_ASSERT_MSG_EQ(service->SetAttributeFailSafe("ExperimentTaAckPacketBytes",
+                                                               UintegerValue(oldValue)),
+                                  false, "removed attribute has no zero-value compatibility");
         UbCtpEntityKey key{.srcEntityId = 1,
                            .dstNodeId = 1,
                            .dstEntityId = 1,
                            .vl = 7};
         Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(0);
+        segment->SetCtpRequesterIdentity(0xabcde, 1);
         segment->SetSport(2);
         segment->SetDport(3);
         Ptr<Packet> packet = service->BuildDataPacket(segment, key);
+        std::vector<uint8_t> wire(packet->GetSize());
+        packet->CopyData(wire.data(), wire.size());
+        std::ostringstream wireHex;
+        for (uint8_t byte : wire)
+            wireHex << std::hex << std::setfill('0') << std::setw(2) << unsigned(byte);
+        std::cout << "CTP-M2-WRITE64 " << wireHex.str() << std::endl;
         NS_TEST_ASSERT_MSG_EQ(packet->GetSize(),
-                              100u,
-                              "64B CTP write should carry the 36B reference compact header stack");
+                              108u,
+                              "64B CTP write should carry the 44B full header stack");
 
         UbDatalinkPacketHeader datalinkHeader;
         packet->RemoveHeader(datalinkHeader);
@@ -29488,18 +29523,20 @@ class UbCtpBuildDataPacketHeaderTest : public TestCase
                               key.dstEntityId,
                               "compact EID should carry destination entity");
 
-        UbCompactTransactionHeader compactTah;
+        UbTransactionHeader compactTah;
         packet->RemoveHeader(compactTah);
         NS_TEST_ASSERT_MSG_EQ(compactTah.GetUbTransactionOpcode(),
                               static_cast<uint8_t>(UbTransactionOpcode::WRITE),
                               "compact TAH opcode should come from the WQE segment");
         NS_TEST_ASSERT_MSG_EQ(compactTah.GetIniTaSsn(), 0, "compact TAH should carry TA SSN");
 
-        UbCompactMAExtTah maHeader;
+        NS_TEST_ASSERT_MSG_EQ(compactTah.GetIniRcId(), 0xabcdeu, "wire RCID independent of Jetty");
+        NS_TEST_ASSERT_MSG_EQ(compactTah.GetIniRcType(), 1u, "local SQ type 01");
+        UbMAExtTah maHeader;
         packet->RemoveHeader(maHeader);
         NS_TEST_ASSERT_MSG_EQ(maHeader.GetLength(),
-                              0u,
-                              "64B compact MA length should encode one 64B unit");
+                              64u,
+                              "full MA length carries exact bytes");
         NS_TEST_ASSERT_MSG_EQ(packet->GetSize(), 64, "payload size should remain intact");
 
         Simulator::Destroy();
@@ -29684,8 +29721,8 @@ class UbCtpBuildResponsePacketTaAckTest : public TestCase
         response->SetDport(0);
         Ptr<Packet> packet = service->BuildResponsePacketForTest(response, key);
         NS_TEST_ASSERT_MSG_EQ(packet->GetSize(),
-                              24u,
-                              "CTP TAACK should carry the 24B reference compact header stack");
+                              28u,
+                              "CTP TAACK carries a full ATAH");
 
         UbDatalinkPacketHeader datalinkHeader;
         packet->RemoveHeader(datalinkHeader);
@@ -29719,7 +29756,7 @@ class UbCtpBuildResponsePacketTaAckTest : public TestCase
                               key.dstEntityId,
                               "TAACK compact EID should carry destination entity");
 
-        UbCompactAckTransactionHeader compactAck;
+        UbAckTransactionHeader compactAck;
         packet->RemoveHeader(compactAck);
         NS_TEST_ASSERT_MSG_EQ(compactAck.GetUbTransactionOpcode(),
                               static_cast<uint8_t>(UbTransactionOpcode::TAACK),
@@ -29808,7 +29845,7 @@ class UbCtpLocalDataPacketGeneratesTaAckTest : public TestCase
         ackPacket->RemoveHeader(upiHeader);
         UbCompactEidHeader eidHeader;
         ackPacket->RemoveHeader(eidHeader);
-        UbCompactAckTransactionHeader compactAck;
+        UbAckTransactionHeader compactAck;
         ackPacket->RemoveHeader(compactAck);
 
         NS_TEST_ASSERT_MSG_EQ(
@@ -31024,16 +31061,16 @@ class UbCtpTaAckCompletionHelperTest : public TestCase
     void DoRun() override
     {
         Ptr<Node> node = BuildSinglePortCtpNode();
+        BuildSinglePortCtpNode();
         Ptr<UbCtpTransportService> service =
             node->GetObject<UbController>()->GetCtpTransportService();
-        UbCtpEntityKey key{.srcEntityId = 10,
+        UbCtpEntityKey key{.srcEntityId = 1,
                            .dstNodeId = 1,
-                           .dstEntityId = 11,
+                           .dstEntityId = 1,
                            .vl = 7};
         Ptr<UbCtpTransactionContext> context = service->GetOrCreateTransactionContext(key);
 
-        NS_TEST_ASSERT_MSG_EQ(context->TryAdmit(0), true, "seq 0 should be outstanding");
-        NS_TEST_ASSERT_MSG_EQ(context->TryAdmit(1), true, "seq 1 should be outstanding");
+        SubmitCtpFixture(node, key, 2 * UB_MTU_BYTE);
 
         service->RecordCnpForTest(key);
         NS_TEST_ASSERT_MSG_EQ(context->GetCompleteUna(),
@@ -31072,6 +31109,11 @@ class UbCtpWireAckRequiresExactEntityContextTest : public TestCase
         controller->CreateCtpEntity(7, {0});
         controller->FreezeCtpEntities();
         Ptr<Node> remoteNode = CreateObject<Node>();
+        InitNode(remoteNode, UB_DEVICE, 1, false);
+        auto peer = remoteNode->GetObject<UbController>();
+        peer->CreateCtpEntity(50, {0});
+        peer->CreateCtpEntity(70, {0});
+        peer->FreezeCtpEntities();
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
         UbCtpEntityKey entity5{.srcEntityId = 5,
                                .dstNodeId = 1,
@@ -31084,9 +31126,7 @@ class UbCtpWireAckRequiresExactEntityContextTest : public TestCase
         Ptr<UbCtpTransactionContext> entity5Context =
             service->GetOrCreateTransactionContext(entity5);
         service->GetOrCreateTransactionContext(entity7);
-        NS_TEST_ASSERT_MSG_EQ(entity5Context->TryAdmit(0),
-                              true,
-                              "entity 5 should have one outstanding transaction");
+        SubmitCtpFixture(node, entity5);
 
         UbCtpEntityKey ackWireKey{.srcEntityId = 70,
                                   .dstNodeId = node->GetId(),
@@ -31098,7 +31138,7 @@ class UbCtpWireAckRequiresExactEntityContextTest : public TestCase
                                            ackWireKey);
 
         NS_TEST_ASSERT_MSG_EQ(service->HandleReceivedPacket(ackPacket, 0),
-                              true,
+                              false,
                               "wire TAACK should remain scoped to its exact Entity context");
         NS_TEST_ASSERT_MSG_EQ(entity5Context->GetCompleteUna(),
                               0u,
@@ -31120,7 +31160,7 @@ class UbCtpWireTaAckCompletesReverseEntityContextTest : public TestCase
     void DoRun() override
     {
         Ptr<Node> node = BuildSinglePortCtpNode();
-        Ptr<Node> remoteNode = CreateObject<Node>();
+        Ptr<Node> remoteNode = BuildSinglePortCtpNode();
         Ptr<UbCtpTransportService> service =
             node->GetObject<UbController>()->GetCtpTransportService();
         UbCtpEntityKey requestKey{.srcEntityId = 1,
@@ -31128,9 +31168,7 @@ class UbCtpWireTaAckCompletesReverseEntityContextTest : public TestCase
                                   .dstEntityId = 1,
                                   .vl = 7};
         Ptr<UbCtpTransactionContext> context = service->GetOrCreateTransactionContext(requestKey);
-        NS_TEST_ASSERT_MSG_EQ(context->TryAdmit(0),
-                              true,
-                              "request Entity context should admit sequence 0");
+        SubmitCtpFixture(node, requestKey);
 
         UbCtpEntityKey responseWireKey{.srcEntityId = 1,
                                        .dstNodeId = 0,
@@ -31206,7 +31244,7 @@ class UbCtpWireTaAckUnwrapsLogicalTassnTest : public TestCase
     void DoRun() override
     {
         Ptr<Node> node = BuildSinglePortCtpNode();
-        Ptr<Node> remoteNode = CreateObject<Node>();
+        Ptr<Node> remoteNode = BuildSinglePortCtpNode();
         Ptr<UbCtpTransportService> service =
             node->GetObject<UbController>()->GetCtpTransportService();
         UbCtpEntityKey requestKey{.srcEntityId = 1,
@@ -31214,7 +31252,7 @@ class UbCtpWireTaAckUnwrapsLogicalTassnTest : public TestCase
                                   .dstEntityId = 1,
                                   .vl = 7};
         Ptr<UbCtpTransactionContext> context = service->GetOrCreateTransactionContext(requestKey);
-        context->SetWindowForTest(65536, 65537);
+        SubmitCtpFixture(node, requestKey, 64, 65536);
 
         UbCtpEntityKey responseWireKey{.srcEntityId = 1,
                                        .dstNodeId = 0,
@@ -31671,13 +31709,7 @@ class UbCtpDataAckLifecycleAndTransactionCleanupTest : public TestCase
                            .dstEntityId = 1,
                            .vl = 7};
 
-        Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(0);
-        segment->SetSrc(topo.sender->GetId());
-        segment->SetDest(topo.receiver->GetId());
-        segment->SetSport(static_cast<uint8_t>(topo.senderPort->GetIfIndex()));
-        NS_TEST_ASSERT_MSG_EQ(senderService->SendSegment(segment, key),
-                              true,
-                              "CTP DATA should enter the production transmit path");
+        SubmitCtpFixture(topo.sender, key);
 
         Simulator::Stop(MilliSeconds(1));
         Simulator::Run();
@@ -33157,6 +33189,7 @@ class UbCtpRuleDrivenDecodeTest : public TestCase
         segment->SetRemoteAddress(0x1000);
         segment->SetRemoteTokenId(0x42);
         segment->SetTransactionFields(fields);
+        segment->SetCtpRequesterIdentity(0, 1);
         return segment;
     }
 
@@ -33196,6 +33229,7 @@ class UbCtpRuleDrivenDecodeTest : public TestCase
         // left those bytes in the payload would reject the request as a payload-bearing READ.
         Ptr<UbWqeSegment> readRequest =
             RequestSegment(topo, UbTransactionOpcode::READ, 0, 64, 0, UbTransactionFields{});
+        readRequest->SetCtpRequesterIdentity(123, 0);
         readRequest->SetSport(0);
         readRequest->SetDport(0);
         Ptr<Packet> readPacket = senderService->BuildDataPacket(readRequest, requestKey);
@@ -33211,12 +33245,14 @@ class UbCtpRuleDrivenDecodeTest : public TestCase
         if (responsePacket != nullptr)
         {
             Ptr<Packet> body = StripCompactCarrier(responsePacket);
-            UbCompactTransactionHeader responseHeader;
+            UbAckTransactionHeader responseHeader;
             NS_TEST_ASSERT_MSG_NE(body->RemoveHeader(responseHeader), 0u,
                                   "READ_RESPONSE compact header decodes");
             NS_TEST_ASSERT_MSG_EQ(responseHeader.GetUbTransactionOpcode(),
                                   static_cast<uint8_t>(UbTransactionOpcode::READ_RESPONSE),
                                   "READ request is answered with READ_RESPONSE");
+            NS_TEST_ASSERT_MSG_EQ(responseHeader.GetIniRcType(), 0u, "target echoes supported SQ type00");
+            NS_TEST_ASSERT_MSG_EQ(responseHeader.GetIniRcId(), 123u, "target echoes requester identity");
             NS_TEST_ASSERT_MSG_EQ(body->GetSize(), 64u,
                                   "READ_RESPONSE carries the requested length");
         }
@@ -33361,7 +33397,7 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbTrafficGenDependencyVisibilityDefaultTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpHeaderEncodeDecodeTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbMAExtTahRoundTripTest(), TestCase::Duration::QUICK);
-    AddTestCase(new UbCompactMAExtTahRoundTripTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbMAExtTahRoundTripTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbTransactionJettyTpBindingQueryTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpJettyPreparationLifecycleTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbJettyTransportPreparationExclusivityTest(), TestCase::Duration::QUICK);
@@ -37709,6 +37745,155 @@ class UbAtomicRtpRoundTripTest : public TestCase
         m_completions, m_acks;
 };
 
+class UbCtpFullSegmentRoundTripTest : public TestCase
+{
+  public:
+    UbCtpFullSegmentRoundTripTest()
+        : TestCase("CTP full headers preserve exact tail addresses and all padding widths") {}
+    void DoRun() override
+    {
+        Config::Reset();
+        auto topo = BuildLocalTpTopology();
+        auto controller = topo.sender->GetObject<UbController>();
+        auto function = controller->GetUbFunction();
+        m_sender = controller->GetCtpTransportService();
+        m_receiver = topo.receiver->GetObject<UbController>()->GetCtpTransportService();
+        m_sourceId = topo.sender->GetId();
+        const UbCtpEntityKey key{1, topo.receiver->GetId(), 1, 7};
+        function->CreateJetty(topo.sender->GetId(), topo.receiver->GetId(), 0x100abc);
+        auto jetty = function->GetJetty(0x100abc);
+        NS_TEST_ASSERT_MSG_EQ(controller->GetCtpTransportService()->PrepareJetty(jetty, key),
+                              true, "keyed preparation");
+        for (bool overflow : {false, true})
+        {
+            auto invalid = CreateCtpWqeForKey(function, topo.sender->GetId(), key, 999);
+            auto fields = invalid->GetTransactionFields();
+            fields.memoryAccess = UbMemoryAccessFields{
+                overflow ? UINT64_MAX - 31 : 0x10000, 0x42, overflow ? 64u : 63u};
+            invalid->SetTransactionFields(fields);
+            NS_TEST_ASSERT_MSG_NE(
+                static_cast<int>(function->SubmitCtpWqe(invalid, 0x100abc, key).status), 0,
+                "inconsistent length and overflowing memory range reject before admission");
+            NS_TEST_ASSERT_MSG_EQ(invalid->IsLifecycleManaged(), false,
+                                  "invalid memory range creates no lifecycle");
+            NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndNxtForTest(), 0u,
+                                  "invalid memory range consumes no sequence");
+        }
+        jetty->SetClientCallback(MakeCallback(&UbCtpFullSegmentRoundTripTest::OnComplete, this));
+        topo.senderPort->SetFaultCallBack(MakeCallback(&UbCtpFullSegmentRoundTripTest::OnWire, this));
+        topo.receiverPort->SetFaultCallBack(MakeCallback(&UbCtpFullSegmentRoundTripTest::OnWire, this));
+        topo.receiver->GetObject<UbController>()->GetUbTransaction()->SetTargetExecutor(
+            UbTargetExecutor([this](Ptr<const UbWqeSegment> request, const UbTransactionRule&,
+                                   UbTargetCompletion done) {
+                const auto task = request->GetTaskId();
+                const uint32_t offset = m_bytes[task];
+                const uint32_t n = std::min(4096u, m_sizes[task] - offset);
+                NS_TEST_EXPECT_MSG_EQ(request->GetLogicalBytes(), n, "accurate tail length");
+                NS_TEST_EXPECT_MSG_EQ(request->GetRemoteAddress(), 0x10000u + offset,
+                                      "base plus per-WQE offset");
+                NS_TEST_EXPECT_MSG_EQ(request->GetTransactionFields().memoryAccess->length, n,
+                                      "normalized and wire lengths agree");
+                NS_TEST_EXPECT_MSG_EQ(request->GetPayloadBytes(), (task == 1 ? 0u : n),
+                                      "READ request has no payload");
+                m_bytes[task] += n;
+                ++m_segments[task];
+                done(UbWorkExecutionResult{});
+            }));
+        for (uint32_t task = 0; task < m_sizes.size(); ++task)
+        {
+            auto wqe = function->CreateWqe(topo.sender->GetId(), topo.receiver->GetId(),
+                                           m_sizes[task], task,
+                                           task == 1 ? UbTransactionOpcode::READ : UbTransactionOpcode::WRITE);
+            wqe->SetRemoteAddress(0x10000);
+            wqe->SetRemoteTokenId(0x42);
+            wqe->SetSrcEntityId(1);
+            wqe->SetDstEntityId(1);
+            wqe->SetPriority(7);
+            wqe->SetSport(0);
+            wqe->SetDport(0);
+            NS_TEST_ASSERT_MSG_EQ(static_cast<int>(function->SubmitCtpWqe(wqe, 0x100abc, key).status),
+                                  0, "accept request");
+        }
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
+        for (uint32_t task = 0; task < m_sizes.size(); ++task)
+        {
+            NS_TEST_EXPECT_MSG_EQ(m_completed[task], 1u, "whole WQE completes exactly once");
+            NS_TEST_EXPECT_MSG_EQ(m_bytes[task], m_sizes[task], "all bytes executed");
+            NS_TEST_EXPECT_MSG_EQ(m_segments[task], (task < 2 ? 2u : 1u), "4096-byte payload MTU");
+        }
+        NS_TEST_EXPECT_MSG_EQ(m_padding.size(), 4u, "exercise padding lengths 0,1,2,3");
+        NS_TEST_EXPECT_MSG_EQ(controller->GetUbTransaction()->GetActiveOperationCount(), 0u,
+                              "all exact requester records drained");
+        Simulator::Destroy();
+        Config::Reset();
+    }
+  private:
+    void OnComplete(uint32_t task, uint32_t) { ++m_completed[task]; }
+    int OnWire(Ptr<Packet> original, uint32_t node, uint32_t, Ptr<UbPort> port)
+    {
+        auto packet = original->Copy();
+        UbDatalinkPacketHeader dl;
+        packet->RemoveHeader(dl);
+        if (dl.GetConfig() == static_cast<uint8_t>(UbDatalinkHeaderConfig::PACKET_CNA16))
+        {
+            NS_TEST_EXPECT_MSG_EQ(packet->GetSize() % 4, 0u, "NTH through payload is aligned");
+            UbCna16NetworkHeader cna;
+            UbCtpHeader ctp;
+            packet->RemoveHeader(cna);
+            packet->RemoveHeader(ctp);
+            auto destination = node == m_sourceId ? m_receiver : m_sender;
+            if (node == m_sourceId)
+            {
+                const uint32_t baseOffset = dl.GetSerializedSize() + cna.GetSerializedSize() +
+                                            ctp.GetSerializedSize() +
+                                            UbCompactUpiHeader().GetSerializedSize() +
+                                            UbCompactEidHeader().GetSerializedSize();
+                for (uint32_t variant = 0; variant < 3; ++variant)
+                {
+                    std::vector<uint8_t> bytes(original->GetSize());
+                    original->CopyData(bytes.data(), bytes.size());
+                    if (variant == 0) bytes[baseOffset + 4] |= 0x80; // No_TAACK
+                    if (variant == 1) bytes[baseOffset + 5] |= 0x20; // unsupported RC type
+                    if (variant == 2) bytes[baseOffset + 1] |= 0x40; // TA version
+                    NS_TEST_EXPECT_MSG_EQ(destination->HandleReceivedPacket(
+                                              Create<Packet>(bytes.data(), bytes.size()), 0), false,
+                                          "unsupported request profile is rejected");
+                }
+            }
+            if (node != m_sourceId)
+            {
+                auto extra = original->Copy();
+                extra->AddPaddingAtEnd(4);
+                NS_TEST_EXPECT_MSG_EQ(destination->HandleReceivedPacket(extra, 0), false,
+                                      "aligned excess response payload cannot complete");
+            }
+            m_padding.insert(ctp.GetPadding());
+            if (ctp.GetPadding())
+            {
+                std::vector<uint8_t> bytes(original->GetSize());
+                original->CopyData(bytes.data(), bytes.size());
+                bytes.back() = 1;
+                NS_TEST_EXPECT_MSG_EQ(destination->HandleReceivedPacket(
+                                          Create<Packet>(bytes.data(), bytes.size()), 0), false,
+                                      "nonzero declared padding is rejected");
+                uint8_t tail[3]{};
+                packet->CreateFragment(packet->GetSize() - ctp.GetPadding(), ctp.GetPadding())
+                    ->CopyData(tail, ctp.GetPadding());
+                for (uint8_t i = 0; i < ctp.GetPadding(); ++i)
+                    NS_TEST_EXPECT_MSG_EQ(tail[i], 0u, "padding bytes are zero");
+            }
+        }
+        port->TransmitPacket(original, Time(0));
+        return 0;
+    }
+    Ptr<UbCtpTransportService> m_sender, m_receiver;
+    uint32_t m_sourceId{0};
+    const std::array<uint32_t, 5> m_sizes{5000, 5000, 1, 2, 3};
+    std::map<uint32_t, uint32_t> m_bytes, m_segments, m_completed;
+    std::set<uint8_t> m_padding;
+};
+
 class UbAtomicCtpRoundTripTest : public TestCase
 {
   public:
@@ -37857,41 +38042,46 @@ class UbAtomicCtpRoundTripTest : public TestCase
         packet->RemoveHeader(ctp);
         packet->RemoveHeader(upi);
         packet->RemoveHeader(eid);
+        packet->RemoveAtEnd(ctp.GetPadding());
         uint32_t headerBytes = dl.GetSerializedSize() + cna.GetSerializedSize() +
                                ctp.GetSerializedSize() + upi.GetSerializedSize() +
                                eid.GetSerializedSize();
         if (node == m_source)
         {
-            UbCompactTransactionHeader ta;
-            UbCompactMAExtTah ma;
+            UbTransactionHeader ta;
+            UbMAExtTah ma;
             packet->RemoveHeader(ta);
             packet->RemoveHeader(ma);
             headerBytes += ta.GetSerializedSize() + ma.GetSerializedSize();
             NS_TEST_EXPECT_MSG_EQ(ta.GetUbTransactionOpcode(), expected.code, "Request opcode");
+            NS_TEST_EXPECT_MSG_EQ(ma.GetLength(), expected.width, "MA carries exact N independently of tag");
+            NS_TEST_EXPECT_MSG_EQ(ta.GetIniRcId(), 0u, "prepared RCID zero is usable");
+            NS_TEST_EXPECT_MSG_EQ(ta.GetIniRcType(), 1u, "local SQ type");
             NS_TEST_EXPECT_MSG_EQ(packet->GetSize(), expected.payload, "Actual request P");
             ++m_requests[task];
             if (task == 0)
             {
                 for (uint32_t width : {0u, 3u, 65u})
                 {
-                    auto invalid = original->Copy();
-                    UbFlowTag removed;
-                    invalid->RemovePacketTag(removed);
-                    invalid->AddPacketTag(UbFlowTag(task, width));
+                    auto invalid = packet->Copy();
+                    auto invalidMa = ma;
+                    invalidMa.SetLength(width);
+                    invalid->AddHeader(invalidMa);
+                    invalid->AddHeader(ta);
+                    invalid->AddHeader(eid);
+                    invalid->AddHeader(upi);
+                    invalid->AddAtEnd(Create<Packet>(ctp.GetPadding()));
+                    invalid->AddHeader(ctp);
+                    invalid->AddHeader(cna);
+                    invalid->AddHeader(dl);
                     NS_TEST_EXPECT_MSG_EQ(m_receiverService->HandleReceivedPacket(invalid, 0),
-                                          false,
-                                          "Illegal FlowTag width explicitly rejected");
+                                          false, "Illegal wire operand width rejected");
                 }
-                auto missing = original->Copy();
-                missing->RemovePacketTag(flow);
-                NS_TEST_EXPECT_MSG_EQ(m_receiverService->HandleReceivedPacket(missing, 0),
-                                      false,
-                                      "Missing FlowTag explicitly rejected");
             }
         }
         else
         {
-            UbCompactAckTransactionHeader ack;
+            UbAckTransactionHeader ack;
             packet->RemoveHeader(ack);
             headerBytes += ack.GetSerializedSize();
             NS_TEST_EXPECT_MSG_EQ(ack.GetUbTransactionOpcode(), 0x13u, "Unified atomic response");
@@ -37900,7 +38090,7 @@ class UbAtomicCtpRoundTripTest : public TestCase
                                   "Actual S excludes compact ACK header");
             ++m_responses[task];
             m_latePackets.push_back(original->Copy());
-            for (uint32_t variant = 0; variant < 7; ++variant)
+            for (uint32_t variant = 0; variant < 11; ++variant)
             {
                 auto invalid = packet->Copy();
                 auto invalidAck = ack;
@@ -37917,27 +38107,35 @@ class UbAtomicCtpRoundTripTest : public TestCase
                 case 2:
                     invalidAck.SetIniTaSsn(ack.GetIniTaSsn() + 500);
                     break;
-                case 3: {
-                    UbFlowTag removed;
-                    invalid->RemovePacketTag(removed);
-                    invalid->AddPacketTag(UbFlowTag(task + 10000, expected.width));
+                case 3:
+                    invalidAck.SetIniRcId(0xabcde);
                     break;
-                }
                 case 4:
                     invalidCna.SetScna(NodeIdToCna16(m_destination + 10));
                     break;
                 case 5:
                     invalidEid.SetSourceEid(2);
                     break;
-                case 6: {
-                    UbFlowTag removed;
-                    invalid->RemovePacketTag(removed);
+                case 6:
+                    invalidAck.SetRspStatus(5);
                     break;
-                }
+                case 7:
+                    invalidAck.SetSV(1);
+                    break;
+                case 8:
+                    invalidAck.SetRspInfo(1);
+                    break;
+                case 9:
+                    invalidAck.SetIniRcType(0);
+                    break;
+                case 10:
+                    invalidAck.SetPoison(true);
+                    break;
                 }
                 invalid->AddHeader(invalidAck);
                 invalid->AddHeader(invalidEid);
                 invalid->AddHeader(upi);
+                invalid->AddAtEnd(Create<Packet>(ctp.GetPadding()));
                 invalid->AddHeader(ctp);
                 invalid->AddHeader(invalidCna);
                 invalid->AddHeader(dl);
@@ -37954,9 +38152,13 @@ class UbAtomicCtpRoundTripTest : public TestCase
                 NS_TEST_EXPECT_MSG_EQ(m_completed[task], 0u,
                                       "Invalid ACK cannot complete task variant=" << variant);
             }
+            // Valid identity survives both missing and incorrect observation tags.
+            UbFlowTag removed;
+            original->RemovePacketTag(removed);
+            if (task % 2 == 0) original->AddPacketTag(UbFlowTag(task + 10000, 999));
         }
         NS_TEST_EXPECT_MSG_EQ(original->GetSize(),
-                              headerBytes + packet->GetSize(),
+                              headerBytes + packet->GetSize() + ctp.GetPadding(),
                               "Existing CTP headers only");
     }
 
@@ -38353,6 +38555,7 @@ class UbAtomicTestSuite : public TestSuite
         AddTestCase(new UbAtomicRtpRoundTripTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbAtomicRtpRoundTripTest(1), TestCase::Duration::QUICK);
         AddTestCase(new UbAtomicRtpRoundTripTest(2), TestCase::Duration::QUICK);
+        AddTestCase(new UbCtpFullSegmentRoundTripTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbAtomicCtpRoundTripTest(false), TestCase::Duration::QUICK);
         AddTestCase(new UbAtomicCtpRoundTripTest(true), TestCase::Duration::QUICK);
         AddTestCase(new UbAtomicCsvInputTest(), TestCase::Duration::QUICK);
@@ -38523,7 +38726,7 @@ class UbTransactionExtensionsRoundTripTest : public TestCase
                 UbCtpHeader ctp;
                 UbCompactUpiHeader upi;
                 UbCompactEidHeader eid;
-                UbCompactAckTransactionHeader ack;
+                UbAckTransactionHeader ack;
                 copy->RemoveHeader(network);
                 copy->RemoveHeader(ctp);
                 copy->RemoveHeader(upi);

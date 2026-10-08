@@ -29,9 +29,8 @@ namespace ns3
 {
 
 class UbCna16NetworkHeader;
-class UbCompactAckTransactionHeader;
-class UbCompactMAExtTah;
-class UbCompactTransactionHeader;
+class UbMAExtTah;
+class UbTransactionHeader;
 class UbJetty;
 class UbRoutingProcess;
 class UbTransaction;
@@ -137,7 +136,6 @@ class UbCtpTransportService : public Object
     Ptr<Node> GetNode() const;
     void SetRoutingType(RoutingType routingType);
     void SetBoundOutPortCountForTest(uint32_t boundOutPortCount);
-    void SetExperimentTaAckPacketBytesForTest(uint32_t packetBytes);
     UbCtpTransportConstraints GetTransactionConstraints() const;
 
     UbCtpEntityState& GetOrCreateEntityState(const UbCtpEntityKey& key);
@@ -205,15 +203,14 @@ class UbCtpTransportService : public Object
                                          uint32_t taSsn,
                                          uint32_t progressBytes,
                                          uint8_t loadBalanceSalt);
-    void PadTaAckPacketForExperiment(Ptr<Packet> packet) const;
     bool SendAdmittedFragment(Ptr<UbWqeSegment> segment,
                               UbCtpEntityState& state,
                               const UbCtpEntityKey& packetKey,
                               uint32_t taSsn,
                               uint32_t progressBytes);
     bool DispatchInboundTransaction(Ptr<UbWqeSegment> request, const UbCtpEntityKey& key);
-    Ptr<UbWqeSegment> BuildInboundTaOperation(const UbCompactTransactionHeader& taHeader,
-                                              const UbCompactMAExtTah& maHeader,
+    Ptr<UbWqeSegment> BuildInboundTaOperation(const UbTransactionHeader& taHeader,
+                                              const UbMAExtTah& maHeader,
                                               UbTransactionOpcode taOpcode,
                                               const UbTransactionFields& fields,
                                               bool maetahPresent,
@@ -248,7 +245,6 @@ class UbCtpTransportService : public Object
     std::map<uint32_t, Ptr<UbWqeSegment>>::iterator FindOutstandingSegment(
         UbCtpTransactionState& state,
         uint32_t taSsn);
-    uint32_t ResolveWireTaSsn(UbCtpTransactionState& state, uint16_t wireTaSsn) const;
     bool ShouldTraceWindow(const UbCtpEntityKey& key) const;
     bool ShouldDelayTaAck(const UbCtpEntityKey& key, uint32_t taSsn) const;
     void AddCtpNetworkHeaders(Ptr<Packet> packet,
@@ -299,7 +295,6 @@ class UbCtpTransportService : public Object
     UbCtpRoutingPolicy m_defaultRoutingPolicy;
     bool m_pktTraceEnabled{false};
     uint32_t m_boundOutPortCount{0};
-    uint32_t m_experimentTaAckPacketBytes{0};
     bool m_windowTraceEnabled{false};
     uint32_t m_windowTraceSrcNode{UINT32_MAX};
     uint32_t m_windowTraceDstNode{UINT32_MAX};

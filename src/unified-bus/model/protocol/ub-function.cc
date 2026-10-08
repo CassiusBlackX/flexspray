@@ -281,6 +281,12 @@ UbFunction::SubmitCtpWqe(Ptr<UbWqe> wqe,
     {
         fields.memoryAccess = UbMemoryAccessFields{wqe->GetRemoteAddress(), wqe->GetRemoteTokenId(), wqe->GetSize()};
     }
+    if (fields.memoryAccess &&
+        (fields.memoryAccess->length != wqe->GetSize() ||
+         wqe->GetSize() > UINT64_MAX - fields.memoryAccess->address))
+    {
+        return {UbWqeSubmissionStatus::INVALID_TRANSACTION_REQUEST, {}};
+    }
     const uint32_t validationPayload =
         (wqe->GetPayloadBytes() == 0 && wqe->GetType() != UbTransactionOpcode::READ)
             ? wqe->GetSize() : wqe->GetPayloadBytes();

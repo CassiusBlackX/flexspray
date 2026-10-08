@@ -260,6 +260,10 @@ namespace ns3 {
         // tp调用
         std::optional<uint32_t> GetCtpRequesterRcid(uint32_t jettyNum) const;
         const UbLifecycleResourceIdentity* FindCtpRequester(uint32_t rcid) const;
+        Ptr<UbWqeSegment> FindCtpOutstanding(uint32_t rcid,
+                                              uint16_t wireSsn,
+                                              UbCtpEntityKey& key,
+                                              std::string& rejection);
         void RetireCtpRequester(uint32_t jettyNum, const UbLifecycleResourceIdentity& identity);
         uint32_t GetNextCtpRcidForTest() const { return m_nextCtpRcid; }
         void SetNextCtpRcidForTest(uint32_t next);
