@@ -1,5 +1,7 @@
 # CTP full TA ticket 05: safe requester retirement
 
+Implementation: `0eb4248f82944af4faad4a579480843789def7b5`. Ticket05 accepted; ticket06 follows.
+
 Baseline: `7db1b86876acb9a2f726e700ddbea965efe1f266`.
 Existing CTP source queue entries now carry optional exact local Jetty identity. Only admitted
 local requests receive it; target responses and CNP remain unowned. Abort/force remove that owner's
