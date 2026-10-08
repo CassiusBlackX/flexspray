@@ -1,6 +1,6 @@
 # CFG6 CTP full transaction headers: integration evidence
 
-Status: all six tickets accepted; final local implementation and closeout commits follow.
+Status: all six tickets completed and accepted. This document update is ticket06 closeout.
 Session baseline: `a4e7025844dd400cf2c0644699de1b6950489377` on `feat/ub-2.1-ddie`.
 Final production revision: `56b369e734e95d11a2670958bbe79a45f66a923c`; ticket06 adds regression
 fixtures and documentation only. Actual command revisions, source fingerprint and dirty diffs are
@@ -24,7 +24,7 @@ There is no compact fallback, aggregate quota, device workaround or remote rollb
 | 03 full CFG6 wire | `eda5d678` | `40df13d8` | [wire, matching and config migration](ctp-full-tah-03.md) |
 | 04 independent progress | `8d99d105` | `7db1b868` | [Jetty, DDIE and window boundaries](ctp-full-tah-04.md) |
 | 05 safe retirement | `0eb4248f` | `56b369e7` | [drain, abort and recreate](ctp-full-tah-05.md) |
-| 06 integration | pending | pending | this record |
+| 06 integration | `7d62c68a` | this record's closeout commit | this record |
 
 Each ticket recorded its task brief/Batch Reuse Map before editing, actual validation, a separate
 root-agent review, implementation commit and separate closeout. No subagents or remote publication.
