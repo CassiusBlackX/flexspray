@@ -42,6 +42,7 @@ namespace ns3 {
         INVALID_TRANSACTION_REQUEST = 11,
         CTP_NOT_PREPARED = 12,
         INVALID_CTP_WINDOW = 13,
+        CTP_SEQUENCE_EXHAUSTED = 14,
     };
 
     struct UbWqeSubmissionResult
@@ -285,7 +286,14 @@ namespace ns3 {
         }
         bool ProcessWqeSegmentComplete(uint32_t taSsnFin);
         void RightShiftBitset(uint32_t shiftCount);
-        void SetTaSegmentBytes(uint32_t bytes);
+        bool SetTaSegmentBytes(uint32_t bytes);
+        bool SetInflightMax(uint32_t value);
+        uint32_t GetInflightMax() const { return m_inflightMax; }
+        bool SetOooAckThreshold(uint32_t value);
+        uint32_t GetOooAckThreshold() const;
+        bool CanReserveCtpWqe(Ptr<UbWqe> wqe, uint32_t maxSegmentBytes) const;
+        uint32_t GetTaSsnSndUna() const { return m_taSsnSndUna; }
+        uint32_t GetTaSsnSndNxt() const { return m_taSsnSndNxt; }
         uint32_t GetTaSegmentBytes() const;
 
         Ptr<UbWqeSegment> GenWqeSegment(Ptr<UbWqe> wqe, uint32_t segment_size);
@@ -294,6 +302,8 @@ namespace ns3 {
 
         void IncreaseTaSsnSndNxt()
         {
+            NS_ABORT_MSG_IF(IsCtpRequester() && m_taSsnSndNxt == UINT32_MAX,
+                            "CTP exclusive sequence sentinel cannot be assigned");
             m_taSsnSndNxt++;
         }
 
@@ -305,7 +315,7 @@ namespace ns3 {
         void PushWqe(Ptr<UbWqe> ubQqe);
         void PushWqe(Ptr<UbWqe> ubQqe, uint32_t maxSegmentBytes);
 
-        uint32_t GetJettyNum()
+        uint32_t GetJettyNum() const
         {
             return m_jettyNum;
         }
@@ -382,11 +392,7 @@ namespace ns3 {
             m_dport = dport;
         }
 
-        void ResetSsnAckBitset(uint32_t taOooAckThreshold)
-        {
-            m_ssnAckWindow.Resize(taOooAckThreshold);
-            m_ssnAckWindow.Reset(m_taSsnSndUna);
-        }
+        bool ResetSsnAckBitset(uint32_t taOooAckThreshold);
 
         void SetClientCallback(Callback<void, uint32_t, uint32_t> cb);
         void SetCompletionObserver(Callback<void, uint32_t, uint32_t> cb);
@@ -405,8 +411,11 @@ namespace ns3 {
 
         void SetTaSsnSendWindowForTest(uint32_t sndUna, uint32_t sndNxt)
         {
+            NS_ABORT_MSG_IF(sndNxt < sndUna || !m_wqeVector.empty(),
+                            "Test cursor positioning requires an empty Jetty and ordered bounds");
             m_taSsnSndUna = sndUna;
             m_taSsnSndNxt = sndNxt;
+            m_taSsnCnt = sndNxt;
             m_ssnAckWindow.Reset(m_taSsnSndUna);
         }
 
@@ -432,6 +441,9 @@ namespace ns3 {
         // ========== Jetty标识信息 ==========
         uint32_t m_jettyNum; // JettyNum UB协议报文头携带（24位）用于标识
 
+        bool IsCtpRequester() const;
+        bool CanChangeCtpParameters() const;
+
         // ========== 传输参数 ==========
         uint32_t m_nodeId;
         UbTransaction* m_transaction{nullptr};
@@ -449,7 +461,7 @@ namespace ns3 {
         // 当前jetty WQE Segment计数器，数字上等于目前已经从client拿到的所有WQE产生的WQE segment数量
         uint32_t m_taSsnCnt = 0;
 
-        uint32_t m_oooAckThreshold; // out of order ACK threshold
+        uint32_t m_oooAckThreshold{2048}; // out of order ACK threshold
         uint32_t m_taSsnSndNxt = 0;                                 // TA层下一个待发送的分段序号
         uint32_t m_taSsnSndUna = 0;                                 // TA层未确认的最小分段序号
         UbSlidingBitmapWindow m_ssnAckWindow{UB_JETTY_TASSN_OOO_THRESHOLD}; // 接收维护的bitmap

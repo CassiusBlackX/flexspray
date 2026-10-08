@@ -330,7 +330,6 @@ SubmitCtpFixture(Ptr<Node> node, const UbCtpEntityKey& key,
     function->CreateJetty(node->GetId(), key.dstNodeId, 0);
     auto jetty = function->GetJetty(0);
     jetty->SetTaSsnSendWindowForTest(firstSsn, firstSsn);
-    service->GetOrCreateTransactionContext(key)->SetWindowForTest(firstSsn, firstSsn);
     NS_ABORT_MSG_IF(!service->PrepareJetty(jetty, key), "fixture preparation failed");
     auto wqe = CreateCtpWqeForKey(function, node->GetId(), key, 0);
     wqe->SetSize(bytes);
@@ -339,6 +338,32 @@ SubmitCtpFixture(Ptr<Node> node, const UbCtpEntityKey& key,
                     "fixture admission failed");
     service->StartJetty(jetty, key);
     return jetty;
+}
+
+bool
+SubmitCtpSegmentFixture(Ptr<UbCtpTransportService> service, Ptr<UbWqeSegment> segment,
+                        const UbCtpEntityKey& key)
+{
+    if (segment->GetBytesLeft() > service->GetTransactionConstraints().maxSegmentBytes)
+        return service->SendSegment(segment, key);
+    auto node = service->GetNode();
+    auto function = node->GetObject<UbController>()->GetUbFunction();
+    if (function->GetJetty(0) == nullptr)
+        function->CreateJetty(node->GetId(), key.dstNodeId, 0);
+    auto jetty = function->GetJetty(0);
+    if (jetty->PeekNextTaSsn() != segment->GetTaSsn() || jetty->IsLimited())
+        return service->SendSegment(segment, key);
+    if (!service->HasJettyPreparation(0) && !service->PrepareJetty(jetty, key)) return false;
+    auto wqe = function->CreateWqe(node->GetId(), key.dstNodeId, segment->GetSize(),
+                                    segment->GetTaSsn(), segment->GetType());
+    wqe->SetSrcEntityId(key.srcEntityId);
+    wqe->SetDstEntityId(key.dstEntityId);
+    wqe->SetPriority(key.vl);
+    wqe->SetSport(segment->GetSport());
+    wqe->SetDport(segment->GetDport());
+    wqe->SetRemoteAddress(segment->GetRemoteAddress());
+    wqe->SetRemoteTokenId(segment->GetRemoteTokenId());
+    return function->SubmitCtpWqe(wqe, 0, key).status == UbWqeSubmissionStatus::ACCEPTED;
 }
 
 LocalTpTopology
@@ -1865,7 +1890,7 @@ class UbAppCtpTransportModeEntryTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(controller->GetTransportChannelManager()->GetCount(),
                               initialTransportCount,
                               "CTP mode should not create RTP transport channels");
-        NS_TEST_ASSERT_MSG_EQ(service->HasTransactionContextForTesting(key),
+        NS_TEST_ASSERT_MSG_EQ(service->HasJettyPreparation(0),
                               true,
                               "CTP mode should create a transaction context for the app key");
         NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(key),
@@ -1976,7 +2001,7 @@ class UbAppCtpRuntimeTaskUsesAppEntityAndWqePortsTest : public TestCase
                                    .dstEntityId = 1,
                                    .vl = 5};
 
-        NS_TEST_ASSERT_MSG_EQ(service->HasTransactionContextForTesting(explicitKey),
+        NS_TEST_ASSERT_MSG_EQ(service->HasJettyPreparation(0),
                               true,
                               "runtime CTP branch should use the App Entity ids");
         NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(explicitKey),
@@ -2369,14 +2394,7 @@ class UbAppCtpAdmissionBackpressurePreservesJettyTest : public TestCase
                            .dstEntityId = 1,
                            .vl = 5};
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-        Ptr<UbCtpTransactionContext> context = service->GetOrCreateTransactionContext(key);
-        for (uint32_t sequence = 0; sequence < UB_JETTY_TASSN_OOO_THRESHOLD; ++sequence)
-        {
-            NS_TEST_ASSERT_MSG_EQ(context->TryAdmit(sequence),
-                                  true,
-                                  "test setup should fill the CTP admission window");
-        }
-
+        Config::SetDefault("ns3::UbJetty::UbJettyInflightMax", UintegerValue(1));
         UbTrafficGen::RuntimeTask task;
         task.taskId = 33;
         task.sourceNode = node->GetId();
@@ -2389,21 +2407,18 @@ class UbAppCtpAdmissionBackpressurePreservesJettyTest : public TestCase
         app->SendCtpUrmaTraffic(task);
 
         NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(key),
-                              0u,
+                              1u,
                               "full CTP admission window should prevent app from queueing packets");
-        NS_TEST_ASSERT_MSG_EQ(context->GetSendNext(),
-                              UB_JETTY_TASSN_OOO_THRESHOLD,
-                              "blocked app send must not advance the transaction context");
-
         Ptr<UbJetty> jetty = controller->GetUbFunction()->GetJetty(0);
         NS_TEST_ASSERT_MSG_NE(jetty,
                               nullptr,
                               "blocked app send should still leave the created Jetty available");
         NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndNxtForTest(),
-                              0u,
-                              "blocked app send must not consume a Jetty segment");
+                              1u,
+                              "full Jetty window must leave the remaining WQE unsent");
 
         Simulator::Destroy();
+        Config::Reset();
     }
 };
 
@@ -25057,10 +25072,10 @@ class UbCtpPacketTraceConnectsLazyServiceTest : public TestCase
         segment->SetDest(topo.receiver->GetId());
         segment->SetSport(static_cast<uint8_t>(topo.senderPort->GetIfIndex()));
         segment->SetDport(static_cast<uint8_t>(topo.receiverPort->GetIfIndex()));
-        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(segment, key),
+        NS_TEST_ASSERT_MSG_EQ(SubmitCtpSegmentFixture(service, segment, key),
                               true,
                               "CTP send should emit packet trace");
-        service->CompleteFromTaAckForTest(key, 0);
+        service->CompleteFromTaAckForTest(0, 0);
 
         Simulator::Destroy();
         utils::UbUtils::Get()->Destroy();
@@ -28588,29 +28603,267 @@ class UbCompactMAExtTahRoundTripTest : public TestCase
     }
 };
 
-class UbCtpTransactionContextHolTest : public TestCase
+class UbCtpSequenceAndConfigurationBoundaryTest : public TestCase
 {
   public:
-    UbCtpTransactionContextHolTest()
-        : TestCase("UnifiedBus - CTP TAACK HOL blocks transaction admission")
-    {
-    }
-
-  private:
+    explicit UbCtpSequenceAndConfigurationBoundaryTest(uint32_t base)
+        : TestCase(base == 65535 ? "CTP real outstanding crosses wire wrap with a same-Jetty hole"
+                                : "CTP whole-WQE reservations drain at the sequence sentinel"),
+          m_base(base) {}
     void DoRun() override
     {
-        UbCtpEntityKey key{.srcEntityId = 1,
-                           .dstNodeId = 1,
-                           .dstEntityId = 1,
-                           .vl = 7};
-        UbCtpTransactionContext context(key);
+        Config::Reset();
+        auto topo = BuildLocalTpTopology();
+        auto controller = topo.sender->GetObject<UbController>();
+        auto function = controller->GetUbFunction();
+        auto service = controller->GetCtpTransportService();
+        auto transaction = controller->GetUbTransaction();
+        const UbCtpEntityKey key{1, topo.receiver->GetId(), 1, 7};
+        function->CreateJetty(topo.sender->GetId(), topo.receiver->GetId(), 31);
+        auto jetty = function->GetJetty(31);
+        jetty->SetAttribute("UbJettyInflightMax", UintegerValue(2));
+        jetty->ResetSsnAckBitset(2);
+        jetty->SetTaSegmentBytes(64);
+        jetty->SetTaSsnSendWindowForTest(m_base, m_base);
+        NS_TEST_ASSERT_MSG_EQ(
+            service->PrepareJetty(jetty, key), true, "prepare boundary requester");
+        const auto rcid = *transaction->GetCtpRequesterRcid(31);
+        jetty->SetClientCallback(
+            MakeCallback(&UbCtpSequenceAndConfigurationBoundaryTest::OnComplete, this));
+        controller->SetAttribute("InitiatorProtocolDispatchDelay", TimeValue(MicroSeconds(1)));
+        topo.receiver->GetObject<UbController>()->GetUbTransaction()->SetTargetExecutor(
+            UbTargetExecutor([this](Ptr<const UbWqeSegment> request, const UbTransactionRule&,
+                                   UbTargetCompletion done) {
+                m_wireSequences.push_back(request->GetTaSsn());
+                if (request->GetTaskId() == 0) m_held.push_back(done);
+                else done(UbWorkExecutionResult{});
+            }));
+        auto make = [&](uint32_t task, uint32_t bytes) {
+            auto wqe = function->CreateWqe(topo.sender->GetId(), topo.receiver->GetId(),
+                                            bytes, task, UbTransactionOpcode::WRITE);
+            wqe->SetSrcEntityId(1); wqe->SetDstEntityId(1);
+            wqe->SetSport(0); wqe->SetDport(0); wqe->SetPriority(7);
+            return wqe;
+        };
+        if (m_base == UINT32_MAX - 2)
+        {
+            auto tooLarge = make(99, 129);
+            NS_TEST_ASSERT_MSG_EQ(
+                static_cast<int>(function->SubmitCtpWqe(tooLarge, 31, key).status),
+                                  static_cast<int>(UbWqeSubmissionStatus::CTP_SEQUENCE_EXHAUSTED),
+                                  "whole WQE rejected without partial acceptance");
+            NS_TEST_ASSERT_MSG_EQ(tooLarge->IsLifecycleManaged(), false, "no rejected lifecycle");
+            NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(), 0u, "no half operation");
+        }
+        for (uint32_t id : {0u, 1u})
+            NS_TEST_ASSERT_MSG_EQ(
+                static_cast<int>(function->SubmitCtpWqe(make(id, 64), 31, key).status),
+                                  0, "two accepted WQEs reserve two different sequences");
+        NS_TEST_ASSERT_MSG_EQ(
+            jetty->GetTaSsnSndNxtForTest(), m_base, "dispatch delay retains reservation only");
+        if (m_base == UINT32_MAX - 2)
+        {
+            auto queuedOverflow = make(2, 1);
+            NS_TEST_ASSERT_MSG_EQ(
+                static_cast<int>(function->SubmitCtpWqe(queuedOverflow, 31, key).status),
+                                  static_cast<int>(UbWqeSubmissionStatus::CTP_SEQUENCE_EXHAUSTED),
+                                  "queued reservations count before any segment is sent");
+            NS_TEST_ASSERT_MSG_EQ(
+                queuedOverflow->IsLifecycleManaged(), false, "rejection remains atomic");
+        }
+        CheckBusyParameters(jetty);
+        Simulator::Stop(MicroSeconds(10));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_EQ(m_wireSequences.size(), 2u, "both real segments reached target");
+        NS_TEST_EXPECT_MSG_EQ(
+            m_wireSequences[0], static_cast<uint16_t>(m_base), "first wire sequence");
+        NS_TEST_EXPECT_MSG_EQ(
+            m_wireSequences[1], static_cast<uint16_t>(m_base + 1), "next wire sequence");
+        NS_TEST_EXPECT_MSG_EQ(jetty->GetTaSsnSndUnaForTest(), m_base, "B ACK cannot cross A hole");
+        NS_TEST_EXPECT_MSG_EQ(
+            m_completed[1], 0u, "later WQE success waits for same-Jetty frontier");
+        NS_TEST_EXPECT_MSG_EQ(
+            transaction->GetResidentSegmentCount(), 1u, "B record already retired once");
+        UbCtpEntityKey matched;
+        std::string reason;
+        NS_TEST_EXPECT_MSG_EQ(
+            transaction->FindCtpOutstanding(rcid, static_cast<uint16_t>(m_base + 1),
+                                                             matched, reason), nullptr,
+                              "window candidate without SegmentRecord authorizes no completion");
+        CheckBusyParameters(jetty);
+        NS_TEST_ASSERT_MSG_EQ(
+            jetty->ResetSsnAckBitset(2), true, "equal capacity is a bitmap-preserving no-op");
+        for (auto& done : m_held) done(UbWorkExecutionResult{});
+        m_held.clear();
+        Simulator::Stop(MicroSeconds(10));
+        Simulator::Run();
+        NS_TEST_EXPECT_MSG_EQ(m_completed[0], 1u, "first WQE completed once");
+        NS_TEST_EXPECT_MSG_EQ(m_completed[1], 1u, "second WQE completed once after hole closes");
+        NS_TEST_EXPECT_MSG_EQ(
+            jetty->GetTaSsnSndUnaForTest(), m_base + 2, "drained frontier including sentinel");
+        NS_TEST_EXPECT_MSG_EQ(
+            transaction->GetActiveOperationCount(), 0u, "accepted work fully drained");
+        NS_TEST_EXPECT_MSG_EQ(
+            jetty->SetAttributeFailSafe("JettyOooAckThreshold", UintegerValue(4)), true,
+                              "idle capacity resize");
+        NS_TEST_EXPECT_MSG_EQ(
+            jetty->SetAttributeFailSafe("UbJettyInflightMax", UintegerValue(4)), true,
+                              "idle inflight resize");
+        NS_TEST_EXPECT_MSG_EQ(jetty->SetTaSegmentBytes(32), true, "idle geometry change");
+        NS_TEST_EXPECT_MSG_EQ(
+            jetty->GetTaSsnSndUnaForTest(), m_base + 2, "resize preserves logical base");
+        NS_TEST_EXPECT_MSG_EQ(
+            *transaction->GetCtpRequesterRcid(31), rcid, "resize preserves requester identity");
+        NS_TEST_EXPECT_MSG_EQ(
+            jetty->SetAttributeFailSafe("UbJettyInflightMax", UintegerValue(0)), false,
+                              "zero inflight rejected even idle");
+        NS_TEST_EXPECT_MSG_EQ(
+            jetty->SetAttributeFailSafe("UbJettyInflightMax", UintegerValue(32769)), false,
+                              "half-modulus bound enforced");
+        NS_TEST_EXPECT_MSG_EQ(
+            jetty->ResetSsnAckBitset(3), false, "capacity below inflight rejected atomically");
+        NS_TEST_EXPECT_MSG_EQ(jetty->SetTaSegmentBytes(0), false, "zero geometry rejected");
+        if (m_base == UINT32_MAX - 2)
+            NS_TEST_EXPECT_MSG_EQ(
+                static_cast<int>(function->SubmitCtpWqe(make(3, 1), 31, key).status),
+                                  static_cast<int>(UbWqeSubmissionStatus::CTP_SEQUENCE_EXHAUSTED),
+                                  "sentinel cannot become an assigned sequence after drain");
+        std::cout << "CTP-M3 boundary base=" << m_base << " drained="
+                  << jetty->GetTaSsnSndUnaForTest() << " RCID=" << rcid << std::endl;
+        Simulator::Destroy();
+        Config::Reset();
+    }
+  private:
+    void CheckBusyParameters(Ptr<UbJetty> jetty)
+    {
+        for (auto [name, value] : std::vector<std::pair<std::string, uint32_t>>{
+                 {"UbJettyInflightMax", 1}, {"JettyOooAckThreshold", 4}, {"TaSegmentBytes", 32}})
+            NS_TEST_EXPECT_MSG_EQ(jetty->SetAttributeFailSafe(name, UintegerValue(value)), false,
+                                  "busy attribute preserves geometry and progress " << name);
+        NS_TEST_EXPECT_MSG_EQ(
+            jetty->SetTaSegmentBytes(32), false, "public setter cannot bypass guard");
+        NS_TEST_EXPECT_MSG_EQ(jetty->ResetSsnAckBitset(4), false, "reset cannot bypass guard");
+        NS_TEST_EXPECT_MSG_EQ(
+            jetty->SetAttributeFailSafe("UbJettyInflightMax", UintegerValue(2)), true,
+                              "equal inflight no-op");
+        NS_TEST_EXPECT_MSG_EQ(
+            jetty->SetAttributeFailSafe("JettyOooAckThreshold", UintegerValue(2)), true,
+                              "equal ACK capacity no-op");
+        NS_TEST_EXPECT_MSG_EQ(jetty->SetTaSegmentBytes(64), true, "equal geometry no-op");
+        NS_TEST_EXPECT_MSG_EQ(
+            jetty->GetTaSegmentBytes(), 64u, "busy rejection preserves segment geometry");
+    }
+    void OnComplete(uint32_t task, uint32_t) { ++m_completed[task]; }
+    uint32_t m_base;
+    std::map<uint32_t, uint32_t> m_completed;
+    std::vector<uint32_t> m_wireSequences;
+    std::vector<UbTargetCompletion> m_held;
+};
 
-        NS_TEST_ASSERT_MSG_EQ(context.TryAdmit(0), true, "seq 0 admitted");
-        NS_TEST_ASSERT_MSG_EQ(context.TryAdmit(1), true, "seq 1 admitted");
-        context.MarkTaAck(1);
-        NS_TEST_ASSERT_MSG_EQ(context.GetCompleteUna(), 0, "out-of-order TAACK does not advance");
-        context.MarkTaAck(0);
-        NS_TEST_ASSERT_MSG_EQ(context.GetCompleteUna(), 2, "contiguous TAACK advances");
+class UbCtpIndependentJettyRoundTripTest : public TestCase
+{
+  public:
+    UbCtpIndependentJettyRoundTripTest()
+        : TestCase("CTP live prepared Jettys independently drain a shared Entity and VL") {}
+
+    void DoRun() override
+    {
+        Config::Reset();
+        auto topo = BuildLocalTpTopology();
+        auto controller = topo.sender->GetObject<UbController>();
+        auto function = controller->GetUbFunction();
+        auto service = controller->GetCtpTransportService();
+        auto transaction = controller->GetUbTransaction();
+        const UbCtpEntityKey key{1, topo.receiver->GetId(), 1, 7};
+        std::vector<Ptr<UbJetty>> jettys;
+        for (uint32_t id : {101u, 102u})
+        {
+            function->CreateJetty(topo.sender->GetId(), topo.receiver->GetId(), id);
+            auto jetty = function->GetJetty(id);
+            jetty->SetAttribute("UbJettyInflightMax", UintegerValue(1));
+            NS_TEST_ASSERT_MSG_EQ(
+                service->PrepareJetty(jetty, key), true, "prepare exact requester");
+            jetty->SetClientCallback(
+                MakeCallback(&UbCtpIndependentJettyRoundTripTest::OnComplete, this));
+            jettys.push_back(jetty);
+        }
+        NS_TEST_ASSERT_MSG_NE(*transaction->GetCtpRequesterRcid(101),
+                              *transaction->GetCtpRequesterRcid(102), "independent RCID");
+        topo.receiver->GetObject<UbController>()->GetUbTransaction()->SetTargetExecutor(
+            UbTargetExecutor([this](Ptr<const UbWqeSegment> request, const UbTransactionRule&,
+                                   UbTargetCompletion done) {
+                ++m_requests[request->GetTaskId()];
+                m_firstSequence.try_emplace(request->GetTaskId(), request->GetTaSsn());
+                m_rcid[request->GetTaskId()] = *request->GetCtpRcid();
+                if (request->GetTaskId() == 101 && m_requests[101] == 1)
+                    m_held.push_back(done);
+                else
+                    done(UbWorkExecutionResult{});
+            }));
+        for (uint32_t id : {101u, 102u})
+        {
+            auto wqe = function->CreateWqe(topo.sender->GetId(), topo.receiver->GetId(),
+                                            2 * UB_MTU_BYTE, id, UbTransactionOpcode::WRITE);
+            wqe->SetSrcEntityId(1);
+            wqe->SetDstEntityId(1);
+            wqe->SetPriority(7);
+            wqe->SetSport(0);
+            wqe->SetDport(0);
+            NS_TEST_ASSERT_MSG_EQ(static_cast<int>(function->SubmitCtpWqe(wqe, id, key).status),
+                                  0, "accept full WQE");
+        }
+        std::cout << "CTP-M3 initial held/fast nxt=" << jettys[0]->GetTaSsnSndNxtForTest()
+                  << "/" << jettys[1]->GetTaSsnSndNxtForTest() << " shared queued="
+                  << service->GetQueuedPacketCountForTest(key) << std::endl;
+        Simulator::Stop(MicroSeconds(10));
+        Simulator::Run();
+        NS_TEST_EXPECT_MSG_EQ(m_completed[101], 0u, "held window cannot complete");
+        NS_TEST_EXPECT_MSG_EQ(m_completed[102], 1u, "other requester completes exactly once");
+        NS_TEST_EXPECT_MSG_EQ(m_requests[101], 1u, "full held window admits no second segment");
+        NS_TEST_EXPECT_MSG_EQ(m_requests[102], 2u, "other requester drains both segments");
+        NS_TEST_EXPECT_MSG_EQ(m_firstSequence[101], 0u, "first requester starts at zero");
+        NS_TEST_EXPECT_MSG_EQ(m_firstSequence[102], 0u, "independent first sequence also zero");
+        NS_TEST_EXPECT_MSG_NE(m_rcid[101], m_rcid[102], "wire carries distinct RCID");
+        std::cout << "CTP-M3 held una/nxt=" << jettys[0]->GetTaSsnSndUnaForTest() << "/"
+                  << jettys[0]->GetTaSsnSndNxtForTest() << " fast una/nxt="
+                  << jettys[1]->GetTaSsnSndUnaForTest() << "/"
+                  << jettys[1]->GetTaSsnSndNxtForTest() << " shared queued="
+                  << service->GetQueuedPacketCountForTest(key) << std::endl;
+        for (auto& done : m_held) done(UbWorkExecutionResult{});
+        m_held.clear();
+        Simulator::Stop(MicroSeconds(10));
+        Simulator::Run();
+        NS_TEST_EXPECT_MSG_EQ(m_completed[101], 1u, "released requester completes once");
+        NS_TEST_EXPECT_MSG_EQ(m_completed[102], 1u, "other completion remains once");
+        NS_TEST_EXPECT_MSG_EQ(transaction->GetActiveOperationCount(), 0u, "all operations drain");
+        for (auto jetty : jettys)
+        {
+            NS_TEST_EXPECT_MSG_EQ(
+                jetty->GetTaSsnSndUnaForTest(), 2u, "independent complete frontier");
+            NS_TEST_EXPECT_MSG_EQ(jetty->GetTaSsnSndNxtForTest(), 2u, "independent send frontier");
+        }
+        Simulator::Destroy();
+        Config::Reset();
+    }
+  private:
+    void OnComplete(uint32_t task, uint32_t) { ++m_completed[task]; }
+    std::map<uint32_t, uint32_t> m_completed, m_requests, m_firstSequence, m_rcid;
+    std::vector<UbTargetCompletion> m_held;
+};
+
+class UbCtpJettyHolTest : public TestCase
+{
+  public:
+    UbCtpJettyHolTest() : TestCase("UbCtpJettyHolTest: authoritative Jetty ACK window") {}
+    void DoRun() override
+    {
+        auto jetty = CreateObject<UbJetty>();
+        jetty->Init();
+        jetty->SetTaSsnSendWindowForTest(0, 2);
+        NS_TEST_ASSERT_MSG_EQ(jetty->ProcessWqeSegmentComplete(1), true, "mark second ACK");
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndUnaForTest(), 0u, "hole retains frontier");
+        NS_TEST_ASSERT_MSG_EQ(jetty->ProcessWqeSegmentComplete(0), true, "mark first ACK");
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndUnaForTest(), 2u, "contiguous completion");
     }
 };
 
@@ -28651,39 +28904,25 @@ class UbCtpReportsConstraintsWithoutMutatingJettyTest : public TestCase
     }
 };
 
-class UbCtpTransactionContextAckWindowAdmissionTest : public TestCase
+class UbCtpJettyAckWindowAdmissionTest : public TestCase
 {
   public:
-    UbCtpTransactionContextAckWindowAdmissionTest()
-        : TestCase("UnifiedBus - CTP transaction admission is bounded by ack bitmap window")
-    {
-    }
-
-  private:
+    UbCtpJettyAckWindowAdmissionTest()
+        : TestCase("UbCtpJettyAckWindowAdmissionTest: authoritative Jetty ACK window")
+    {}
     void DoRun() override
     {
-        UbCtpEntityKey key{.srcEntityId = 1,
-                           .dstNodeId = 1,
-                           .dstEntityId = 1,
-                           .vl = 7};
-        UbCtpTransactionContext context(key);
-
-        for (uint32_t sequence = 0; sequence < UB_JETTY_TASSN_OOO_THRESHOLD; ++sequence)
-        {
-            NS_TEST_ASSERT_MSG_EQ(context.TryAdmit(sequence),
-                                  true,
-                                  "Sequence inside the ack bitmap window should be admitted");
-        }
-
-        NS_TEST_ASSERT_MSG_EQ(context.TryAdmit(UB_JETTY_TASSN_OOO_THRESHOLD),
-                              false,
-                              "A full ack bitmap window should block the next transaction");
-
-        context.MarkTaAck(0);
-
-        NS_TEST_ASSERT_MSG_EQ(context.TryAdmit(UB_JETTY_TASSN_OOO_THRESHOLD),
-                              true,
-                              "Acking the base transaction should reopen one admission slot");
+        auto jetty = CreateObject<UbJetty>();
+        jetty->Init();
+        jetty->SetAttribute("UbJettyInflightMax", UintegerValue(2));
+        jetty->ResetSsnAckBitset(2);
+        jetty->SetTaSsnSendWindowForTest(0, 2);
+        NS_TEST_ASSERT_MSG_EQ(jetty->HasValidCtpWindow(), true, "actual bitmap covers window");
+        NS_TEST_ASSERT_MSG_EQ(jetty->IsLimited(), true, "full authoritative window blocks");
+        jetty->ProcessWqeSegmentComplete(1);
+        NS_TEST_ASSERT_MSG_EQ(jetty->IsLimited(), true, "out of order response retains hole");
+        jetty->ProcessWqeSegmentComplete(0);
+        NS_TEST_ASSERT_MSG_EQ(jetty->IsLimited(), false, "contiguous ACK reopens admission");
     }
 };
 
@@ -28710,14 +28949,14 @@ class UbCtpServiceDoesNotCreateRtpTpTest : public TestCase
                            .dstEntityId = 1,
                            .vl = 7};
 
-        service->GetOrCreateTransactionContext(key);
         NS_TEST_ASSERT_MSG_EQ(controller->GetTransportChannelManager()->GetCount(),
                               initialTransportCount,
                               "Creating a CTP context must not allocate RTP transport channels");
 
         Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(0);
         segment->SetSport(0);
-        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(segment, key), true, "CTP send should admit seq 0");
+        NS_TEST_ASSERT_MSG_EQ(
+            SubmitCtpSegmentFixture(service, segment, key), true, "CTP send should admit seq 0");
         NS_TEST_ASSERT_MSG_EQ(controller->GetTransportChannelManager()->GetCount(),
                               initialTransportCount,
                               "Sending a CTP segment must not allocate RTP transport channels");
@@ -29701,7 +29940,7 @@ class UbCtpBuildResponsePacketTaAckTest : public TestCase
 {
   public:
     UbCtpBuildResponsePacketTaAckTest()
-        : TestCase("UnifiedBus - CTP TAACK response uses compact ACK transaction header")
+        : TestCase("UnifiedBus - CTP TAACK response uses full ACK transaction header")
     {
     }
 
@@ -30416,7 +30655,7 @@ class UbCtpWireTaAckCompletesJettyTest : public TestCase
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
             "test setup should admit the CTP WQE through the Transaction owner");
         service->StartJetty(jetty, key);
-        NS_TEST_ASSERT_MSG_EQ(service->GetOrCreateTransactionContext(key)->GetOutstandingCount(),
+        NS_TEST_ASSERT_MSG_EQ((jetty->GetTaSsnSndNxtForTest() - jetty->GetTaSsnSndUnaForTest()),
                               1u,
                               "test setup should make one CTP transaction outstanding");
 
@@ -30502,7 +30741,7 @@ class UbCtpWireTaAckContinuesInflightLimitedWqeTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndNxtForTest(),
                               1u,
                               "Only the first CTP WQE segment should enter the Jetty window");
-        NS_TEST_ASSERT_MSG_EQ(service->GetOrCreateTransactionContext(key)->GetOutstandingCount(),
+        NS_TEST_ASSERT_MSG_EQ((jetty->GetTaSsnSndNxtForTest() - jetty->GetTaSsnSndUnaForTest()),
                               1u,
                               "Only the first CTP segment should occupy the entity window");
 
@@ -30520,7 +30759,7 @@ class UbCtpWireTaAckContinuesInflightLimitedWqeTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndNxtForTest(),
                               2u,
                               "First wire TAACK should admit the next WQE segment exactly once");
-        NS_TEST_ASSERT_MSG_EQ(service->GetOrCreateTransactionContext(key)->GetOutstandingCount(),
+        NS_TEST_ASSERT_MSG_EQ((jetty->GetTaSsnSndNxtForTest() - jetty->GetTaSsnSndUnaForTest()),
                               1u,
                               "The continued CTP segment should occupy the released entity slot");
 
@@ -30605,7 +30844,7 @@ class UbCtpOutOfOrderWireTaAckCompletesContiguousJettyRangeTest : public TestCas
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
             "test setup should admit the CTP WQE through the Transaction owner");
         service->StartJetty(jetty, key);
-        NS_TEST_ASSERT_MSG_EQ(service->GetOrCreateTransactionContext(key)->GetOutstandingCount(),
+        NS_TEST_ASSERT_MSG_EQ((jetty->GetTaSsnSndNxtForTest() - jetty->GetTaSsnSndUnaForTest()),
                               2u,
                               "test setup should make both CTP transactions outstanding");
 
@@ -30746,7 +30985,7 @@ class UbCtpTerminalRecoveryWithoutTaAckContinuesWaitingJettyWqeTest : public Tes
         NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
                               1u,
                               "The waiting CTP WQE should remain as the only active operation");
-        NS_TEST_ASSERT_MSG_EQ(service->GetOrCreateTransactionContext(key)->GetOutstandingCount(),
+        NS_TEST_ASSERT_MSG_EQ((jetty->GetTaSsnSndNxtForTest() - jetty->GetTaSsnSndUnaForTest()),
                               1u,
                               "The continued CTP WQE should occupy one entity window slot");
 
@@ -30833,7 +31072,7 @@ class UbCtpOutOfOrderWireTaAckTracesArrivalTest : public TestCase
             static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
             "test setup should admit the CTP WQE through the Transaction owner");
         service->StartJetty(jetty, key);
-        NS_TEST_ASSERT_MSG_EQ(service->GetOrCreateTransactionContext(key)->GetOutstandingCount(),
+        NS_TEST_ASSERT_MSG_EQ((jetty->GetTaSsnSndNxtForTest() - jetty->GetTaSsnSndUnaForTest()),
                               2u,
                               "test setup should make both CTP transactions outstanding");
 
@@ -30897,13 +31136,14 @@ class UbCtpCnpDoesNotAckTransactionTest : public TestCase
                            .dstNodeId = 1,
                            .dstEntityId = 11,
                            .vl = 7};
-        Ptr<UbCtpTransactionContext> context = service->GetOrCreateTransactionContext(key);
+        auto context = CreateObject<UbJetty>();
+        context->Init();
 
-        NS_TEST_ASSERT_MSG_EQ(context->TryAdmit(0), true, "seq 0 should be outstanding");
+        context->SetTaSsnSendWindowForTest(0, 1);
 
         service->RecordCnpForTest(key);
 
-        NS_TEST_ASSERT_MSG_EQ(context->GetCompleteUna(),
+        NS_TEST_ASSERT_MSG_EQ(context->GetTaSsnSndUnaForTest(),
                               0u,
                               "CNP must not advance transaction ACK state");
         NS_TEST_ASSERT_MSG_EQ(service->GetCongestionStateCountForTest(),
@@ -30914,61 +31154,30 @@ class UbCtpCnpDoesNotAckTransactionTest : public TestCase
     }
 };
 
-class UbCtpTransactionStateCreatesSendContextLazilyTest : public TestCase
+class UbCtpIdleReprepareKeepsJettyProgressTest : public TestCase
 {
   public:
-    UbCtpTransactionStateCreatesSendContextLazilyTest()
-        : TestCase("UnifiedBus - finite CTP Transaction state creates send context lazily")
-    {
-    }
-
-  private:
+    UbCtpIdleReprepareKeepsJettyProgressTest()
+        : TestCase("CTP idle unprepare and reprepare retain Jetty cursor and RCID") {}
     void DoRun() override
     {
-        Ptr<Node> node = BuildSinglePortCtpNode();
-        Ptr<UbController> controller = node->GetObject<UbController>();
-        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
-        Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-        UbCtpEntityKey key{.srcEntityId = 10,
-                           .dstNodeId = 1,
-                           .dstEntityId = 11,
-                           .vl = 7};
-
-        UbCtpTransactionState& state = transaction->GetOrCreateCtpTransactionState(key);
-        NS_TEST_ASSERT_MSG_EQ(state.context,
-                              nullptr,
-                              "Pre-send Transaction state must not allocate a send window");
-        NS_TEST_ASSERT_MSG_EQ(service->HasTransactionContextForTesting(key),
-                              false,
-                              "State presence must not be reported as send-context presence");
-        NS_TEST_ASSERT_MSG_EQ(transaction->TryRetireCtpTransactionState(key),
-                              true,
-                              "Context-free state should retire without a send window");
-        NS_TEST_ASSERT_MSG_EQ(transaction->FindCtpTransactionState(key),
-                              nullptr,
-                              "Receiver-only retirement should erase the finite state");
-
-        Ptr<UbCtpTransactionContext> context = service->GetOrCreateTransactionContext(key);
-        NS_TEST_ASSERT_MSG_NE(context,
-                              nullptr,
-                              "The existing send-window seam should allocate on first use");
-        NS_TEST_ASSERT_MSG_EQ(service->HasTransactionContextForTesting(key),
-                              true,
-                              "The context query should observe the allocated send window");
-        NS_TEST_ASSERT_MSG_EQ(context->TryAdmit(0), true, "Sequence zero should enter the window");
-        context->MarkTaAck(0);
-        NS_TEST_ASSERT_MSG_EQ(transaction->TryRetireCtpTransactionState(key),
-                              true,
-                              "A drained send window should permit finite state retirement");
-
-        UbCtpTransactionState& recreated = transaction->GetOrCreateCtpTransactionState(key);
-        NS_TEST_ASSERT_MSG_EQ(recreated.context,
-                              nullptr,
-                              "Recreated finite state should remain lightweight until send use");
-        NS_TEST_ASSERT_MSG_EQ(service->GetOrCreateTransactionContext(key)->GetSendNext(),
-                              1u,
-                              "Lazy context recreation must preserve the retained TASSN cursor");
-
+        auto node = BuildSinglePortCtpNode();
+        auto peer = BuildSinglePortCtpNode();
+        auto controller = node->GetObject<UbController>();
+        auto service = controller->GetCtpTransportService();
+        const UbCtpEntityKey key{1, peer->GetId(), 1, 7};
+        auto jetty = SubmitCtpFixture(node, key);
+        auto rcid = controller->GetUbTransaction()->GetCtpRequesterRcid(0);
+        NS_TEST_ASSERT_MSG_EQ(service->UnprepareJetty(0), false, "active work prevents unprepare");
+        service->CompleteFromTaAckForTest(0, 0);
+        NS_TEST_ASSERT_MSG_EQ(controller->GetUbTransaction()->GetResidentSegmentCount(), 0u,
+                              "sole segment backing retired");
+        NS_TEST_ASSERT_MSG_EQ(service->UnprepareJetty(0), true, "idle unprepare");
+        NS_TEST_ASSERT_MSG_EQ(service->PrepareJetty(jetty, key), true, "reprepare same generation");
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndNxtForTest(), 1u, "send cursor retained");
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndUnaForTest(), 1u, "completion cursor retained");
+        NS_TEST_ASSERT_MSG_EQ(*controller->GetUbTransaction()->GetCtpRequesterRcid(0), *rcid,
+                              "same generation retains RCID");
         Simulator::Destroy();
     }
 };
@@ -31068,22 +31277,20 @@ class UbCtpTaAckCompletionHelperTest : public TestCase
                            .dstNodeId = 1,
                            .dstEntityId = 1,
                            .vl = 7};
-        Ptr<UbCtpTransactionContext> context = service->GetOrCreateTransactionContext(key);
-
-        SubmitCtpFixture(node, key, 2 * UB_MTU_BYTE);
+        auto context = SubmitCtpFixture(node, key, 2 * UB_MTU_BYTE);
 
         service->RecordCnpForTest(key);
-        NS_TEST_ASSERT_MSG_EQ(context->GetCompleteUna(),
+        NS_TEST_ASSERT_MSG_EQ(context->GetTaSsnSndUnaForTest(),
                               0u,
                               "CNP must not complete a transaction");
 
-        service->CompleteFromTaAckForTest(key, 1);
-        NS_TEST_ASSERT_MSG_EQ(context->GetCompleteUna(),
+        service->CompleteFromTaAckForTest(0, 1);
+        NS_TEST_ASSERT_MSG_EQ(context->GetTaSsnSndUnaForTest(),
                               0u,
                               "out-of-order TAACK should wait for the base sequence");
 
-        service->CompleteFromTaAckForTest(key, 0);
-        NS_TEST_ASSERT_MSG_EQ(context->GetCompleteUna(),
+        service->CompleteFromTaAckForTest(0, 0);
+        NS_TEST_ASSERT_MSG_EQ(context->GetTaSsnSndUnaForTest(),
                               2u,
                               "contiguous TAACKs should advance complete UNA");
 
@@ -31123,10 +31330,7 @@ class UbCtpWireAckRequiresExactEntityContextTest : public TestCase
                                .dstNodeId = 1,
                                .dstEntityId = 70,
                                .vl = 7};
-        Ptr<UbCtpTransactionContext> entity5Context =
-            service->GetOrCreateTransactionContext(entity5);
-        service->GetOrCreateTransactionContext(entity7);
-        SubmitCtpFixture(node, entity5);
+        auto entity5Context = SubmitCtpFixture(node, entity5);
 
         UbCtpEntityKey ackWireKey{.srcEntityId = 70,
                                   .dstNodeId = node->GetId(),
@@ -31140,7 +31344,7 @@ class UbCtpWireAckRequiresExactEntityContextTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(service->HandleReceivedPacket(ackPacket, 0),
                               false,
                               "wire TAACK should remain scoped to its exact Entity context");
-        NS_TEST_ASSERT_MSG_EQ(entity5Context->GetCompleteUna(),
+        NS_TEST_ASSERT_MSG_EQ(entity5Context->GetTaSsnSndUnaForTest(),
                               0u,
                               "wire TAACK for Entity 7 must not complete Entity 5");
 
@@ -31167,8 +31371,7 @@ class UbCtpWireTaAckCompletesReverseEntityContextTest : public TestCase
                                   .dstNodeId = 1,
                                   .dstEntityId = 1,
                                   .vl = 7};
-        Ptr<UbCtpTransactionContext> context = service->GetOrCreateTransactionContext(requestKey);
-        SubmitCtpFixture(node, requestKey);
+        auto context = SubmitCtpFixture(node, requestKey);
 
         UbCtpEntityKey responseWireKey{.srcEntityId = 1,
                                        .dstNodeId = 0,
@@ -31182,7 +31385,7 @@ class UbCtpWireTaAckCompletesReverseEntityContextTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(service->HandleReceivedPacket(ackPacket, 0),
                               true,
                               "response-direction wire TAACK should match request context");
-        NS_TEST_ASSERT_MSG_EQ(context->GetCompleteUna(),
+        NS_TEST_ASSERT_MSG_EQ(context->GetTaSsnSndUnaForTest(),
                               1u,
                               "request context should complete sequence 0");
 
@@ -31251,8 +31454,7 @@ class UbCtpWireTaAckUnwrapsLogicalTassnTest : public TestCase
                                   .dstNodeId = 1,
                                   .dstEntityId = 1,
                                   .vl = 7};
-        Ptr<UbCtpTransactionContext> context = service->GetOrCreateTransactionContext(requestKey);
-        SubmitCtpFixture(node, requestKey, 64, 65536);
+        auto context = SubmitCtpFixture(node, requestKey, 64, 65536);
 
         UbCtpEntityKey responseWireKey{.srcEntityId = 1,
                                        .dstNodeId = 0,
@@ -31266,7 +31468,7 @@ class UbCtpWireTaAckUnwrapsLogicalTassnTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(service->HandleReceivedPacket(ackPacket, 0),
                               true,
                               "wire TAACK should unwrap low 16 bits into outstanding range");
-        NS_TEST_ASSERT_MSG_EQ(context->GetCompleteUna(),
+        NS_TEST_ASSERT_MSG_EQ(context->GetTaSsnSndUnaForTest(),
                               65537u,
                               "logical TASSN 65536 should complete from wire ACK 0");
 
@@ -31298,21 +31500,16 @@ class UbCtpSendSegmentFragmentsPayloadTest : public TestCase
         segment->SetResLenBytes(payloadBytes);
         segment->SetCarrierBytes(payloadBytes);
 
-        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(segment, key),
+        NS_TEST_ASSERT_MSG_EQ(SubmitCtpSegmentFixture(service, segment, key),
                               false,
                               "CTP must reject segmentation work that belongs to Transaction");
         NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(key),
                               0u,
                               "Rejected oversized segment must not queue a packet");
 
-        Ptr<UbCtpTransactionContext> context = service->GetOrCreateTransactionContext(key);
-        NS_TEST_ASSERT_MSG_EQ(context->GetSendNext(),
-                              0u,
-                              "Rejected oversized segment must not consume a TASSN");
-        NS_TEST_ASSERT_MSG_EQ(context->GetOutstandingCount(),
-                              0u,
-                              "Rejected oversized segment must not occupy a transaction slot");
-
+        NS_TEST_ASSERT_MSG_EQ(
+            node->GetObject<UbController>()->GetUbTransaction()->GetResidentSegmentCount(),
+                              0u, "rejected oversized work creates no segment backing");
         Simulator::Destroy();
     }
 };
@@ -31341,7 +31538,7 @@ class UbCtpSendSegmentRemainderPayloadTest : public TestCase
         segment->SetResLenBytes(payloadBytes);
         segment->SetCarrierBytes(payloadBytes);
 
-        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(segment, key),
+        NS_TEST_ASSERT_MSG_EQ(SubmitCtpSegmentFixture(service, segment, key),
                               false,
                               "Transaction must split a segment before CTP admission");
 
@@ -31382,23 +31579,23 @@ class UbCtpFragmentedSegmentDoesNotBlockNextTaSsnTest : public TestCase
         first->SetResLenBytes(16u * UB_MTU_BYTE);
         first->SetCarrierBytes(16u * UB_MTU_BYTE);
 
-        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(first, key),
+        NS_TEST_ASSERT_MSG_EQ(SubmitCtpSegmentFixture(service, first, key),
                               false,
                               "Oversized segment should be rejected at the CTP seam");
         Ptr<UbWqeSegment> valid = CreateCtpWriteSegment(0);
         valid->SetSport(0);
-        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(valid, key),
+        NS_TEST_ASSERT_MSG_EQ(SubmitCtpSegmentFixture(service, valid, key),
                               true,
                               "Next valid segment should retain TASSN 0 after rejection");
         NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(key),
                               1u,
                               "Only the valid one-packet segment should be queued");
 
-        Ptr<UbCtpTransactionContext> context = service->GetOrCreateTransactionContext(key);
-        NS_TEST_ASSERT_MSG_EQ(context->GetSendNext(),
+        auto context = node->GetObject<UbController>()->GetUbFunction()->GetJetty(0);
+        NS_TEST_ASSERT_MSG_EQ(context->GetTaSsnSndNxtForTest(),
                               1u,
                               "Only the valid segment should consume one transaction sequence");
-        NS_TEST_ASSERT_MSG_EQ(context->GetOutstandingCount(),
+        NS_TEST_ASSERT_MSG_EQ((context->GetTaSsnSndNxtForTest() - context->GetTaSsnSndUnaForTest()),
                               1u,
                               "Rejected oversized work must not consume a transaction slot");
 
@@ -31428,7 +31625,7 @@ class UbCtpSendSegmentQueueTest : public TestCase
 
         Ptr<UbWqeSegment> first = CreateCtpWriteSegment(0);
         first->SetSport(0);
-        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(first, key),
+        NS_TEST_ASSERT_MSG_EQ(SubmitCtpSegmentFixture(service, first, key),
                               true,
                               "first in-order CTP segment should be queued");
         NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(key),
@@ -31437,7 +31634,7 @@ class UbCtpSendSegmentQueueTest : public TestCase
 
         Ptr<UbWqeSegment> duplicate = CreateCtpWriteSegment(0);
         duplicate->SetSport(0);
-        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(duplicate, key),
+        NS_TEST_ASSERT_MSG_EQ(SubmitCtpSegmentFixture(service, duplicate, key),
                               false,
                               "duplicate TA SSN should be rejected by TryAdmit");
         NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(key),
@@ -31468,10 +31665,6 @@ class UbCtpRejectedSegmentDoesNotCreateQueueOrRequireRouteTest : public TestCase
                            .dstEntityId = 11,
                            .vl = 7};
 
-        Ptr<UbCtpTransactionContext> context = service->GetOrCreateTransactionContext(key);
-        NS_TEST_ASSERT_MSG_EQ(context->TryAdmit(0),
-                              true,
-                              "test setup should reserve the first CTP transaction sequence");
         NS_TEST_ASSERT_MSG_EQ(service->SendSegment(CreateCtpWriteSegment(0), key),
                               false,
                               "rejected duplicate CTP segment should return false without routing");
@@ -31509,7 +31702,7 @@ class UbCtpExplicitSourcePortRequiresPeerEntityTest : public TestCase
                                .vl = 7};
             Ptr<UbWqeSegment> segment = CreateCtpWriteSegment(0);
             segment->SetSport(0);
-            service->SendSegment(segment, key);
+            SubmitCtpSegmentFixture(service, segment, key);
         });
 
         NS_TEST_ASSERT_MSG_EQ(WIFSIGNALED(status),
@@ -31588,7 +31781,7 @@ class UbCtpSendSegmentRegistersAndTriggersPortTest : public TestCase
         first->SetSrc(topo.sender->GetId());
         first->SetDest(topo.receiver->GetId());
         first->SetSport(static_cast<uint8_t>(outPort));
-        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(first, key),
+        NS_TEST_ASSERT_MSG_EQ(SubmitCtpSegmentFixture(service, first, key),
                               true,
                               "CTP send should admit and enqueue seq 0");
         NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(key, outPort, key.vl),
@@ -31602,7 +31795,7 @@ class UbCtpSendSegmentRegistersAndTriggersPortTest : public TestCase
         second->SetSrc(topo.sender->GetId());
         second->SetDest(topo.receiver->GetId());
         second->SetSport(static_cast<uint8_t>(outPort));
-        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(second, key),
+        NS_TEST_ASSERT_MSG_EQ(SubmitCtpSegmentFixture(service, second, key),
                               true,
                               "CTP send should admit and enqueue seq 1");
         NS_TEST_ASSERT_MSG_EQ(service->GetQueuedPacketCountForTest(key, outPort, key.vl),
@@ -31656,7 +31849,7 @@ class UbCtpQueueBackpressurePreservesPacketAndRegistrationTest : public TestCase
         segment->SetSrc(topo.sender->GetId());
         segment->SetDest(topo.receiver->GetId());
         segment->SetSport(static_cast<uint8_t>(outPort));
-        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(segment, key),
+        NS_TEST_ASSERT_MSG_EQ(SubmitCtpSegmentFixture(service, segment, key),
                               true,
                               "CTP send should enqueue before egress backpressure is observed");
         Simulator::Stop(NanoSeconds(100));
@@ -31715,16 +31908,16 @@ class UbCtpDataAckLifecycleAndTransactionCleanupTest : public TestCase
         Simulator::Run();
 
         Ptr<UbController> receiverController = topo.receiver->GetObject<UbController>();
-        NS_TEST_ASSERT_MSG_EQ(senderController->GetUbTransaction()->FindCtpTransactionState(key),
-                              nullptr,
+        NS_TEST_ASSERT_MSG_EQ(senderController->GetUbTransaction()->GetResidentSegmentCount(),
+                              0u,
                               "Completed initiator Transaction state should retire independently");
         UbCtpEntityKey reverseKey{.srcEntityId = key.dstEntityId,
                                   .dstNodeId = topo.sender->GetId(),
                                   .dstEntityId = key.srcEntityId,
                                   .vl = key.vl};
         NS_TEST_ASSERT_MSG_EQ(
-            receiverController->GetUbTransaction()->FindCtpTransactionState(reverseKey),
-            nullptr,
+            receiverController->GetUbTransaction()->GetResidentSegmentCount(),
+            0u,
             "One complete CTP TP Packet must leave no target-side assembly state");
 
         Simulator::Destroy();
@@ -31760,24 +31953,18 @@ class UbCtpRouteLossKeepsTransactionOutstandingTest : public TestCase
         segment->SetSrc(topo.sender->GetId());
         segment->SetDest(topo.receiver->GetId());
         segment->SetSport(static_cast<uint8_t>(topo.senderPort->GetIfIndex()));
-        NS_TEST_ASSERT_MSG_EQ(service->SendSegment(segment, key),
+        NS_TEST_ASSERT_MSG_EQ(SubmitCtpSegmentFixture(service, segment, key),
                               true,
                               "CTP DATA should be admitted before downstream route loss");
 
         Simulator::Stop(MilliSeconds(1));
         Simulator::Run();
 
-        const UbCtpTransactionState* state =
-            controller->GetUbTransaction()->FindCtpTransactionState(key);
-        NS_TEST_ASSERT_MSG_NE(state,
-                              nullptr,
-                              "Loss without recovery must keep Transaction work visible");
-        NS_TEST_ASSERT_MSG_EQ(state->outstandingSegments.size(),
-                              1u,
-                              "Unresolved CTP loss must not force-complete the segment");
-        NS_TEST_ASSERT_MSG_EQ(state->context->GetOutstandingCount(),
-                              1u,
-                              "Unresolved CTP loss must retain window occupancy");
+        NS_TEST_ASSERT_MSG_EQ(controller->GetUbTransaction()->GetResidentSegmentCount(),
+                              1u, "unresolved route loss retains the exact SegmentRecord");
+        auto jetty = controller->GetUbFunction()->GetJetty(0);
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndNxtForTest() - jetty->GetTaSsnSndUnaForTest(),
+                              1u, "unresolved route loss retains Jetty window occupancy");
 
         Simulator::Destroy();
     }
@@ -31795,35 +31982,46 @@ class UbCtpDelayedTaAckTrackedEventCleanupTest : public TestCase
     void DoRun() override
     {
         Ptr<Node> node = BuildSinglePortCtpNode();
+        BuildSinglePortCtpNode();
         Ptr<UbController> controller = node->GetObject<UbController>();
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-        UbCtpEntityKey key{.srcEntityId = 10,
+        UbCtpEntityKey key{.srcEntityId = 1,
                            .dstNodeId = 1,
-                           .dstEntityId = 11,
+                           .dstEntityId = 1,
                            .vl = 7};
         service->SetAttribute("DelayTaAckSrcNode", UintegerValue(node->GetId()));
         service->SetAttribute("DelayTaAckDstNode", UintegerValue(key.dstNodeId));
         service->SetAttribute("DelayTaAckSequence", UintegerValue(0));
         service->SetAttribute("DelayTaAckTime", TimeValue(NanoSeconds(10)));
-        NS_TEST_ASSERT_MSG_EQ(service->AdmitSegmentForTest(CreateCtpWriteSegment(0), key, 0),
-                              true,
-                              "Delayed TAACK fixture should admit one finite segment");
+        auto jetty = SubmitCtpFixture(node, key);
 
-        service->CompleteFromTaAckForTest(key, 0);
+        service->CompleteFromTaAckForTest(0, 0);
+        service->SetAttribute("DelayTaAckTime", TimeValue(NanoSeconds(20)));
+        service->CompleteFromTaAckForTest(0, 0);
         Ptr<UbLifecycleCoordinator> coordinator = node->GetObject<UbLifecycleCoordinator>();
-        const UbLifecycleResourceIdentity owner = service->GetLifecycleOwnerForTest();
+        UbLifecycleResourceIdentity owner;
+        controller->GetUbFunction()->TryGetJettyLifecycleIdentity(0, owner);
         NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(owner).activeTrackedEventLeases,
-                              1u,
-                              "Pending delayed TAACK should hold one tracked-event lease");
+                              2u,
+                              "Each delayed completion leases the exact Jetty generation");
 
-        Simulator::Stop(NanoSeconds(20));
+        Simulator::Stop(NanoSeconds(15));
+        Simulator::Run();
+        NS_TEST_EXPECT_MSG_EQ(controller->GetUbTransaction()->GetActiveOperationCount(), 0u,
+                              "first completion already retired WQE");
+        NS_TEST_EXPECT_MSG_EQ(coordinator->GetSnapshot(owner).activeTrackedEventLeases, 1u,
+                              "a later duplicate callback still belongs to this requester");
+        NS_TEST_EXPECT_MSG_EQ(
+            jetty->SetAttributeFailSafe("TaSegmentBytes", UintegerValue(64)), false,
+                              "pending owner callback prevents an idle parameter change");
+        Simulator::Stop(NanoSeconds(10));
         Simulator::Run();
 
         NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(owner).activeTrackedEventLeases,
                               0u,
                               "Delayed TAACK callback should resolve its tracked-event lease");
-        NS_TEST_ASSERT_MSG_EQ(controller->GetUbTransaction()->FindCtpTransactionState(key),
-                              nullptr,
+        NS_TEST_ASSERT_MSG_EQ(controller->GetUbTransaction()->GetResidentSegmentCount(),
+                              0u,
                               "Delayed completion should retire the finite Transaction record");
 
         Simulator::Destroy();
@@ -31842,23 +32040,24 @@ class UbCtpDelayedTaAckDisposeKeepsUnresolvedWorkTest : public TestCase
     void DoRun() override
     {
         Ptr<Node> node = BuildSinglePortCtpNode();
+        BuildSinglePortCtpNode();
         Ptr<UbController> controller = node->GetObject<UbController>();
         Ptr<UbCtpTransportService> service = controller->GetCtpTransportService();
-        UbCtpEntityKey key{.srcEntityId = 10,
+        UbCtpEntityKey key{.srcEntityId = 1,
                            .dstNodeId = 1,
-                           .dstEntityId = 11,
+                           .dstEntityId = 1,
                            .vl = 7};
         service->SetAttribute("DelayTaAckSrcNode", UintegerValue(node->GetId()));
         service->SetAttribute("DelayTaAckDstNode", UintegerValue(key.dstNodeId));
         service->SetAttribute("DelayTaAckSequence", UintegerValue(0));
         service->SetAttribute("DelayTaAckTime", TimeValue(NanoSeconds(10)));
-        NS_TEST_ASSERT_MSG_EQ(service->AdmitSegmentForTest(CreateCtpWriteSegment(0), key, 0),
-                              true,
-                              "Dispose fixture should admit one finite segment");
-        service->CompleteFromTaAckForTest(key, 0);
+        auto jetty = SubmitCtpFixture(node, key);
+
+        service->CompleteFromTaAckForTest(0, 0);
 
         Ptr<UbLifecycleCoordinator> coordinator = node->GetObject<UbLifecycleCoordinator>();
-        const UbLifecycleResourceIdentity owner = service->GetLifecycleOwnerForTest();
+        UbLifecycleResourceIdentity owner;
+        controller->GetUbFunction()->TryGetJettyLifecycleIdentity(0, owner);
         NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(owner).activeTrackedEventLeases,
                               1u,
                               "Pending delayed TAACK should hold a tracked-event lease");
@@ -31867,23 +32066,10 @@ class UbCtpDelayedTaAckDisposeKeepsUnresolvedWorkTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(owner).activeTrackedEventLeases,
                               0u,
                               "CTP dispose should cancel and resolve the pending event lease");
-        const UbCtpTransactionState* state =
-            controller->GetUbTransaction()->FindCtpTransactionState(key);
-        NS_TEST_ASSERT_MSG_NE(state,
-                              nullptr,
-                              "Canceling the event must leave unresolved Transaction work visible");
-        if (state != nullptr)
-        {
-            NS_TEST_ASSERT_MSG_EQ(state->pendingCompletionEvents,
-                                  0u,
-                                  "Canceled delayed completion should release its Transaction hold");
-            NS_TEST_ASSERT_MSG_EQ(state->outstandingSegments.size(),
-                                  1u,
-                                  "Canceled delayed completion must not retire outstanding work");
-            NS_TEST_ASSERT_MSG_EQ(state->context->GetOutstandingCount(),
-                                  1u,
-                                  "Canceled delayed completion must not release window capacity");
-        }
+        NS_TEST_ASSERT_MSG_EQ(controller->GetUbTransaction()->GetResidentSegmentCount(),
+                              1u, "canceling completion retains unresolved operation backing");
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndUnaForTest(), 0u,
+                              "canceling completion cannot advance requester");
 
         Simulator::Stop(NanoSeconds(20));
         Simulator::Run();
@@ -32269,21 +32455,15 @@ class UbCtpReadWriteUsesTransactionLifecycleTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
                               1u,
                               "CTP WRITE should create one common Transaction operation");
-        const UbCtpTransactionState* writeState = transaction->FindCtpTransactionState(key);
-        NS_TEST_ASSERT_MSG_NE(writeState,
-                              nullptr,
-                              "CTP WRITE state should live in the Transaction owner");
-        NS_TEST_ASSERT_MSG_EQ(writeState->context->GetSendNext(),
-                              2u,
-                              "Two-MTU WRITE should allocate two Transaction-owned TASSNs");
-        NS_TEST_ASSERT_MSG_EQ(writeState->outstandingSegments.size(),
-                              2u,
-                              "WRITE should retain two one-packet Transaction segments");
-        service->CompleteFromTaAckForTest(key, 0);
+        NS_TEST_ASSERT_MSG_EQ(controller->GetUbFunction()->GetJetty(0)->GetTaSsnSndNxtForTest(),
+                              2u, "shared Jetty retains contiguous sequence across WQEs");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetResidentSegmentCount(),
+                              2u, "two real segment records retained");
+        service->CompleteFromTaAckForTest(0, 0);
         NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
                               1u,
                               "First WRITE TAACK should not finish the two-segment operation");
-        service->CompleteFromTaAckForTest(key, 1);
+        service->CompleteFromTaAckForTest(0, 1);
         NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
                               0u,
                               "Final WRITE TAACK should retire the common Transaction operation");
@@ -32291,18 +32471,12 @@ class UbCtpReadWriteUsesTransactionLifecycleTest : public TestCase
         task.taskId = 101;
         task.op = UbTrafficGen::RuntimeTaskOp::URMA_READ;
         app->SendCtpUrmaTraffic(task);
-        const UbCtpTransactionState* readState = transaction->FindCtpTransactionState(key);
-        NS_TEST_ASSERT_MSG_NE(readState,
-                              nullptr,
-                              "CTP READ should reuse Transaction-owned key state");
-        NS_TEST_ASSERT_MSG_EQ(readState->context->GetSendNext(),
-                              4u,
-                              "Two-MTU READ should allocate two more request TASSNs");
-        NS_TEST_ASSERT_MSG_EQ(readState->outstandingSegments.size(),
-                              2u,
-                              "READ should retain two one-packet request/response units");
-        service->CompleteFromTaAckForTest(key, 2);
-        service->CompleteFromTaAckForTest(key, 3);
+        NS_TEST_ASSERT_MSG_EQ(controller->GetUbFunction()->GetJetty(0)->GetTaSsnSndNxtForTest(),
+                              4u, "shared Jetty retains contiguous sequence across WQEs");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetResidentSegmentCount(),
+                              2u, "two real segment records retained");
+        service->CompleteFromTaAckForTest(0, 2);
+        service->CompleteFromTaAckForTest(0, 3);
         NS_TEST_ASSERT_MSG_EQ(transaction->GetActiveOperationCount(),
                               0u,
                               "Final READ response should retire the common Transaction operation");
@@ -32353,11 +32527,8 @@ class UbCtpForcedTerminalCleansTransactionStateTest : public TestCase
         task.hasSrcPortId = true;
         app->SendCtpUrmaTraffic(task);
 
-        const UbCtpTransactionState* before = transaction->FindCtpTransactionState(key);
-        NS_TEST_ASSERT_MSG_NE(before, nullptr, "CTP state should exist before forced terminal");
-        NS_TEST_ASSERT_MSG_EQ(before->outstandingSegments.size(),
-                              2u,
-                              "Two-MTU WRITE should retain two segments before terminal");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetResidentSegmentCount(), 2u,
+                              "two real segment records before forced termination");
 
         NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(
                                   function->DestroyJetty(0, UbDestroyReason::ERROR)),
@@ -32367,10 +32538,8 @@ class UbCtpForcedTerminalCleansTransactionStateTest : public TestCase
                               0u,
                               "Forced CTP terminal should erase the common operation");
 
-        const UbCtpTransactionState* after = transaction->FindCtpTransactionState(key);
-        NS_TEST_ASSERT_MSG_EQ(after,
-                              nullptr,
-                              "Forced terminal must retire the finite CTP Transaction record");
+        NS_TEST_ASSERT_MSG_EQ(transaction->GetResidentSegmentCount(), 0u,
+                              "forced termination retires all segment backing");
 
         Simulator::Destroy();
     }
@@ -33407,10 +33576,14 @@ UbTestSuite::UbTestSuite()
                 TestCase::Duration::QUICK);
     AddTestCase(new UbControllerSubmitsUnboundSourceCtpDestinationsTest(),
                 TestCase::Duration::QUICK);
-    AddTestCase(new UbCtpTransactionContextHolTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpSequenceAndConfigurationBoundaryTest(65535), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpSequenceAndConfigurationBoundaryTest(UINT32_MAX - 2),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpIndependentJettyRoundTripTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpJettyHolTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpReportsConstraintsWithoutMutatingJettyTest(),
                 TestCase::Duration::QUICK);
-    AddTestCase(new UbCtpTransactionContextAckWindowAdmissionTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpJettyAckWindowAdmissionTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpServiceDoesNotCreateRtpTpTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpEntityRegistryLifecycleTest(), TestCase::Duration::QUICK);
 #ifndef _WIN32
@@ -33733,12 +33906,16 @@ UbCtpTransactionTestSuite::UbCtpTransactionTestSuite()
     : TestSuite("unified-bus-ctp-transaction", Type::UNIT)
 {
     AddTestCase(new UbCtpRequesterPreparationTest(), TestCase::Duration::QUICK);
-    AddTestCase(new UbCtpTransactionContextHolTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpSequenceAndConfigurationBoundaryTest(65535), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpSequenceAndConfigurationBoundaryTest(UINT32_MAX - 2),
+                TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpIndependentJettyRoundTripTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbCtpJettyHolTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpReportsConstraintsWithoutMutatingJettyTest(),
                 TestCase::Duration::QUICK);
-    AddTestCase(new UbCtpTransactionContextAckWindowAdmissionTest(),
+    AddTestCase(new UbCtpJettyAckWindowAdmissionTest(),
                 TestCase::Duration::QUICK);
-    AddTestCase(new UbCtpTransactionStateCreatesSendContextLazilyTest(),
+    AddTestCase(new UbCtpIdleReprepareKeepsJettyProgressTest(),
                 TestCase::Duration::QUICK);
     AddTestCase(new UbCtpServiceDoesNotCreateRtpTpTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbCtpEntityRegistryLifecycleTest(), TestCase::Duration::QUICK);
@@ -37986,7 +38163,8 @@ class UbAtomicCtpRoundTripTest : public TestCase
                               0u,
                               "No retained atomic operation");
         NS_TEST_EXPECT_MSG_EQ(
-            m_senderService->GetOrCreateTransactionContext(m_key)->GetOutstandingCount(),
+            m_senderService->GetNode()
+                ->GetObject<UbController>()->GetUbTransaction()->GetResidentSegmentCount(),
             0u,
             "CTP window drains");
         Simulator::Destroy();
@@ -38139,14 +38317,17 @@ class UbAtomicCtpRoundTripTest : public TestCase
                 invalid->AddHeader(ctp);
                 invalid->AddHeader(invalidCna);
                 invalid->AddHeader(dl);
-                auto context = m_senderService->GetOrCreateTransactionContext(m_key);
-                const auto outstanding = context->GetOutstandingCount();
-                const auto una = context->GetCompleteUna();
+                auto context = m_senderService->GetNode()
+                    ->GetObject<UbController>()->GetUbFunction()->GetJetty(23);
+                const auto outstanding =
+                    (context->GetTaSsnSndNxtForTest() - context->GetTaSsnSndUnaForTest());
+                const auto una = context->GetTaSsnSndUnaForTest();
                 m_senderService->HandleReceivedPacket(invalid, 0);
-                NS_TEST_EXPECT_MSG_EQ(context->GetCompleteUna(),
+                NS_TEST_EXPECT_MSG_EQ(context->GetTaSsnSndUnaForTest(),
                                       una,
                                       "Invalid ACK cannot advance window variant=" << variant);
-                NS_TEST_EXPECT_MSG_EQ(context->GetOutstandingCount(),
+                NS_TEST_EXPECT_MSG_EQ(
+                    (context->GetTaSsnSndNxtForTest() - context->GetTaSsnSndUnaForTest()),
                                       outstanding,
                                       "Invalid ACK cannot retire request variant=" << variant);
                 NS_TEST_EXPECT_MSG_EQ(m_completed[task], 0u,

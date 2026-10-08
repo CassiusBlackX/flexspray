@@ -58,93 +58,6 @@ UbCtpEntityKey::operator==(const UbCtpEntityKey& other) const
            dstEntityId == other.dstEntityId && vl == other.vl;
 }
 
-UbCtpTransactionContext::UbCtpTransactionContext(UbCtpEntityKey key,
-                                                 uint32_t ackWindowCapacity,
-                                                 uint32_t initialSequence)
-    : m_key(key),
-      m_sendNext(initialSequence),
-      m_completeUna(initialSequence)
-{
-    NS_ABORT_MSG_IF(ackWindowCapacity == 0,
-                    "CTP transaction context requires a non-zero ack window");
-    m_ackWindow.Resize(ackWindowCapacity);
-    m_ackWindow.Reset(initialSequence);
-}
-
-bool
-UbCtpTransactionContext::CanAdmit(uint32_t sequence) const
-{
-    if (sequence != m_sendNext)
-    {
-        return false;
-    }
-    return m_sendNext - m_completeUna < m_ackWindow.GetWindowSize();
-}
-
-bool
-UbCtpTransactionContext::TryAdmit(uint32_t sequence)
-{
-    if (!CanAdmit(sequence))
-    {
-        return false;
-    }
-    ++m_sendNext;
-    return true;
-}
-
-void
-UbCtpTransactionContext::MarkTaAck(uint32_t sequence)
-{
-    if (sequence < m_completeUna || sequence >= m_sendNext)
-    {
-        return;
-    }
-    const bool marked = m_ackWindow.Mark(sequence);
-    NS_ASSERT_MSG(marked, "CTP TAACK sequence must fit in window");
-    m_completeUna += m_ackWindow.AdvanceContiguous();
-}
-
-std::optional<uint32_t>
-UbCtpTransactionContext::MarkTaAckWire(uint16_t wireSequence)
-{
-    auto logicalSequence =
-        UbTaSsnSequence::UnwrapInWindow(wireSequence, m_completeUna, m_sendNext);
-    if (!logicalSequence.has_value())
-    {
-        return std::nullopt;
-    }
-
-    MarkTaAck(*logicalSequence);
-    return logicalSequence;
-}
-
-uint32_t
-UbCtpTransactionContext::GetCompleteUna() const
-{
-    return m_completeUna;
-}
-
-uint32_t
-UbCtpTransactionContext::GetSendNext() const
-{
-    return m_sendNext;
-}
-
-uint32_t
-UbCtpTransactionContext::GetOutstandingCount() const
-{
-    return m_sendNext - m_completeUna;
-}
-
-void
-UbCtpTransactionContext::SetWindowForTest(uint32_t completeUna, uint32_t sendNext)
-{
-    NS_ABORT_MSG_IF(sendNext < completeUna, "CTP test window sendNext must not precede completeUna");
-    m_completeUna = completeUna;
-    m_sendNext = sendNext;
-    m_ackWindow.Reset(completeUna);
-}
-
 UbRtpTransportReference::UbRtpTransportReference(
     UbRtpTransportReferenceKind kind,
     const UbLifecycleResourceIdentity& identity,
@@ -768,6 +681,15 @@ UbTransaction::TryContinueJettyTransmission(uint32_t jettyNum)
         return;
     }
 
+    auto controller = GetOwnerController();
+    auto ctp = controller == nullptr ? nullptr : controller->PeekCtpTransportService();
+    if (ctp != nullptr && ctp->HasJettyPreparation(jettyNum))
+    {
+        if (GetFunction()->ShouldContinueAcceptedWqes(jettyNum))
+            ctp->NotifyJettyWork(jettyNum);
+        return;
+    }
+
     std::vector<Ptr<UbWqe>> eligibleWqes;
     for (auto operation = m_operations.lower_bound({jettyNum, 0});
          operation != m_operations.end() && operation->first.first == jettyNum;
@@ -1023,8 +945,8 @@ UbTransaction::FindCtpOutstanding(uint32_t rcid,
     NS_ABORT_MSG_IF(jetty == nullptr ||
                     !GetFunction()->TryGetJettyLifecycleIdentity(jettyNum, current) ||
                     current != *identity, "live CTP RCID has a stale Jetty generation");
-    const uint64_t una = jetty->GetTaSsnSndUnaForTest();
-    const uint64_t nxt = jetty->GetTaSsnSndNxtForTest();
+    const uint64_t una = jetty->GetTaSsnSndUna();
+    const uint64_t nxt = jetty->GetTaSsnSndNxt();
     uint64_t sequence = (una & ~uint64_t{0xffff}) | wireSsn;
     if (sequence < una) sequence += 0x10000;
     if (sequence >= nxt || sequence >= UINT32_MAX)
@@ -1073,6 +995,7 @@ Ptr<UbWqeSegment>
 UbTransaction::PrepareNextCtpWqeSegment(Ptr<UbJetty> jetty, uint32_t maxSegmentBytes)
 {
     NS_ABORT_MSG_IF(jetty == nullptr, "CTP segmentation requires a Jetty");
+    if (!GetFunction()->ShouldContinueAcceptedWqes(jetty->GetJettyNum())) return nullptr;
     auto segment = jetty->PrepareNextWqeSegment(nullptr, maxSegmentBytes);
     if (segment == nullptr) return nullptr;
     const auto rcid = GetCtpRequesterRcid(jetty->GetJettyNum());
@@ -1127,88 +1050,6 @@ UbTransaction::CommitCtpWqeSegment(Ptr<UbWqeSegment> segment)
         operation->second.segments.emplace(segment->GetTaSsn(), record);
     }
     jetty->CommitWqeSegmentAdmission(segment);
-}
-
-UbCtpTransactionState&
-UbTransaction::GetOrCreateCtpTransactionState(const UbCtpEntityKey& key)
-{
-    return m_ctpTransactionStates.try_emplace(key).first->second;
-}
-
-Ptr<UbCtpTransactionContext>
-UbTransaction::GetOrCreateCtpTransactionContext(const UbCtpEntityKey& key)
-{
-    UbCtpTransactionState& state = GetOrCreateCtpTransactionState(key);
-    if (state.context == nullptr)
-    {
-        const auto cursor = m_nextCtpTaSsnByEntity.find(key);
-        const uint32_t initialSequence =
-            cursor == m_nextCtpTaSsnByEntity.end() ? 0 : cursor->second;
-        state.context = Create<UbCtpTransactionContext>(
-            key,
-            UB_JETTY_TASSN_OOO_THRESHOLD,
-            initialSequence);
-    }
-    return state.context;
-}
-
-const UbCtpTransactionState*
-UbTransaction::FindCtpTransactionState(const UbCtpEntityKey& key) const
-{
-    const auto it = m_ctpTransactionStates.find(key);
-    return it == m_ctpTransactionStates.end() ? nullptr : &it->second;
-}
-
-UbCtpTransactionState*
-UbTransaction::FindCtpTransactionState(const UbCtpEntityKey& key)
-{
-    const auto it = m_ctpTransactionStates.find(key);
-    return it == m_ctpTransactionStates.end() ? nullptr : &it->second;
-}
-
-void
-UbTransaction::RetainCtpCompletionEvent(const UbCtpEntityKey& key)
-{
-    ++GetOrCreateCtpTransactionState(key).pendingCompletionEvents;
-}
-
-void
-UbTransaction::ReleaseCtpCompletionEvent(const UbCtpEntityKey& key)
-{
-    UbCtpTransactionState* state = FindCtpTransactionState(key);
-    NS_ABORT_MSG_IF(state == nullptr || state->pendingCompletionEvents == 0,
-                    "CTP completion event release would underflow");
-    --state->pendingCompletionEvents;
-}
-
-bool
-UbTransaction::TryRetireCtpTransactionState(const UbCtpEntityKey& key)
-{
-    auto state = m_ctpTransactionStates.find(key);
-    if (state == m_ctpTransactionStates.end())
-    {
-        return true;
-    }
-    const bool activeOperation = std::any_of(
-        m_operations.begin(),
-        m_operations.end(),
-        [&key](const auto& entry) { return entry.second.ctp && entry.second.ctpKey == key; });
-    const UbCtpTransactionState& transactionState = state->second;
-    if (activeOperation || !transactionState.pendingSegments.empty() ||
-        !transactionState.outstandingSegments.empty() ||
-        !transactionState.segmentOutstandingPackets.empty() ||
-        transactionState.pendingCompletionEvents != 0 ||
-        (transactionState.context != nullptr &&
-         transactionState.context->GetOutstandingCount() != 0))
-    {
-        return false;
-    }
-    if (transactionState.context != nullptr)
-    {
-        m_nextCtpTaSsnByEntity[key] = transactionState.context->GetSendNext();
-    }
-    m_ctpTransactionStates.erase(state);
-    return true;
 }
 
 bool UbTransaction::IsRoiMemoryRequest(const Ptr<UbWqeSegment>& segment)
@@ -2521,7 +2362,6 @@ UbTransaction::TryAdmitCtpWqe(uint32_t jettyNum,
     operation.ctp = true;
     operation.ctpKey = key;
     m_operations.emplace(std::make_pair(jettyNum, wqe->GetWqeId()), operation);
-    GetOrCreateCtpTransactionState(key);
     wqe->MarkLifecycleManaged();
     return true;
 }
@@ -2719,30 +2559,23 @@ UbTransaction::FinishWqe(uint32_t jettyNum,
                     "WqeFinish references an unknown, duplicate, or stale direct WQE");
     if (operation != m_operations.end() && operation->second.ctp)
     {
+        if (outcome != UbWorkOutcome::COMPLETED &&
+            terminalMode == WqeTerminalMode::CONTINUE_ACCEPTED)
+        {
+            GetFunction()->DestroyJetty(jettyNum, outcome == UbWorkOutcome::FLUSHED
+                                                     ? UbDestroyReason::SIMULATION_STOP
+                                                     : UbDestroyReason::ERROR);
+            return;
+        }
+        operation->second.dispatchReady = false;
         CancelDispatchEvent(operation->second);
         const UbCtpEntityKey ctpKey = operation->second.ctpKey;
         const UbLifecycleResourceIdentity wqeIdentity = operation->second.wqeIdentity;
-        auto transactionState = m_ctpTransactionStates.find(operation->second.ctpKey);
-        if (transactionState != m_ctpTransactionStates.end())
-        {
-            auto& pendingSegments = transactionState->second.pendingSegments;
-            std::erase_if(pendingSegments,
-                          [jettyNum, wqe](const Ptr<UbWqeSegment>& segment) {
-                              return segment != nullptr && segment->GetJettyNum() == jettyNum &&
-                                     segment->GetTaskId() == wqe->GetWqeId();
-                          });
-        }
         std::vector<uint32_t> terminalTaSsns;
         terminalTaSsns.reserve(operation->second.segments.size());
         for (const auto& [taSsn, record] : operation->second.segments)
         {
             terminalTaSsns.push_back(taSsn);
-            if (transactionState != m_ctpTransactionStates.end())
-            {
-                transactionState->second.outstandingSegments.erase(taSsn);
-                transactionState->second.segmentOutstandingPackets.erase(record.segment);
-                transactionState->second.context->MarkTaAck(taSsn);
-            }
             m_coordinator->ReleaseLease(record.childLease);
             m_coordinator->RecordWorkTerminal(record.identity, outcome);
             m_coordinator->RetireResource(record.identity);
@@ -2775,10 +2608,6 @@ UbTransaction::FinishWqe(uint32_t jettyNum,
                                                       wqe->GetWqeId(),
                                                       wqeIdentity,
                                                       outcome);
-        if (outcome != UbWorkOutcome::COMPLETED)
-        {
-            TryRetireCtpTransactionState(ctpKey);
-        }
         Ptr<UbController> controller = GetOwnerController();
         Ptr<UbCtpTransportService> ctpService =
             controller == nullptr ? nullptr : controller->PeekCtpTransportService();
@@ -3053,10 +2882,8 @@ UbTransaction::DoDispose()
         }
     }
     m_remoteRtpWqeSegmentsByTpn.clear();
-    m_ctpTransactionStates.clear();
     m_ctpRequesters.clear();
     m_ctpRcidByJetty.clear();
-    m_nextCtpTaSsnByEntity.clear();
     m_tpRRIndex.clear();
     m_random = nullptr;
     m_serviceMode.clear();

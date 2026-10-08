@@ -16,9 +16,16 @@
 ## RTP vs CTP
 
 - `RTP`: TP Channel / TPG semantics. RTP uses TPN, PSN, TPACK/TPNAK/TPSACK, and RTP retransmission.
-- `CTP`: Entity/VL semantics. CTP uses CTPH without SrcTPN/DstTPN/PSN. CTP traffic
-  does not use RTP TP mappings from `transport_channel.csv`, though case files may
-  still include that file for setup or comparison.
+- `CTP`: Entity/VL scopes shared routing, queues and congestion signals. Each prepared
+  Jetty generation has its own node-local RCID; UbJetty alone owns its TASSN/window
+  and contiguous WQE completion frontier across destinations. CFG6 carries full
+  transaction headers, while CTPH has no SrcTPN/DstTPN/PSN. CTP traffic does not use
+  RTP TP mappings from `transport_channel.csv`, though case files may still include
+  that file for setup or comparison.
+- CTP inflight must be positive and no larger than the actual ACK bitmap or 32768.
+  Inflight, ACK capacity and segment geometry can change only when the requester
+  and its owned callbacks are idle; equal-value writes preserve progress. Whole-WQE
+  sequence reservation rejects local 32-bit exhaustion before accepting work.
 
 ## Non-Implications
 
