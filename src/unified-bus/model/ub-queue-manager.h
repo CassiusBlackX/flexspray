@@ -164,7 +164,8 @@ public:
                                    bool ingressHeld);
 
     /** Release retained recovery storage for a packet that is disposed instead of rerouted. */
-    void RemovePendingRecoveryBytes(uint32_t inPort, uint32_t priority, uint32_t pSize);
+    void RemovePendingRecoveryBytes(uint32_t inPort, uint32_t priority, uint32_t pSize,
+                                    bool ingressHeld);
 
     uint64_t GetPendingRecoveryBytes() const { return m_totalPendingRecoveryBytes; }
     uint64_t GetQueuePendingRecoveryBytes(uint32_t inPort, uint32_t priority) const;
@@ -220,6 +221,7 @@ private:
     uint64_t GetIngressAdmissionThresholdBytes(uint32_t inPort, uint32_t priority) const;
     uint64_t GetDynamicPauseThresholdBytes() const;
     uint64_t GetDynamicResumeThresholdBytes() const;
+    uint64_t GetPaperBufferedBytes() const;
     uint64_t GetPaperPauseThresholdBytes(uint64_t totalBufferedBytes) const;
     uint64_t GetPaperResumeThresholdBytes(uint64_t totalBufferedBytes) const;
     uint64_t GetSwitchTotalBufferedBytes() const;
@@ -239,6 +241,8 @@ private:
     uint64_t m_totalProcessingBytes {0};
     DarrayU64 m_pendingRecoveryBytes;    // [inPort][priority]
     uint64_t m_totalPendingRecoveryBytes {0};
+    // Pending subset that still owns its original ingress reservation.
+    uint64_t m_pendingRecoveryIngressBytes {0};
 
     // 三层 buffer 状态
     uint64_t m_sharedPoolBytes {DEFAULT_SHARED_POOL_BYTES};

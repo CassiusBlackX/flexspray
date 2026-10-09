@@ -95,10 +95,9 @@ UbPfcDecision UbPfcPaperDynamicDecisionHook::Evaluate(Ptr<UbQueueManager> queueM
 {
     auto queueOcc = queueManager->GetIngressQueueOccupancy(inPort, priority);
     auto switchOcc = queueManager->GetSwitchBufferOccupancy();
-    const uint64_t xoff = queueManager->GetPaperPauseThresholdBytes(
-        switchOcc.total_buffered_bytes - switchOcc.recovery_voq_bytes);
-    const uint64_t xon = queueManager->GetPaperResumeThresholdBytes(
-        switchOcc.total_buffered_bytes - switchOcc.recovery_voq_bytes);
+    const uint64_t paperBytes = queueManager->GetPaperBufferedBytes();
+    const uint64_t xoff = queueManager->GetPaperPauseThresholdBytes(paperBytes);
+    const uint64_t xon = queueManager->GetPaperResumeThresholdBytes(paperBytes);
     const bool pause = queueOcc.headroom_bytes > 0 || (queueOcc.total_bytes >= xoff && queueOcc.total_bytes > 0);
     return {
         .pause = pause,

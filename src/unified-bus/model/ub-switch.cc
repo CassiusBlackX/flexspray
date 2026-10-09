@@ -1585,7 +1585,8 @@ UbSwitch::TransferOnePendingEntry(PendingRecoveryEntry& entry)
             // Link-local control frames leave with their recovery accounting.
             m_queueManager->RemovePendingRecoveryBytes(entry.inPort,
                                                        entry.priority,
-                                                       entry.packet->GetSize());
+                                                       entry.packet->GetSize(),
+                                                       entry.ingressHeld);
             --m_pendingRecoveryPackets;
             m_pendingRecoveryBytes -= entry.packet->GetSize();
             if (!entry.ingressHeld)

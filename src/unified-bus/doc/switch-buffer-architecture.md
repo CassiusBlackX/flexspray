@@ -85,6 +85,27 @@ uint64_t GetOutPortBufferOccupancyBytes(uint32_t outPort) const;
 uint64_t GetOutPortQueueBacklogBytes(uint32_t outPort) const;
 ```
 
+### PAPER 与 pending recovery ingress 占用
+
+`PFC_DYNAMIC_PAPER` 的 PAUSE/RESUME 和 ingress 准入共用 queue manager 的 O(1) 占用计算：
+
+```text
+B_paper = total_buffered_bytes - recovery_voq_bytes + pending_recovery_ingress_bytes
+XOFF = beta * max(SharedPoolBytes - B_paper, 0) / 8
+XON = max(XOFF - 2 * UB_MTU_BYTE, 0)
+```
+
+`pending_recovery_ingress_bytes` 仅计入仍持有原 ingress 预留的 pending 子集。
+processing 或普通 VOQ 转 pending 时增加，进入健康 VOQ 或按既有分支移除时按
+`ingressHeld` 扣减，初始化归零。更新在既有转换内、可观察回调之前完成，扣减检查下溢。
+因此 processing / 普通 VOQ → pending → 健康 VOQ 不会因暂存位置变化而提前 RESUME
+或放宽准入；实际释放后容量正常恢复。
+
+原 ingress 已释放的 failed-egress / retry 使用独立恢复存储，不计入该子集；其进入
+recovery VOQ 后仍按 `recovery_voq_bytes` 扣除。通用 `total_buffered_bytes`、输出
+backlog 和普通 egress 的既有口径不变；本修复不改变 LastAck 门控、信用返还或调度。
+这一边界落实 [ADR 0029](../../../doc/adr/0029-retain-original-packets-for-failure-recovery.md)。
+
 ### 2.3 Buffer Occupancy 与 Queue Backlog
 
 两个查询都聚合一个出端口的所有 VL 和入端口，包括该端口的本地控制帧：

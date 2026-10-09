@@ -15,6 +15,7 @@
 #include "ns3/ub-next-hop-index.h"
 #include "ns3/ub-rule-routing.h"
 #include "ns3/ub-port.h"
+#include "ns3/ub-pfc.h"
 #include "ns3/ub-reliable-rerouting.h"
 #include "ns3/ub-switch.h"
 #include "ns3/ub-transport.h"
@@ -373,14 +374,15 @@ struct ReroutingTopology
                       Time failedLinkDelay = NanoSeconds(20),
                       Time detectionDelay = NanoSeconds(0),
                       Time lastAckPathDelay = NanoSeconds(0),
-                      FcType flowControl = FcType::NONE)
+                      FcType flowControl = FcType::NONE,
+                      uint32_t switchBPorts = 3)
     {
         hostA = CreateObject<Node>(0);
         swB = CreateObject<Node>(1);
         swC = CreateObject<Node>(2);
         hostD = CreateObject<Node>(3);
         InitReroutingNode(hostA, UB_DEVICE, 1, flowControl);
-        InitReroutingNode(swB, UB_SWITCH, 3, flowControl);
+        InitReroutingNode(swB, UB_SWITCH, switchBPorts, flowControl);
         InitReroutingNode(swC, UB_SWITCH, 3, flowControl);
         InitReroutingNode(hostD, UB_DEVICE, 1, flowControl);
 
@@ -2291,6 +2293,141 @@ class UbReroutingPfcReleaseTest : public TestCase
     }
 };
 
+/** PAPER keeps a healthy upstream paused until retained ingress occupancy really drains. */
+class UbReroutingPaperPendingIngressTest : public TestCase
+{
+  public:
+    UbReroutingPaperPendingIngressTest()
+        : TestCase("Reliable rerouting - PAPER pending holds PAUSE until real release and upstream progress")
+    {
+    }
+
+  private:
+    void ReceiveUpstream(Ptr<UbPort> port, Ptr<Packet> packet)
+    {
+        const auto before = port->GetCredits(kPriority);
+        // Keep production control-frame decoding and flow-control wakeups intact.
+        port->GetNode()->GetObject<UbSwitch>()->SwitchHandlePacket(port, packet);
+        const auto after = port->GetCredits(kPriority);
+        if (before != 0 && after == 0)
+        {
+            ++m_pauses;
+        }
+        if (before == 0 && after != 0)
+        {
+            ++m_resumes;
+            m_resumeTime = Simulator::Now();
+        }
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        Config::SetDefault("ns3::UbQueueManager::ReservePerQueueBytes", UintegerValue(65536));
+        Config::SetDefault("ns3::UbQueueManager::SharedPoolBytes", UintegerValue(102400));
+        Config::SetDefault("ns3::UbQueueManager::PaperDynamicPfcBeta", UintegerValue(8));
+        ReroutingTopology topo(true, NanoSeconds(20), NanoSeconds(0), MicroSeconds(10),
+                               FcType::PFC_DYNAMIC_PAPER, 5);
+        auto source = CreateObject<Node>(4);
+        InitReroutingNode(source, UB_DEVICE, 1, FcType::PFC_DYNAMIC_PAPER);
+        auto retainedIngress = DynamicCast<UbPort>(topo.swB->GetDevice(4));
+        ConnectPorts(DynamicCast<UbPort>(source->GetDevice(0)), retainedIngress, false,
+                     NanoSeconds(20));
+        auto sw = topo.Switch(topo.swB);
+        auto qm = sw->GetQueueManager();
+        topo.a0->SetReceiveHandler(
+            MakeCallback(&UbReroutingPaperPendingIngressTest::ReceiveUpstream, this));
+        PacketSink sink;
+        topo.d0->SetReceiveHandler(MakeBoundCallback(&CaptureDeliveredPacket, &sink));
+        TransferWatcher transfers;
+        topo.Rerouting(1)->TraceConnectWithoutContext(
+            "Rerouting", MakeBoundCallback(&WatchReroutingEvent, &transfers));
+        std::vector<std::vector<uint8_t>> expected;
+        auto makePacket = [&](uint32_t bytes, uint32_t psn) {
+            const auto overhead = BuildUrmaPacket(0, topo.hostA->GetId(), topo.hostD->GetId(),
+                                                  kPriority,
+                                                  RoutingType::PER_FLOW_SHORTEST_PATHS)->GetSize();
+            auto packet = BuildUrmaPacket(bytes - overhead, topo.hostA->GetId(),
+                                           topo.hostD->GetId(), kPriority,
+                                           RoutingType::PER_FLOW_SHORTEST_PATHS, psn);
+            expected.push_back(PacketBytes(packet));
+            return packet;
+        };
+        // Two real ingress processing populations; ingress stripe 4 also selects failed output 1.
+        sw->SetAttribute("InPortProcessingDelay", TimeValue(MicroSeconds(3)));
+        for (uint32_t i = 0; i < 10; ++i)
+        {
+            sw->SwitchHandlePacket(retainedIngress, makePacket(4096, i));
+        }
+        sw->SetAttribute("InPortProcessingDelay", TimeValue(MicroSeconds(40)));
+        for (uint32_t i = 0; i < 7; ++i)
+        {
+            sw->SwitchHandlePacket(topo.b0, makePacket(5120, 10 + i));
+        }
+        Simulator::Schedule(NanoSeconds(500), [&]() {
+            // PFC rechecks on enqueue completion, not processing admission. Complete a small
+            // ordinary packet before the held population moves to pending to establish PAUSE.
+            sw->SetAttribute("InPortProcessingDelay", TimeValue(NanoSeconds(0)));
+            sw->SwitchHandlePacket(topo.b0, makePacket(100, 19));
+        });
+        Simulator::Schedule(MicroSeconds(1), &UbLink::Fail, PeekPointer(topo.failedLink));
+        Simulator::Schedule(MicroSeconds(4), [&]() {
+            NS_TEST_ASSERT_MSG_EQ(topo.State(1), UbReliableRerouting::State::WAIT_LAST_ACK,
+                                  "real network LastAck is still in flight");
+            NS_TEST_ASSERT_MSG_EQ(qm->GetQueuePendingRecoveryBytes(4, kPriority), 40960u,
+                                  "40 KiB processing moved to pending");
+            NS_TEST_ASSERT_MSG_EQ(qm->GetIngressQueueOccupancy(4, kPriority).total_bytes, 40960u,
+                                  "pending retains original ingress");
+            sw->SetAttribute("InPortProcessingDelay", TimeValue(NanoSeconds(0)));
+            // A normal arrival/release rechecks the observed ingress using production PFC hooks.
+            sw->SwitchHandlePacket(topo.b0, makePacket(100, 17));
+        });
+        auto followup = makePacket(512, 18);
+        // Reuse the existing generated-source fixture: a production packet queue registered
+        // with the allocator, without acquiring a forwarded packet's ingress reservation.
+        auto upstreamQueue = CreateObject<UbPacketQueue>();
+        upstreamQueue->SetInPortId(0);
+        upstreamQueue->SetOutPortId(0);
+        upstreamQueue->SetIngressPriority(kPriority);
+        Simulator::Schedule(MicroSeconds(6), [&]() {
+            NS_TEST_ASSERT_MSG_GT(m_pauses, 0u, "PAUSE reached healthy upstream");
+            NS_TEST_ASSERT_MSG_EQ(m_resumes, 0u, "no early RESUME while LastAck is pending");
+            NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(topo.a0->GetCredits(kPriority)), 0u,
+                                  "production receiver keeps upstream paused");
+            upstreamQueue->Push(followup);
+            topo.Switch(topo.hostA)->RegisterTpWithAllocator(upstreamQueue, 0, kPriority);
+            topo.a0->TriggerTransmit();
+        });
+        Simulator::Schedule(MicroSeconds(8), [&]() {
+            NS_TEST_ASSERT_MSG_EQ(upstreamQueue->GetPacketCount(), 1u,
+                                  "later data cannot advance before genuine release");
+        });
+        Simulator::Stop(MicroSeconds(100));
+        Simulator::Run();
+        NS_TEST_ASSERT_MSG_GT(transfers.validCopies, 0u, "real network LastAck arrived");
+        NS_TEST_ASSERT_MSG_EQ(m_resumes, 1u, "one genuine RESUME reaches healthy upstream");
+        NS_TEST_ASSERT_MSG_GT(m_resumeTime, transfers.validLastAckTime,
+                              "RESUME follows LastAck and real occupancy release");
+        NS_TEST_ASSERT_MSG_EQ(upstreamQueue->GetPacketCount(), 0u, "upstream queue drains");
+        NS_TEST_ASSERT_MSG_EQ((SortedHex(sink.packets) == SortedHex(expected)), true,
+                              "all recovered and later data arrive byte-identically exactly once");
+        NS_TEST_ASSERT_MSG_EQ(qm->GetPendingRecoveryBytes(), 0u, "pending fully drains");
+        NS_TEST_ASSERT_MSG_EQ(qm->GetSwitchBufferOccupancy().total_buffered_bytes, 0u,
+                              "switch fully drains");
+        auto hook = CreateObject<UbPfcPaperDynamicDecisionHook>();
+        NS_TEST_ASSERT_MSG_EQ(hook->Evaluate(qm, 0, kPriority).xoff_threshold_bytes, 102400u,
+                              "no retained PAPER correction after drain");
+        NS_TEST_ASSERT_MSG_EQ(UbUtils::Get()->GetRuntimePacketDropCount(), 0u, "no data drops");
+        topo.Switch(topo.hostA)->RemoveTpFromAllocator(upstreamQueue);
+        Simulator::Destroy();
+        Config::Reset();
+    }
+
+    uint32_t m_pauses{0};
+    uint32_t m_resumes{0};
+    Time m_resumeTime;
+};
+
 /** @brief One protocol family member for the recovery matrix. */
 struct ReroutingProtocolCase
 {
@@ -3145,6 +3282,7 @@ class UbReliableReroutingSuite : public TestSuite
         AddTestCase(new UbReroutingMixedVoqTest(true, true, true), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingCbfcCreditTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingControlFrameDisposalTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbReroutingPaperPendingIngressTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingPfcReleaseTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingProtocolMatrixTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbReroutingRoutingRepresentationTest(), TestCase::Duration::QUICK);

@@ -86,6 +86,7 @@ void UbQueueManager::Init()
     m_totalEgressBufferedBytes = 0;
     m_totalProcessingBytes = 0;
     m_totalPendingRecoveryBytes = 0;
+    m_pendingRecoveryIngressBytes = 0;
     m_recoveryVoqBytes = 0;
     m_totalHeadroomBytes = static_cast<uint64_t>(m_headroomPerPortBytes) * m_portsNum;
     m_totalReservedBytes = static_cast<uint64_t>(m_reservePerQueueBytes) * m_vlNum * m_portsNum;
@@ -319,6 +320,7 @@ UbQueueManager::MoveProcessingToPendingRecovery(uint32_t inPort,
     m_totalProcessingBytes -= pSize;
     m_pendingRecoveryBytes[inPort][priority] += pSize;
     m_totalPendingRecoveryBytes += pSize;
+    m_pendingRecoveryIngressBytes += pSize;
     m_traceOutPortBufferBytes(outPort, GetTotalOutPortBufferUsed(outPort));
 }
 
@@ -337,6 +339,7 @@ UbQueueManager::MoveVoqToPendingRecovery(uint32_t inPort,
     m_totalOutPortVoqBufferedBytes[outPort] -= pSize;
     m_pendingRecoveryBytes[inPort][priority] += pSize;
     m_totalPendingRecoveryBytes += pSize;
+    m_pendingRecoveryIngressBytes += pSize;
     m_traceOutPortBufferBytes(outPort, GetTotalOutPortBufferUsed(outPort));
 }
 
@@ -355,11 +358,7 @@ UbQueueManager::AdmitPendingRecoveryToVoq(uint32_t inPort,
                                           uint32_t pSize,
                                           bool ingressHeld)
 {
-    NS_ASSERT_MSG(m_pendingRecoveryBytes[inPort][priority] >= pSize,
-                  "Pending recovery accounting underflow");
-    NS_ASSERT_MSG(m_totalPendingRecoveryBytes >= pSize, "Pending recovery total underflow");
-    m_pendingRecoveryBytes[inPort][priority] -= pSize;
-    m_totalPendingRecoveryBytes -= pSize;
+    RemovePendingRecoveryBytes(inPort, priority, pSize, ingressHeld);
 
     if (ingressHeld)
     {
@@ -374,11 +373,20 @@ UbQueueManager::AdmitPendingRecoveryToVoq(uint32_t inPort,
 }
 
 void
-UbQueueManager::RemovePendingRecoveryBytes(uint32_t inPort, uint32_t priority, uint32_t pSize)
+UbQueueManager::RemovePendingRecoveryBytes(uint32_t inPort,
+                                            uint32_t priority,
+                                            uint32_t pSize,
+                                            bool ingressHeld)
 {
     NS_ASSERT_MSG(m_pendingRecoveryBytes[inPort][priority] >= pSize,
                   "Pending recovery accounting underflow");
     NS_ASSERT_MSG(m_totalPendingRecoveryBytes >= pSize, "Pending recovery total underflow");
+    if (ingressHeld)
+    {
+        NS_ABORT_MSG_IF(m_pendingRecoveryIngressBytes < pSize,
+                        "Pending recovery ingress accounting underflow");
+        m_pendingRecoveryIngressBytes -= pSize;
+    }
     m_pendingRecoveryBytes[inPort][priority] -= pSize;
     m_totalPendingRecoveryBytes -= pSize;
 }
@@ -545,6 +553,12 @@ uint64_t UbQueueManager::GetDynamicResumeThresholdBytes() const
     return xoff > m_dynamicPfcResumeGapBytes ? xoff - m_dynamicPfcResumeGapBytes : 0;
 }
 
+uint64_t UbQueueManager::GetPaperBufferedBytes() const
+{
+    // Independent recovery VOQs do not own ingress; held pending entries still do.
+    return GetSwitchTotalBufferedBytes() - m_recoveryVoqBytes + m_pendingRecoveryIngressBytes;
+}
+
 uint64_t UbQueueManager::GetPaperPauseThresholdBytes(uint64_t totalBufferedBytes) const
 {
     uint64_t remaining = m_sharedPoolBytes > totalBufferedBytes ? m_sharedPoolBytes - totalBufferedBytes : 0;
@@ -567,7 +581,7 @@ uint64_t UbQueueManager::GetSwitchTotalBufferedBytes() const
 uint64_t UbQueueManager::GetIngressAdmissionThresholdBytes(uint32_t, uint32_t) const
 {
     if (m_paperDynamicAdmissionEnabled) {
-        return GetPaperPauseThresholdBytes(GetSwitchTotalBufferedBytes() - m_recoveryVoqBytes);
+        return GetPaperPauseThresholdBytes(GetPaperBufferedBytes());
     }
     return GetDynamicPauseThresholdBytes();
 }
