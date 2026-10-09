@@ -1,5 +1,9 @@
 # CFG6 CTP full transaction headers: integration evidence
 
+Port note: this record and tickets 01–05 preserve historical source-branch evidence, including
+Iodie/DDIE. For the GitCode main port's scope, omitted device-module adaptations and fresh
+validation, see [the main-port record](ctp-full-tah-main-port.md).
+
 Status: all six tickets completed and accepted. This document update is ticket06 closeout.
 Session baseline: `a4e7025844dd400cf2c0644699de1b6950489377` on `feat/ub-2.1-ddie`.
 Final production revision: `56b369e734e95d11a2670958bbe79a45f66a923c`; ticket06 adds regression

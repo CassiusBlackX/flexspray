@@ -1179,7 +1179,7 @@ UbJetty::SetTaSegmentBytes(uint32_t bytes)
 bool
 UbJetty::CanReserveCtpWqe(Ptr<UbWqe> wqe, uint32_t maxSegmentBytes) const
 {
-    const uint32_t limit = GetEffectiveSegmentBytes(maxSegmentBytes);
+    const uint32_t limit = std::min(m_taSegmentBytes, maxSegmentBytes);
     if (wqe == nullptr || limit == 0) return false;
     const uint64_t demand = IsAtomicTransaction(wqe->GetType())
                                 ? 1 : (uint64_t{wqe->GetSize()} + limit - 1) / limit;
