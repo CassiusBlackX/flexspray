@@ -5,6 +5,7 @@
 #include "ns3/ub-datatype.h"
 #include "ns3/ub-header.h"
 #include "ns3/ub-transaction-rules.h"
+#include "ns3/packet.h"
 
 #include <array>
 
@@ -80,13 +81,13 @@ class UbTaHeaderPlan
     UbTaHeaderPresence m_presence{};
 };
 
-/** Serialized MAETAH size in bytes of the full (RTP) transaction header format. */
+/** Serialized MAETAH size in bytes of the full (RTP and CFG6 CTP) transaction header format. */
 constexpr uint32_t UB_TA_FULL_MAETAH_BYTES = 16;
-/** Serialized MAETAH size in bytes of the compact (CTP) transaction header format. */
+/** Serialized MAETAH size in bytes of the compact (LDST) transaction header format. */
 constexpr uint32_t UB_TA_COMPACT_MAETAH_BYTES = 12;
-/** Serialized BTAH/ATAH size in bytes of the full (RTP) transaction header format. */
+/** Serialized BTAH/ATAH size in bytes of the full (RTP and CFG6 CTP) transaction header format. */
 constexpr uint32_t UB_TA_FULL_BASE_HEADER_BYTES = 8;
-/** Serialized BTAH/ATAH size in bytes of the compact (CTP) transaction header format. */
+/** Serialized BTAH/ATAH size in bytes of the compact (LDST) transaction header format. */
 constexpr uint32_t UB_TA_COMPACT_BASE_HEADER_BYTES = 4;
 
 /**
@@ -99,7 +100,7 @@ UbTaHeaderPresence DeclareRequestHeaderPresence(const UbTransactionRule& rule,
                                                 const UbTransactionFields& fields);
 
 /**
- * The rule-owned header presence a compact (CTP) basic transaction header cannot flag.
+ * The rule-owned header presence a compact (LDST) basic transaction header cannot flag.
  *
  * The compact basic header has no MT_EN bit, so MTETAH is carried whenever the rule lists it.
  * UDETAH stays absent here; the compact UD flag supplies that presence at the carrier call site.
@@ -118,6 +119,46 @@ bool WriteTransactionExtension(const UbTransactionFields& fields,
 /** Read one decoded extension header into the normalized field set. */
 void ReadTransactionExtension(const UbTransactionExtensionHeader& header,
                               UbTransactionFields& fields);
+
+/** Full base header, preserving all response fields for the carrier's validation policy. */
+struct UbFullTaHeader
+{
+    bool isResponse{false};
+    UbTransactionHeader request;
+    UbAckTransactionHeader response;
+};
+
+enum class UbTaDecodeError
+{
+    NONE,
+    TRUNCATED_BASE,
+    TRUNCATED_EXTENSION,
+    INVALID_EXTENSION_LENGTH,
+};
+
+/** Structural failure only; transaction rules and the carrier own semantic rejection. */
+struct UbTaDecodeResult
+{
+    UbTaDecodeError error{UbTaDecodeError::NONE};
+    UbTransactionHeaderKind header{UbTransactionHeaderKind::BTAH};
+    bool IsSuccess() const { return error == UbTaDecodeError::NONE; }
+};
+
+uint32_t GetFullTaHeaderBytes(const UbTaHeaderPlan& plan, const UbTransactionFields& fields);
+
+/** Prepend full headers to carrier-owned payload without inspecting tags or owner state. */
+void PrependFullTaHeaders(Ptr<Packet> packet,
+                         const UbFullTaHeader& base,
+                         const UbTaHeaderPlan& plan,
+                         const UbMAExtTah& memory,
+                         const UbTransactionFields& fields);
+
+/** Decode the base before the caller resolves a request-dependent response layout. */
+UbTaDecodeResult DecodeFullTaBase(Ptr<Packet> packet, UbFullTaHeader& base);
+UbTaDecodeResult DecodeFullTaExtensions(Ptr<Packet> packet,
+                                      const UbTaHeaderPlan& plan,
+                                      UbMAExtTah& memory,
+                                      UbTransactionFields& fields);
 
 } // namespace ns3
 

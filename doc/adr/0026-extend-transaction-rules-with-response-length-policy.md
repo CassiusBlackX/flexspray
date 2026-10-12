@@ -2,6 +2,11 @@
 
 Status: Accepted, 2026-09-17
 
+The CTP CFG6/compact-transaction-header compatibility boundary below is
+superseded by [ADR 0031](0031-use-full-transaction-headers-for-cfg6-ctp.md)
+(implemented; see the [integration evidence](../implementation/ctp-full-tah-06.md)).
+The remaining decisions retain their scope.
+
 UB 2.1.0 adds memory operations whose header layouts require UDETAH, BEETAH, and, for
 Atomic_sync in the applicable CFG/NLP formats, TAIDETAH. Atomic_sync also permits a response
 payload selected by target execution. ADR 0024's single fixed response length cannot express that

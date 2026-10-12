@@ -48,36 +48,21 @@ namespace ns3 {
         bool operator==(const UbCtpEntityKey& other) const;
     };
 
-    class UbCtpTransactionContext : public SimpleRefCount<UbCtpTransactionContext>
+    enum class UbCtpPreparationStatus : uint8_t
     {
-      public:
-        explicit UbCtpTransactionContext(
-            UbCtpEntityKey key = {},
-            uint32_t ackWindowCapacity = UB_JETTY_TASSN_OOO_THRESHOLD,
-            uint32_t initialSequence = 0);
-        bool CanAdmit(uint32_t sequence) const;
-        bool TryAdmit(uint32_t sequence);
-        void MarkTaAck(uint32_t sequence);
-        std::optional<uint32_t> MarkTaAckWire(uint16_t wireSequence);
-        uint32_t GetCompleteUna() const;
-        uint32_t GetSendNext() const;
-        uint32_t GetOutstandingCount() const;
-        void SetWindowForTest(uint32_t completeUna, uint32_t sendNext);
-
-      private:
-        UbCtpEntityKey m_key;
-        uint32_t m_sendNext{0};
-        uint32_t m_completeUna{0};
-        UbSlidingBitmapWindow m_ackWindow{UB_JETTY_TASSN_OOO_THRESHOLD};
+        PREPARED,
+        ID_SPACE_EXHAUSTED,
+        INVALID_WINDOW,
+        BINDING_MISMATCH,
+        JETTY_NOT_ACCEPTING,
     };
 
-    struct UbCtpTransactionState
+    struct UbCtpPreparationResult
     {
-        Ptr<UbCtpTransactionContext> context;
-        std::deque<Ptr<UbWqeSegment>> pendingSegments;
-        std::map<uint32_t, Ptr<UbWqeSegment>> outstandingSegments;
-        std::map<Ptr<UbWqeSegment>, uint32_t> segmentOutstandingPackets;
-        uint32_t pendingCompletionEvents{0};
+        UbCtpPreparationStatus status{UbCtpPreparationStatus::BINDING_MISMATCH};
+        std::optional<uint32_t> rcid;
+        std::string message;
+        bool IsSuccess() const { return status == UbCtpPreparationStatus::PREPARED; }
     };
 
     enum class UbRtpTransportReferenceKind : uint8_t
@@ -241,18 +226,18 @@ namespace ns3 {
         void TryContinueJettyTransmission(Ptr<UbTransportGroup> tpGroup);
 
         // tp调用
+        std::optional<uint32_t> GetCtpRequesterRcid(uint32_t jettyNum) const;
+        const UbLifecycleResourceIdentity* FindCtpRequester(uint32_t rcid) const;
+        Ptr<UbWqeSegment> FindCtpOutstanding(uint32_t rcid,
+                                              uint16_t wireSsn,
+                                              UbCtpEntityKey& key,
+                                              std::string& rejection);
+        void RetireCtpRequester(uint32_t jettyNum, const UbLifecycleResourceIdentity& identity);
+        uint32_t GetNextCtpRcidForTest() const { return m_nextCtpRcid; }
+        void SetNextCtpRcidForTest(uint32_t next);
         Ptr<UbWqeSegment> PrepareNextCtpWqeSegment(Ptr<UbJetty> jetty,
                                                    uint32_t maxSegmentBytes);
         void CommitCtpWqeSegment(Ptr<UbWqeSegment> segment);
-        UbCtpTransactionState& GetOrCreateCtpTransactionState(const UbCtpEntityKey& key);
-        Ptr<UbCtpTransactionContext> GetOrCreateCtpTransactionContext(
-            const UbCtpEntityKey& key);
-        UbCtpTransactionState* FindCtpTransactionState(const UbCtpEntityKey& key);
-        const UbCtpTransactionState* FindCtpTransactionState(const UbCtpEntityKey& key) const;
-        void RetainCtpCompletionEvent(const UbCtpEntityKey& key);
-        void ReleaseCtpCompletionEvent(const UbCtpEntityKey& key);
-        bool TryRetireCtpTransactionState(const UbCtpEntityKey& key);
-
         bool ProcessWqeSegmentComplete(Ptr<UbWqeSegment> wqeSegment);
         Ptr<UbWqeSegment> BuildTransactionResponse(uint32_t localTpn,
                                                     Ptr<UbWqeSegment> request,
@@ -419,6 +404,12 @@ namespace ns3 {
 
 
     private:
+
+        friend class UbCtpTransportService;
+        UbCtpPreparationResult PrepareCtpRequester(Ptr<UbJetty> jetty);
+        uint32_t m_nextCtpRcid{0};
+        std::map<uint32_t, UbLifecycleResourceIdentity> m_ctpRequesters;
+        std::map<uint32_t, uint32_t> m_ctpRcidByJetty;
 
         void DoDispose() override;
 
@@ -636,8 +627,6 @@ namespace ns3 {
         };
 
         std::map<std::pair<uint32_t, uint32_t>, OperationRecord> m_operations;
-        std::map<UbCtpEntityKey, UbCtpTransactionState> m_ctpTransactionStates;
-        std::map<UbCtpEntityKey, uint32_t> m_nextCtpTaSsnByEntity;
         std::map<RtpTxQueueKey, RtpTxQueue> m_rtpTxQueues;
         std::vector<UbLifecycleResourceIdentity> m_tpgsBlockingJettyRetry;
         bool m_collectRtpResolutionCountersForTest{false};

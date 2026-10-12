@@ -289,7 +289,7 @@ class UbTaHeaderPlanTest : public TestCase
 class UbCtpRuleDrivenLayoutTest : public TestCase
 {
   public:
-    UbCtpRuleDrivenLayoutTest() : TestCase("compact carrier writes the planned transaction headers")
+    UbCtpRuleDrivenLayoutTest() : TestCase("CFG6 carrier writes the planned transaction headers")
     {
     }
 
@@ -347,10 +347,11 @@ class UbCtpRuleDrivenLayoutTest : public TestCase
         segment->SetRemoteAddress(0x1000);
         segment->SetRemoteTokenId(0x42);
         segment->SetTransactionFields(fields);
+        segment->SetCtpRequesterIdentity(0, 1);
         return segment;
     }
 
-    /** Strip the compact carrier wrapper down to the transaction unit. */
+    /** Strip the CFG6 carrier wrapper down to the transaction unit. */
     Ptr<Packet> StripCompactCarrier(Ptr<Packet> packet)
     {
         UbDatalinkPacketHeader dataLinkHeader;
@@ -363,6 +364,7 @@ class UbCtpRuleDrivenLayoutTest : public TestCase
         NS_TEST_EXPECT_MSG_NE(packet->RemoveHeader(ctpHeader), 0u, "CTP header");
         NS_TEST_EXPECT_MSG_NE(packet->RemoveHeader(upiHeader), 0u, "CTP UPI header");
         NS_TEST_EXPECT_MSG_NE(packet->RemoveHeader(eidHeader), 0u, "CTP EID header");
+        packet->RemoveAtEnd(ctpHeader.GetPadding());
         return packet;
     }
 
@@ -374,12 +376,12 @@ class UbCtpRuleDrivenLayoutTest : public TestCase
         {
             if (name == "MAETAH")
             {
-                UbCompactMAExtTah maHeader;
-                NS_TEST_EXPECT_MSG_NE(packet->RemoveHeader(maHeader), 0u, "compact MAETAH present");
-                NS_TEST_EXPECT_MSG_EQ(maHeader.GetSerializedSize(), UB_TA_COMPACT_MAETAH_BYTES,
-                                      "compact MAETAH size");
-                NS_TEST_EXPECT_MSG_EQ(maHeader.GetTokenId(), 0x42u, "compact MAETAH token");
-                bytes += UB_TA_COMPACT_MAETAH_BYTES;
+                UbMAExtTah maHeader;
+                NS_TEST_EXPECT_MSG_NE(packet->RemoveHeader(maHeader), 0u, "full MAETAH present");
+                NS_TEST_EXPECT_MSG_EQ(maHeader.GetSerializedSize(), UB_TA_FULL_MAETAH_BYTES,
+                                      "full MAETAH size");
+                NS_TEST_EXPECT_MSG_EQ(maHeader.GetTokenId(), 0x42u, "full MAETAH token");
+                bytes += UB_TA_FULL_MAETAH_BYTES;
                 continue;
             }
             UbTransactionExtensionHeader header(KindOf(name));
@@ -443,10 +445,10 @@ class UbCtpRuleDrivenLayoutTest : public TestCase
         NS_TEST_ASSERT_MSG_NE(packet, nullptr, "CTP packet is built");
 
         Ptr<Packet> body = StripCompactCarrier(packet);
-        UbCompactTransactionHeader taHeader;
-        NS_TEST_ASSERT_MSG_NE(body->RemoveHeader(taHeader), 0u, "compact TA header decodes");
+        UbTransactionHeader taHeader;
+        NS_TEST_ASSERT_MSG_NE(body->RemoveHeader(taHeader), 0u, "full TA header decodes");
         NS_TEST_ASSERT_MSG_EQ(taHeader.GetUbTransactionOpcode(), static_cast<uint8_t>(opcode),
-                              "compact TA header carries the segment opcode");
+                              "full TA header carries the segment opcode");
         const uint32_t extensionBytes = ConsumeExpected(body, expected);
         NS_TEST_ASSERT_MSG_EQ(body->GetSize(), payloadBytes,
                               "the declared headers never leak into the compact payload");
@@ -471,12 +473,81 @@ class UbCtpRuleDrivenLayoutTest : public TestCase
     }
 };
 
+/** Full TA decode preserves response semantics and never reads beyond the wire unit. */
+class UbFullTaDecodeBoundsTest : public TestCase
+{
+  public:
+    UbFullTaDecodeBoundsTest()
+        : TestCase("full TA decode preserves ATAH fields and bounds every planned header")
+    {
+    }
+
+    void DoRun() override
+    {
+        // Independently specified full ATAH bytes: Atomic response, version 2, SV/poison,
+        // TASSN=0x1234, status=5/info=17, SQ type=1 and RCID=0xabcde.
+        const uint8_t wire[]{0x13, 0x8c, 0x12, 0x34, 0xb1, 0x1a, 0xbc, 0xde};
+        for (uint32_t length = 0; length < sizeof(wire); ++length)
+        {
+            auto packet = Create<Packet>(wire, length);
+            UbFullTaHeader decoded;
+            auto result = DecodeFullTaBase(packet, decoded);
+            NS_TEST_ASSERT_MSG_EQ(static_cast<int>(result.error),
+                                  static_cast<int>(UbTaDecodeError::TRUNCATED_BASE),
+                                  "a truncated base header is rejected before Deserialize");
+            NS_TEST_ASSERT_MSG_EQ(packet->GetSize(), length, "rejection does not consume bytes");
+        }
+        auto packet = Create<Packet>(wire, sizeof(wire));
+        UbFullTaHeader decoded;
+        NS_TEST_ASSERT_MSG_EQ(DecodeFullTaBase(packet, decoded).IsSuccess(), true,
+                              "a complete response header decodes");
+        NS_TEST_ASSERT_MSG_EQ(decoded.isResponse, true, "ATAH retains its response type");
+        NS_TEST_ASSERT_MSG_EQ(decoded.response.GetTaVersion(), 2, "TA version is retained");
+        NS_TEST_ASSERT_MSG_EQ(decoded.response.GetSV(), 1, "SV is retained");
+        NS_TEST_ASSERT_MSG_EQ(decoded.response.GetPoison(), true, "poison is retained");
+        NS_TEST_ASSERT_MSG_EQ(decoded.response.GetRspStatus(), 5, "status is retained");
+        NS_TEST_ASSERT_MSG_EQ(decoded.response.GetRspInfo(), 17, "aggregation info is retained");
+        NS_TEST_ASSERT_MSG_EQ(decoded.response.GetIniRcId(), 0xabcdeu, "20-bit RCID is retained");
+
+        const auto* rule = FindTransactionRule(UbTransactionOpcode::WRITE_WITH_BE);
+        NS_TEST_ASSERT_MSG_NE(rule, nullptr, "existing BE request rule");
+        const auto plan = UbTaHeaderPlan::ForRequest(*rule, {});
+        for (uint32_t payload : {64u, 128u, 256u, 512u, 1024u})
+        {
+            // Use production Header primitives, independently of the new full encoder.
+            UbMAExtTah ma;
+            ma.SetLength(payload);
+            ma.SetVirtualAddress(0x12340000);
+            auto complete = Create<Packet>(payload / 8);
+            complete->AddHeader(ma);
+            for (uint32_t length = 0; length < complete->GetSize(); ++length)
+            {
+                auto shortPacket = complete->CreateFragment(0, length);
+                UbMAExtTah memory;
+                UbTransactionFields fields;
+                auto result = DecodeFullTaExtensions(shortPacket, plan, memory, fields);
+                NS_TEST_ASSERT_MSG_EQ(result.IsSuccess(), false,
+                                      "truncated MAETAH or variable BEETAH must fail");
+            }
+            UbMAExtTah memory;
+            UbTransactionFields fields;
+            NS_TEST_ASSERT_MSG_EQ(
+                DecodeFullTaExtensions(complete, plan, memory, fields).IsSuccess(), true,
+                "complete variable-size BEETAH decodes");
+            NS_TEST_ASSERT_MSG_EQ(fields.byteEnable->bytes.size(), payload / 8,
+                                  "BEETAH consumes exactly its declared width");
+            NS_TEST_ASSERT_MSG_EQ(complete->GetSize(), 0u, "no header bytes leak as payload");
+        }
+    }
+};
+
 class UbTransactionExtensionCodecSuite : public TestSuite
 {
   public:
     UbTransactionExtensionCodecSuite()
         : TestSuite("unified-bus-transaction-header-codecs", Type::UNIT)
     {
+        AddTestCase(new UbFullTaDecodeBoundsTest, TestCase::Duration::QUICK);
         AddTestCase(new UbTransactionExtensionCodecTest, TestCase::Duration::QUICK);
         AddTestCase(new UbTaHeaderPlanTest, TestCase::Duration::QUICK);
         AddTestCase(new UbCtpRuleDrivenLayoutTest, TestCase::Duration::QUICK);

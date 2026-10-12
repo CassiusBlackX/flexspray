@@ -149,9 +149,10 @@ Without atomic columns, the other seven atomic operations can use defaults. Conv
 All atomic responses use 0x13; Store sends a real zero-Payload response. This is a timing and byte
 model with placeholder data: no arithmetic, old values, CAS success or address contention.
 Suboperations are validated and retained only in the local WQE, never encoded or executed remotely.
-Default runs register no remote callback. CTP keeps its existing compact packet format and obtains
-exact N from the existing FlowTag even with trace disabled; missing/invalid metadata is rejected.
-No new header or tag layout is introduced. This does not claim full CTP specification conformance.
+Default runs register no remote callback. CFG6 CTP uses full BTAH/ATAH and full MAETAH;
+exact N comes from MAETAH and actual P from the payload after standard 0–3-byte padding is removed.
+Response matching uses wire RCID/TASSN and the outstanding request; FlowTag is observational.
+The existing Atomic payload/suboperation model is retained, without a claim of full specification conformance.
 
 Use reference CSVs in `scratch/2nodes_atomic_rtp` and `scratch/2nodes_atomic_ctp`; the collective
 `build_traffic.py` CLI remains Write-only. The current case inspector and trace/task parsers accept

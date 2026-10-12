@@ -259,6 +259,19 @@ UbFunction::SubmitCtpWqe(Ptr<UbWqe> wqe,
     {
         return {UbWqeSubmissionStatus::JETTY_BINDING_MISMATCH, {}};
     }
+    auto service = NodeList::GetNode(m_nodeId)->GetObject<UbController>()->PeekCtpTransportService();
+    if (service == nullptr || !service->HasJettyPreparation(jettyNum))
+    {
+        return {UbWqeSubmissionStatus::CTP_NOT_PREPARED, {}};
+    }
+    if (!service->CanSubmitWqe(jettyNum, wqe, key))
+    {
+        return {UbWqeSubmissionStatus::JETTY_BINDING_MISMATCH, {}};
+    }
+    if (!jetty->HasValidCtpWindow())
+    {
+        return {UbWqeSubmissionStatus::INVALID_CTP_WINDOW, {}};
+    }
     UbTransactionFields fields = wqe->GetTransactionFields();
     if (wqe->GetType() == UbTransactionOpcode::ATOMIC_SYNC && !fields.taskId)
         fields.taskId = static_cast<uint16_t>(wqe->GetWqeId() & 0xffffu);
@@ -267,6 +280,12 @@ UbFunction::SubmitCtpWqe(Ptr<UbWqe> wqe,
         wqe->GetType() != UbTransactionOpcode::MANAGEMENT)
     {
         fields.memoryAccess = UbMemoryAccessFields{wqe->GetRemoteAddress(), wqe->GetRemoteTokenId(), wqe->GetSize()};
+    }
+    if (fields.memoryAccess &&
+        (fields.memoryAccess->length != wqe->GetSize() ||
+         wqe->GetSize() > UINT64_MAX - fields.memoryAccess->address))
+    {
+        return {UbWqeSubmissionStatus::INVALID_TRANSACTION_REQUEST, {}};
     }
     const uint32_t validationPayload =
         (wqe->GetPayloadBytes() == 0 && wqe->GetType() != UbTransactionOpcode::READ)
@@ -287,6 +306,10 @@ UbFunction::SubmitCtpWqe(Ptr<UbWqe> wqe,
         NS_LOG_WARN("WQE transaction validation failed: " << ruleResult.message);
         return {(IsAtomicTransaction(wqe->GetType()) || wqe->GetAtomicOptions().has_value()) ? UbWqeSubmissionStatus::INVALID_ATOMIC_REQUEST
                                      : UbWqeSubmissionStatus::INVALID_TRANSACTION_REQUEST, {}, ruleResult};
+    }
+    if (!jetty->CanReserveCtpWqe(wqe, UbCtpTransportConstraints{}.maxSegmentBytes))
+    {
+        return {UbWqeSubmissionStatus::CTP_SEQUENCE_EXHAUSTED, {}};
     }
     wqe->SetTransactionFields(ruleResult.fields);
     wqe->SetTransactionResolved(ruleResult.resolved);
@@ -757,6 +780,9 @@ UbJettyManager::IsDrainReady(const JettyRecord& record) const
 {
     return record.wqes.empty() && record.jetty->GetActiveWqeCount() == 0 &&
            !m_jettyEvents.HasEvents(record.identity) &&
+           (!record.hasCtpBinding ||
+            (m_coordinator->GetSnapshot(record.identity).activeTrackedEventLeases == 0 &&
+             !m_ctpService->HasRequesterPackets(record.identity))) &&
            !GetTransaction()->HasLifecycleOperationForJetty(record.jetty->GetJettyNum());
 }
 
@@ -873,6 +899,11 @@ UbJettyManager::DestroyJetty(uint32_t jettyNum,
     if (it->second.cleanupMode == CleanupMode::ABORT ||
         it->second.cleanupMode == CleanupMode::FORCE)
     {
+        if (it->second.hasCtpBinding && m_ctpService != nullptr)
+        {
+            m_ctpService->CancelRequesterCompletionEvents(identity);
+            m_ctpService->RemoveRequesterPackets(identity);
+        }
         const UbWorkOutcome outcome = it->second.cleanupMode == CleanupMode::ABORT
                                           ? UbWorkOutcome::FAILED
                                           : UbWorkOutcome::FLUSHED;
@@ -960,6 +991,7 @@ UbJettyManager::FinalizeDestroy(uint32_t jettyNum)
     {
         m_ctpService->ReleaseJetty(jettyNum);
     }
+    GetTransaction()->RetireCtpRequester(jettyNum, identity);
     Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
     coordinator->RecordSuccessfulTerminal(identity);
     coordinator->RetireResource(identity);
@@ -1020,17 +1052,20 @@ TypeId UbJetty::GetTypeId(void)
                         .AddAttribute("JettyOooAckThreshold",
                                       "Maximum out-of-order ACK window tracked per Jetty (TASSN bitmap size).",
                                       UintegerValue(2048),
-                                      MakeUintegerAccessor(&UbJetty::m_oooAckThreshold),
+                                      MakeUintegerAccessor(&UbJetty::SetOooAckThreshold,
+                                          &UbJetty::GetOooAckThreshold),
                                       MakeUintegerChecker<uint32_t>())
                         .AddAttribute("UbJettyInflightMax",
                                       "Maximum number of in-flight WQE segments per Jetty before back-pressure.",
                                       UintegerValue(512),
-                                      MakeUintegerAccessor(&UbJetty::m_inflightMax),
+                                      MakeUintegerAccessor(&UbJetty::SetInflightMax,
+                                          &UbJetty::GetInflightMax),
                                       MakeUintegerChecker<uint32_t>())
                         .AddAttribute("TaSegmentBytes",
                                       "TA WQE segment size in bytes.",
                                       UintegerValue(UB_WQE_TA_SEGMENT_BYTE),
-                                      MakeUintegerAccessor(&UbJetty::m_taSegmentBytes),
+                                      MakeUintegerAccessor(&UbJetty::SetTaSegmentBytes,
+                                          &UbJetty::GetTaSegmentBytes),
                                       MakeUintegerChecker<uint32_t>());
     return tid;
 }
@@ -1072,11 +1107,83 @@ UbJetty::CanAcceptWqe(Ptr<UbWqe> wqe) const
     return true;
 }
 
-void UbJetty::SetTaSegmentBytes(uint32_t bytes)
+bool
+UbJetty::IsCtpRequester() const
 {
-    NS_ABORT_MSG_IF(bytes == 0 || bytes > UB_WQE_TA_SEGMENT_BYTE,
-                    "TA segment bytes must be in [1, UB_WQE_TA_SEGMENT_BYTE]");
+    return m_transaction != nullptr && m_transaction->GetCtpRequesterRcid(m_jettyNum).has_value();
+}
+
+bool
+UbJetty::CanChangeCtpParameters() const
+{
+    return IsIdle() && m_taSsnCnt == m_taSsnSndNxt &&
+           m_transaction->GetFunction()->IsJettyDrainReady(m_jettyNum);
+}
+
+bool
+UbJetty::SetInflightMax(uint32_t value)
+{
+    if (value == m_inflightMax) return true;
+    if (IsCtpRequester() && (value == 0 || value > 32768 ||
+                            value > m_ssnAckWindow.GetWindowSize() || !CanChangeCtpParameters()))
+        return false;
+    m_inflightMax = value;
+    return true;
+}
+
+uint32_t
+UbJetty::GetOooAckThreshold() const
+{
+    return IsCtpRequester() ? m_ssnAckWindow.GetWindowSize() : m_oooAckThreshold;
+}
+
+bool
+UbJetty::SetOooAckThreshold(uint32_t value)
+{
+    if (IsCtpRequester()) return ResetSsnAckBitset(value);
+    m_oooAckThreshold = value;
+    return true;
+}
+
+bool
+UbJetty::ResetSsnAckBitset(uint32_t value)
+{
+    if (IsCtpRequester())
+    {
+        if (value == m_ssnAckWindow.GetWindowSize()) return true;
+        if (value == 0 || value < m_inflightMax || !CanChangeCtpParameters()) return false;
+    }
+    m_ssnAckWindow.Resize(value);
+    m_ssnAckWindow.Reset(m_taSsnSndUna);
+    if (IsCtpRequester()) m_oooAckThreshold = value;
+    return true;
+}
+
+bool
+UbJetty::SetTaSegmentBytes(uint32_t bytes)
+{
+    if (bytes == m_taSegmentBytes) return true;
+    if (IsCtpRequester())
+    {
+        if (bytes == 0 || bytes > UB_WQE_TA_SEGMENT_BYTE || !CanChangeCtpParameters()) return false;
+    }
+    else
+    {
+        NS_ABORT_MSG_IF(bytes == 0 || bytes > UB_WQE_TA_SEGMENT_BYTE,
+                        "TA segment bytes must be in [1, UB_WQE_TA_SEGMENT_BYTE]");
+    }
     m_taSegmentBytes = bytes;
+    return true;
+}
+
+bool
+UbJetty::CanReserveCtpWqe(Ptr<UbWqe> wqe, uint32_t maxSegmentBytes) const
+{
+    const uint32_t limit = std::min(m_taSegmentBytes, maxSegmentBytes);
+    if (wqe == nullptr || limit == 0) return false;
+    const uint64_t demand = IsAtomicTransaction(wqe->GetType())
+                                ? 1 : (uint64_t{wqe->GetSize()} + limit - 1) / limit;
+    return demand > 0 && uint64_t{m_taSsnCnt} + demand <= UINT32_MAX;
 }
 
 uint32_t UbJetty::GetTaSegmentBytes() const
@@ -1388,12 +1495,16 @@ void UbJetty::PushWqe(Ptr<UbWqe> ubWqe, uint32_t maxSegmentBytes)
                     "WQE is not compatible with Jetty source/destination binding");
     NS_ABORT_MSG_IF(maxSegmentBytes == 0 || maxSegmentBytes > UB_WQE_TA_SEGMENT_BYTE,
                     "WQE segment limit must be in [1, UB_WQE_TA_SEGMENT_BYTE]");
+    NS_ABORT_MSG_IF(IsCtpRequester() && !CanReserveCtpWqe(ubWqe, maxSegmentBytes),
+                    "CTP whole-WQE sequence reservation exhausted before PushWqe");
     ubWqe->SetJettyNum(m_jettyNum);
     ubWqe->SetTaMsn(m_taMsnCnt);
     ubWqe->SetTaSsnStart(m_taSsnCnt);
     const uint32_t segmentLimit = std::min(m_taSegmentBytes, maxSegmentBytes);
     const bool atomic = IsAtomicTransaction(ubWqe->GetType());
-    uint64_t ssnSize = atomic ? 1 : (ubWqe->GetSize() + segmentLimit - 1) / segmentLimit;
+    const uint64_t ssnSize = atomic ? 1 : IsCtpRequester()
+        ? (uint64_t{ubWqe->GetSize()} + segmentLimit - 1) / segmentLimit
+        : (ubWqe->GetSize() + segmentLimit - 1) / segmentLimit;
     ubWqe->SetTaSsnSize(ssnSize);
     // Assign request identity only after Jetty binding is known.
     ubWqe->SetSegmentKind(UbTransactionSegmentKind::REQUEST);

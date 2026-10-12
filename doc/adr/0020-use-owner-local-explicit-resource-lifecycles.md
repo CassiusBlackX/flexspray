@@ -4,6 +4,12 @@
 
 Accepted
 
+The historical raw-byte output requirement below is narrowed for the accepted
+CTP full-header/padding migration by
+[ADR 0031](0031-use-full-transaction-headers-for-cfg6-ctp.md)
+(implemented; see the [integration evidence](../implementation/ctp-full-tah-06.md)).
+The owner-local destruction decision is unchanged.
+
 ## Context
 
 The simulator currently uses a node-scoped lifecycle coordinator, packet tags, cross-owner packet

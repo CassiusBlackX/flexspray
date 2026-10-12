@@ -156,6 +156,18 @@ _Avoid_: response pending, response received
 A TASSN-identified transaction-layer slice of a transaction operation that is completed by its corresponding transaction response.
 _Avoid_: WQE segment, packet, whole WQE
 
+**Transaction segment sequence number (TASSN)**:
+The transaction request or segment identifier carried in the 16-bit INI_TASSN field and returned in its transaction response for correlation. Each CTP transaction segment occupies one packet and has its own TASSN.
+_Avoid_: transport PSN, Jetty identifier, necessarily Entity-wide sequence
+
+**Requester context identifier (RCID)**:
+The identifier of an initiator send queue's requester context; each SQ has a distinct RCID. For ordinary SQ requests, the full transaction request and response headers carry this identifier so the initiator can locate the correct SQ.
+_Avoid_: TASSN, Entity identifier, DDIE RTSQ identifier, necessarily the caller's Jetty ID
+
+**CTP requester context (simulator)**:
+The transaction identity and progress domain associated with one simulator Jetty generation, spanning its WQEs and destinations. It has its own RCID and TASSN sequence while sharing transport resources with other requesters.
+_Avoid_: CTP Entity/VL congestion domain, one context per destination, DDIE RTSQ
+
 **Ready transaction source**:
 A local Jetty or remote-origin response source that currently has transaction work eligible for an admission attempt.
 _Avoid_: queued segment copy, scheduler object, future work prediction
@@ -265,7 +277,7 @@ The order in which completion notifications are generated.
 _Avoid_: execution order
 
 **Basic transaction header (BTAH)**:
-The base transaction request header that carries the transaction opcode and common transaction fields. Its format is compact when LPH.CFG is 9 and full otherwise.
+The base transaction request header that carries the transaction opcode and common transaction fields. Under UB 2.1, its format is compact when LPH.CFG is 9 or when LPH.CFG is 7 with NTH.NLP 4, and full otherwise.
 _Avoid_: TAH when the compact/full distinction matters
 
 **Transaction header (TAH)**:
@@ -376,7 +388,7 @@ _Avoid_: ROI
 
 **Compact transport (CTP)**:
 The transport mode that relies on lower protocol layers for reliability and offers coarser congestion management.
-_Avoid_: compressed RTP
+_Avoid_: compressed RTP, compact transaction-header format, CFG9 TP bypass
 
 **CTP entity key**:
 The node-local value key identifying one source Entity, destination node and Entity, and VL communication domain inside the node-scoped CTP service; the source node is implicit in the owner.

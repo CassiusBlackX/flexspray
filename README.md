@@ -296,10 +296,15 @@ UB 模块是基于灵衢基础规范实现的仿真组件：
 
 ### UnifiedBus 事务规范范围
 
-当前实现符合灵衢基础规范 2.1 版本的已实现子集：RTP/CTP 的 BTAH 请求与 ATAH/compact 响应、
+当前实现符合灵衢基础规范 2.1 版本的已实现子集：RTP 与 CFG6 CTP 的完整 BTAH 请求和 ATAH 响应、
 规则驱动的 Read/Atomic Payload、outstanding request 响应匹配、Atomic Load/Store 子操作输入
-校验和 Management 状态字段。BE request、ROT、LDST、真实原子值语义、Management 命令效果及
-完整 CTP 公共格式迁移明确属于未实现/范围外；因此项目不声称完整符合灵衢基础规范。
+校验和 Management 状态字段。通用 BE request、ROT、LDST 规范完整性、真实原子值语义及
+Management 命令效果仍属于未实现/范围外；因此项目不声称完整符合灵衢基础规范。
+
+CFG6 CTP 的 requester 使用独立 RCID，并由各自 UbJetty 维护进度。准备时要求
+`1 <= UbJettyInflightMax <= min(JettyOooAckThreshold, 32768)`；参数只能在 requester 完全空闲时修改。
+旧 `ExperimentTaAckPacketBytes` 已删除，维护配置不再接受该项（包括零值）。
+实现和验收记录见 [CTP 完整事务头集成记录](doc/implementation/ctp-full-tah-06.md)。
 
 ## 许可证
 

@@ -926,6 +926,13 @@ public:
     bool GetMtEn() const { return m_mtEn; }
     bool GetUdFlg() const { return m_udFlg; }
     uint16_t GetIniTaSsn() const;
+    uint8_t GetTaVersion() const { return m_taVer; }
+    bool GetPoison() const { return m_poison; }
+    bool GetNoTaAck() const { return m_noTaAck; }
+    bool HasUnsupportedCtpControl() const
+    {
+        return m_ee != 0 || m_retry || m_alloc || m_exclusive;
+    }
     uint8_t GetOrder() const;
     bool GetExclusive() const;
     uint8_t GetIniRcType() const;

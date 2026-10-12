@@ -1717,6 +1717,15 @@ public:
         return m_requestTassn;
     }
 
+    // CTP wire identity is distinct from the local caller Jetty number.
+    void SetCtpRequesterIdentity(uint32_t rcid, uint8_t type)
+    {
+        m_ctpRcid = rcid;
+        m_ctpRcType = type;
+    }
+    std::optional<uint32_t> GetCtpRcid() const { return m_ctpRcid; }
+    uint8_t GetCtpRcType() const { return m_ctpRcType; }
+
     void SetRequestOpcode(UbTransactionOpcode requestOpcode)
     {
         m_requestOpcode = requestOpcode;
@@ -1845,6 +1854,8 @@ private:
     UbTransactionSegmentKind m_segmentKind{UbTransactionSegmentKind::REQUEST};
     uint32_t m_originJettyNum{UINT32_MAX};
     uint32_t m_requestTassn{UINT32_MAX};
+    std::optional<uint32_t> m_ctpRcid;
+    uint8_t m_ctpRcType{1};
     UbTransactionOpcode m_requestOpcode{UbTransactionOpcode::WRITE};
     uint32_t m_responseBytes{0};
     uint64_t m_remoteAddress{0};

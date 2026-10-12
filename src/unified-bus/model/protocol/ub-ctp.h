@@ -29,9 +29,8 @@ namespace ns3
 {
 
 class UbCna16NetworkHeader;
-class UbCompactAckTransactionHeader;
-class UbCompactMAExtTah;
-class UbCompactTransactionHeader;
+class UbMAExtTah;
+class UbTransactionHeader;
 class UbJetty;
 class UbRoutingProcess;
 class UbTransaction;
@@ -107,6 +106,9 @@ class UbCtpTxQueue : public UbIngressQueue
     bool IsEmpty() override;
     Ptr<Packet> GetNextPacket() override;
     uint32_t GetNextPacketSize() override;
+    void EnqueueRequest(Ptr<Packet> packet, const UbLifecycleResourceIdentity& owner);
+    void RemoveRequesterPackets(const UbLifecycleResourceIdentity& owner);
+    bool HasRequesterPackets(const UbLifecycleResourceIdentity& owner) const;
     void EnqueueData(Ptr<Packet> packet);
     void EnqueueAck(Ptr<Packet> packet);
     void EnqueueCnp(Ptr<Packet> packet);
@@ -115,15 +117,23 @@ class UbCtpTxQueue : public UbIngressQueue
     uint32_t GetQueuedPacketCountForTest() const;
 
   private:
-    std::queue<Ptr<Packet>>& QueueForClass(UbCtpQueueClass queueClass);
-    const std::queue<Ptr<Packet>>& QueueForClass(UbCtpQueueClass queueClass) const;
-    const std::queue<Ptr<Packet>>* GetPriorityQueue() const;
-    std::queue<Ptr<Packet>>* GetPriorityQueue();
-    void EnqueueToClass(UbCtpQueueClass queueClass, Ptr<Packet> packet);
+    struct Entry
+    {
+        Ptr<Packet> packet;
+        // Only locally admitted requests carry ownership. Wire RCID is never a cleanup key.
+        std::optional<UbLifecycleResourceIdentity> requester;
+    };
+    using ClassQueue = std::queue<Entry>;
+    ClassQueue& QueueForClass(UbCtpQueueClass queueClass);
+    const ClassQueue& QueueForClass(UbCtpQueueClass queueClass) const;
+    const ClassQueue* GetPriorityQueue() const;
+    ClassQueue* GetPriorityQueue();
+    void EnqueueToClass(UbCtpQueueClass queueClass, Ptr<Packet> packet,
+                        std::optional<UbLifecycleResourceIdentity> requester = std::nullopt);
 
-    std::queue<Ptr<Packet>> m_dataQueue;
-    std::queue<Ptr<Packet>> m_ackQueue;
-    std::queue<Ptr<Packet>> m_cnpQueue;
+    ClassQueue m_dataQueue;
+    ClassQueue m_ackQueue;
+    ClassQueue m_cnpQueue;
 };
 
 class UbCtpTransportService : public Object
@@ -137,35 +147,37 @@ class UbCtpTransportService : public Object
     Ptr<Node> GetNode() const;
     void SetRoutingType(RoutingType routingType);
     void SetBoundOutPortCountForTest(uint32_t boundOutPortCount);
-    void SetExperimentTaAckPacketBytesForTest(uint32_t packetBytes);
     UbCtpTransportConstraints GetTransactionConstraints() const;
 
     UbCtpEntityState& GetOrCreateEntityState(const UbCtpEntityKey& key);
     void ConfigureRoutingPolicy(const UbCtpEntityKey& key, RoutingType routingType);
     uint32_t GetEntityStateCount() const;
-    Ptr<UbCtpTransactionContext> GetOrCreateTransactionContext(const UbCtpEntityKey& key);
-    bool HasTransactionContextForTesting(const UbCtpEntityKey& key) const;
     Ptr<Packet> BuildDataPacket(Ptr<UbWqeSegment> segment, const UbCtpEntityKey& key);
     Ptr<Packet> BuildResponsePacketForTest(Ptr<UbWqeSegment> response,
                                            const UbCtpEntityKey& key);
     bool HandleReceivedPacket(Ptr<Packet> packet);
     bool HandleReceivedPacket(Ptr<Packet> packet, uint32_t ingressPortId);
     bool SendSegment(Ptr<UbWqeSegment> segment, const UbCtpEntityKey& key);
-    void PrepareJetty(Ptr<UbJetty> jetty);
+    UbCtpPreparationResult PrepareJettyWithResult(Ptr<UbJetty> jetty,
+                                                  const UbCtpEntityKey& key);
     bool PrepareJetty(Ptr<UbJetty> jetty, const UbCtpEntityKey& key);
     bool HasJettyPreparation(uint32_t jettyNum) const;
     bool CanSubmitWqe(uint32_t jettyNum, Ptr<UbWqe> wqe) const;
+    bool CanSubmitWqe(uint32_t jettyNum, Ptr<UbWqe> wqe, const UbCtpEntityKey& key) const;
     bool SubmitPreparedWqe(uint32_t jettyNum, Ptr<UbWqe> wqe);
     bool NotifyJettyWork(uint32_t jettyNum);
     bool UnprepareJetty(uint32_t jettyNum);
     void StartJetty(Ptr<UbJetty> jetty, const UbCtpEntityKey& key);
     void TryContinueJettyTransmission(const UbCtpEntityKey& entityKey);
     void ReleaseJetty(uint32_t jettyNum);
+    void RemoveRequesterPackets(const UbLifecycleResourceIdentity& owner);
+    bool HasRequesterPackets(const UbLifecycleResourceIdentity& owner) const;
+    void CancelRequesterCompletionEvents(const UbLifecycleResourceIdentity& owner);
     bool HasJettyBindingForTest(uint32_t jettyNum) const;
     UbCtpEntityKey MakeSourceGroupKeyForRequest(const UbCtpEntityKey& key) const;
     UbCtpEntityKey MakeTxKeyForSegment(const UbCtpEntityKey& jettyKey,
                                        Ptr<UbWqeSegment> segment) const;
-    void CompleteFromTaAckForTest(const UbCtpEntityKey& key, uint32_t taSsn);
+    void CompleteFromTaAckForTest(uint32_t jettyNum, uint32_t taSsn);
     void RecordCnpForTest(const UbCtpEntityKey& key);
     uint32_t GetQueueCount() const;
     uint32_t GetCongestionStateCountForTest() const;
@@ -175,9 +187,6 @@ class UbCtpTransportService : public Object
     void RegisterQueueForTest(Ptr<UbCtpTxQueue> queue,
                               uint32_t outPort,
                               uint32_t priority);
-    bool AdmitSegmentForTest(Ptr<UbWqeSegment> segment,
-                             const UbCtpEntityKey& key,
-                             uint32_t taSsn);
     bool SendResponseSegmentForTest(Ptr<UbWqeSegment> response, const UbCtpEntityKey& key);
     uint32_t GetQueuedPacketCountForTest(const UbCtpEntityKey& key) const;
     uint32_t GetQueuedPacketCountForTest(const UbCtpEntityKey& key,
@@ -191,7 +200,6 @@ class UbCtpTransportService : public Object
     using QueueKey = std::tuple<UbCtpEntityKey, uint32_t, uint32_t>;
 
     Ptr<UbTransaction> GetTransactionOwner() const;
-    UbCtpTransactionState& GetTransactionState(const UbCtpEntityKey& key) const;
     void ValidateRoutingType(RoutingType routingType, const std::string& owner) const;
     bool TryGetJettyPreparation(uint32_t jettyNum,
                                 Ptr<UbJetty>& jetty,
@@ -203,15 +211,14 @@ class UbCtpTransportService : public Object
                                          uint32_t taSsn,
                                          uint32_t progressBytes,
                                          uint8_t loadBalanceSalt);
-    void PadTaAckPacketForExperiment(Ptr<Packet> packet) const;
     bool SendAdmittedFragment(Ptr<UbWqeSegment> segment,
                               UbCtpEntityState& state,
                               const UbCtpEntityKey& packetKey,
                               uint32_t taSsn,
                               uint32_t progressBytes);
     bool DispatchInboundTransaction(Ptr<UbWqeSegment> request, const UbCtpEntityKey& key);
-    Ptr<UbWqeSegment> BuildInboundTaOperation(const UbCompactTransactionHeader& taHeader,
-                                              const UbCompactMAExtTah& maHeader,
+    Ptr<UbWqeSegment> BuildInboundTaOperation(const UbTransactionHeader& taHeader,
+                                              const UbMAExtTah& maHeader,
                                               UbTransactionOpcode taOpcode,
                                               const UbTransactionFields& fields,
                                               bool maetahPresent,
@@ -230,12 +237,11 @@ class UbCtpTransportService : public Object
     void RegisterQueueIfNeeded(Ptr<UbCtpTxQueue> queue,
                                uint32_t outPort,
                                uint32_t priority);
-    void RunTrackedCompleteFromTaAck(UbCtpEntityKey key,
+    void RunTrackedCompleteFromTaAck(UbLifecycleResourceIdentity owner,
+                                    UbCtpEntityKey key,
                                      uint32_t taSsn,
                                      Ptr<UbWqeSegment> response,
                                      uint64_t token);
-    void CancelTrackedCompleteFromTaAck(UbCtpEntityKey key);
-    void TryRetireTransactionState(const UbCtpEntityKey& key);
     bool SendResponseSegment(Ptr<UbWqeSegment> response, UbCtpEntityState& state);
     void CompleteFromTaAck(const UbCtpEntityKey& key,
                            uint32_t taSsn,
@@ -243,10 +249,6 @@ class UbCtpTransportService : public Object
     void CompleteFromTaAckNow(const UbCtpEntityKey& key,
                               uint32_t taSsn,
                               Ptr<UbWqeSegment> response);
-    std::map<uint32_t, Ptr<UbWqeSegment>>::iterator FindOutstandingSegment(
-        UbCtpTransactionState& state,
-        uint32_t taSsn);
-    uint32_t ResolveWireTaSsn(UbCtpTransactionState& state, uint16_t wireTaSsn) const;
     bool ShouldTraceWindow(const UbCtpEntityKey& key) const;
     bool ShouldDelayTaAck(const UbCtpEntityKey& key, uint32_t taSsn) const;
     void AddCtpNetworkHeaders(Ptr<Packet> packet,
@@ -279,7 +281,7 @@ class UbCtpTransportService : public Object
     void TraceWindowEvent(const UbCtpEntityKey& key,
                           const std::string& event,
                           uint32_t taSsn,
-                          const UbCtpTransactionContext& context,
+                          const UbJetty& jetty,
                           uint32_t outPort = UINT32_MAX) const;
     void TraceDetailEvent(const UbCtpEntityKey& key,
                           const std::string& event,
@@ -297,7 +299,6 @@ class UbCtpTransportService : public Object
     UbCtpRoutingPolicy m_defaultRoutingPolicy;
     bool m_pktTraceEnabled{false};
     uint32_t m_boundOutPortCount{0};
-    uint32_t m_experimentTaAckPacketBytes{0};
     bool m_windowTraceEnabled{false};
     uint32_t m_windowTraceSrcNode{UINT32_MAX};
     uint32_t m_windowTraceDstNode{UINT32_MAX};

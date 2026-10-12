@@ -98,8 +98,8 @@ CTP 默认没有 AllPacketTrace，不能从其 `Last Packet ACKs` 的逻辑 N �
 往返测试验证，CSV 不增加参数列。各例的预期任务数、实际完成数和命令记录见对应
 `experiment-spec.md`。
 
-RTP 和 CTP 共用规则、头计划、Target executor 与完成路径；CTP 仍沿用 CFG=6 与精简事务头的
-既有模型约定，不是完整 UB 2.1.0 线格式。旧的九种 atomic 不整体迁移到 2.1.0 UDETAH，
+RTP 和 CTP 共用规则、完整事务头 codec、Target executor 与完成路径；CFG6 CTP 使用完整
+BTAH/ATAH 和 MAETAH，保留 UPI/EID 外层。旧的九种 atomic 不整体迁移到 2.1.0 UDETAH，
 其子操作仍只在本地 WQE 保留。Atomic N 是逻辑操作数宽度；用 N 计算的 taskThroughput
 不代表线上吞吐，跨 CTP 的逻辑 N 也不能反推响应 Payload。
 
@@ -109,9 +109,10 @@ RTP 和 CTP 共用规则、头计划、Target executor 与完成路径；CTP 仍
 WQE 保留与校验，不编码到网络，也不在 Target 区分执行。默认不注册远端回调，自定义回调
 处理 atomic 不属于本版验收范围。
 
-沿用现有 RTP/CTP 封装，不新增网络头或 PacketTag 布局。CTP 仍保留 CFG=6 与精简事务头的
-既有规范偏差；精确 N 复用现有 FlowTag，trace 关闭也可用，缺失或非法元数据明确拒绝。
-不承诺接收无该元数据的外部 CTP atomic。未验证完整 MPI/MTP 配置矩阵和大规模性能。
+CTP 的精确 N 来自完整 MAETAH，实际 P 来自去除标准 padding 后的 payload。响应以 wire
+RCID/TASSN 定位准确请求并校验后完成，不依赖 FlowTag；仍保留既有 Atomic N/P 建模边界。
+`ExperimentTaAckPacketBytes` 已删除，包括值零；维护配置应移除该项。
+未验证完整 MPI/MTP 配置矩阵和大规模性能。
 
 ## Knowledge Sources
 

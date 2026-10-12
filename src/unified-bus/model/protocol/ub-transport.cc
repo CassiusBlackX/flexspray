@@ -975,7 +975,7 @@ UbTransportChannel::GetDataPacketHeaderBytes(UbTransactionOpcode opcode,
             segmentKind == UbTransactionSegmentKind::RESPONSE
                 ? UbTaHeaderPlan::ForResponse(*rule)
                 : UbTaHeaderPlan::ForRequest(*rule, DeclareRequestHeaderPresence(*rule, fields));
-        transactionBytes += plan.GetExtensionBytes(UB_TA_FULL_MAETAH_BYTES, fields);
+        transactionBytes = GetFullTaHeaderBytes(plan, fields);
     }
     return stackBytes + transactionBytes;
 }
@@ -1079,28 +1079,14 @@ UbTransportChannel::BuildRtpDataPacket(const UbGbnPacketDescriptor& descriptor)
                          *rule,
                          DeclareRequestHeaderPresence(*rule, descriptor.transactionFields));
     }
-    // Write declared transaction extensions in reverse order because AddHeader prepends.
-    for (int index = static_cast<int>(plan.GetCount()) - 1; index >= 0; --index)
-    {
-        const auto kind = plan.GetKind(static_cast<uint8_t>(index));
-        if (kind == UbTransactionHeaderKind::MAETAH)
-        {
-            UbMAExtTah maHeader;
-            maHeader.SetVirtualAddress(descriptor.remoteAddress);
-            maHeader.SetTokenId(descriptor.remoteTokenId);
-            maHeader.SetLength(descriptor.wireLengthBytes == 0
-                                   ? std::max(1u, descriptor.payloadBytes)
-                                   : descriptor.wireLengthBytes);
-            p->AddHeader(maHeader);
-            continue;
-        }
-        UbTransactionExtensionHeader header(kind);
-        if (!WriteTransactionExtension(descriptor.transactionFields, header))
-        {
-            continue;
-        }
-        p->AddHeader(header);
-    }
+    UbMAExtTah memory;
+    memory.SetVirtualAddress(descriptor.remoteAddress);
+    memory.SetTokenId(descriptor.remoteTokenId);
+    memory.SetLength(descriptor.wireLengthBytes == 0
+                         ? std::max(1u, descriptor.payloadBytes)
+                         : descriptor.wireLengthBytes);
+    UbFullTaHeader base;
+    base.isResponse = descriptor.segmentKind == UbTransactionSegmentKind::RESPONSE;
     // Requests use BTAH; transaction responses use the corresponding ATAH.
     const uint16_t wireIniTaSsn =
         descriptor.segmentKind == UbTransactionSegmentKind::RESPONSE
@@ -1108,27 +1094,22 @@ UbTransportChannel::BuildRtpDataPacket(const UbGbnPacketDescriptor& descriptor)
             : UbTaSsnSequence::ToWire(descriptor.taSsn);
     if (descriptor.segmentKind == UbTransactionSegmentKind::RESPONSE)
     {
-        UbAckTransactionHeader ackHeader;
+        auto& ackHeader = base.response;
         ackHeader.SetUbTransactionOpcode(descriptor.taOpcode);
         ackHeader.SetIniTaSsn(wireIniTaSsn);
         ackHeader.SetIniRcType(0x01);
         ackHeader.SetIniRcId(descriptor.originJettyNum);
-        p->AddHeader(ackHeader);
     }
     else
     {
-        UbTransactionHeader taHeader;
+        auto& taHeader = base.request;
         taHeader.SetUbTransactionOpcode(descriptor.taOpcode);
         taHeader.SetIniTaSsn(wireIniTaSsn);
         taHeader.SetOrder(descriptor.order);
         taHeader.SetIniRcType(0x01);
         taHeader.SetIniRcId(descriptor.originJettyNum);
-        // The declared presence is exactly the plan that was just serialized.
-        taHeader.SetTvEn(plan.GetPresence().tokenValue);
-        taHeader.SetMtEn(plan.GetPresence().messageTarget);
-        taHeader.SetUdFlg(plan.GetPresence().userData);
-        p->AddHeader(taHeader);
     }
+    PrependFullTaHeaders(p, base, plan, memory, descriptor.transactionFields);
     // add TpHeader
     UbTransportHeader TpHeader;
     TpHeader.SetLastPacket(descriptor.lastPacket);
@@ -1928,32 +1909,23 @@ UbTransportChannel::ParseReceivedDataPacket(Ptr<Packet> packet,
     packet->RemoveHeader(ctx.ipv4Header);
     packet->RemoveHeader(ctx.udpHeader);
     packet->RemoveHeader(ctx.transportHeader);
-    UbTransactionHeader transactionPrefix;
-    if (packet->PeekHeader(transactionPrefix) == 0)
+    UbFullTaHeader base;
+    if (!DecodeFullTaBase(packet, base).IsSuccess())
     {
         return false;
     }
-    const auto wireOpcode = static_cast<UbTransactionOpcode>(
-        transactionPrefix.GetUbTransactionOpcode());
-    const bool isResponse = wireOpcode == UbTransactionOpcode::TAACK ||
-                            wireOpcode == UbTransactionOpcode::READ_RESPONSE ||
-                            wireOpcode == UbTransactionOpcode::ATOMIC_RESPONSE;
+    const bool isResponse = base.isResponse;
+    ctx.ackTransactionHeader.reset();
+    ctx.transactionHeader = base.request;
     if (isResponse)
     {
-        UbAckTransactionHeader ackHeader;
-        if (packet->RemoveHeader(ackHeader) == 0)
-        {
-            return false;
-        }
+        ctx.ackTransactionHeader = base.response;
+        // Retain the original RTP common-field view while exposing the complete ATAH.
         ctx.transactionHeader.SetUbTransactionOpcode(
-            static_cast<UbTransactionOpcode>(ackHeader.GetUbTransactionOpcode()));
-        ctx.transactionHeader.SetIniTaSsn(ackHeader.GetIniTaSsn());
-        ctx.transactionHeader.SetIniRcType(ackHeader.GetIniRcType());
-        ctx.transactionHeader.SetIniRcId(ackHeader.GetIniRcId());
-    }
-    else if (packet->RemoveHeader(ctx.transactionHeader) == 0)
-    {
-        return false;
+            static_cast<UbTransactionOpcode>(base.response.GetUbTransactionOpcode()));
+        ctx.transactionHeader.SetIniTaSsn(base.response.GetIniTaSsn());
+        ctx.transactionHeader.SetIniRcType(base.response.GetIniRcType());
+        ctx.transactionHeader.SetIniRcId(base.response.GetIniRcId());
     }
     // Consume exactly the header plan a sender of this rule and these wire flags must have written.
     const auto transactionOpcode = static_cast<UbTransactionOpcode>(
@@ -1993,34 +1965,9 @@ UbTransportChannel::ParseReceivedDataPacket(Ptr<Packet> packet,
         plan = isResponse ? UbTaHeaderPlan::ForResponse(*transactionRule)
                           : UbTaHeaderPlan::ForRequest(*transactionRule, presence);
     }
-    for (uint8_t index = 0; index < plan.GetCount(); ++index)
+    if (!DecodeFullTaExtensions(packet, plan, ctx.maExtHeader, ctx.transactionFields).IsSuccess())
     {
-        const auto kind = plan.GetKind(index);
-        if (kind == UbTransactionHeaderKind::MAETAH)
-        {
-            if (packet->RemoveHeader(ctx.maExtHeader) == 0)
-                return false;
-            continue;
-        }
-        UbTransactionExtensionHeader extension(kind);
-        // BEETAH is variable-sized: its bitmap width is P/8, where P is the MAETAH length.
-        // Seed the header before Deserialize so packets with more than eight bitmap bytes do not
-        // leave part of BEETAH in the payload.
-        if (kind == UbTransactionHeaderKind::BEETAH)
-        {
-            const uint32_t byteEnableBytes = ctx.maExtHeader.GetLength() / 8;
-            if (byteEnableBytes == 8 || byteEnableBytes == 16 || byteEnableBytes == 32 ||
-                byteEnableBytes == 64 || byteEnableBytes == 128)
-            {
-                extension.SetRaw(std::vector<uint8_t>(byteEnableBytes, 0));
-            }
-        }
-        if (packet->GetSize() < extension.GetSerializedSize() ||
-            packet->RemoveHeader(extension) == 0)
-        {
-            return false;
-        }
-        ReadTransactionExtension(extension, ctx.transactionFields);
+        return false;
     }
     ctx.payloadBytes = packet->GetSize();
     ctx.resLenBytes = ctx.maExtHeader.GetLength();

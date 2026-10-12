@@ -277,7 +277,14 @@ UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
         return;
     }
     service->SetRoutingType(m_routingType);
-    service->PrepareJetty(jetty);
+    UbCtpEntityKey key{.srcEntityId = srcEntityId,
+                       .dstNodeId = task.destNode,
+                       .dstEntityId = dstEntityId,
+                       .vl = vl};
+    const UbCtpEntityKey jettyKey =
+        m_ctpUseUnboundSourceJetty ? service->MakeSourceGroupKeyForRequest(key) : key;
+    const auto preparation = service->PrepareJettyWithResult(jetty, jettyKey);
+    NS_ABORT_MSG_IF(!preparation.IsSuccess(), preparation.message);
 
     NS_LOG_INFO("CTP WQE Starts, jettyNum: " << jettyNum << " taskId: " << task.taskId);
     WqeTaskStartsNotify(GetNode()->GetId(), jettyNum, task.taskId);
@@ -300,12 +307,6 @@ UbApp::SendCtpUrmaTraffic(UbTrafficGen::RuntimeTask task)
                                                               TransactionServiceMode::ROI);
     jetty->SetNodeId(GetNode()->GetId());
 
-    UbCtpEntityKey key{.srcEntityId = srcEntityId,
-                       .dstNodeId = task.destNode,
-                       .dstEntityId = dstEntityId,
-                       .vl = vl};
-    const UbCtpEntityKey jettyKey =
-        m_ctpUseUnboundSourceJetty ? service->MakeSourceGroupKeyForRequest(key) : key;
     const UbWqeSubmissionResult submission = ubFunc->SubmitCtpWqe(wqe, jettyNum, jettyKey);
     NS_ABORT_MSG_IF(submission.status != UbWqeSubmissionStatus::ACCEPTED,
                     "Validated CTP WQE submission failed before transport start");
