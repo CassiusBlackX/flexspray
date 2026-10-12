@@ -459,3 +459,10 @@ Use toolchain-native parameter names in `experiment-spec.md`:
 - `routing_type`, `multipath_selector`, `path_source`, `transport_channel_mode`
 
 This avoids translation ambiguity at the plan→run boundary.
+
+## Parser version baseline
+
+The tools gitlink `0fec3ae` includes the existing canonical CSV/CSV.gz trace parsers and
+legacy traffic node-column compatibility. Task and port parsers prefer CSV over legacy `.tr`
+for the same trace stream, avoiding double counting. Older tools at `2900917` only scanned
+`.tr` and could report zero tasks/directions for valid canonical CSV runlogs.

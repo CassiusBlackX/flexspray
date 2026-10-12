@@ -2002,6 +2002,19 @@ void UbUtils::Destroy()
         }
     }
 
+    // Sample authoritative stage counters before Simulator::Destroy releases incomplete packets.
+    for (auto node = NodeList::Begin(); node != NodeList::End(); ++node)
+    {
+        for (uint32_t index = 0; index < (*node)->GetNDevices(); ++index)
+        {
+            auto port = DynamicCast<UbPort>((*node)->GetDevice(index));
+            if (port != nullptr && port->GetReliableRerouting() != nullptr)
+            {
+                port->GetReliableRerouting()->WriteOccupancySummary();
+            }
+        }
+    }
+
     for (auto& [ownerId, owner] : trace_owners)
     {
         (void)ownerId;
@@ -2285,6 +2298,25 @@ UbUtils::AppendCsvRow(const std::string& fileName,
 }
 
 void
+UbUtils::ReliableReroutingOccupancyNotify(const UbRecoveryOccupancyEvent& record, bool summary)
+{
+    if (trace_path.empty())
+    {
+        return;
+    }
+    constexpr const char* header =
+        "time_ps,node_id,failed_port,stage,packets,bytes,peak_packets,peak_bytes,state,event,source";
+    const auto& count = record.occupancy;
+    std::ostringstream row;
+    row << Simulator::Now().GetPicoSeconds() << ',' << record.nodeId << ',' << record.portId << ','
+        << record.stage << ',' << count.packets << ',' << count.bytes << ',' << count.peakPackets
+        << ',' << count.peakBytes << ',' << record.state << ',' << record.event << ',' << record.source;
+    AppendCsvRow(trace_path + (summary ? "output/reliable_rerouting_occupancy_summary.csv"
+                                     : "output/reliable_rerouting_occupancy_events.csv"),
+                 header, row.str());
+}
+
+void
 UbUtils::ReliableReroutingNotify(const UbReliableReroutingEvent& record)
 {
     BooleanValue enabled;
@@ -2299,7 +2331,9 @@ UbUtils::ReliableReroutingNotify(const UbReliableReroutingEvent& record)
 
     constexpr const char* header =
         "time_ps,node_id,port_id,event,attempt_id,old_output,new_output,retry_packets,retry_bytes,"
-        "pending_packets,pending_bytes";
+        "pending_packets,pending_bytes,source_node,source_port,destination_node,destination_port,receive_next,copy,owner,processing_packets,"
+        "in_flight_packets,in_flight_bytes,failed_egress_packets,failed_egress_bytes,"
+        "recovery_voq_packets,recovery_voq_bytes";
     const auto outputField = [](uint32_t outPort) {
         return outPort == UB_REROUTING_NO_OUTPUT ? std::string("na") : std::to_string(outPort);
     };
@@ -2308,7 +2342,13 @@ UbUtils::ReliableReroutingNotify(const UbReliableReroutingEvent& record)
     row << Simulator::Now().GetPicoSeconds() << ',' << record.nodeId << ',' << record.portId << ','
         << record.event << ',' << record.attemptId << ',' << outputField(record.oldOutput) << ','
         << outputField(record.newOutput) << ',' << record.retryPackets << ',' << record.retryBytes
-        << ',' << record.pendingPackets << ',' << record.pendingBytes;
+        << ',' << record.pendingPackets << ',' << record.pendingBytes
+        << ',' << outputField(record.sourceNode) << ',' << outputField(record.sourcePort)
+        << ',' << outputField(record.destinationNode) << ',' << outputField(record.destinationPort)
+        << ',' << outputField(record.receiveNext) << ',' << record.copy << ',' << record.owner << ',' << record.processingPackets
+        << ',' << record.inFlightPackets << ',' << record.inFlightBytes
+        << ',' << record.failedEgressPackets << ',' << record.failedEgressBytes
+        << ',' << record.recoveryVoqPackets << ',' << record.recoveryVoqBytes;
     AppendCsvRow(trace_path + "output/reliable_rerouting.csv", header, row.str());
 }
 
@@ -5023,14 +5063,16 @@ void UbUtils::TopoTraceConnect()
             }
         }
 
-        if (PortTraceEnable) {
+        if (PortTraceEnable || PacketTraceEnable) {
             uint32_t DevicesNum = node->GetNDevices();
             for (uint32_t i = 0; i < DevicesNum; i++) { // 设置 port的trace callback
                 Ptr<UbPort> port = DynamicCast<UbPort>(node->GetDevice(i));
                 if (port) {
-                    port->TraceConnectWithoutContext("PortTxNotify", MakeCallback(PortTxNotify));
-                    port->TraceConnectWithoutContext("PortRxNotify", MakeCallback(PortRxNotify));
-                    if (port->GetReliableRerouting() != nullptr) {
+                    if (PortTraceEnable) {
+                        port->TraceConnectWithoutContext("PortTxNotify", MakeCallback(PortTxNotify));
+                        port->TraceConnectWithoutContext("PortRxNotify", MakeCallback(PortRxNotify));
+                    }
+                    if (PacketTraceEnable && port->GetReliableRerouting() != nullptr) {
                         port->GetReliableRerouting()->TraceConnectWithoutContext(
                             "Rerouting",
                             MakeCallback(&UbUtils::ReliableReroutingNotify));

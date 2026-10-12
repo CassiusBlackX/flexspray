@@ -81,3 +81,12 @@ When a user reports `理论上无收敛却丢包/挂住`, check in this order:
    - change only `FlowControl` from `NONE` to `CBFC`
 
 If the A/B flips the outcome, the first suspect is queue/backpressure semantics rather than fabric cut capacity.
+
+## Reliable rerouting exception to ordinary ingress admission
+
+Retry attempts and failed-egress packets have already returned their original ingress credit. Their
+recovery storage is unbounded in this model and re-enters shared VOQs without consuming original
+ingress capacity again. Old VOQ and delayed-processing packets retain their original reservation.
+Actual VOQ/congestion backlog includes recovery; ingress admission and PFC capacity thresholds exclude
+its separately backed subset. Recovery still waits for healthy egress capacity and downstream credit.
+See ADR 0029 and `src/unified-bus/doc/reliable-rerouting-buffer-accounting-validation.md`.

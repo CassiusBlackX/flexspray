@@ -82,6 +82,15 @@ class UbRoutingProcess : public Object
 
     int GetOutPort(RoutingKey& key, bool& selectedShortestPath, uint16_t inPort = UINT16_MAX);
 
+    /** Explicit failure-only extension; ordinary APIs retain shortest-only semantics.
+     * Exact endpoint, allow-list and ingress constraints precede detour authorization.
+     */
+    int GetOutPortAfterFailure(RoutingKey& key,
+                               bool& selectedShortestPath,
+                               uint16_t inPort = UINT16_MAX,
+                               bool exactEndpoint = false,
+                               const std::vector<uint16_t>* allowedOutPorts = nullptr);
+
     /**
      * @brief Select an output port from the ordinary route candidates and an allow-list.
      * @param key Routing lookup and selector input.
@@ -158,15 +167,18 @@ class UbRoutingProcess : public Object
     int SelectCandidate(RoutingKey& key,
                         const UbRoutingCandidateView& candidates,
                         bool& selectedShortestPath,
-                        uint16_t inPort);
+                        uint16_t inPort,
+                        bool failureDetour = false);
     int GetOutPortInternal(RoutingKey& key,
                            const std::vector<uint16_t>* allowedOutPorts,
                            bool& selectedShortestPath,
-                           uint16_t inPort);
+                           uint16_t inPort,
+                        bool failureDetour = false);
     int GetOutPortForEndpointInternal(RoutingKey& key,
                                       const std::vector<uint16_t>* allowedOutPorts,
                                       bool& selectedShortestPath,
-                                      uint16_t inPort);
+                                      uint16_t inPort,
+                        bool failureDetour = false);
     bool TryGetIndexedCandidates(uint32_t dip,
                                  std::vector<uint16_t>& shortestPorts,
                                  std::vector<uint16_t>& nonShortestPorts) const;

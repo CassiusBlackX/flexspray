@@ -547,15 +547,35 @@ The set of claims that this simulator can support with its modeled protocol beha
 _Avoid_: hardware truth, real cluster measurement
 
 **Packet-level reliable rerouting**:
-A simulator modeling boundary for reliable rerouting using whole-packet backups and idealized link acknowledgements. It preserves the peer's complete-packet receive boundary without guaranteeing arrival order between new and recovered packets, and abstracts flit pointers, partial-packet reception, and on-wire ACK and ReliableRerouting_LastAckMsg transmission.
+A simulator modeling boundary for reliable rerouting using retained whole packets and idealized link acknowledgements, with ReliableRerouting_LastAckMsg carried over an alternate network path. It preserves the peer's complete-packet receive boundary without guaranteeing arrival order between new and recovered packets, while abstracting flit-by-flit transfer, partial-packet reception, physical retry-buffer wraparound, and ordinary on-wire link acknowledgements.
 _Avoid_: full data-link retry implementation, replay of all historical packets
 
 **Packet-level retry buffer**:
-A per-transmit-direction collection of whole-packet backups whose complete reception by the adjacent peer has not yet been confirmed in the packet-level reliable rerouting model.
-_Avoid_: unsent VOQ contents, transport retransmission queue
+A per-transmit-direction store of whole packets retained after their attempted transmission on a failed link in the packet-level reliable rerouting model. Its retained-packet occupancy is distinct from ordinary in-flight occupancy and does not imply a separately copied packet object.
+_Avoid_: unsent VOQ contents, transport retransmission queue, all healthy in-flight packets
+
+**Packet-level in-flight set**:
+The whole packets whose transmission in one UB link direction has started but whose complete reception by the adjacent peer has not yet been confirmed. It includes packets still propagating after local transmission completes.
+_Avoid_: current transmit packet only, failure recovery backlog
+
+**Recovery backlog**:
+Whole packets awaiting rerouting after a link failure, including retained transmission attempts and unsent packets associated with the failed output. This broader category does not by itself say whether a packet still holds its original ingress reservation.
+_Avoid_: retry buffer alone, newly received traffic
+
+**VOQ recovery occupancy**:
+The subset of actual VOQ backlog backed by recovery storage after the packets' original ingress reservations have been released. It contributes to queued work without consuming the original ingress capacity again.
+_Avoid_: ingress admission occupancy, additional bytes to add to a VOQ total that already includes them
+
+**Link-local packet sequence**:
+A whole-packet transmission sequence maintained independently for each direction of a UB link in the packet-level model. Sending a recovered packet on another link gives that transmission an identity in the new link's own sequence.
+_Avoid_: end-to-end packet identity, RTP PSN, Packet UID
+
+**Packet-level receive boundary**:
+The next expected whole-packet sequence number in one link direction, separating packets already received completely by the adjacent peer from packets still awaiting complete receipt. In the packet-level rerouting model, LastAck reports this packet boundary instead of a flit-buffer address.
+_Avoid_: transport ACK sequence, end-to-end completion, physical retry-buffer pointer
 
 **Idealized link acknowledgement**:
-Simulator confirmation that the adjacent peer has received one complete packet, without an on-wire acknowledgement exchange. It permits release of the corresponding packet-level backup and does not imply end-to-end delivery or receiver credit return.
+Simulator confirmation that the adjacent peer has received one complete packet, without an on-wire acknowledgement exchange. It permits release of the corresponding sender-side retention and does not imply end-to-end delivery or receiver credit return.
 _Avoid_: transport ACK, application completion, credit return
 
 **Atomic timing model**:

@@ -353,23 +353,24 @@ class UbRecoveredCreditTag : public Tag
 
     uint32_t GetSerializedSize() const override
     {
-        return 1;
+        return 4;
     }
 
     void Serialize(TagBuffer i) const override
     {
-        i.WriteU8(1);
+        i.WriteU32(failedOutput);
     }
 
     void Deserialize(TagBuffer i) override
     {
-        i.ReadU8();
+        failedOutput = i.ReadU32();
     }
 
     void Print(std::ostream& os) const override
     {
-        os << "RecoveredPacketWithReturnedCredit";
+        os << "RecoveredPacketWithReturnedCredit origin=" << failedOutput;
     }
+    uint32_t failedOutput{UINT32_MAX};
 };
 
 }

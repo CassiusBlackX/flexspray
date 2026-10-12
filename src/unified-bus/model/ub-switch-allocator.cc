@@ -56,10 +56,10 @@ MakeAllocatorFlowControlEventContext(Ptr<Packet> packet,
                                      uint32_t outPortId,
                                      uint32_t priority)
 {
-    // A recovered packet carries a switch-local marker while it sits in the healthy VOQ. Consume it
-    // here so the marker never reaches a later hop and never changes serialized bytes.
+    // Capture the switch-local marker before the successful service transaction. Consume it
+    // only after the switch has used it for queue accounting; neither step changes wire bytes.
     UbRecoveredCreditTag recoveredCreditTag;
-    const bool upstreamCreditAlreadyReturned = packet->RemovePacketTag(recoveredCreditTag);
+    const bool upstreamCreditAlreadyReturned = packet->PeekPacketTag(recoveredCreditTag);
     return {
         .packet = packet,
         .ingressQueue = ingressQueue,

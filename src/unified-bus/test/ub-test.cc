@@ -21106,6 +21106,101 @@ class UbPfcPaperDynamicModeUsesRealGlobalOccupancyTest : public TestCase
     }
 };
 
+class UbPfcPaperPendingIngressTest : public TestCase
+{
+  public:
+    UbPfcPaperPendingIngressTest()
+        : TestCase("UnifiedBus - PAPER preserves held pending occupancy and admission")
+    {
+    }
+
+    void DoRun() override
+    {
+        for (bool processing : {true, false})
+        {
+            Config::Reset();
+            Config::SetDefault("ns3::UbQueueManager::PaperDynamicPfcBeta", UintegerValue(8));
+            auto fixture = CreateMultiPortSwitchFixture(FcType::PFC_DYNAMIC_PAPER,
+                                                        3, 65536, 102400, 65536, 64, 0, {});
+            auto qm = fixture.queueManager;
+            auto hook = CreateObject<UbPfcPaperDynamicDecisionHook>();
+            if (processing)
+            {
+                qm->PushToInPortProcessing(0, 2, 7, 40960);
+            }
+            else
+            {
+                qm->PushToVoq(0, 2, 7, 40960);
+            }
+            qm->PushToVoq(1, 2, 7, 35840);
+            qm->PushToVoq(2, 0, 6, 100);
+            auto before = hook->Evaluate(qm, 1, 7);
+            NS_TEST_ASSERT_MSG_EQ(before.xoff_threshold_bytes, 25500u, "worked baseline XOFF");
+            NS_TEST_ASSERT_MSG_EQ(before.xon_threshold_bytes, 17308u, "worked baseline XON");
+            NS_TEST_ASSERT_MSG_EQ(before.pause, true, "loaded ingress pauses");
+            NS_TEST_ASSERT_MSG_EQ(qm->CheckIngressAdmission(1, 7, 70000), false,
+                                  "boundary packet exceeds headroom before move");
+            if (processing)
+            {
+                qm->MoveProcessingToPendingRecovery(0, 2, 7, 40960);
+            }
+            else
+            {
+                qm->MoveVoqToPendingRecovery(0, 2, 7, 40960);
+            }
+            auto pending = hook->Evaluate(qm, 1, 7);
+            NS_TEST_ASSERT_MSG_EQ(pending.xoff_threshold_bytes, 25500u, "move preserves XOFF");
+            NS_TEST_ASSERT_MSG_EQ(pending.xon_threshold_bytes, 17308u, "move preserves XON");
+            NS_TEST_ASSERT_MSG_EQ(pending.pause, true, "pending must not cause early RESUME");
+            NS_TEST_ASSERT_MSG_EQ(pending.resume, false, "no false release");
+            NS_TEST_ASSERT_MSG_EQ(qm->GetIngressQueueOccupancy(0, 7).total_bytes, 40960u,
+                                  "original ingress reservation remains");
+            NS_TEST_ASSERT_MSG_EQ(qm->GetSwitchBufferOccupancy().total_buffered_bytes, 35940u,
+                                  "generic switch total remains unchanged in meaning");
+            NS_TEST_ASSERT_MSG_EQ(qm->CheckIngressAdmission(1, 7, 70000), false,
+                                  "pending must not widen admission");
+            NS_TEST_ASSERT_MSG_EQ(qm->CheckIngressAdmission(1, 7, 60000), true,
+                                  "smaller boundary packet fits headroom");
+            qm->PushToVoq(1, 2, 7, 60000);
+            NS_TEST_ASSERT_MSG_EQ(qm->GetIngressQueueOccupancy(1, 7).headroom_bytes, 60000u,
+                                  "actual allocation uses corrected threshold");
+            qm->PopFromVoq(1, 2, 7, 60000);
+
+            // Independent recovery uses the same pending bucket, but has no ingress reservation.
+            qm->AddPendingRecoveryBytes(0, 7, 2048);
+            qm->AdmitPendingRecoveryToVoq(0, 1, 7, 1024, false);
+            NS_TEST_ASSERT_MSG_EQ(hook->Evaluate(qm, 1, 7).xoff_threshold_bytes, 25500u,
+                                  "independent pending and recovery VOQ do not consume PAPER capacity");
+            qm->RemovePendingRecoveryBytes(0, 7, 1024, false);
+            qm->PopFromVoq(0, 1, 7, 1024, true);
+            for (uint32_t part = 0; part < 2; ++part)
+            {
+                qm->AdmitPendingRecoveryToVoq(0, 1, 7, 20480, true);
+                NS_TEST_ASSERT_MSG_EQ(hook->Evaluate(qm, 1, 7).xoff_threshold_bytes, 25500u,
+                                      "partial handoffs neither leak nor double count");
+            }
+            qm->PopFromVoq(0, 1, 7, 40960);
+            NS_TEST_ASSERT_MSG_EQ(hook->Evaluate(qm, 1, 7).resume, true,
+                                  "real release permits RESUME");
+            qm->PopFromVoq(1, 2, 7, 35840);
+            qm->PopFromVoq(2, 0, 6, 100);
+            NS_TEST_ASSERT_MSG_EQ(qm->GetPendingRecoveryBytes(), 0u, "pending drains");
+            NS_TEST_ASSERT_MSG_EQ(hook->Evaluate(qm, 1, 7).xoff_threshold_bytes, 102400u,
+                                  "full capacity returns after drain");
+            qm->PushToInPortProcessing(0, 2, 7, 40960);
+            qm->MoveProcessingToPendingRecovery(0, 2, 7, 40960);
+            qm->RemovePendingRecoveryBytes(0, 7, 20480, true);
+            NS_TEST_ASSERT_MSG_EQ(hook->Evaluate(qm, 1, 7).xoff_threshold_bytes, 81920u,
+                                  "held removal subtracts only its own correction");
+            qm->Init();
+            NS_TEST_ASSERT_MSG_EQ(hook->Evaluate(qm, 1, 7).xoff_threshold_bytes, 102400u,
+                                  "Init clears held pending accounting");
+            Simulator::Destroy();
+            Config::Reset();
+        }
+    }
+};
+
 class UbQueueManagerTotalBufferedBytesTracksEgressTransferTest : public TestCase
 {
   public:
@@ -33396,6 +33491,7 @@ UbTestSuite::UbTestSuite()
     AddTestCase(new UbPfcPaperDynamicModePauseResumeTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbQueueManagerPaperPfcDecisionApiTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbPfcPaperDynamicModeIgnoresAlphaShiftForAdmissionTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbPfcPaperPendingIngressTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbPfcPaperDynamicModeUsesRealGlobalOccupancyTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbQueueManagerTotalBufferedBytesTracksEgressTransferTest(),
                 TestCase::Duration::QUICK);
@@ -34210,6 +34306,7 @@ UbFlowControlTestSuite::UbFlowControlTestSuite()
     AddTestCase(new UbPfcPaperDynamicModePauseResumeTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbQueueManagerPaperPfcDecisionApiTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbPfcPaperDynamicModeIgnoresAlphaShiftForAdmissionTest(), TestCase::Duration::QUICK);
+    AddTestCase(new UbPfcPaperPendingIngressTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbPfcPaperDynamicModeUsesRealGlobalOccupancyTest(), TestCase::Duration::QUICK);
     AddTestCase(new UbQueueManagerTotalBufferedBytesTracksEgressTransferTest(),
                 TestCase::Duration::QUICK);

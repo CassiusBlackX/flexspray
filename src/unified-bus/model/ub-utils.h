@@ -384,6 +384,7 @@ public:
      * packet-trace category is enabled. Correctness and counters never depend on this sink.
      */
     static void ReliableReroutingNotify(const UbReliableReroutingEvent& record);
+    static void ReliableReroutingOccupancyNotify(const UbRecoveryOccupancyEvent& record, bool summary);
 
     static void TpDebugStateNotify(uint32_t nodeId,
                                    uint32_t tpn,

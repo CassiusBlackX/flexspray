@@ -7,6 +7,7 @@
 #include "ns3/ub-controller.h"
 #include "ns3/ub-link-fault-schedule.h"
 #include "ns3/ub-link.h"
+#include "ns3/ub-network-address.h"
 #include "ns3/ub-reliable-rerouting.h"
 #include "ns3/ub-port.h"
 #include "ns3/ub-switch.h"
@@ -143,11 +144,15 @@ struct FaultInputTopology
         // Arming captures the immutable configuration when the link completes, so the recovery
         // delays must be in place before the second endpoint attaches.
         link->SetAttribute("FailureDetectionDelay", TimeValue(MicroSeconds(5)));
-        link->SetAttribute("LastAckDelay", TimeValue(MicroSeconds(10)));
+        link->SetAttribute("LastAckTimeout", TimeValue(MicroSeconds(10)));
         l1->Attach(link);
         r1->Attach(link);
         failedLink = link;
         alternateLink = ConnectFaultTestPorts(l2, r2, armLinks);
+        swLeft->GetObject<UbSwitch>()->GetRoutingProcess()->AddShortestRoute(
+            utils::NodeIdToIp(swRight->GetId()).Get(), {1, 2});
+        swRight->GetObject<UbSwitch>()->GetRoutingProcess()->AddShortestRoute(
+            utils::NodeIdToIp(swLeft->GetId()).Get(), {1, 2});
     }
 };
 

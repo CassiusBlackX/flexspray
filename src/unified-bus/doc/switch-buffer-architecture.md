@@ -85,6 +85,27 @@ uint64_t GetOutPortBufferOccupancyBytes(uint32_t outPort) const;
 uint64_t GetOutPortQueueBacklogBytes(uint32_t outPort) const;
 ```
 
+### PAPER 与 pending recovery ingress 占用
+
+`PFC_DYNAMIC_PAPER` 的 PAUSE/RESUME 和 ingress 准入共用 queue manager 的 O(1) 占用计算：
+
+```text
+B_paper = total_buffered_bytes - recovery_voq_bytes + pending_recovery_ingress_bytes
+XOFF = beta * max(SharedPoolBytes - B_paper, 0) / 8
+XON = max(XOFF - 2 * UB_MTU_BYTE, 0)
+```
+
+`pending_recovery_ingress_bytes` 仅计入仍持有原 ingress 预留的 pending 子集。
+processing 或普通 VOQ 转 pending 时增加，进入健康 VOQ 或按既有分支移除时按
+`ingressHeld` 扣减，初始化归零。更新在既有转换内、可观察回调之前完成，扣减检查下溢。
+因此 processing / 普通 VOQ → pending → 健康 VOQ 不会因暂存位置变化而提前 RESUME
+或放宽准入；实际释放后容量正常恢复。
+
+原 ingress 已释放的 failed-egress / retry 使用独立恢复存储，不计入该子集；其进入
+recovery VOQ 后仍按 `recovery_voq_bytes` 扣除。通用 `total_buffered_bytes`、输出
+backlog 和普通 egress 的既有口径不变；本修复不改变 LastAck 门控、信用返还或调度。
+这一边界落实 [ADR 0029](../../../doc/adr/0029-retain-original-packets-for-failure-recovery.md)。
+
 ### 2.3 Buffer Occupancy 与 Queue Backlog
 
 两个查询都聚合一个出端口的所有 VL 和入端口，包括该端口的本地控制帧：
@@ -426,3 +447,22 @@ void CheckPfcCondition(uint32_t inPort, uint32_t priority)
 | `src/unified-bus/model/ub-switch.cc` | 包处理和调度逻辑 |
 | `src/unified-bus/model/ub-port.h` | UbPort 和 EgressQueue 定义 |
 | `src/unified-bus/model/protocol/ub-caqm.cc` | CAQM 拥塞控制实现 |
+
+## Reliable rerouting storage
+
+With reliable rerouting armed, retry packets and unsent failed-egress packets have already released
+their original ingress reservation. They enter the existing healthy-output VOQ without checking or
+charging that ingress again. A switch-local recovery tag records the failed-output origin. The
+allocator captures it for credit handling, and switch dequeue consumes it for queue accounting
+before the packet leaves this switch. The healthy next hop uses ordinary credit accounting.
+
+Actual VOQ/output backlog includes both ordinary and recovery packets. Ingress admission includes
+only ordinary reserved work; `recovery_voq_bytes` is a subset of actual buffered bytes, not a quantity
+to add again. Paper-dynamic PFC excludes this independently backed subset when computing capacity
+thresholds, while congestion-control output backlog remains inclusive. Old VOQ and delayed input
+processing packets retain their existing ingress reservation and return upstream credit once.
+
+Recovery has no separate scheduler or strict priority. Existing FIFO, VL/RR/DWRR, egress capacity
+checks and downstream credit remain authoritative. A blocked healthy egress leaves recovery in the
+shared VOQ. Draining the retry owner does not establish destination delivery or empty recovery VOQs.
+See ADR 0029 and `reliable-rerouting-buffer-accounting-validation.md` for validation.

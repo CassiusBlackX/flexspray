@@ -42,6 +42,7 @@ typedef enum {
     UB_URMA_DATA_PACKET,
     UB_LDST_DATA_PACKET,
     UB_CTP_DATA_PACKET,
+    UB_LAST_ACK_PACKET,
     UNKOWN_TYPE
 } UbPacketType_t;
 
@@ -141,6 +142,8 @@ public:
     Ptr<UbCongestionControl> GetCongestionCtrl();
     Ptr<UbQueueManager> GetQueueManager();    // Queue Manage Unit
     void SendPacket(Ptr<Packet> p, uint32_t inPort, uint32_t outPort, uint32_t priority);
+    void SendLastAck(Ptr<Packet> packet);
+    void HandleLastAck(Ptr<UbPort> port, Ptr<Packet> packet);
     void SendControlFrame(Ptr<Packet> packet, uint32_t portId);
 
     /**
@@ -154,13 +157,12 @@ public:
 
     /**
      * @brief Admit one retained recovery packet into a healthy VOQ.
-     * @param packet Retained whole-packet copy (never a live transmission).
+     * @param packet Retained original packet with its old link delivery invalidated.
      * @param inPort Original ingress port identity.
      * @param priority Original VL/priority.
      * @param oldOutput The detected failed output the packet was retained for.
      * @param entryId Local attempt or backlog identity, for evidence only.
-     * @return true when the packet entered a healthy VOQ, false when ingress admission is full and
-     *         the caller must keep or park the retained packet.
+     * @return TRANSFERRED after VOQ ownership, or DISCARDED for link-local control frames.
      */
     UbRecoverySubmitResult SubmitRecoveryPacket(Ptr<Packet> packet,
                                                 uint32_t inPort,
@@ -318,11 +320,8 @@ private:
                             uint32_t priority,
                             bool ingressHeld);
     void TryTransferPendingRecovery();
-    void ScheduleRecoveryWakeup();
-    void RunRecoveryWakeup();
-    void OnIngressSpaceReleased(uint32_t inPort, uint32_t priority);
     void ClearRecoveryBacklogForOutput(uint32_t outPort);
-    bool TransferOnePendingEntry(PendingRecoveryEntry& entry);
+    void TransferOnePendingEntry(PendingRecoveryEntry& entry);
     void ClearOldLinkPiggybackMetadata(Ptr<Packet> packet);
     Ptr<UbReliableRerouting> FailedOutputRerouting();
     int ResolveURMAOutput(Ptr<Packet> packet,
@@ -368,12 +367,12 @@ private:
 
     // Retained work that the switch itself owns during recovery (never a live transmission).
     std::vector<PendingRecoveryEntry> m_pendingRecovery;
-    EventId m_recoveryWakeup;
-    bool m_recoveryWakeupPending{false};
+    uint64_t m_pendingRecoveryPackets{0};
+    uint64_t m_pendingRecoveryBytes{0};
+    uint64_t m_pendingFailedProcessing{0};
     bool m_recoveryBacklogMigrated{false};
     bool m_recoveryDisposed{false};
     uint64_t m_nextRecoveryEntryId{0};
-    std::unordered_map<uint64_t, uint16_t> m_blockedRetryOutput;
 
     Ipv4Address m_Ipv4Addr;
     bool m_isECNEnable;

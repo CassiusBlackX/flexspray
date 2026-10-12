@@ -299,6 +299,8 @@ public:
     }
 
 private:
+    void LastAckSerialized(Ptr<Packet> packet);
+    EventId m_lastAckSerialization;
 
     TracedCallback<uint32_t, uint32_t, uint32_t> m_tracePortTxNotify;
     TracedCallback<uint32_t, uint32_t, uint32_t> m_tracePortRxNotify;

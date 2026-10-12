@@ -1,0 +1,79 @@
+schema_version: 1
+status: implemented
+cwd_contract: all_commands_from_repository_root
+package_root: scratch/20260921-2nodes-roi-write-counter
+execution_mode: serial_separate_processes
+overwrite_policy: preserve_previous_evidence_and_record_archives_before_retry
+preconditions:
+  - implement_driver_and_comparison_helper_before_execution
+  - materialize_plan_matrix_manifest_ledger_and_case_specs_at_package_root
+  - satisfy_repository_build_prerequisites
+  - discover_runtime_parameters_and_apply_confirmed_overrides
+  - confirm_actual_target_name_and_commands_before_first_run
+  - record_environment_and_run_authorization_in_ledger
+preparation:
+  - id: configure
+    command: >-
+      python3.12 ./ns3 configure --enable-modules=unified-bus --disable-examples
+      --disable-tests --disable-mpi --disable-mtp --disable-werror -d release -G Ninja
+    note: executed_successfully_ticket01
+  - id: build
+    command: python3.12 ./ns3 build -j 2 ub-roi-write-counter
+    note: auto_discovered_target_verified_by_successful_build
+commands:
+  - case_id: control
+    record_command: python3.12 scratch/20260921-2nodes-roi-write-counter/record-run.py --variant=control
+    phase: run
+    cwd: .
+    command: >-
+      python3.12 ./ns3 run --no-build
+      'scratch/20260921-2nodes-roi-write-counter/ub-roi-write-counter
+      --variant=control
+      --output-dir=scratch/20260921-2nodes-roi-write-counter/cases/control/output'
+    output_dir: scratch/20260921-2nodes-roi-write-counter/cases/control/output
+    console_log: scratch/20260921-2nodes-roi-write-counter/cases/control/output/console.log
+    capture: stdout_stderr_to_console_log_and_return_code_to_ledger
+    expected_artifacts:
+      - events.csv
+      - summary.json
+      - resolved-parameters.json
+      - console.log
+      - run-record.json
+  - case_id: treatment
+    record_command: python3.12 scratch/20260921-2nodes-roi-write-counter/record-run.py --variant=treatment
+    phase: run
+    cwd: .
+    command: >-
+      python3.12 ./ns3 run --no-build
+      'scratch/20260921-2nodes-roi-write-counter/ub-roi-write-counter
+      --variant=treatment
+      --output-dir=scratch/20260921-2nodes-roi-write-counter/cases/treatment/output'
+    output_dir: scratch/20260921-2nodes-roi-write-counter/cases/treatment/output
+    console_log: scratch/20260921-2nodes-roi-write-counter/cases/treatment/output/console.log
+    capture: stdout_stderr_to_console_log_and_return_code_to_ledger
+    expected_artifacts:
+      - events.csv
+      - summary.json
+      - resolved-parameters.json
+      - console.log
+      - run-record.json
+  - case_id: comparison
+    phase: summarize
+    cwd: .
+    command: >-
+      python3.12 scratch/20260921-2nodes-roi-write-counter/compare-results.py
+      --control-dir=scratch/20260921-2nodes-roi-write-counter/cases/control/output
+      --treatment-dir=scratch/20260921-2nodes-roi-write-counter/cases/treatment/output
+      --output-dir=scratch/20260921-2nodes-roi-write-counter/output
+    output_dir: scratch/20260921-2nodes-roi-write-counter/output
+    expected_artifacts:
+      - comparison.json
+      - comparison.md
+    failure_behavior: emit_diagnostic_report_for_missing_or_invalid_cases_and_return_nonzero
+
+validation:
+  - command: python3.12 scratch/20260921-2nodes-roi-write-counter/compare-results.py --self-test
+    purpose: negative_evidence_checks_not_network_matrix_rows
+  - command: python3.12 scratch/20260921-2nodes-roi-write-counter/test-recording.py
+    purpose: preserve_failure_exit_status_and_archives_with_truncated_output
+recording_contract: record_command wraps exactly command and records provenance without changing simulation inputs

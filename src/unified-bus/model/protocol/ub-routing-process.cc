@@ -447,10 +447,26 @@ UbRoutingProcess::GetOutPortRestricted(RoutingKey& key,
 }
 
 int
+UbRoutingProcess::GetOutPortAfterFailure(RoutingKey& key,
+                                         bool& selectedShortestPath,
+                                         uint16_t inPort,
+                                         bool exactEndpoint,
+                                         const std::vector<uint16_t>* allowedOutPorts)
+{
+    const bool failureDetour = !m_unavailableOutputs.empty();
+    return exactEndpoint
+               ? GetOutPortForEndpointInternal(key, allowedOutPorts, selectedShortestPath,
+                                                inPort, failureDetour)
+               : GetOutPortInternal(key, allowedOutPorts, selectedShortestPath,
+                                      inPort, failureDetour);
+}
+
+int
 UbRoutingProcess::GetOutPortInternal(RoutingKey& key,
                                      const std::vector<uint16_t>* allowedOutPorts,
                                      bool& selectedShortestPath,
-                                     uint16_t inPort)
+                                     uint16_t inPort,
+                                     bool failureDetour)
 {
     NS_LOG_DEBUG("[UbRoutingProcess GetOutPort]: sip: " << Ipv4Address(key.sip)
                                                         << " dip: " << Ipv4Address(key.dip)
@@ -479,7 +495,7 @@ UbRoutingProcess::GetOutPortInternal(RoutingKey& key,
                                                                      structuredNonShortest);
     if (handledByRule || handledByIndex)
     {
-        if (RoutingTypeUsesShortestPaths(key.routingType))
+        if (RoutingTypeUsesShortestPaths(key.routingType) && !failureDetour)
         {
             structuredNonShortest.clear();
         }
@@ -495,13 +511,13 @@ UbRoutingProcess::GetOutPortInternal(RoutingKey& key,
             NS_LOG_ERROR("No candidate ports found for dip: " << Ipv4Address(key.dip));
             return -1;
         }
-        return SelectCandidate(key, structuredCandidates, selectedShortestPath, inPort);
+        return SelectCandidate(key, structuredCandidates, selectedShortestPath, inPort, failureDetour);
     }
 
     uint32_t lookupDip = key.dip;
     const auto shortest = LookupCandidatePorts(lookupDip, true);
     UbRoutingTable::PortSetView nonShortest;
-    if (!RoutingTypeUsesShortestPaths(key.routingType))
+    if (!RoutingTypeUsesShortestPaths(key.routingType) || failureDetour)
     {
         nonShortest = LookupCandidatePorts(lookupDip, false);
     }
@@ -514,7 +530,7 @@ UbRoutingProcess::GetOutPortInternal(RoutingKey& key,
             NS_LOG_ERROR("No candidate ports found for dip: " << Ipv4Address(key.dip));
             return -1;
         }
-        return SelectCandidate(key, candidates, selectedShortestPath, inPort);
+        return SelectCandidate(key, candidates, selectedShortestPath, inPort, failureDetour);
     }
 
     m_hotPathTemporaryContainerAllocations += 2;
@@ -529,7 +545,7 @@ UbRoutingProcess::GetOutPortInternal(RoutingKey& key,
         return -1;
     }
 
-    return SelectCandidate(key, candidates, selectedShortestPath, inPort);
+    return SelectCandidate(key, candidates, selectedShortestPath, inPort, failureDetour);
 }
 
 int
@@ -554,7 +570,8 @@ int
 UbRoutingProcess::GetOutPortForEndpointInternal(RoutingKey& key,
                                                 const std::vector<uint16_t>* allowedOutPorts,
                                                 bool& selectedShortestPath,
-                                                uint16_t inPort)
+                                                uint16_t inPort,
+                                     bool failureDetour)
 {
     ValidateRoutingType(key.routingType, "endpoint packet forwarding");
     m_lastFailureExcludedAllCandidates = false;
@@ -567,12 +584,12 @@ UbRoutingProcess::GetOutPortForEndpointInternal(RoutingKey& key,
     if (!handledByRule && !handledByIndex)
     {
         GetShortestOutPorts(key.dip, shortestPorts);
-        if (!RoutingTypeUsesShortestPaths(key.routingType))
+        if (!RoutingTypeUsesShortestPaths(key.routingType) || failureDetour)
         {
             GetOtherOutPorts(key.dip, nonShortestPorts);
         }
     }
-    if (RoutingTypeUsesShortestPaths(key.routingType))
+    if (RoutingTypeUsesShortestPaths(key.routingType) && !failureDetour)
     {
         nonShortestPorts.clear();
     }
@@ -588,7 +605,7 @@ UbRoutingProcess::GetOutPortForEndpointInternal(RoutingKey& key,
         NS_LOG_ERROR("No exact endpoint candidate ports found for dip: " << Ipv4Address(key.dip));
         return -1;
     }
-    return SelectCandidate(key, candidates, selectedShortestPath, inPort);
+    return SelectCandidate(key, candidates, selectedShortestPath, inPort, failureDetour);
 }
 
 int
@@ -622,8 +639,36 @@ int
 UbRoutingProcess::SelectCandidate(RoutingKey& key,
                                   const UbRoutingCandidateView& candidates,
                                   bool& selectedShortestPath,
-                                  uint16_t inPort)
+                                  uint16_t inPort,
+                                  bool failureDetour)
 {
+    if (failureDetour && RoutingTypeUsesShortestPaths(key.routingType))
+    {
+        const UbRoutingCandidateView shortest{candidates.shortest, {}, candidates.excludedPort};
+        if (UbRoutingPolicy::Count(shortest) == 0)
+        {
+            // Missing or forbidden shortest candidates do not confer detour permission.
+            m_lastFailureExcludedAllCandidates = false;
+            return -1;
+        }
+        const int preferred = SelectCandidate(key, shortest, selectedShortestPath, inPort);
+        if (preferred >= 0 || !m_lastFailureExcludedAllCandidates)
+        {
+            return preferred;
+        }
+        const UbRoutingCandidateView detour{{}, candidates.nonShortest, candidates.excludedPort};
+        if (UbRoutingPolicy::Count(detour) == 0)
+        {
+            return -1;
+        }
+        const int output = SelectCandidate(key, detour, selectedShortestPath, inPort);
+        if (output < 0)
+        {
+            m_lastFailureExcludedAllCandidates = true;
+        }
+        return output;
+    }
+
     if (m_unavailableOutputs.empty())
     {
         m_lastFailureExcludedAllCandidates = false;

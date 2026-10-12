@@ -43,6 +43,7 @@ struct UbIngressPortOccupancy {
 struct UbSwitchBufferOccupancy {
     uint64_t shared_pool_used_bytes {0};
     uint64_t total_buffered_bytes {0};
+    uint64_t recovery_voq_bytes {0};
 };
 
 struct UbBufferProfileView {
@@ -115,12 +116,14 @@ public:
     /**
      * @brief 包进入VOQ时调用（同时更新双视图）
      */
-    void PushToVoq(uint32_t inPort, uint32_t outPort, uint32_t priority, uint32_t pSize);
+    void PushToVoq(uint32_t inPort, uint32_t outPort, uint32_t priority, uint32_t pSize,
+                     bool recovery = false);
     
     /**
      * @brief 包离开VOQ时调用（同时更新双视图）
      */
-    void PopFromVoq(uint32_t inPort, uint32_t outPort, uint32_t priority, uint32_t pSize);
+    void PopFromVoq(uint32_t inPort, uint32_t outPort, uint32_t priority, uint32_t pSize,
+                     bool recovery = false);
     void PushToInPortProcessing(uint32_t inPort, uint32_t outPort, uint32_t priority, uint32_t pSize);
     void MoveInPortProcessingToVoq(uint32_t inPort, uint32_t outPort, uint32_t priority, uint32_t pSize);
 
@@ -153,7 +156,7 @@ public:
     /** Record one egress/retry packet that is retained without ingress admission. */
     void AddPendingRecoveryBytes(uint32_t inPort, uint32_t priority, uint32_t pSize);
 
-    /** Admit a retained packet into a healthy VOQ, acquiring ingress admission when it has none. */
+    /** Admit a retained packet into a healthy VOQ, preserving ingress or using independent recovery storage. */
     void AdmitPendingRecoveryToVoq(uint32_t inPort,
                                    uint32_t newOutPort,
                                    uint32_t priority,
@@ -161,22 +164,12 @@ public:
                                    bool ingressHeld);
 
     /** Release retained recovery storage for a packet that is disposed instead of rerouted. */
-    void RemovePendingRecoveryBytes(uint32_t inPort, uint32_t priority, uint32_t pSize);
+    void RemovePendingRecoveryBytes(uint32_t inPort, uint32_t priority, uint32_t pSize,
+                                    bool ingressHeld);
 
     uint64_t GetPendingRecoveryBytes() const { return m_totalPendingRecoveryBytes; }
     uint64_t GetQueuePendingRecoveryBytes(uint32_t inPort, uint32_t priority) const;
 
-    /**
-     * @brief Ingress space-release notification.
-     *
-     * Called after real occupancy is released for one (inPort, priority). Recovery uses it as a
-     * coalesced wakeup source; it is not a polling loop.
-     */
-    void SetIngressSpaceReleaseCallback(Callback<void, uint32_t, uint32_t> callback)
-    {
-        m_ingressSpaceReleaseCallback = callback;
-    }
-    
     // ========== 查询接口：InPort视图（用于流控） ==========
     
     /** InPort视图：某(inPort, priority)的 reserve+shared 占用（不含headroom） */
@@ -228,6 +221,7 @@ private:
     uint64_t GetIngressAdmissionThresholdBytes(uint32_t inPort, uint32_t priority) const;
     uint64_t GetDynamicPauseThresholdBytes() const;
     uint64_t GetDynamicResumeThresholdBytes() const;
+    uint64_t GetPaperBufferedBytes() const;
     uint64_t GetPaperPauseThresholdBytes(uint64_t totalBufferedBytes) const;
     uint64_t GetPaperResumeThresholdBytes(uint64_t totalBufferedBytes) const;
     uint64_t GetSwitchTotalBufferedBytes() const;
@@ -247,7 +241,8 @@ private:
     uint64_t m_totalProcessingBytes {0};
     DarrayU64 m_pendingRecoveryBytes;    // [inPort][priority]
     uint64_t m_totalPendingRecoveryBytes {0};
-    Callback<void, uint32_t, uint32_t> m_ingressSpaceReleaseCallback;
+    // Pending subset that still owns its original ingress reservation.
+    uint64_t m_pendingRecoveryIngressBytes {0};
 
     // 三层 buffer 状态
     uint64_t m_sharedPoolBytes {DEFAULT_SHARED_POOL_BYTES};
@@ -260,6 +255,7 @@ private:
     uint64_t m_totalReservedBytes {0};
     uint64_t m_sharedUsedBytes {0};
     uint64_t m_totalVoqBufferedBytes {0};
+    uint64_t m_recoveryVoqBytes {0};
     uint64_t m_totalEgressBufferedBytes {0};
     std::vector<uint64_t> m_totalOutPortVoqBufferedBytes;
     DarrayU64 m_hdrmBytes;    // [inPort][priority] headroom usage
