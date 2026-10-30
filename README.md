@@ -331,7 +331,7 @@ CFG6 CTP 的 requester 使用独立 RCID，并由各自 UbJetty 维护进度。�
 欢迎加入 OpenUSim 仿真答疑交流微信群：
 
 <p>
-<img src="https://raw.gitcode.com/user-images/assets/7654616/1059fa1d-64e6-4d07-a288-41a33ee2a727/image.png" width="300" height="300" alt="OpenUSim 答疑交流微信群二维码">
+<img src="https://raw.gitcode.com/user-images/assets/7654616/da776214-666b-4d7c-896a-273f75770264/image.png" width="300" height="300" alt="OpenUSim 答疑交流微信群二维码">
 </p>
 
 ---
