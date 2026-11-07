@@ -240,7 +240,8 @@ UbTransportChannelManager::ResolveInboundTp(uint32_t srcTpn,
                                             uint32_t dstTpn,
                                             Ipv4Address sourceIp,
                                             Ipv4Address destinationIp,
-                                            UbPriority priority)
+                                            UbPriority priority,
+                                            bool anyPriority)
 {
     if (m_controller == nullptr || m_controller->IsDisposing())
     {
@@ -267,7 +268,8 @@ UbTransportChannelManager::ResolveInboundTp(uint32_t srcTpn,
         const UbPriority expectedPriority =
             static_cast<UbPriority>(record.channel->GetPriority());
         if (srcTpn != expectedSrcTpn || sourceIp != expectedSourceIp ||
-            destinationIp != expectedDestinationIp || priority != expectedPriority)
+            destinationIp != expectedDestinationIp ||
+            (!anyPriority && priority != expectedPriority))
         {
             return {};
         }
@@ -275,7 +277,7 @@ UbTransportChannelManager::ResolveInboundTp(uint32_t srcTpn,
     }
 
     Connection conn;
-    const TpConnectionManager::InboundConnectionState connectionState =
+    TpConnectionManager::InboundConnectionState connectionState =
         m_controller->GetTpConnManager()->ResolveInboundConnection(currentNode->GetId(),
                                                                    srcTpn,
                                                                    dstTpn,
@@ -283,6 +285,20 @@ UbTransportChannelManager::ResolveInboundTp(uint32_t srcTpn,
                                                                    destinationIp,
                                                                    priority,
                                                                    conn);
+    // A response on a dedicated response VL does not carry the connection priority; on the
+    // (rare) non-live path try every priority for the exact TPN/IP key.
+    for (uint32_t p = 0; anyPriority && p < 16 &&
+                         connectionState == TpConnectionManager::InboundConnectionState::INVALID;
+         ++p)
+    {
+        if (p == static_cast<uint32_t>(priority))
+        {
+            continue;
+        }
+        connectionState = m_controller->GetTpConnManager()->ResolveInboundConnection(
+            currentNode->GetId(), srcTpn, dstTpn, sourceIp, destinationIp,
+            static_cast<UbPriority>(p), conn);
+    }
     if (connectionState == TpConnectionManager::InboundConnectionState::RETIRED_EXACT)
     {
         return {UbInboundTpState::RETIRED_EXACT, nullptr};

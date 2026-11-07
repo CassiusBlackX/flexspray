@@ -71,6 +71,9 @@ public:
     void SetPeerPortIsolated(uint32_t peerNode, uint16_t peerPort, bool isolated);
     /** True when @p tp uses an isolated local port or targets an isolated peer port. */
     bool IsTpPathIsolated(const Ptr<UbTransportChannel>& tp) const;
+    /** Number of members of the RTP TP group containing local @p tpn (1 if none). */
+    uint32_t GetRtpTpGroupSizeForTpn(uint32_t tpn) const;
+
 
     // Port management
     /**

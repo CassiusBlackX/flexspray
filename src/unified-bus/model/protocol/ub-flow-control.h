@@ -86,6 +86,16 @@ public:
     {
         return FcType::NONE;
     }
+    /**
+     * Bytes of this port's traffic on @p vl still occupying the downstream buffer, as implied by
+     * consumed-but-unreturned credit beyond the normal credit-return batching slack. 0 when the
+     * flow control is not credit based.
+     */
+    virtual uint64_t GetDownstreamBacklogBytes(uint8_t vl) const
+    {
+        (void)vl;
+        return 0;
+    }
 };
 
 

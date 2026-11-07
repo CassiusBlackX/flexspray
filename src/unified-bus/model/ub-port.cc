@@ -18,6 +18,7 @@ using namespace utils;
 
 namespace ns3 {
 NS_OBJECT_ENSURE_REGISTERED(UbPort);
+NS_OBJECT_ENSURE_REGISTERED(UbEgressQueue);
 NS_LOG_COMPONENT_DEFINE("UbPort");
 
 constexpr long DEFAULT_PFC_UP_THLD = 819200;   // 800KB ≈ 78% of 1MB per-queue reserve
@@ -33,6 +34,8 @@ TypeId UbEgressQueue::GetTypeId(void)
     static TypeId tid =
         TypeId("ns3::UbEgressQueue")
             .SetParent<Object>()
+            .SetGroupName("UnifiedBus")
+            .AddConstructor<UbEgressQueue>()
             .AddTraceSource(
             "UbEnqueue",
             "Enqueue a packet in the UbEgressQueue.",

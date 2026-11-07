@@ -121,10 +121,12 @@ UbHostCaqm::UbHostCaqm()
 UbHostCaqm::~UbHostCaqm()
 {
     NS_LOG_FUNCTION(this);
+    m_congestionStateResetEvent.Cancel();
 }
 
 void UbHostCaqm::OnTpAttached(Ptr<UbTransportChannel> tp)
 {
+
     m_src = tp->GetSrc();
     m_dst = tp->GetDest();
     m_tpn = tp->GetTpn();
@@ -487,6 +489,7 @@ void UbHostCaqm::StateReset()
 void UbHostCaqm::DoDispose()
 {
     NS_LOG_FUNCTION(this);
+    m_congestionStateResetEvent.Cancel();
     m_recvdPsnPacketSizeMap.clear();
     m_recvdPsnHintMap.clear();
     m_recvdPsnCMap.clear();

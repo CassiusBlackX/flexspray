@@ -123,7 +123,8 @@ class UbTransportChannelManager : public Object
                                            uint32_t dstTpn,
                                            Ipv4Address sourceIp,
                                            Ipv4Address destinationIp,
-                                           UbPriority priority);
+                                           UbPriority priority,
+                                           bool anyPriority = false);
     /** Assess owner-local TP quiescence without mutating endpoint or owner state. */
     UbTpQuiescenceAssessment AssessTpQuiescence(uint32_t tpn) const;
     /** Return the exact materialized endpoint identity. */

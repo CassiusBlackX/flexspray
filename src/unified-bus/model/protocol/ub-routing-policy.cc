@@ -179,4 +179,72 @@ UbRoutingPolicy::SelectAdaptive(const RoutingKey& key,
     return selectedPort;
 }
 
+int
+UbRoutingPolicy::SelectAdaptiveRate(const RoutingKey& key,
+                                    const UbRoutingCandidateView& candidates,
+                                    uint32_t nodeId,
+                                    bool& selectedShortestPath)
+{
+    Ptr<Node> node = NodeList::GetNode(nodeId);
+    Ptr<UbSwitch> sw = node->GetObject<UbSwitch>();
+    Ptr<UbQueueManager> queueManager = sw->GetQueueManager();
+    const uint8_t vl = static_cast<uint8_t>(key.priority);
+
+    auto drainPs = [&](uint16_t outPort) -> uint64_t {
+        Ptr<UbPort> port = DynamicCast<UbPort>(node->GetDevice(outPort));
+        uint64_t bytes = port->GetUbQueue()->GetCurrentBytes();
+        if (queueManager != nullptr)
+        {
+            bytes += queueManager->GetOutPortBufferUsed(outPort, static_cast<uint32_t>(vl));
+        }
+        Ptr<UbFlowControl> fc = port->GetFlowControl();
+        if (fc != nullptr)
+        {
+            bytes += fc->GetDownstreamBacklogBytes(vl);
+        }
+        const uint64_t bps = std::max<uint64_t>(port->GetDataRate().GetBitRate(), 1);
+        // bytes * 8 bits * 1e12 ps/s / bps; split to avoid overflow for large backlogs.
+        return bytes * 8000000ULL / (bps / 1000000ULL > 0 ? bps / 1000000ULL : 1);
+    };
+
+    uint64_t bestScore = std::numeric_limits<uint64_t>::max();
+    std::vector<std::pair<uint16_t, bool>> bestCandidates;
+    auto consider = [&](std::span<const uint16_t> ports, bool isShortest) {
+        for (uint16_t port : ports)
+        {
+            if (port == candidates.excludedPort)
+            {
+                continue;
+            }
+            const uint64_t score = drainPs(port);
+            if (score < bestScore)
+            {
+                bestScore = score;
+                bestCandidates.clear();
+                bestCandidates.emplace_back(port, isShortest);
+            }
+            else if (score == bestScore)
+            {
+                bestCandidates.emplace_back(port, isShortest);
+            }
+        }
+    };
+    consider(candidates.shortest, true);
+    if (bestCandidates.empty())
+    {
+        consider(candidates.nonShortest, false);
+    }
+    if (bestCandidates.empty())
+    {
+        return -1;
+    }
+    const uint32_t salt = utils::NodeIdToIp(nodeId).Get();
+    const uint64_t selection =
+        CalcHash(key.sip, key.dip, key.sport, key.dport, key.priority, salt);
+    const auto [selectedPort, isShortest] =
+        bestCandidates[static_cast<size_t>(selection % bestCandidates.size())];
+    selectedShortestPath = isShortest;
+    return selectedPort;
+}
+
 } // namespace ns3

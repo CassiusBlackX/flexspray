@@ -27,6 +27,7 @@
 #include "ns3/ub-ctp.h"
 #include "ns3/ub-datalink.h"
 #include "ns3/ub-dcqcn.h"
+#include "ns3/ub-spraycc.h"
 #include "ns3/ub-flow-control.h"
 #include "ns3/ub-function.h"
 #include "ns3/ub-ldst-api.h"
@@ -36441,6 +36442,166 @@ class UbLinkHealthSystemTest : public TestCase
     }
 };
 
+/**
+ * FlexSpray building blocks: SprayCC feedback encoding, the SPRAYCC factory, ADAPTIVE_RATE
+ * validity, and rate/credit-aware candidate scoring.
+ */
+class UbFlexSprayUnitTest : public TestCase
+{
+  public:
+    UbFlexSprayUnitTest()
+        : TestCase("UnifiedBus - FlexSpray SprayCC feedback, factory and ADAPTIVE_RATE")
+    {
+    }
+
+    void DoRun() override
+    {
+        uint32_t marked = 0;
+        uint32_t total = 0;
+        UbHostSprayCc::DecodeFeedback(UbHostSprayCc::EncodeFeedback(7, 31), marked, total);
+        NS_TEST_ASSERT_MSG_EQ(marked, 7u, "marked count round-trips");
+        NS_TEST_ASSERT_MSG_EQ(total, 31u, "total count round-trips");
+        UbHostSprayCc::DecodeFeedback(UbHostSprayCc::EncodeFeedback(70000, 90000), marked, total);
+        NS_TEST_ASSERT_MSG_EQ(marked, 0xFFFFu, "marked count saturates");
+        NS_TEST_ASSERT_MSG_EQ(total, 0xFFFFu, "total count saturates");
+
+        for (RoutingType rt : {RoutingType::PER_FLOW_ALL_PATHS,
+                               RoutingType::PER_PACKET_ALL_PATHS,
+                               RoutingType::PER_FLOW_SHORTEST_PATHS,
+                               RoutingType::PER_PACKET_SHORTEST_PATHS})
+        {
+            NS_TEST_ASSERT_MSG_EQ(
+                MultipathSelectorIsValidForRoutingType(MultipathSelector::ADAPTIVE_RATE, rt),
+                RoutingTypeIsPerPacket(rt),
+                "ADAPTIVE_RATE is a per-packet selector");
+        }
+
+        GlobalValue::Bind("UB_CC_ALGO", EnumValue(CongestionCtrlAlgo::SPRAYCC));
+        NS_TEST_ASSERT_MSG_NE(DynamicCast<UbHostSprayCc>(UbCongestionControl::Create(UB_DEVICE)),
+                              nullptr,
+                              "SPRAYCC creates the host controller");
+        NS_TEST_ASSERT_MSG_NE(DynamicCast<UbSwitchSprayCc>(UbCongestionControl::Create(UB_SWITCH)),
+                              nullptr,
+                              "SPRAYCC creates the switch marker");
+        GlobalValue::Bind("UB_CC_ALGO", EnumValue(CongestionCtrlAlgo::CAQM));
+
+        // ADAPTIVE_RATE: equal backlog bytes on a 100G and a 400G output -> the 400G output drains
+        // 4x faster and must win; once it holds 8x the bytes the 100G output must win.
+        Ptr<Node> node = CreateObject<Node>();
+        InitNode(node, UB_SWITCH, 2);
+        DynamicCast<UbPort>(node->GetDevice(0))->SetDataRate(DataRate("100Gbps"));
+        DynamicCast<UbPort>(node->GetDevice(1))->SetDataRate(DataRate("400Gbps"));
+        Ptr<UbRoutingProcess> routing = node->GetObject<UbSwitch>()->GetRoutingProcess();
+        routing->SetAttribute("MultipathSelector", EnumValue(MultipathSelector::ADAPTIVE_RATE));
+        Ptr<UbQueueManager> qm = node->GetObject<UbSwitch>()->GetQueueManager();
+        RoutingKey key{};
+        key.sip = NodeIdToIp(1).Get();
+        key.dip = NodeIdToIp(42).Get();
+        key.dport = 4792;
+        key.routingType = RoutingType::PER_PACKET_SHORTEST_PATHS;
+        key.priority = 7;
+        qm->PushToVoq(0, 0, key.priority, 40000);
+        qm->PushToVoq(0, 1, key.priority, 40000);
+        for (uint16_t lb = 0; lb < 64; ++lb)
+        {
+            key.sport = lb;
+            bool shortest = false;
+            NS_TEST_ASSERT_MSG_EQ(routing->SelectOutPort(key, {0, 1}, {}, shortest),
+                                  1,
+                                  "equal bytes: the faster port has the smaller drain time");
+        }
+        qm->PushToVoq(0, 1, key.priority, 280000);
+        for (uint16_t lb = 0; lb < 64; ++lb)
+        {
+            key.sport = lb;
+            bool shortest = false;
+            NS_TEST_ASSERT_MSG_EQ(routing->SelectOutPort(key, {0, 1}, {}, shortest),
+                                  0,
+                                  "8x the bytes on the fast port: the slow port drains first");
+        }
+        Simulator::Destroy();
+    }
+};
+
+/**
+ * End to end: with the FlexSpray configuration (ADAPTIVE_RATE + TP-group fair share +
+ * MIN_DRAIN_TIME dispatch + SprayCC), a lane degrade on the *receiver's* port of one plane must
+ * not stall the sender's other planes: the in-flight cap bounds the backlog on the slow plane and
+ * dispatch moves segments to the healthy planes.
+ */
+class UbFlexSprayFarEndDegradeSystemTest : public TestCase
+{
+  public:
+    UbFlexSprayFarEndDegradeSystemTest()
+        : TestCase("UnifiedBus - FlexSpray rebalances around a far-end lane degrade")
+    {
+    }
+
+    void DoRun() override
+    {
+        SetDataDir(NS_TEST_SOURCEDIR);
+        const std::filesystem::path repoRoot = LocateRepoRoot();
+        const std::filesystem::path caseDir =
+            std::filesystem::path(CreateTempDirFilename("ub-flexspray-far-end-degrade"));
+        std::filesystem::remove_all(caseDir);
+        std::filesystem::create_directories(caseDir);
+        for (const char* f : {"node.csv", "topology.csv", "routing_table.csv",
+                              "transport_channel.csv", "network_attribute.txt"})
+        {
+            std::filesystem::copy_file(repoRoot / "scratch/2nodes_multiple-tp" / f, caseDir / f);
+        }
+        {
+            std::ofstream traffic(caseDir / "traffic.csv");
+            traffic << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
+                       "dependOnPhases\n0,0,1,40000000,URMA_WRITE,7,10ns,0,\n";
+        }
+        {
+            std::ofstream attrs(caseDir / "network_attribute.txt", std::ios::app);
+            attrs << "\nglobal UB_PARSE_TRACE_ENABLE \"false\"\n"
+                     "global UB_PACKET_TRACE_ENABLE \"false\"\n"
+                     "global UB_RECORD_PKT_TRACE \"false\"\n"
+                     "global UB_CC_ENABLED \"true\"\n"
+                     "global UB_CC_ALGO \"SPRAYCC\"\n"
+                     "default ns3::UbApp::RoutingType \"PER_PACKET_SHORTEST_PATHS\"\n"
+                     "default ns3::UbTransportChannel::RoutingType \"PER_PACKET_SHORTEST_PATHS\"\n"
+                     "default ns3::UbRoutingProcess::MultipathSelector \"ADAPTIVE_RATE\"\n"
+                     "default ns3::UbTransaction::TpgDispatchPolicy \"MIN_DRAIN_TIME\"\n"
+                     "default ns3::UbTransaction::TpgDispatchSlack \"0.1\"\n"
+                     "default ns3::UbSwitchAllocator::TpGroupFairShare \"true\"\n"
+                     "default ns3::UbTransportChannel::ResponseVl \"1\"\n"
+                     "default ns3::UbJetty::TaSegmentBytes \"16384\"\n";
+        }
+        {
+            // Node 1 is the receiver; its port 1 (plane 1) drops to 1/4 rate at 20 us.
+            std::ofstream health(caseDir / "link_health.csv");
+            health << "timeNs,nodeId,portId,action,value\n20000,1,1,DEGRADE,1/4\n";
+        }
+        auto [status, output] = RunQuickExampleAbsoluteCaseCommand(
+            CreateTempDirFilename("ub-flexspray-far-end-degrade.log"), "", "", caseDir);
+        NS_TEST_ASSERT_MSG_EQ(status, 0, "case should complete: " << output);
+        double doneUs = 0.0;
+        for (const auto& entry : std::filesystem::directory_iterator(caseDir / "runlog"))
+        {
+            if (entry.path().filename().string().rfind("TaskTrace", 0) != 0)
+            {
+                continue;
+            }
+            std::ifstream in(entry.path());
+            std::string line;
+            while (std::getline(in, line))
+            {
+                if (line.find("WQE Completes") != std::string::npos)
+                {
+                    doneUs = std::stoull(line.substr(0, line.find(','))) / 1e6;
+                }
+            }
+        }
+        // 40 MB over 3x400G, then 400+400+100G after 20 us: ideal ~357 us.
+        NS_TEST_ASSERT_MSG_GT(doneUs, 0.0, "transfer must complete");
+        NS_TEST_ASSERT_MSG_LT(doneUs, 357.0 * 1.04, "load must move off the degraded far-end plane");
+    }
+};
+
 class UbQuickExampleHelpTextSystemTest : public TestCase
 {
   public:
@@ -39952,3 +40113,13 @@ class UbTransactionExtensionsSuite : public TestSuite
         AddTestCase(new UbTransactionExtensionsRoundTripTest(true), TestCase::Duration::QUICK);
     }
 } g_ubTransactionExtensionsSuite;
+
+class UbFlexSpraySuite : public TestSuite
+{
+  public:
+    UbFlexSpraySuite() : TestSuite("unified-bus-flexspray", Type::UNIT)
+    {
+        AddTestCase(new UbFlexSprayUnitTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbFlexSprayFarEndDegradeSystemTest(), TestCase::Duration::QUICK);
+    }
+} g_ubFlexSpraySuite;

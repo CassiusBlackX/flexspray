@@ -307,6 +307,13 @@ The skill-layer toolchain validates **parameter keys** (whether a key exists in 
 Current examples from this repo's source of truth:
 
 - `ns3::UbSwitch::FlowControl`: `NONE`, `CBFC`, `CBFC_SHARED`, `PFC_FIXED`, `PFC_DYNAMIC`, `PFC_DYNAMIC_PAPER`
+- `global UB_CC_ALGO`: `CAQM`, `DCQCN`, `SPRAYCC` (packet-spray / multi-plane aware, see `ub-spraycc.h`)
+- `ns3::UbTransaction::TpgDispatchPolicy`: `FIRST_ADMISSIBLE` (default), `MIN_DRAIN_TIME`, `STATIC_RR`
+- `ns3::UbSwitchAllocator::TpGroupFairShare` (bool, default false), `ns3::UbTransportChannel::ResponseVl`
+  (default keeps the data VL), `ns3::UbTransportChannel::MaxActiveSendSegments` (default 2)
+- Optional case files: `link_health.csv` (`timeNs,nodeId,portId,action,value`; actions `DEGRADE`,
+  `RESTORE`, `ISOLATE`, `UNISOLATE`, `ISOLATE_NODE`, `UNISOLATE_NODE`); sampler
+  `global UB_GOODPUT_SAMPLE_INTERVAL_NS` writes `runlog/GoodputSample.csv`
 - `ns3::UbQueueManager::DynamicPfcResumeGapBytes`: dynamic PFC xon/xoff gap in bytes
 - `ns3::UbQueueManager::PaperDynamicPfcBeta`: paper-style dynamic PFC beta used by `PFC_DYNAMIC_PAPER`, the DCQCN paper reproduction mode for **"Congestion Control for Large-Scale RDMA Deployments"** (SIGCOMM 2015)
 
@@ -360,7 +367,11 @@ mechanical mapping from the confirmed profile to case attributes and route gener
   - `PER_PACKET_SHORTEST_PATHS` = RT bits `11`
 - `multipath_selector` maps to `default ns3::UbRoutingProcess::MultipathSelector "..."`.
 - Valid per-flow selectors: `HASH64`, `CRC32`, `TOEPLITZ`, `INGRESS_PORT_STRIPE`.
-- Valid per-packet selectors: `HASH64`, `CRC32`, `TOEPLITZ`, `ROUND_ROBIN`, `ADAPTIVE`.
+- Valid per-packet selectors: `HASH64`, `CRC32`, `TOEPLITZ`, `ROUND_ROBIN`, `ADAPTIVE`, `ADAPTIVE_RATE`.
+- `ADAPTIVE` scores candidates by raw local backlog bytes (VOQ of the packet's priority + egress).
+  `ADAPTIVE_RATE` divides that backlog, plus the downstream backlog implied by consumed CBFC credit
+  beyond the credit-return slack, by the candidate port's *current* rate, so lane-degraded outputs
+  and congested next hops are scored correctly. Both break ties with the per-packet hash.
 - Hash selectors consume the complete 17-byte routing key once: `sip`, `dip`, `sport/Lb`, `dport`, `priority`, and node salt. Do not add a separate entropy or packet-ordinal field.
 - `INGRESS_PORT_STRIPE` maps ingress port modulo candidate count; local injection falls back to full-key `HASH64`.
 - Invalid routing-type/selector combinations are rejected during `network_attribute.txt` loading.

@@ -90,7 +90,9 @@ UbRoutingProcess::GetTypeId()
                                 MultipathSelector::ADAPTIVE,
                                 "ADAPTIVE",
                                 MultipathSelector::INGRESS_PORT_STRIPE,
-                                "INGRESS_PORT_STRIPE"));
+                                "INGRESS_PORT_STRIPE",
+                                MultipathSelector::ADAPTIVE_RATE,
+                                "ADAPTIVE_RATE"));
     return tid;
 }
 
@@ -757,6 +759,13 @@ UbRoutingProcess::SelectCandidateFromView(RoutingKey& key,
     {
         const int outPort =
             UbRoutingPolicy::SelectAdaptive(key, candidates, m_nodeId, selectedShortestPath);
+        NS_ASSERT_MSG(outPort != -1, "No available output port found");
+        return outPort;
+    }
+    if (m_multipathSelector == MultipathSelector::ADAPTIVE_RATE)
+    {
+        const int outPort =
+            UbRoutingPolicy::SelectAdaptiveRate(key, candidates, m_nodeId, selectedShortestPath);
         NS_ASSERT_MSG(outPort != -1, "No available output port found");
         return outPort;
     }

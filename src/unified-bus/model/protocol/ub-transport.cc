@@ -270,6 +270,22 @@ TypeId UbTransportChannel::GetTypeId(void)
                       UintegerValue(1000),
                       MakeUintegerAccessor(&UbTransportChannel::m_defaultMaxInflightPacketSize),
                       MakeUintegerChecker<uint32_t>())
+        .AddAttribute("ResponseVl",
+                      "VL used by transport response packets (TPACK/TPNAK). Values >= 16 keep "
+                      "the VL of the acknowledged data packet (legacy). A higher-priority VL keeps "
+                      "small responses from being starved by per-packet input round-robin behind "
+                      "saturating data at shared outputs.",
+                      UintegerValue(UINT32_MAX),
+                      MakeUintegerAccessor(&UbTransportChannel::m_responseVl),
+                      MakeUintegerChecker<uint32_t>())
+        .AddAttribute("MaxOutstandingReadBytes",
+                      "Requester side: do not admit a new READ request segment while this many "
+                      "response bytes are still outstanding on the TP (0 = unlimited, legacy). "
+                      "Bounds the backlog a slow responder plane can accumulate so TPG dispatch "
+                      "moves new reads to faster planes.",
+                      UintegerValue(0),
+                      MakeUintegerAccessor(&UbTransportChannel::m_maxOutstandingReadBytes),
+                      MakeUintegerChecker<uint64_t>())
         .AddAttribute("MaxActiveSendSegments",
                       "Maximum WQE segments per TP that may be admitted but not fully sent "
                       "(shallow send pipeline depth).",
@@ -596,6 +612,12 @@ void UbTransportChannel::DoDispose()
     m_inboundTpMsnReferences.clear();
     m_inboundTaSsnReferences.clear();
     m_bufferedInboundPackets.clear();
+    if (m_congestionCtrl != nullptr) {
+        // Dispose explicitly so controllers cancel their timers (pacing, rate increase, state
+        // reset...) before the object is released; otherwise a pending event would fire on a
+        // freed controller (heap use-after-free, found with ASan on CAQM).
+        m_congestionCtrl->Dispose();
+    }
     m_congestionCtrl = nullptr;
     m_recvPsnWindow.Resize(0);
 }
@@ -764,8 +786,11 @@ void
 UbTransportChannel::NotifyDataPacketSent(const UbGbnPacketDescriptor& descriptor,
                                          Ptr<Packet> packet)
 {
+    // Report payload bytes, the same quantity the receiver-side controller accounts. Zero-payload
+    // TA responses keep one byte of *scheduling* progress; reporting it made CAQM's sender count
+    // bytes the receiver never acknowledges, leaking in-flight until the window floor deadlocked.
     m_congestionCtrl->OnSenderDataPacketSent(UbTpPsnSequence::ToWire(descriptor.logicalPsn),
-                                             descriptor.progressBytes);
+                                             descriptor.payloadBytes);
 
     if (descriptor.firstPacket) {
         FirstPacketSendsNotify(m_nodeId, descriptor.taskId, m_tpn, m_dstTpn,
@@ -2072,11 +2097,13 @@ UbTransportChannel::BuildTransportResponsePacket(const ReceivedDataPacketContext
                           ctx.ipv4Header.GetDestination(),
                           ctx.ipv4Header.GetSource());
     responsePacket->AddHeader(ctx.networkHeader);
+    const uint8_t responseVl = m_responseVl < 16 ? static_cast<uint8_t>(m_responseVl)
+                                                 : ctx.dataLinkHeader.GetPacketVL();
     UbDataLink::AddPacketHeader(responsePacket,
                                 false,
                                 true,
                                 ctx.dataLinkHeader.GetCreditTargetVL(),
-                                ctx.dataLinkHeader.GetPacketVL(),
+                                responseVl,
                                 ctx.dataLinkHeader.GetRoutingType(),
                                 UbDatalinkHeaderConfig::PACKET_IPV4);
     return responsePacket;
@@ -2206,6 +2233,14 @@ UbTransportChannel::UpdateReceiveWindowAndCollectCompletedTa(
     m_hasReceivedAnyPsn = true;
     m_maxRcvPsn = std::max(m_maxRcvPsn, ctx.psn);
     utils::UbUtils::AddTpPayloadBytes(m_nodeId, m_sport, true, ctx.payloadBytes);
+    if (m_outstandingReadBytes > 0) {
+        const uint64_t arrived = std::min<uint64_t>(m_outstandingReadBytes, ctx.payloadBytes);
+        m_outstandingReadBytes -= arrived;
+        if (arrived > 0 && m_maxOutstandingReadBytes > 0) {
+            // Freed read quota is a capacity transition for this TP's group.
+            TryContinueJettyTransmission();
+        }
+    }
     m_congestionCtrl->OnReceiverDataPacketReceived(ctx.psn,
                                                    ctx.payloadBytes,
                                                    ctx.networkHeader);
@@ -2393,6 +2428,9 @@ UbTransportChannel::TryContinueAcceptedWqeSegment(Ptr<UbWqeSegment> segment)
         return false;
     }
 
+    if (IsZeroPayloadReadRequest(segment)) {
+        m_outstandingReadBytes += segment->GetSize();
+    }
     segment->SetTpn(m_tpn);
     segment->SetResolvedTpIdentity(m_lifecycleOwner);
     segment->SetTpMsn(GetMsnCnt());
@@ -2412,6 +2450,12 @@ UbTransportChannel::CanAdmitWqeSegment(Ptr<const UbWqeSegment> segment) const
 bool
 UbTransportChannel::CanContinueAcceptedWqeSegment(Ptr<const UbWqeSegment> segment) const
 {
+    if (segment != nullptr && m_maxOutstandingReadBytes > 0 && m_outstandingReadBytes > 0 &&
+        segment->GetType() == UbTransactionOpcode::READ &&
+        segment->GetSegmentKind() == UbTransactionSegmentKind::REQUEST &&
+        m_outstandingReadBytes + segment->GetSize() > m_maxOutstandingReadBytes) {
+        return false;
+    }
     return segment != nullptr && !IsWqeSegmentLimited() && CanScheduleAnotherSegment();
 }
 
@@ -2577,8 +2621,8 @@ UbTransportChannel::GetDeliveryRateBps() const
 double
 UbTransportChannel::EstimateDrainTimeNs(uint64_t extraBytes) const
 {
-    const uint64_t backlogBytes =
-        GetUnsentPayloadBytes() + GetInflightPsns() * UB_MTU_BYTE + extraBytes;
+    const uint64_t backlogBytes = GetUnsentPayloadBytes() + GetInflightPsns() * UB_MTU_BYTE +
+                                  m_outstandingReadBytes + extraBytes;
     // Floor the rate so a member that stopped draining is strongly disfavoured but still finite.
     const double rate = std::max(GetDeliveryRateBps(), 1e6);
     return static_cast<double>(backlogBytes) * 8.0 * 1e9 / rate;

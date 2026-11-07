@@ -551,6 +551,22 @@ UbController::IsTpPathIsolated(const Ptr<UbTransportChannel>& tp) const
            m_isolatedPeerPorts.count({tp->GetDest(), tp->GetDport()}) != 0;
 }
 
+uint32_t
+UbController::GetRtpTpGroupSizeForTpn(uint32_t tpn) const
+{
+    const auto membership = m_rtpTpGroupByTpn.find(tpn);
+    if (membership == m_rtpTpGroupByTpn.end())
+    {
+        return 1;
+    }
+    const auto group = m_rtpTpGroups.find(membership->second);
+    if (group == m_rtpTpGroups.end() || group->second == nullptr)
+    {
+        return 1;
+    }
+    return std::max<uint32_t>(group->second->GetMemberCount(), 1);
+}
+
 void
 UbController::WakeRtpTpGroupsAfterIsolationChange()
 {

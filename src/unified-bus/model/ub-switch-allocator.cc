@@ -82,6 +82,12 @@ TypeId UbSwitchAllocator::GetTypeId(void)
                       TimeValue(NanoSeconds(5)),
                       MakeTimeAccessor(&UbSwitchAllocator::m_allocationTime),
                       MakeTimeChecker())
+        .AddAttribute("TpGroupFairShare",
+                      "Host egress: arbitrate TP queues by start-time fair queueing weighted by "
+                      "1/(TP group size), giving flows a fair share of pooled multi-plane ports.",
+                      BooleanValue(false),
+                      MakeBooleanAccessor(&UbSwitchAllocator::m_tpGroupFairShare),
+                      MakeBooleanChecker())
         .AddAttribute("EnableDirectAllocationCompletion",
                       "Synchronously start an idle egress port after allocation completes.",
                       BooleanValue(true),
@@ -310,8 +316,8 @@ UbSwitchAllocator::NotifyAllocationFinish(Ptr<UbPort> outPort)
 
 void UbSwitchAllocator::TriggerAllocator(Ptr<UbPort> outPort)
 {
-    std::string typeName = GetInstanceTypeId().GetName();
-    NS_LOG_DEBUG("[" << typeName << " TriggerAllocator] portId: " << outPort->GetIfIndex());
+    NS_LOG_DEBUG("[" << GetInstanceTypeId().GetName()
+                     << " TriggerAllocator] portId: " << outPort->GetIfIndex());
 
     auto outPortId = outPort->GetIfIndex();
 
@@ -322,13 +328,15 @@ void UbSwitchAllocator::TriggerAllocator(Ptr<UbPort> outPort)
 
     if (!GetEgressStatus(outPortId)) {
         // Detected failed output: no grant may commit to it.
-        NS_LOG_DEBUG("[" << typeName << " TriggerAllocator] output suspended: " << outPortId);
+        NS_LOG_DEBUG("[" << GetInstanceTypeId().GetName()
+                         << " TriggerAllocator] output suspended: " << outPortId);
         return;
     }
 
     if (m_running[outPortId]) {
         m_runAgain[outPortId] = true;
-        NS_LOG_DEBUG("[" << typeName << " TriggerAllocator] Allocator is running, will run again.");
+        NS_LOG_DEBUG("[" << GetInstanceTypeId().GetName()
+                         << " TriggerAllocator] Allocator is running, will run again.");
         return;
     }
     m_running[outPortId] = true;
@@ -369,6 +377,10 @@ void UbSwitchAllocator::ResizeIngressSources(uint32_t portsNum, uint32_t vlNum)
         i.resize(vlNum);
     }
     m_nonVoqIngressCount.resize(portsNum);
+    m_tpVirtualTime.resize(portsNum);
+    for (auto& v : m_tpVirtualTime) {
+        v.resize(vlNum, 0.0);
+    }
     m_inexactSummaryCount.resize(portsNum);
     m_nonEmptyByPriority.resize(portsNum);
     for (uint32_t port = 0; port < portsNum; ++port) {
@@ -520,6 +532,14 @@ UbSwitchAllocator::FindNextEligibleIngressQueue(uint32_t outPort,
     std::optional<IngressCandidate> bestAtOrAfterStart;
     std::optional<IngressCandidate> bestWrapped;
     uint32_t nonVoqQueueOrdinal = 0;
+    // TP-group fair share: min effective pass among eligible TP queues (ties keep RR order).
+    const bool fairShare = m_tpGroupFairShare && outPort < m_tpVirtualTime.size() &&
+                           priority < m_tpVirtualTime[outPort].size();
+    const double vtime = fairShare ? m_tpVirtualTime[outPort][priority] : 0.0;
+    std::optional<IngressCandidate> bestByPass;
+    double bestPass = 0.0;
+    uint32_t bestPassOrder = 0;
+    bool allEligibleAreTp = true;
 
     for (const auto& queue : queues) {
         uint32_t ingressQueueSlot;
@@ -542,6 +562,26 @@ UbSwitchAllocator::FindNextEligibleIngressQueue(uint32_t outPort,
         }
 
         IngressCandidate candidate{queue, ingressQueueSlot};
+        if (fairShare) {
+            Ptr<UbTransportChannel> tp = queue->GetIngressQueueType() == IngressQueueType::TP
+                                             ? DynamicCast<UbTransportChannel>(queue)
+                                             : nullptr;
+            if (tp == nullptr) {
+                allEligibleAreTp = false;
+            } else {
+                const double pass = std::max(tp->GetArbitrationPass(), vtime);
+                const uint32_t order = ingressQueueSlot >= startIngressQueueSlot
+                                           ? ingressQueueSlot - startIngressQueueSlot
+                                           : ingressQueueSlot + ingressQueueSlotCount -
+                                                 startIngressQueueSlot;
+                if (!bestByPass.has_value() || pass < bestPass ||
+                    (pass == bestPass && order < bestPassOrder)) {
+                    bestByPass = candidate;
+                    bestPass = pass;
+                    bestPassOrder = order;
+                }
+            }
+        }
         if (ingressQueueSlot >= startIngressQueueSlot) {
             if (!bestAtOrAfterStart.has_value() ||
                 ingressQueueSlot < bestAtOrAfterStart->ingressQueueSlot) {
@@ -553,10 +593,40 @@ UbSwitchAllocator::FindNextEligibleIngressQueue(uint32_t outPort,
         }
     }
 
+    if (fairShare && allEligibleAreTp && bestByPass.has_value()) {
+        return bestByPass;
+    }
     if (bestAtOrAfterStart.has_value()) {
         return bestAtOrAfterStart;
     }
     return bestWrapped;
+}
+
+void
+UbSwitchAllocator::ChargeTpGroupFairShare(uint32_t outPort,
+                                          uint32_t priority,
+                                          const Ptr<UbIngressQueue>& queue,
+                                          uint32_t bytes)
+{
+    if (!m_tpGroupFairShare || queue == nullptr ||
+        queue->GetIngressQueueType() != IngressQueueType::TP || outPort >= m_tpVirtualTime.size() ||
+        priority >= m_tpVirtualTime[outPort].size()) {
+        return;
+    }
+    Ptr<UbTransportChannel> tp = DynamicCast<UbTransportChannel>(queue);
+    if (tp == nullptr) {
+        return;
+    }
+    // Weight 1/k for a member of a k-plane TP group: a flow pooled over k ports gets about 1/k of
+    // each, so a plane-limited flow keeps a flow-level share of the ports it shares with
+    // many-plane flows. (A single pass shared by the whole group across ports was evaluated and
+    // rejected: it serialises a flow's packets across ports and synchronises receivers.)
+    Ptr<UbController> ctrl = NodeList::GetNode(m_nodeId)->GetObject<UbController>();
+    const uint32_t groupSize = ctrl == nullptr ? 1 : ctrl->GetRtpTpGroupSizeForTpn(tp->GetTpn());
+    double& vtime = m_tpVirtualTime[outPort][priority];
+    const double start = std::max(tp->GetArbitrationPass(), vtime);
+    vtime = start;
+    tp->SetArbitrationPass(start + static_cast<double>(bytes) * groupSize);
 }
 
 void UbSwitchAllocator::CheckDeadlock()
@@ -749,8 +819,23 @@ void UbRoundRobinAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
         }
 
         auto packet = ingressQueue->GetNextPacket();
+        if (packet == nullptr) {
+            // The grant was decided at wakeup; a transport queue can become congestion-control
+            // limited before the commit (e.g. a window-reducing ACK arrived in between). Nothing
+            // to move: release the grant and re-arbitrate the remaining sources. The limited
+            // queue now reports IsLimited() and is skipped; the re-run commits one allocation
+            // time later, so this cannot recurse.
+            ClearActiveIngressQueue(outPortId);
+            m_running[outPortId] = false;
+            m_runAgain[outPortId] = false;
+            if (HasNonEmptyIngress(outPortId)) {
+                TriggerAllocator(outPort);
+            }
+            return;
+        }
         auto inPortId = ingressQueue->GetInPortId();
         auto priority = ingressQueue->GetIngressPriority();
+        ChargeTpGroupFairShare(outPortId, priority, ingressQueue, packet->GetSize());
         auto packetEntry = std::make_tuple(inPortId, priority, packet);
         auto context = MakeAllocatorFlowControlEventContext(packet,
                                                             ingressQueue,
@@ -1072,6 +1157,11 @@ void UbDwrrAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
                 }
 
                 auto packet = q->GetNextPacket();
+                if (packet == nullptr) {
+                    // Transport became congestion-control limited after selection: stop the
+                    // burst without consuming deficit (see UbRoundRobinAllocator).
+                    break;
+                }
                 auto inPortId = q->GetInPortId();
                 auto packetEntry = std::make_tuple(inPortId, priority, packet);
                 auto context = MakeAllocatorFlowControlEventContext(packet,

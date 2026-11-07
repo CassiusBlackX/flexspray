@@ -61,6 +61,7 @@ build_lib(
 	model/protocol/ub-congestion-control.cc
 	model/protocol/ub-caqm.cc
 	model/protocol/ub-dcqcn.cc
+	model/protocol/ub-spraycc.cc
 	model/protocol/ub-flow-control.cc
 	model/protocol/ub-cbfc.cc
 	model/protocol/ub-pfc.cc
@@ -113,6 +114,7 @@ build_lib(
 	model/protocol/ub-congestion-control.h
 	model/protocol/ub-caqm.h
 	model/protocol/ub-dcqcn.h
+	model/protocol/ub-spraycc.h
 	model/protocol/ub-flow-control.h
 	model/protocol/ub-cbfc.h
 	model/protocol/ub-pfc.h

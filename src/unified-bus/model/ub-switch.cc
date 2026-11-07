@@ -846,7 +846,10 @@ bool UbSwitch::SinkTpDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Pars
             dstTpn,
             headers.ipv4Header.GetSource(),
             headers.ipv4Header.GetDestination(),
-            headers.datalinkPacketHeader.GetPacketVL());
+            headers.datalinkPacketHeader.GetPacketVL(),
+            // Transport responses may ride a dedicated response VL (UbTransportChannel::ResponseVl);
+            // the destination TPN already identifies the endpoint, so do not match priority.
+            UbTransportChannel::IsTransportResponseOpcode(headers.transportHeader.GetTPOpcode()));
     if (resolution.state == UbInboundTpState::RETIRED_EXACT)
     {
         NS_LOG_DEBUG("Ignoring stale packet for retired TP channel key");

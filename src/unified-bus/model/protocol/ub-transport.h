@@ -382,10 +382,16 @@ public:
     uint32_t GetOutstandingUnackedSegmentCount() const;
     bool CanScheduleAnotherSegment() const;
 
+    /** Virtual pass used by TP-group fair-share arbitration at the host egress allocator. */
+    double GetArbitrationPass() const { return m_arbitrationPass; }
+    void SetArbitrationPass(double pass) { m_arbitrationPass = pass; }
+
     /** Payload bytes of admitted segments not yet put on the wire. */
     uint64_t GetUnsentPayloadBytes() const;
     /** Sent but not yet cumulatively acknowledged packets. */
     uint64_t GetInflightPsns() const { return m_psnSndNxt - m_psnSndUna; }
+    /** READ response bytes requested over this TP that have not arrived yet. */
+    uint64_t GetOutstandingReadBytes() const { return m_outstandingReadBytes; }
     /**
      * Smoothed delivery rate in bit/s, measured from cumulative-ACK progress only while this TP
      * was backlogged. Falls back to the local port rate before the first valid sample.
@@ -734,6 +740,11 @@ private:
 
     uint32_t m_maxInflightPacketSize;
     uint32_t m_maxActiveSendSegments{2};
+    uint32_t m_responseVl{UINT32_MAX};
+    // Requester-side READ accounting: response bytes requested over this TP and not yet received.
+    uint64_t m_outstandingReadBytes{0};
+    uint64_t m_maxOutstandingReadBytes{0};
+    double m_arbitrationPass{0.0};
     // Delivery-rate estimator state (see GetDeliveryRateBps).
     Time m_deliveryRateMinInterval;
     double m_deliveryRateGain{0.25};

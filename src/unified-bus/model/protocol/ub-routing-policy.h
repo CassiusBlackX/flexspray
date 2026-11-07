@@ -24,6 +24,17 @@ class UbRoutingPolicy
                           const UbRoutingCandidateView& candidates,
                           uint32_t nodeId,
                           bool& selectedShortestPath);
+    /**
+     * Rate- and credit-aware adaptive selection: score = (VOQ bytes for this priority + egress
+     * queue bytes + downstream occupancy implied by consumed credit for this VL) / current port
+     * rate, compared in integer picoseconds. Downstream occupancy lets a switch see congestion one
+     * hop ahead; rate normalisation makes lane-degraded ports look as loaded as they are. Ties use
+     * the per-packet flow hash (which carries the PSN spray salt).
+     */
+    static int SelectAdaptiveRate(const RoutingKey& key,
+                                  const UbRoutingCandidateView& candidates,
+                                  uint32_t nodeId,
+                                  bool& selectedShortestPath);
     static int SelectAdaptive(const RoutingKey& key,
                               const UbRoutingCandidateView& candidates,
                               uint32_t nodeId,

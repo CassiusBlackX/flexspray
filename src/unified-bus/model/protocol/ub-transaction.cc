@@ -4,6 +4,7 @@
 #include "ub-transaction-rules.h"
 #include "ub-ctp.h"
 
+#include "ns3/double.h"
 #include "ns3/hash.h"
 #include "ns3/log.h"
 #include "ns3/simulator.h"
@@ -136,7 +137,15 @@ TypeId UbTransaction::GetTypeId(void)
                             UbTpgDispatchPolicy::MIN_DRAIN_TIME,
                             "MIN_DRAIN_TIME",
                             UbTpgDispatchPolicy::STATIC_RR,
-                            "STATIC_RR"));
+                            "STATIC_RR"))
+        .AddAttribute(
+            "TpgDispatchSlack",
+            "MIN_DRAIN_TIME only: defer a segment (wait for a better member) when the best "
+            "admissible member's drain-time estimate exceeds the best live member's by more than "
+            "this fraction. Negative disables deferral.",
+            DoubleValue(-1.0),
+            MakeDoubleAccessor(&UbTransaction::m_tpgDispatchSlack),
+            MakeDoubleChecker<double>());
     return tid;
 }
 
@@ -1202,6 +1211,7 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
         Ptr<UbController> ownerController = GetOwnerController();
         const bool scoreMembers = m_tpgDispatchPolicy == UbTpgDispatchPolicy::MIN_DRAIN_TIME;
         double bestDrainNs = 0.0;
+        double bestLiveDrainNs = -1.0;
         bool hasLiveMember = false;
         for (uint32_t offset = 0; offset < selectedGroup->GetMemberCount(); ++offset)
         {
@@ -1235,6 +1245,14 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
                 }
                 break;
             }
+            if (scoreMembers && m_tpgDispatchSlack >= 0.0)
+            {
+                const double liveNs = transport->EstimateDrainTimeNs(segment->GetSize());
+                if (bestLiveDrainNs < 0.0 || liveNs < bestLiveDrainNs)
+                {
+                    bestLiveDrainNs = liveNs;
+                }
+            }
             if (transport->CanAdmitWqeSegment(segment))
             {
                 if (!scoreMembers)
@@ -1252,6 +1270,14 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
                     admittedTp = transport;
                 }
             }
+        }
+        if (admittedTp != nullptr && scoreMembers && m_tpgDispatchSlack >= 0.0 &&
+            bestDrainNs > bestLiveDrainNs * (1.0 + m_tpgDispatchSlack))
+        {
+            // A clearly faster plane will free capacity soon: wait for it rather than queue the
+            // segment behind a slow plane. The group's capacity transitions wake this queue.
+            admittedTp = nullptr;
+            selectedGroupIndex = UINT32_MAX;
         }
         if (admittedTp == nullptr)
         {

@@ -2,6 +2,7 @@
 #include "ns3/ub-congestion-control.h"
 #include "ns3/ub-caqm.h"
 #include "ns3/ub-dcqcn.h"
+#include "ns3/ub-spraycc.h"
 #include "ns3/boolean.h"
 #include "ns3/enum.h"
 #include "ns3/ub-switch.h"
@@ -18,7 +19,9 @@ GlobalValue g_congestionCtrlAlgo =
                 MakeEnumChecker(CongestionCtrlAlgo::CAQM,
                                 "CAQM",
                                 CongestionCtrlAlgo::DCQCN,
-                                "DCQCN"));
+                                "DCQCN",
+                                CongestionCtrlAlgo::SPRAYCC,
+                                "SPRAYCC"));
 
 GlobalValue g_congestionCtrlEnabled =
     GlobalValue("UB_CC_ENABLED",
@@ -72,6 +75,10 @@ Ptr<UbCongestionControl> UbCongestionControl::Create(UbNodeType_t nodeType)
         return CreateObject<UbHostDcqcn>();
     } else if (algo == DCQCN && nodeType == UB_SWITCH) {
         return CreateObject<UbSwitchDcqcn>();
+    } else if (algo == SPRAYCC && nodeType == UB_DEVICE) {
+        return CreateObject<UbHostSprayCc>();
+    } else if (algo == SPRAYCC && nodeType == UB_SWITCH) {
+        return CreateObject<UbSwitchSprayCc>();
     } else {
         // Other congestion control algorithms to be extended
         return nullptr;

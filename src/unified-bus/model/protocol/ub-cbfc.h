@@ -26,6 +26,7 @@ public:
     virtual void OnDataPacketReceived(Ptr<Packet> p) override;
     virtual void OnIngressEnqueued(const UbFlowControlEventContext& context) override;
     int32_t GetCrdToReturn(uint8_t vlId);
+    uint64_t GetDownstreamBacklogBytes(uint8_t vl) const override;
     void SetCrdToReturn(uint8_t vlId, int32_t consumeCell, Ptr<UbPort> targetPort);
     void UpdateCrdToReturn(uint8_t vlId, int32_t consumeCell, Ptr<UbPort> targetPort);
     bool CbfcConsumeCrd(Ptr<Packet> p);
@@ -53,6 +54,7 @@ protected:
     } m_cbfcCfg {};
 
     std::vector<int32_t>  m_crdTxfree;      // 发送端口每个vl信用证
+    int32_t m_initCrdTxfreeCells {0};       // initial per-VL transmit credit (cells)
     std::vector<int32_t>  m_crdToReturn;    // 用于记录每个vl需要返回的信用证
     std::vector<bool> m_creditBlockedLast;  // 上一次是否因 credit 不足而阻塞
     uint8_t m_lastPiggybackVl {0};
@@ -95,9 +97,11 @@ public:
     void OnEgressEnqueued(const UbFlowControlEventContext& context) override;
     void OnControlFrameReceived(Ptr<Packet> p) override;
     void OnDataPacketReceived(Ptr<Packet> p) override;
+    uint64_t GetDownstreamBacklogBytes(uint8_t vl) const override;
 
 private:
     bool CbfcSharedConsumeCrd(Ptr<Packet> p);
+    int32_t m_initShareCrdCells {0};
     bool CbfcSharedRestoreCrd(Ptr<Packet> p);
     bool RestoreSharedDataPacketCredit(Ptr<Packet> p);
     int32_t m_shareCrd {0};

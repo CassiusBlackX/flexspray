@@ -330,6 +330,7 @@ enum class MultipathSelector : uint8_t {
     ROUND_ROBIN = 3,
     ADAPTIVE = 4,
     INGRESS_PORT_STRIPE = 5,
+    ADAPTIVE_RATE = 6,  //!< per-packet: min (local + downstream-credit backlog) / port rate
 };
 
 constexpr const char*
@@ -366,6 +367,8 @@ MultipathSelectorToString(MultipathSelector selector)
         return "ADAPTIVE";
     case MultipathSelector::INGRESS_PORT_STRIPE:
         return "INGRESS_PORT_STRIPE";
+    case MultipathSelector::ADAPTIVE_RATE:
+        return "ADAPTIVE_RATE";
     }
     return "UNKNOWN";
 }
@@ -399,6 +402,7 @@ MultipathSelectorIsValidForRoutingType(MultipathSelector selector, RoutingType r
         return true;
     case MultipathSelector::ROUND_ROBIN:
     case MultipathSelector::ADAPTIVE:
+    case MultipathSelector::ADAPTIVE_RATE:
         return RoutingTypeIsPerPacket(routingType);
     case MultipathSelector::INGRESS_PORT_STRIPE:
         return !RoutingTypeIsPerPacket(routingType);

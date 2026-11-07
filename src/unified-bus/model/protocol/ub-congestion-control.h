@@ -15,6 +15,7 @@ class UbTransportChannel;
 enum CongestionCtrlAlgo {
     CAQM,
     DCQCN,
+    SPRAYCC,
 };
 
 /**

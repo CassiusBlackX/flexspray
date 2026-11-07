@@ -115,6 +115,16 @@ protected:
     std::vector<std::vector<uint32_t>> m_nonEmptyByPriority;
     bool IsVlProvablyEmpty(uint32_t outPort, uint32_t priority) const;
     void ResizeIngressSources(uint32_t portsNum, uint32_t vlNum);
+    // TP-group fair share (host egress): start-time fair queueing among TP queues where a TP's
+    // virtual pass advances by packet bytes x (members of its TP group). A flow spread over k
+    // planes then gets ~1/k of a port per member, so plane-limited flows sharing a port with
+    // many-plane flows keep a flow-level fair share of the pooled ports.
+    bool m_tpGroupFairShare{false};
+    std::vector<std::vector<double>> m_tpVirtualTime;
+    void ChargeTpGroupFairShare(uint32_t outPort,
+                                uint32_t priority,
+                                const Ptr<UbIngressQueue>& queue,
+                                uint32_t bytes);
     bool m_enableDirectAllocationCompletion = true;
     std::vector<PortEventState> m_portEventState;
     EventId m_deadlockEvent;

@@ -62,6 +62,7 @@ void UbCbfc::Init(uint8_t flitLen, uint8_t nFlitPerCell, uint8_t retCellGrainDat
     g_ub_vl_num.GetValue(val);
     int ubVlNum = val.Get();
     m_crdTxfree.resize(ubVlNum, portTxfree);
+    m_initCrdTxfreeCells = portTxfree;
     m_crdToReturn.resize(ubVlNum, 0);
     m_creditBlockedLast.resize(ubVlNum, false);
     m_nodeId = nodeId;
@@ -104,6 +105,20 @@ void UbCbfc::DoDispose()
 {
     NS_LOG_FUNCTION(this);
     Object::DoDispose();
+}
+
+uint64_t
+UbCbfc::GetDownstreamBacklogBytes(uint8_t vl) const
+{
+    if (vl >= m_crdTxfree.size())
+    {
+        return 0;
+    }
+    const int64_t consumed = static_cast<int64_t>(m_initCrdTxfreeCells) - m_crdTxfree[vl] -
+                             m_cbfcCfg.m_ctrlCrdRtrThldCells;
+    return consumed > 0 ? static_cast<uint64_t>(consumed) * m_cbfcCfg.m_flitLen *
+                              m_cbfcCfg.m_nFlitPerCell
+                        : 0;
 }
 
 bool UbCbfc::IsFcLimited(Ptr<UbIngressQueue> ingressQ)
@@ -537,6 +552,7 @@ void UbCbfcSharedCredit::Init(uint8_t flitLen, uint8_t nFlitPerCell, uint8_t ret
                  reservedPerVlCells, ctrlCrdRtrThldCells, nodeId, portId);
 
     m_shareCrd = sharedInitCells;
+    m_initShareCrdCells = sharedInitCells;
     m_reservedPerVlCells = reservedPerVlCells;
 
     NS_LOG_DEBUG("NodeId: " << m_nodeId
@@ -558,6 +574,20 @@ void UbCbfcSharedCredit::Init(uint8_t flitLen, uint8_t nFlitPerCell, uint8_t ret
 FcType UbCbfcSharedCredit::GetFcType()
 {
     return FcType::CBFC_SHARED;
+}
+
+uint64_t
+UbCbfcSharedCredit::GetDownstreamBacklogBytes(uint8_t vl) const
+{
+    if (vl >= m_crdTxfree.size())
+    {
+        return 0;
+    }
+    const int64_t consumed = static_cast<int64_t>(m_initShareCrdCells) + m_initCrdTxfreeCells -
+                             m_shareCrd - m_crdTxfree[vl] - m_cbfcCfg.m_ctrlCrdRtrThldCells;
+    return consumed > 0 ? static_cast<uint64_t>(consumed) * m_cbfcCfg.m_flitLen *
+                              m_cbfcCfg.m_nFlitPerCell
+                        : 0;
 }
 
 bool UbCbfcSharedCredit::IsFcLimited(Ptr<UbIngressQueue> ingressQ)

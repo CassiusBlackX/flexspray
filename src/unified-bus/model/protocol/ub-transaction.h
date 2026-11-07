@@ -653,6 +653,7 @@ enum class UbTpgDispatchPolicy : uint32_t
         UbTargetExecutor m_targetExecutor;
         Time m_targetExecutionDelay{NanoSeconds(0)};
         UbTpgDispatchPolicy m_tpgDispatchPolicy{UbTpgDispatchPolicy::FIRST_ADMISSIBLE};
+        double m_tpgDispatchSlack{-1.0};
         bool m_targetExecutionStarted{false};
     };
 
