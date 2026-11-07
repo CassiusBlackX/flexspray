@@ -2057,6 +2057,7 @@ void UbUtils::Destroy()
     goodput_sampler_events.clear();
     goodput_sampler_enabled = false;
     goodput_payload_bytes.clear();
+    goodput_reorder.clear();
 
     if (UbLifecycleTrace::GetLevel() != UbLifecycleTraceLevel::OFF)
     {
@@ -2291,10 +2292,12 @@ UbUtils::StartGoodputSampler()
         return;
     }
     goodput_payload_bytes.assign(NodeList::GetNNodes(), {});
+    goodput_reorder.assign(NodeList::GetNNodes(), {});
     goodput_sampler_events.assign(NodeList::GetNNodes(), EventId());
     for (uint32_t nodeId = 0; nodeId < NodeList::GetNNodes(); ++nodeId)
     {
         goodput_payload_bytes[nodeId].assign(NodeList::GetNode(nodeId)->GetNDevices(), {0, 0});
+        goodput_reorder[nodeId].assign(NodeList::GetNode(nodeId)->GetNDevices(), {0, 0, 0});
     }
     goodput_sampler_enabled = true;
     for (uint32_t nodeId = 0; nodeId < NodeList::GetNNodes(); ++nodeId)
@@ -2310,8 +2313,10 @@ UbUtils::GoodputSampleTick(uint32_t nodeId, uint32_t intervalNs)
     Ptr<Node> node = NodeList::GetNode(nodeId);
     const std::string fileName = trace_path + "runlog/GoodputSample.csv";
     const std::string header =
-        "time_ns,node,port,rate_bps,tx_wire_bytes,rx_wire_bytes,tx_payload_bytes,rx_payload_bytes";
+        "time_ns,node,port,rate_bps,tx_wire_bytes,rx_wire_bytes,tx_payload_bytes,rx_payload_bytes,"
+        "queue_bytes,fc_blocked_ns,ooo_pkts,max_reorder_psn,max_ooo_buffered";
     const uint64_t nowNs = static_cast<uint64_t>(Simulator::Now().GetNanoSeconds());
+    Ptr<UbSwitch> sw = node->GetObject<UbSwitch>();
     for (uint32_t portId = 0; portId < node->GetNDevices(); ++portId)
     {
         Ptr<UbPort> port = DynamicCast<UbPort>(node->GetDevice(portId));
@@ -2337,6 +2342,25 @@ UbUtils::GoodputSampleTick(uint32_t nodeId, uint32_t intervalNs)
         row += std::to_string(payload[0]);
         row += ',';
         row += std::to_string(payload[1]);
+        // Output queue at this port: switch VOQ toward it plus the port's egress queue.
+        uint64_t queueBytes = port->GetUbQueue() != nullptr ? port->GetUbQueue()->GetCurrentBytes() : 0;
+        if (sw != nullptr && sw->GetQueueManager() != nullptr)
+        {
+            queueBytes += sw->GetQueueManager()->GetTotalOutPortBufferUsed(portId);
+        }
+        row += ',';
+        row += std::to_string(queueBytes);
+        row += ',';
+        row += std::to_string(port->GetFlowControl() != nullptr
+                                  ? port->GetFlowControl()->GetCreditBlockedNs()
+                                  : 0);
+        const auto& reorder = goodput_reorder[nodeId][portId];
+        row += ',';
+        row += std::to_string(reorder[0]);
+        row += ',';
+        row += std::to_string(reorder[1]);
+        row += ',';
+        row += std::to_string(reorder[2]);
         AppendCsvRow(fileName, header, row);
     }
     goodput_sampler_events[nodeId] =

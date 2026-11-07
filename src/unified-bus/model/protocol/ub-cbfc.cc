@@ -65,6 +65,7 @@ void UbCbfc::Init(uint8_t flitLen, uint8_t nFlitPerCell, uint8_t retCellGrainDat
     m_initCrdTxfreeCells = portTxfree;
     m_crdToReturn.resize(ubVlNum, 0);
     m_creditBlockedLast.resize(ubVlNum, false);
+    m_creditBlockedSinceNs.assign(ubVlNum, -1);
     m_nodeId = nodeId;
     m_portId = portId;
     NS_LOG_DEBUG("NodeId: " << m_nodeId
@@ -121,6 +122,36 @@ UbCbfc::GetDownstreamBacklogBytes(uint8_t vl) const
                         : 0;
 }
 
+void
+UbCbfc::RecordCreditBlockTransition(uint32_t vl, bool blocked)
+{
+    if (vl >= m_creditBlockedSinceNs.size()) {
+        return;
+    }
+    const int64_t now = Simulator::Now().GetNanoSeconds();
+    if (blocked) {
+        m_creditBlockedSinceNs[vl] = now;
+    } else if (m_creditBlockedSinceNs[vl] >= 0) {
+        m_creditBlockedNs += static_cast<uint64_t>(now - m_creditBlockedSinceNs[vl]);
+        m_creditBlockedSinceNs[vl] = -1;
+    }
+}
+
+uint64_t
+UbCbfc::GetCreditBlockedNs() const
+{
+    // Wall time with at least one VL blocked would need interval union; per-VL sum is reported
+    // (bulk traffic uses one data VL, so the two coincide in the FlexSpray study).
+    uint64_t total = m_creditBlockedNs;
+    const int64_t now = Simulator::Now().GetNanoSeconds();
+    for (int64_t since : m_creditBlockedSinceNs) {
+        if (since >= 0) {
+            total += static_cast<uint64_t>(now - since);
+        }
+    }
+    return total;
+}
+
 bool UbCbfc::IsFcLimited(Ptr<UbIngressQueue> ingressQ)
 {
     uint32_t nextPktSize = 0;
@@ -145,6 +176,7 @@ bool UbCbfc::IsFcLimited(Ptr<UbIngressQueue> ingressQ)
                                         static_cast<uint32_t>(m_cbfcCfg.m_flitLen) *
                                             m_cbfcCfg.m_nFlitPerCell);
         m_creditBlockedLast[vl] = blocked;
+        RecordCreditBlockTransition(vl, blocked);
     }
     if (blocked) {
         NS_LOG_INFO("Flow Control Credit Limited,outPort:{" << ingressQ->GetOutPortId() << "} VL:{"

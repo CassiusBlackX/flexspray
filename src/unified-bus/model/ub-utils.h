@@ -377,6 +377,20 @@ public:
         }
         goodput_payload_bytes[nodeId][portId][rx ? 1 : 0] += bytes;
     }
+    /** Receiver reorder statistics for the goodput sampler: a packet arrived `distance` PSNs ahead
+     *  of the next expected PSN while the TP held `buffered` out-of-order packets. */
+    static void AddRxReorder(uint32_t nodeId, uint32_t portId, uint64_t distance, uint64_t buffered)
+    {
+        if (!goodput_sampler_enabled || nodeId >= goodput_reorder.size() ||
+            portId >= goodput_reorder[nodeId].size())
+        {
+            return;
+        }
+        auto& r = goodput_reorder[nodeId][portId];
+        r[0] += distance > 0 ? 1 : 0;
+        r[1] = std::max(r[1], distance);
+        r[2] = std::max(r[2], buffered);
+    }
     void StartGoodputSampler();
     static void GoodputSampleTick(uint32_t nodeId, uint32_t intervalNs);
 
@@ -515,6 +529,8 @@ private:
     // Goodput sampler (UB_GOODPUT_SAMPLE_INTERVAL_NS): per [node][port] {tx, rx} TP payload bytes.
     inline static bool goodput_sampler_enabled = false;
     inline static std::vector<std::vector<std::array<uint64_t, 2>>> goodput_payload_bytes;
+    // per (node, port): {out-of-order packets, max reorder distance (PSN), max per-TP OOO buffer}
+    inline static std::vector<std::vector<std::array<uint64_t, 3>>> goodput_reorder;
     inline static std::vector<ns3::EventId> goodput_sampler_events;
     inline static std::map<std::pair<uint32_t, uint32_t>, ns3::EventId> queue_sampler_events;
 

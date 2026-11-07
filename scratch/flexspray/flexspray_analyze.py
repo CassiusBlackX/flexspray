@@ -76,6 +76,7 @@ def bulk_flows(meta, tasks):
         src, dst = (t["dst"], t["src"]) if t["op"] == "URMA_READ" else (t["src"], t["dst"])
         planes = sorted(set(hosts[src]["planes"]) & set(hosts[dst]["planes"]))
         flows.append(dict(task=t["task"], src=src, dst=dst, bits=t["bytes"] * 8.0, planes=planes,
+                          release_us=t.get("delay_ns", 0) / 1000.0,
                           cross=hosts[src]["server"] != hosts[dst]["server"],
                           ssrv=hosts[src]["server"], dsrv=hosts[dst]["server"], cls=t["cls"]))
     return flows
@@ -134,8 +135,66 @@ def solve_lambda(meta, flows, caps_list, durations, ack):
     return res.x[lam]
 
 
-def _capacity_rows(flows, cap, up, down, var, ack):
-    """Yield (key, [(var_index, weight)], capacity) port/L1 constraint rows for one phase."""
+def drained_after_fault(meta, samples):
+    """Wire bytes that still crossed each isolated resource after t_f (graceful isolation drains).
+
+    Returns {(group, key): bytes} with group in eg/ing (device port, key=(dev, plane)) and l1u/l1d
+    (L1 aggregate, key=(plane, server)), plus a summary dict. The simulator lets queued and
+    in-flight packets of an isolated port drain; the LP bound gets the same allowance so the bound
+    and the run describe the same system (otherwise the bound assumes capacity vanishes at t_f and
+    the efficiency can exceed 1). The drained bytes are also the *exposure*: what a hard link-down
+    at t_f would have lost and had to resend."""
+    if not meta.get("fault_rows"):
+        return {}, {}
+    tf_ns = meta["fault_ns"]
+    hosts = meta["hosts"]
+    l1_by_node = {v: tuple(map(int, k.split(","))) for k, v in meta["l1"].items()}
+    up_port = {v: tuple(map(int, k.split(","))) for k, v in meta["l1_up_port"].items()}
+    allow = {}
+    last_ns = tf_ns
+
+    def after(node, port):
+        nonlocal last_ns
+        s = samples.get((node, port))
+        if not s:
+            return 0, 0
+        ts = [x[0] for x in s]
+        import bisect
+        i0 = max(0, bisect.bisect_right(ts, tf_ns) - 1)
+        tx = s[-1][4] - s[i0][4]
+        rx = s[-1][5] - s[i0][5]
+        for i in range(len(s) - 1, i0, -1):
+            if s[i][4] != s[i - 1][4] or s[i][5] != s[i - 1][5]:
+                last_ns = max(last_ns, s[i][0])
+                break
+        return tx, rx
+
+    for (_, node, port, action, _v) in meta["fault_rows"]:
+        if action == "ISOLATE_NODE" and node in l1_by_node:
+            p, s_ = l1_by_node[node]
+            for h in hosts:
+                if h["server"] == s_ and p in h["ports"]:
+                    tx, rx = after(h["id"], h["ports"][p])
+                    allow[("eg", (h["id"], p))] = tx
+                    allow[("ing", (h["id"], p))] = rx
+        elif action == "ISOLATE" and node in l1_by_node:
+            p, s_ = l1_by_node[node]
+            tx, rx = after(node, port)  # L1 side of the uplink: tx = up, rx = down
+            allow[("l1u", (p, s_))] = tx
+            allow[("l1d", (p, s_))] = rx
+        elif action == "ISOLATE" and node < len(hosts):
+            h = hosts[node]
+            p = next(pl for pl, pt in h["ports"].items() if pt == port)
+            tx, rx = after(node, port)
+            allow[("eg", (node, p))] = tx
+            allow[("ing", (node, p))] = rx
+    total = sum(allow.values())
+    summary = dict(exposure_bytes=total, drain_us=(last_ns - tf_ns) / 1000.0 if total else 0.0)
+    return allow, summary
+
+
+def _capacity_rows(flows, cap, up, down, var, ack, allow=None):
+    """Yield ([(var_index, weight)], capacity, allowance_bytes) constraint rows for one phase."""
     data_w = (MTU + DATA_HDR) / MTU
     ack_w = ack / MTU
     groups = {"eg": collections.defaultdict(list), "ing": collections.defaultdict(list),
@@ -150,15 +209,82 @@ def _capacity_rows(flows, cap, up, down, var, ack):
                 groups["l1d"][(p, f["dsrv"])].append((v, data_w)); groups["l1u"][(p, f["dsrv"])].append((v, ack_w))
     for name, capd in (("eg", cap), ("ing", cap), ("l1u", up), ("l1d", down)):
         for key, terms in groups[name].items():
-            yield terms, capd.get(key, 0.0)
+            yield terms, capd.get(key, 0.0), (allow or {}).get((name, key), 0.0)
 
 
-def ideal_makespan_us(meta, flows, ack):
+def ideal_makespan_timeindexed_us(meta, flows, ack, allow=None, with_fault=True):
+    """Exact fluid bound with per-flow release times (and an optional fault): time-indexed LP.
+
+    Breakpoints = {0, release times, t_f}. Fixed phases [b_k, b_k+1) carry rates r_kfp (Gbps) of
+    flows already released; the last phase from b_K carries volumes b_fp under capacities * z.
+    Minimise z; T = b_K + z (the last released flow needs positive time, so T >= b_K is exact).
+    The drain allowance of an isolated resource is granted in the first post-fault phase."""
+    tf = meta["fault_ns"] / 1000.0 if (with_fault and meta.get("fault_rows")) else None
+    if tf is not None:
+        t_h = ideal_makespan_timeindexed_us(meta, flows, ack, None, with_fault=False)
+        if t_h <= tf:
+            return t_h
+    bps = sorted({0.0} | {f["release_us"] for f in flows} | ({tf} if tf is not None else set()))
+    caps_h = capacities(meta, faulted=False)
+    caps_f = capacities(meta, faulted=True) if tf is not None else caps_h
+    nph = len(bps)  # phases 0..nph-2 fixed, nph-1 variable
+    var = {}
+    for k in range(nph):
+        for fi, f in enumerate(flows):
+            if f["release_us"] <= bps[k] + 1e-9:
+                for p in f["planes"]:
+                    var[(k, fi, p)] = len(var)
+    zi = len(var)
+    rows, cols, vals, b = [], [], [], []
+    first_post = next((k for k in range(nph) if tf is not None and bps[k] >= tf - 1e-9), None)
+    for k in range(nph):
+        cap, up, down = caps_f if (tf is not None and bps[k] >= tf - 1e-9) else caps_h
+        vk = {(fi, p): v for (kk, fi, p), v in var.items() if kk == k}
+        sub = [f if any((fi, p) in vk for p in f["planes"]) else None for fi, f in enumerate(flows)]
+        idx = [fi for fi, f in enumerate(sub) if f is not None]
+        sflows = [flows[fi] for fi in idx]
+        svar = {(j, p): vk[(fi, p)] for j, fi in enumerate(idx) for p in flows[fi]["planes"]}
+        allow_k = allow if k == first_post else None
+        dur = bps[k + 1] - bps[k] if k < nph - 1 else None
+        for terms, c, d in _capacity_rows(sflows, cap, up, down, svar, ack, allow_k):
+            r = len(b)
+            for v, w in terms:
+                rows.append(r); cols.append(v); vals.append(w)
+            if dur is None:
+                rows.append(r); cols.append(zi); vals.append(-c)
+                b.append(d * 8.0 / 1e3)
+            else:
+                b.append(c + d * 8.0 / 1e3 / dur)
+    for fi, f in enumerate(flows):
+        r = len(b)
+        for k in range(nph):
+            for p in f["planes"]:
+                v = var.get((k, fi, p))
+                if v is None:
+                    continue
+                rows.append(r); cols.append(v)
+                vals.append(-(bps[k + 1] - bps[k]) if k < nph - 1 else -1.0)
+        b.append(-f["bits"] / 1e3)
+    nv = zi + 1
+    A = coo_matrix((vals, (rows, cols)), shape=(len(b), nv)).tocsr()
+    c = np.zeros(nv); c[zi] = 1.0
+    res = linprog(c, A_ub=A, b_ub=np.array(b), bounds=[(0, None)] * nv,
+                  method=os.environ.get("FLEX_LP_METHOD", "highs-ipm"))
+    if res.status != 0:
+        raise RuntimeError(res.message)
+    return bps[-1] + res.x[zi]
+
+
+def ideal_makespan_us(meta, flows, ack, allow=None):
+    if any(f.get("release_us", 0) > 0 for f in flows):
+        return ideal_makespan_timeindexed_us(meta, flows, ack, allow)
     """Minimum makespan (us) with perfect per-plane splitting (fluid LP).
 
     Healthy: max lambda s.t. rates r (Gbps) with sum_p r_fp >= lambda * bits_f; T = 1/lambda.
     Fault at t_f: one LP. Phase 0 uses rates r0 (Gbps) for t_f us under healthy capacities; phase 1
-    moves b1 (Gbit*1e-3 = Gbps*us) under reduced capacities C1 during z us: sum w*b1 <= C1*z.
+    moves b1 (Gbit*1e-3 = Gbps*us) under reduced capacities C1 during z us: sum w*b1 <= C1*z + D,
+    where D is the measured drain allowance of an isolated resource (wire bytes that still crossed
+    it after t_f in the run; 0 for every other resource).
     Minimise z subject to t_f*sum_p r0_fp + sum_p b1_fp >= bits_f. T = t_f + z.
     """
     caps0 = capacities(meta, faulted=False)
@@ -181,17 +307,17 @@ def ideal_makespan_us(meta, flows, ack):
             var1[(fi, p)] = n0 + len(var1)
     zi = n0 + len(var1)
     rows, cols, vals, b = [], [], [], []
-    for terms, c in _capacity_rows(flows, cap0, up0, down0, var0, ack):
+    for terms, c, _ in _capacity_rows(flows, cap0, up0, down0, var0, ack):
         r = len(b)
         for v, w in terms:
             rows.append(r); cols.append(v); vals.append(w)
         b.append(c)
-    for terms, c in _capacity_rows(flows, cap1, up1, down1, var1, ack):
+    for terms, c, d in _capacity_rows(flows, cap1, up1, down1, var1, ack, allow):
         r = len(b)
         for v, w in terms:
             rows.append(r); cols.append(v); vals.append(w)
         rows.append(r); cols.append(zi); vals.append(-c)
-        b.append(0.0)
+        b.append(d * 8.0 / 1e3)  # bytes -> Gbps*us
     for fi, f in enumerate(flows):
         r = len(b)
         for p in f["planes"]:
@@ -256,7 +382,10 @@ def analyze(case):
     meta, tasks = load_case(case)
     flows = bulk_flows(meta, tasks)
     ack = meta["ack_bytes"]
-    t_ideal = ideal_makespan_us(meta, flows, ack)
+    samples = read_samples(case)
+    allow, drain = drained_after_fault(meta, samples)
+    t_ideal_nodrain = ideal_makespan_us(meta, flows, ack)
+    t_ideal = ideal_makespan_us(meta, flows, ack, allow) if allow else t_ideal_nodrain
     start, done = read_tasks(case)
     bulk_ids = [f["task"] for f in flows]
     missing = [i for i in bulk_ids if i not in done]
@@ -265,12 +394,22 @@ def analyze(case):
     res = dict(case=os.path.basename(os.path.normpath(case)), scenario=meta["scenario"],
                fault=meta["fault"], scheme=meta["scheme"], seed=meta["seed"],
                t_ideal_us=t_ideal, makespan_us=makespan, missing_tasks=len(missing),
-               eff=t_ideal / makespan if comp and not missing else 0.0)
+               eff=t_ideal / makespan if comp and not missing else 0.0,
+               t_ideal_nodrain_us=t_ideal_nodrain,
+               eff_nodrain=t_ideal_nodrain / makespan if comp and not missing else 0.0, **drain)
     by_cls = collections.defaultdict(list)
     for f in flows:
         if f["task"] in done:
             by_cls[f["cls"]].append(done[f["task"]])
     res["class_eff"] = {c: t_ideal / max(v) for c, v in by_cls.items()}
+    if meta["scenario"] == "incast":
+        # Victim bound: the alltoall alone (the incast is capped by SSD0's own 2 ports and shares no
+        # bottleneck with it), so victim_eff = T_ideal(a2a alone) / a2a makespan.
+        vf = [f for f in flows if f["cls"] == "a2a"]
+        vt = [done[f["task"]] for f in vf if f["task"] in done]
+        if vt and len(vt) == len(vf):
+            res["victim_t_ideal_us"] = ideal_makespan_us(dict(meta, fault_rows=[]), vf, ack)
+            res["victim_eff"] = res["victim_t_ideal_us"] / max(vt)
     # Per device: last completion among flows it sources or sinks (data direction).
     dev_last = collections.defaultdict(float)
     for f in flows:
@@ -294,7 +433,6 @@ def analyze(case):
         res["ctrl_lat_us"] = dict(p50=lat[len(lat) // 2], p99=lat[int(len(lat) * 0.99) - 1],
                                   max=lat[-1], n=len(lat))
     # Windowed goodput per device (payload, tx and rx summed over ports).
-    samples = read_samples(case)
     first_done = min(comp) if comp else 0.0
     tf = meta["fault_ns"] / 1000.0 if meta.get("fault_ns") else None
     end = 0.95 * first_done

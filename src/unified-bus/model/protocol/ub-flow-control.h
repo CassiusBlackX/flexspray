@@ -91,6 +91,12 @@ public:
      * consumed-but-unreturned credit beyond the normal credit-return batching slack. 0 when the
      * flow control is not credit based.
      */
+    /** Cumulative time (ns) any VL of this port had a packet waiting for credits (measurement). */
+    virtual uint64_t GetCreditBlockedNs() const
+    {
+        return 0;
+    }
+
     virtual uint64_t GetDownstreamBacklogBytes(uint8_t vl) const
     {
         (void)vl;

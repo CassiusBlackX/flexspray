@@ -27,6 +27,7 @@ public:
     virtual void OnIngressEnqueued(const UbFlowControlEventContext& context) override;
     int32_t GetCrdToReturn(uint8_t vlId);
     uint64_t GetDownstreamBacklogBytes(uint8_t vl) const override;
+    uint64_t GetCreditBlockedNs() const override;
     void SetCrdToReturn(uint8_t vlId, int32_t consumeCell, Ptr<UbPort> targetPort);
     void UpdateCrdToReturn(uint8_t vlId, int32_t consumeCell, Ptr<UbPort> targetPort);
     bool CbfcConsumeCrd(Ptr<Packet> p);
@@ -57,6 +58,9 @@ protected:
     int32_t m_initCrdTxfreeCells {0};       // initial per-VL transmit credit (cells)
     std::vector<int32_t>  m_crdToReturn;    // 用于记录每个vl需要返回的信用证
     std::vector<bool> m_creditBlockedLast;  // 上一次是否因 credit 不足而阻塞
+    std::vector<int64_t> m_creditBlockedSinceNs;  // measurement only: start of the current block
+    uint64_t m_creditBlockedNs {0};               // measurement only: closed block intervals
+    void RecordCreditBlockTransition(uint32_t vl, bool blocked);
     uint8_t m_lastPiggybackVl {0};
 
 protected:

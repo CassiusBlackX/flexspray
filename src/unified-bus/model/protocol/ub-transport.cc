@@ -2233,6 +2233,10 @@ UbTransportChannel::UpdateReceiveWindowAndCollectCompletedTa(
     m_hasReceivedAnyPsn = true;
     m_maxRcvPsn = std::max(m_maxRcvPsn, ctx.psn);
     utils::UbUtils::AddTpPayloadBytes(m_nodeId, m_sport, true, ctx.payloadBytes);
+    utils::UbUtils::AddRxReorder(m_nodeId,
+                                 m_sport,
+                                 ctx.psn - m_psnRecvNxt,
+                                 outOfOrderPacket ? m_bufferedInboundPackets.size() + 1 : 0);
     if (m_outstandingReadBytes > 0) {
         const uint64_t arrived = std::min<uint64_t>(m_outstandingReadBytes, ctx.payloadBytes);
         m_outstandingReadBytes -= arrived;

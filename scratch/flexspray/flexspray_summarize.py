@@ -23,8 +23,10 @@ def work(item):
     if f != "F0" and h is not None and not dl(r) and not dl(h):
         fl = R.fault_loss(r, h)
         if fl:
-            d.update(loss=fl["loss"], net=fl["agg_loss"], n=fl["n"], reb=fl["rebalance_us"],
-                     ideal=1 - h["t_ideal_us"] / r["t_ideal_us"])
+            d.update(loss=fl["loss"], net=fl["agg_loss"], n=(1.0 / fl["frac"]) if fl.get("frac") else fl["n"], reb=fl["rebalance_us"],
+                     ideal=1 - h["t_ideal_us"] / r["t_ideal_us"], full=fl["loss_full"],
+                     trans=fl["loss_trans"], expo=r.get("exposure_bytes"), drain=r.get("drain_us"),
+                     effnd=r.get("eff_nodrain"))
     return (sc, scheme, f), d
 import concurrent.futures as cf
 items = [(k, f, r, fs.get("F0")) for k, fs in by.items() for f, r in fs.items()]
@@ -33,11 +35,17 @@ with cf.ProcessPoolExecutor(48) as ex:
     for key, d in ex.map(work, items, chunksize=2):
         cell[key].append(d)
 def mean(v): v = [x for x in v if x is not None]; return st.mean(v) if v else None
+def mx(v): v = [x for x in v if x is not None]; return max(v) if v else None
+def mn(v): v = [x for x in v if x is not None]; return min(v) if v else None
 out = {}
 for k, v in cell.items():
     out["|".join(k)] = dict(eff=mean([x["eff"] for x in v]), dl=sum(x["dl"] for x in v), n=len(v),
                             loss=mean([x.get("loss") for x in v]), net=mean([x.get("net") for x in v]),
-                            reb=mean([x.get("reb") for x in v]), N=next((x.get("n") for x in v if x.get("n")), None))
+                            reb=mean([x.get("reb") for x in v]), N=next((x.get("n") for x in v if x.get("n")), None),
+                            loss_max=mx([x.get("loss") for x in v]), full_max=mx([x.get("full") for x in v]),
+                            trans_max=mx([x.get("trans") for x in v]), net_max=mx([x.get("net") for x in v]),
+                            expo_max=mx([x.get("expo") for x in v]), drain_max=mx([x.get("drain") for x in v]),
+                            effnd=mean([x.get("effnd") for x in v]), eff_min=mn([x["eff"] for x in v]))
 json.dump(out, open(os.path.join(root, "summary.json"), "w"), indent=1)
 def fmt(x, pct=False):
     if x is None: return "-"
@@ -60,5 +68,24 @@ for sc in scen:
             if not c: row.append("-"); continue
             if c["eff"] is None: row.append(f"DL"); continue
             n = c["N"]
-            row.append(f"{fmt(c['eff'])} / {fmt(c['loss'], True)} (1/N={100/n:.1f}%) / {fmt(c['net'], True)} / {'-' if c['reb'] is None else round(c['reb'])}" if n else fmt(c["eff"]))
+            row.append(f"{fmt(c['eff'])} / {fmt(c['loss'], True)} (floor={100/n:.1f}%) / {fmt(c['net'], True)} / {'-' if c['reb'] is None else round(c['reb'])}" if n else fmt(c["eff"]))
         print(f"| {s} | " + " | ".join(row) + " |")
+
+print("\n## Fault detail (worst seed): eff_min / loss steady / loss incl. transient [t_f, end] / "
+      "loss first 10 us / network loss / exposure KB (bytes through isolated resources after t_f) / "
+      "drain us\n")
+for sc in scen:
+    print(f"\n### {sc}\n")
+    print("| scheme | fault | eff min | eff (no drain allowance) | loss | loss incl. transient | first 10 us | net | removed capacity (floor) | exposure KB | drain us |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|")
+    for s in schemes:
+        for f in faults[1:]:
+            c = out.get(f"{sc}|{s}|{f}")
+            if not c or c["eff"] is None:
+                continue
+            n = c["N"]
+            e = c["expo_max"]
+            print(f"| {s} | {f} | {fmt(c['eff_min'])} | {fmt(c['effnd'])} | {fmt(c['loss_max'], True)} | "
+                  f"{fmt(c['full_max'], True)} | {fmt(c['trans_max'], True)} | {fmt(c['net_max'], True)} | "
+                  f"{'' if not n else f'{100/n:.1f}%'} | {'' if e is None else round(e/1024)} | "
+                  f"{'' if c['drain_max'] is None else round(c['drain_max'])} |")

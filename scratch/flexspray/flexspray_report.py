@@ -58,7 +58,8 @@ def device_rate(case_dir, devs, direction, t0, t1):
 def affected(meta, fi):
     hosts = meta["hosts"]
     if fi.get("dev") == "server0":
-        return [h["id"] for h in hosts if h["server"] == 0 and 3 in h["planes"]], "both"
+        pl = fi.get("plane", 3)
+        return [h["id"] for h in hosts if h["server"] == 0 and pl in h["planes"]], "both"
     if fi.get("dev") is None:
         return [h["id"] for h in hosts if h["type"] == "NPU"], "both"
     return [fi["dev"]], fi.get("dir", "tx")
@@ -80,8 +81,31 @@ def rebalance_time_us(case_dir, devs, dirs, tf, post_mean, step=1.0, span=2.0):
     return None
 
 
+def removed_fraction(meta, tasks, devs, dirs, fi):
+    """Fraction of the affected devices' *used* capacity that the fault removes (the physical floor
+    of the loss): planes actually carrying the devices' flows in the measured direction(s), with a
+    lane degrade removing 1/lanes of one plane. For an L1 uplink fault: 1 / (uplinks per L1)."""
+    if fi.get("dev") is None:
+        return 1.0 / (meta["spines"] * meta["links_per_pair"])
+    flows = A.bulk_flows(meta, tasks)
+    action = (meta.get("fault_rows") or [[0, 0, 0, ""]])[0][3]
+    used = removed = 0.0
+    for d in devs:
+        for dr in dirs:
+            planes = set()
+            for f in flows:
+                if (dr == "tx" and f["src"] == d) or (dr == "rx" and f["dst"] == d):
+                    planes.update(f["planes"])
+            if not planes:
+                continue
+            used += len(planes)
+            if fi.get("plane", 3) in planes:
+                removed += 1.0 / meta["lanes"] if action == "DEGRADE" else 1.0
+    return removed / used if used else None
+
+
 def fault_loss(rec, healthy):
-    meta, _ = A.load_case(rec["_dir"])
+    meta, tasks = A.load_case(rec["_dir"])
     fi = meta.get("fault_info") or {}
     devs, direction = affected(meta, fi)
     t0, t1 = rec["windows"]["post"]
@@ -95,9 +119,15 @@ def fault_loss(rec, healthy):
     agg_f = device_rate(rec["_dir"], all_devs, "tx", t0, t1)
     agg_h = device_rate(healthy["_dir"], all_devs, "tx", t0, t1)
     tf = meta["fault_ns"] / 1000.0
+    # Including the transient: the whole post-fault period [t_f, t1] and the first 10 us alone.
+    def loss_in(a, b):
+        f_ = sum(device_rate(rec["_dir"], devs, d, a, b) for d in dirs)
+        h_ = sum(device_rate(healthy["_dir"], devs, d, a, b) for d in dirs)
+        return 1 - f_ / h_ if h_ > 0 else float("nan")
     return dict(loss=1 - bw_f / bw_h if bw_h > 0 else float("nan"), bw_f=bw_f, bw_h=bw_h,
+                loss_full=loss_in(tf, t1), loss_trans=loss_in(tf, tf + 10.0),
                 agg_loss=1 - agg_f / agg_h if agg_h > 0 else float("nan"),
-                n=fi.get("n"), window=(t0, t1),
+                n=fi.get("n"), window=(t0, t1), frac=removed_fraction(meta, tasks, devs, dirs, fi),
                 rebalance_us=rebalance_time_us(rec["_dir"], devs, dirs, tf, bw_f))
 
 
