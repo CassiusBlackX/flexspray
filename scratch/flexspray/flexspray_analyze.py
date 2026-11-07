@@ -128,32 +128,83 @@ def solve_lambda(meta, flows, caps_list, durations, ack):
         b.append(0.0)
     A = coo_matrix((vals, (rows, cols)), shape=(len(b), nv)).tocsr()
     c = np.zeros(nv); c[lam] = -1.0
-    res = linprog(c, A_ub=A, b_ub=np.array(b), bounds=[(0, None)] * nv, method="highs")
+    res = linprog(c, A_ub=A, b_ub=np.array(b), bounds=[(0, None)] * nv, method=os.environ.get("FLEX_LP_METHOD", "highs-ipm"))
     if res.status != 0:
         raise RuntimeError(res.message)
     return res.x[lam]
 
 
+def _capacity_rows(flows, cap, up, down, var, ack):
+    """Yield (key, [(var_index, weight)], capacity) port/L1 constraint rows for one phase."""
+    data_w = (MTU + DATA_HDR) / MTU
+    ack_w = ack / MTU
+    groups = {"eg": collections.defaultdict(list), "ing": collections.defaultdict(list),
+              "l1u": collections.defaultdict(list), "l1d": collections.defaultdict(list)}
+    for fi, f in enumerate(flows):
+        for p in f["planes"]:
+            v = var[(fi, p)]
+            groups["eg"][(f["src"], p)].append((v, data_w)); groups["ing"][(f["src"], p)].append((v, ack_w))
+            groups["ing"][(f["dst"], p)].append((v, data_w)); groups["eg"][(f["dst"], p)].append((v, ack_w))
+            if f["cross"]:
+                groups["l1u"][(p, f["ssrv"])].append((v, data_w)); groups["l1d"][(p, f["ssrv"])].append((v, ack_w))
+                groups["l1d"][(p, f["dsrv"])].append((v, data_w)); groups["l1u"][(p, f["dsrv"])].append((v, ack_w))
+    for name, capd in (("eg", cap), ("ing", cap), ("l1u", up), ("l1d", down)):
+        for key, terms in groups[name].items():
+            yield terms, capd.get(key, 0.0)
+
+
 def ideal_makespan_us(meta, flows, ack):
+    """Minimum makespan (us) with perfect per-plane splitting (fluid LP).
+
+    Healthy: max lambda s.t. rates r (Gbps) with sum_p r_fp >= lambda * bits_f; T = 1/lambda.
+    Fault at t_f: one LP. Phase 0 uses rates r0 (Gbps) for t_f us under healthy capacities; phase 1
+    moves b1 (Gbit*1e-3 = Gbps*us) under reduced capacities C1 during z us: sum w*b1 <= C1*z.
+    Minimise z subject to t_f*sum_p r0_fp + sum_p b1_fp >= bits_f. T = t_f + z.
+    """
     caps0 = capacities(meta, faulted=False)
+    lam = solve_lambda(meta, flows, [caps0], [1.0], ack)  # lambda per us
+    t_healthy = 1.0 / lam
     if not meta.get("fault_rows"):
-        lam = solve_lambda(meta, flows, [caps0], [1.0], ack)  # lambda per us
-        return 1.0 / lam
+        return t_healthy
     tf = meta["fault_ns"] / 1000.0
-    caps1 = capacities(meta, faulted=True)
-    lo, hi = tf, tf * 20 + 1e4
-    lam_tf = solve_lambda(meta, flows, [caps0], [tf], ack)
-    if lam_tf >= 1.0:
-        return 1.0 / solve_lambda(meta, flows, [caps0], [1.0], ack)
-    for _ in range(40):
-        mid = 0.5 * (lo + hi)
-        if solve_lambda(meta, flows, [caps0, caps1], [tf, mid - tf], ack) >= 1.0:
-            hi = mid
-        else:
-            lo = mid
-        if hi - lo < 0.05:
-            break
-    return hi
+    if t_healthy <= tf:
+        return t_healthy
+    cap0, up0, down0 = caps0
+    cap1, up1, down1 = capacities(meta, faulted=True)
+    var0, var1 = {}, {}
+    for fi, f in enumerate(flows):
+        for p in f["planes"]:
+            var0[(fi, p)] = len(var0)
+    n0 = len(var0)
+    for fi, f in enumerate(flows):
+        for p in f["planes"]:
+            var1[(fi, p)] = n0 + len(var1)
+    zi = n0 + len(var1)
+    rows, cols, vals, b = [], [], [], []
+    for terms, c in _capacity_rows(flows, cap0, up0, down0, var0, ack):
+        r = len(b)
+        for v, w in terms:
+            rows.append(r); cols.append(v); vals.append(w)
+        b.append(c)
+    for terms, c in _capacity_rows(flows, cap1, up1, down1, var1, ack):
+        r = len(b)
+        for v, w in terms:
+            rows.append(r); cols.append(v); vals.append(w)
+        rows.append(r); cols.append(zi); vals.append(-c)
+        b.append(0.0)
+    for fi, f in enumerate(flows):
+        r = len(b)
+        for p in f["planes"]:
+            rows.append(r); cols.append(var0[(fi, p)]); vals.append(-tf)
+            rows.append(r); cols.append(var1[(fi, p)]); vals.append(-1.0)
+        b.append(-f["bits"] / 1e3)
+    nv = zi + 1
+    A = coo_matrix((vals, (rows, cols)), shape=(len(b), nv)).tocsr()
+    c = np.zeros(nv); c[zi] = 1.0
+    res = linprog(c, A_ub=A, b_ub=np.array(b), bounds=[(0, None)] * nv, method=os.environ.get("FLEX_LP_METHOD", "highs-ipm"))
+    if res.status != 0:
+        raise RuntimeError(res.message)
+    return tf + res.x[zi]
 
 
 def read_tasks(case):

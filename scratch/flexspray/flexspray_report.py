@@ -36,10 +36,17 @@ def load(dirs):
     return list(recs.values())
 
 
-def device_rate(case_dir, devs, direction, t0, t1):
+import functools
+
+
+@functools.lru_cache(maxsize=8)
+def _case_cache(case_dir):
     meta, _ = A.load_case(case_dir)
-    hosts = {h["id"]: h for h in meta["hosts"]}
-    samples = A.read_samples(case_dir)
+    return {h["id"]: h for h in meta["hosts"]}, A.read_samples(case_dir)
+
+
+def device_rate(case_dir, devs, direction, t0, t1):
+    hosts, samples = _case_cache(case_dir)
     idx = 1 if direction == "tx" else 2
     total = 0.0
     for d in devs:
