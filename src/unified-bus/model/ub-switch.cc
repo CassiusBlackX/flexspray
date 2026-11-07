@@ -840,7 +840,7 @@ bool UbSwitch::SinkTpDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Pars
     const uint32_t srcTpn = headers.transportHeader.GetSrcTpn();
     uint32_t dstTpn = headers.transportHeader.GetDestTpn();
     Ptr<UbController> controller = GetObject<UbController>();
-    const UbInboundTpResolution resolution =
+    UbInboundTpResolution resolution =
         controller->GetTransportChannelManager()->ResolveInboundTp(
             srcTpn,
             dstTpn,
@@ -850,6 +850,19 @@ bool UbSwitch::SinkTpDataPacket(Ptr<UbPort> port, Ptr<Packet> packet, const Pars
             // Transport responses may ride a dedicated response VL (UbTransportChannel::ResponseVl);
             // the destination TPN already identifies the endpoint, so do not match priority.
             UbTransportChannel::IsTransportResponseOpcode(headers.transportHeader.GetTPOpcode()));
+    if (resolution.state != UbInboundTpState::LIVE &&
+        resolution.state != UbInboundTpState::RETIRED_EXACT &&
+        UbTransportChannel::IsReadRequestVl(headers.datalinkPacketHeader.GetPacketVL())) {
+        // READ requests may ride a dedicated VL (UbTransportChannel::ReadRequestVl): retry
+        // without the priority match before treating the key as unreserved.
+        resolution = controller->GetTransportChannelManager()->ResolveInboundTp(
+            srcTpn,
+            dstTpn,
+            headers.ipv4Header.GetSource(),
+            headers.ipv4Header.GetDestination(),
+            headers.datalinkPacketHeader.GetPacketVL(),
+            true);
+    }
     if (resolution.state == UbInboundTpState::RETIRED_EXACT)
     {
         NS_LOG_DEBUG("Ignoring stale packet for retired TP channel key");

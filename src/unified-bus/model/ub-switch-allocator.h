@@ -120,6 +120,8 @@ protected:
     // planes then gets ~1/k of a port per member, so plane-limited flows sharing a port with
     // many-plane flows keep a flow-level fair share of the pooled ports.
     bool m_tpGroupFairShare{false};
+    bool m_tpGroupFairShareUsableOnly{false};
+    double m_tpGroupFairShareExponent{1.0};
     std::vector<std::vector<double>> m_tpVirtualTime;
     void ChargeTpGroupFairShare(uint32_t outPort,
                                 uint32_t priority,

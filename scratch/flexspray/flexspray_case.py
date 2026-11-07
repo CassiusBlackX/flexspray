@@ -462,6 +462,15 @@ def scheme_attrs(name):
         # v2: a separate, deeper pipeline for READ segments (requests and responses). The shallow
         # write depth (2 x 16 KB per TP) starved read alltoall (0.79 -> 0.95 with 8).
         d["ns3::UbTransportChannel::MaxActiveReadSegments"] = "8"
+        # v3 (second review round):
+        #  * fair-share weight counts only non-isolated planes of a flow (SSD/NIC port faults);
+        #  * a flow's read quota is re-spread over its usable planes after an isolation;
+        #  * READ requests ride the control VL (no HoL behind bulk data at a hot ingress);
+        #  * READ responses are not gated by SprayCC: reads are receiver-driven by the quota.
+        d["ns3::UbSwitchAllocator::TpGroupFairShareUsableOnly"] = "true"
+        d["ns3::UbTransportChannel::ReadQuotaFollowsUsablePlanes"] = "true"
+        d["ns3::UbTransportChannel::ReadRequestVl"] = "1"
+        d["ns3::UbTransportChannel::CcExemptReadResponses"] = "true"
     else:
         raise KeyError(base)
     cc = "none"
@@ -482,6 +491,30 @@ def scheme_attrs(name):
             cc = "caqm"; g["UB_CC_ENABLED"] = "true"; g["UB_CC_ALGO"] = "CAQM"
         elif opt == "spraycc":
             cc = "spraycc"; g["UB_CC_ENABLED"] = "true"; g["UB_CC_ALGO"] = "SPRAYCC"
+        elif opt == "v2":    # undo the v3 additions (ablation)
+            for k in ("ns3::UbSwitchAllocator::TpGroupFairShareUsableOnly",
+                      "ns3::UbTransportChannel::ReadQuotaFollowsUsablePlanes",
+                      "ns3::UbTransportChannel::CcExemptReadResponses"):
+                d[k] = "false"
+            d["ns3::UbTransportChannel::ReadRequestVl"] = "4294967295"
+        elif opt == "norqvl":
+            d["ns3::UbTransportChannel::ReadRequestVl"] = "4294967295"
+        elif opt == "noccxr":
+            d["ns3::UbTransportChannel::CcExemptReadResponses"] = "false"
+        elif opt == "ccxr":  # read responses exempt from the CC window (receiver-driven reads)
+            d["ns3::UbTransportChannel::CcExemptReadResponses"] = "true"
+        elif opt == "rqvl":  # READ requests on the control VL
+            d["ns3::UbTransportChannel::ReadRequestVl"] = "1"
+        elif opt == "rqf":   # per-flow read quota follows usable planes
+            d["ns3::UbTransportChannel::ReadQuotaFollowsUsablePlanes"] = "true"
+        elif opt == "usable":  # fair-share weight from non-isolated group members only
+            d["ns3::UbSwitchAllocator::TpGroupFairShareUsableOnly"] = "true"
+        elif opt.startswith("fx"):  # fair-share exponent, e.g. fx2 or fx1.5
+            d["ns3::UbSwitchAllocator::TpGroupFairShareExponent"] = opt[2:]
+        elif opt.startswith("buf"):  # shallow switch buffer: CBFC credit per VL per port (KB)
+            kb = int(opt[3:])
+            d["ns3::UbPort::CbfcInitCreditCell"] = str(kb * 1024 // 160)   # 160 B cells
+            d["ns3::UbPort::CbfcCtrlCrdRtrThldCell"] = "64"   # must stay below the credit
         elif opt.startswith("rd"):  # read pipeline depth (rd0 = shared with writes, v1)
             d["ns3::UbTransportChannel::MaxActiveReadSegments"] = opt[2:]
         elif opt.startswith("seg"):

@@ -408,7 +408,7 @@ def analyze(case):
         vf = [f for f in flows if f["cls"] == "a2a"]
         vt = [done[f["task"]] for f in vf if f["task"] in done]
         if vt and len(vt) == len(vf):
-            res["victim_t_ideal_us"] = ideal_makespan_us(dict(meta, fault_rows=[]), vf, ack)
+            res["victim_t_ideal_us"] = ideal_makespan_us(meta, vf, ack, allow or None)
             res["victim_eff"] = res["victim_t_ideal_us"] / max(vt)
     # Per device: last completion among flows it sources or sinks (data direction).
     dev_last = collections.defaultdict(float)

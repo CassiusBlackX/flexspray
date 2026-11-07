@@ -93,6 +93,19 @@ void UbCbfc::Init(uint8_t flitLen, uint8_t nFlitPerCell, uint8_t retCellGrainDat
                     "CBFC requires a positive control-frame force threshold");
     NS_ABORT_MSG_IF(portTxfree < 0,
                     "CBFC requires non-negative initial transmit credit per VL");
+    // A force-return threshold above the whole credit can never be reached by one-way traffic
+    // (only piggybacking on reverse data returns credit), so such a link can deadlock silently.
+    // Warn once per run (unit tests use tiny credits on purpose, so this is not fatal).
+    if (portTxfree > 0 && m_cbfcCfg.m_ctrlCrdRtrThldCells > portTxfree) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            std::cerr << "[warn] CBFC control-frame credit-return threshold ("
+                      << m_cbfcCfg.m_ctrlCrdRtrThldCells << " cells) exceeds the initial credit ("
+                      << portTxfree << " cells): one-way traffic may never get its credits back "
+                      << "(deadlock). Lower UbPort::CbfcCtrlCrdRtrThldCell." << std::endl;
+        }
+    }
 
     if (portTxfree == 0)
     {

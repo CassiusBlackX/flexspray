@@ -567,6 +567,28 @@ UbController::GetRtpTpGroupSizeForTpn(uint32_t tpn) const
     return std::max<uint32_t>(group->second->GetMemberCount(), 1);
 }
 
+uint32_t
+UbController::GetRtpTpGroupUsableSizeForTpn(uint32_t tpn) const
+{
+    const uint32_t size = GetRtpTpGroupSizeForTpn(tpn);
+    if (size <= 1 || (m_isolatedLocalPorts.empty() && m_isolatedPeerPorts.empty()))
+    {
+        return size;
+    }
+    const auto group = m_rtpTpGroups.find(m_rtpTpGroupByTpn.at(tpn));
+    uint32_t usable = 0;
+    for (uint32_t i = 0; i < group->second->GetMemberCount(); ++i)
+    {
+        Ptr<UbTransportChannel> member =
+            GetTransportChannelManager()->GetTp(group->second->GetMember(i).tpn);
+        if (member != nullptr && !IsTpPathIsolated(member))
+        {
+            ++usable;
+        }
+    }
+    return std::max<uint32_t>(usable, 1);
+}
+
 void
 UbController::WakeRtpTpGroupsAfterIsolationChange()
 {

@@ -744,6 +744,23 @@ private:
     // Requester-side READ accounting: response bytes requested over this TP and not yet received.
     uint64_t m_outstandingReadBytes{0};
     uint64_t m_maxOutstandingReadBytes{0};
+    uint32_t m_readRequestVl{UINT32_MAX};
+    bool m_ccExemptReadResponses{false};
+    bool IsCcExemptSegment(const Ptr<UbWqeSegment>& segment) const;
+    static bool IsReadPipelineSegment(const Ptr<const UbWqeSegment>& segment);
+    static uint32_t& ReadRequestVlMask();
+
+  public:
+    /** True if some TP sends READ requests on @p vl (UbTransportChannel::ReadRequestVl). */
+    static bool IsReadRequestVl(uint8_t vl)
+    {
+        return vl < 32 && (ReadRequestVlMask() & (1u << vl)) != 0;
+    }
+
+  private:
+    bool HeadSegmentIsCcExempt() const;
+    bool m_readQuotaFollowsUsablePlanes{false};
+    uint64_t EffectiveReadQuotaBytes() const;
     // Separate send-pipeline depth for READ segments (0 = shared with writes).
     uint32_t m_maxActiveReadSegments{0};
     bool CanScheduleSegmentOfKind(bool read) const;

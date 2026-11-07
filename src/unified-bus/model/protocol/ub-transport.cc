@@ -286,6 +286,28 @@ TypeId UbTransportChannel::GetTypeId(void)
                       UintegerValue(0),
                       MakeUintegerAccessor(&UbTransportChannel::m_maxOutstandingReadBytes),
                       MakeUintegerChecker<uint64_t>())
+        .AddAttribute("CcExemptReadResponses",
+                      "Do not gate READ response packets by the congestion controller's window or "
+                      "pacing: their volume is already set by the requester's read quota "
+                      "(receiver-driven), so a responder-side rate cut only idles a requester-"
+                      "limited stream. Writes on the same TP stay controlled (false = legacy).",
+                      BooleanValue(false),
+                      MakeBooleanAccessor(&UbTransportChannel::m_ccExemptReadResponses),
+                      MakeBooleanChecker())
+        .AddAttribute("ReadRequestVl",
+                      "VL for READ request packets (payload-free, latency-critical). Values >= 16 "
+                      "send them on the TP's data VL (legacy).",
+                      UintegerValue(UINT32_MAX),
+                      MakeUintegerAccessor(&UbTransportChannel::m_readRequestVl),
+                      MakeUintegerChecker<uint32_t>())
+        .AddAttribute("ReadQuotaFollowsUsablePlanes",
+                      "Treat MaxOutstandingReadBytes as a per-flow budget spread over the TP group: "
+                      "when members are isolated (link sub-health) each remaining TP's quota grows "
+                      "by groupSize / usableMembers, so losing a plane does not also cut the "
+                      "flow's outstanding reads (false = per-TP quota, legacy).",
+                      BooleanValue(false),
+                      MakeBooleanAccessor(&UbTransportChannel::m_readQuotaFollowsUsablePlanes),
+                      MakeBooleanChecker())
         .AddAttribute("MaxActiveReadSegments",
                       "Separate send-pipeline depth for READ segments (read requests and read "
                       "responses). Read admission is already bounded by MaxOutstandingReadBytes, "
@@ -721,7 +743,8 @@ UbTransportChannel::BuildNextDataSendContext(NewDataSendContext& ctx)
         ctx.wireLengthBytes = GetWireLengthBytes(currentSegment, ctx.payloadBytes);
         ctx.totalProgressBytes = GetTotalProgressBytes(currentSegment);
 
-        if (m_congestionCtrl->IsCcLimited(ctx.progressBytes)) {
+        if (!IsCcExemptSegment(currentSegment) &&
+            m_congestionCtrl->IsCcLimited(ctx.progressBytes)) {
             m_sendWindowLimited = true;
             TraceTpDebugState(m_nodeId,
                               m_tpn,
@@ -1191,11 +1214,20 @@ UbTransportChannel::BuildRtpDataPacket(const UbGbnPacketDescriptor& descriptor)
     m_congestionCtrl->OnSenderPrepareIpBasedNetworkHeader(networkHeader);
     p->AddHeader(networkHeader);
     // add dl header
+    // READ requests carry no payload but gate the whole response stream: optionally send them on
+    // the (higher-priority) control VL so they do not queue behind bulk data at a hot ingress.
+    const bool readRequest = descriptor.taOpcode == UbTransactionOpcode::READ &&
+                             descriptor.segmentKind == UbTransactionSegmentKind::REQUEST;
+    const uint8_t vl = (readRequest && m_readRequestVl < 16) ? static_cast<uint8_t>(m_readRequestVl)
+                                                             : m_priority;
+    if (vl != m_priority) {
+        ReadRequestVlMask() |= 1u << vl;
+    }
     UbDataLink::AddPacketHeader(p,
                                 false,
                                 false,
-                                m_priority,
-                                m_priority,
+                                vl,
+                                vl,
                                 m_routingType,
                                 UbDatalinkHeaderConfig::PACKET_IPV4);
     return p;
@@ -2455,6 +2487,23 @@ UbTransportChannel::TryContinueAcceptedWqeSegment(Ptr<UbWqeSegment> segment)
     return true;
 }
 
+uint64_t
+UbTransportChannel::EffectiveReadQuotaBytes() const
+{
+    if (!m_readQuotaFollowsUsablePlanes) {
+        return m_maxOutstandingReadBytes;
+    }
+    Ptr<Node> node = NodeList::GetNode(m_nodeId);
+    Ptr<UbController> ctrl = node == nullptr ? nullptr : node->GetObject<UbController>();
+    if (ctrl == nullptr) {
+        return m_maxOutstandingReadBytes;
+    }
+    const uint32_t size = ctrl->GetRtpTpGroupSizeForTpn(m_tpn);
+    const uint32_t usable = ctrl->GetRtpTpGroupUsableSizeForTpn(m_tpn);
+    return usable >= size ? m_maxOutstandingReadBytes
+                          : m_maxOutstandingReadBytes * size / std::max<uint32_t>(usable, 1);
+}
+
 bool
 UbTransportChannel::CanAdmitWqeSegment(Ptr<const UbWqeSegment> segment) const
 {
@@ -2467,12 +2516,12 @@ UbTransportChannel::CanContinueAcceptedWqeSegment(Ptr<const UbWqeSegment> segmen
     if (segment != nullptr && m_maxOutstandingReadBytes > 0 && m_outstandingReadBytes > 0 &&
         segment->GetType() == UbTransactionOpcode::READ &&
         segment->GetSegmentKind() == UbTransactionSegmentKind::REQUEST &&
-        m_outstandingReadBytes + segment->GetSize() > m_maxOutstandingReadBytes) {
+        m_outstandingReadBytes + segment->GetSize() > EffectiveReadQuotaBytes()) {
         return false;
     }
     if (segment != nullptr && m_maxActiveReadSegments > 0) {
         return !IsWqeSegmentLimited() &&
-               CanScheduleSegmentOfKind(segment->GetType() == UbTransactionOpcode::READ);
+               CanScheduleSegmentOfKind(IsReadPipelineSegment(segment));
     }
     return segment != nullptr && !IsWqeSegmentLimited() && CanScheduleAnotherSegment();
 }
@@ -2621,7 +2670,7 @@ bool UbTransportChannel::CanScheduleSegmentOfKind(bool read) const
     uint32_t active = 0;
     for (const Ptr<UbWqeSegment>& segment : m_wqeSegmentVector) {
         if (segment != nullptr && !segment->IsSentCompleted() &&
-            (segment->GetType() == UbTransactionOpcode::READ) == read) {
+            IsReadPipelineSegment(segment) == read) {
             ++active;
         }
     }
@@ -2895,9 +2944,47 @@ bool UbTransportChannel::IsLimited()
         NS_LOG_DEBUG("Full Send Window");
         return true;
     }
-    if (m_congestionCtrl->IsCcLimited(UB_MTU_BYTE)) {
+    if (m_congestionCtrl->IsCcLimited(UB_MTU_BYTE) && !HeadSegmentIsCcExempt()) {
         m_sendWindowLimited = true;
         return true;
+    }
+    return false;
+}
+
+bool
+UbTransportChannel::IsReadPipelineSegment(const Ptr<const UbWqeSegment>& segment)
+{
+    return segment != nullptr &&
+           (segment->GetType() == UbTransactionOpcode::READ ||
+            (segment->GetSegmentKind() == UbTransactionSegmentKind::RESPONSE &&
+             segment->GetRequestOpcode() == UbTransactionOpcode::READ));
+}
+
+uint32_t&
+UbTransportChannel::ReadRequestVlMask()
+{
+    static uint32_t mask = 0;
+    return mask;
+}
+
+bool
+UbTransportChannel::IsCcExemptSegment(const Ptr<UbWqeSegment>& segment) const
+{
+    return m_ccExemptReadResponses && segment != nullptr &&
+           segment->GetSegmentKind() == UbTransactionSegmentKind::RESPONSE &&
+           segment->GetRequestOpcode() == UbTransactionOpcode::READ;
+}
+
+bool
+UbTransportChannel::HeadSegmentIsCcExempt() const
+{
+    if (!m_ccExemptReadResponses) {
+        return false;
+    }
+    for (const Ptr<UbWqeSegment>& segment : m_wqeSegmentVector) {
+        if (segment != nullptr && !segment->IsSentCompleted()) {
+            return IsCcExemptSegment(segment);
+        }
     }
     return false;
 }

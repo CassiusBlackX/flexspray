@@ -73,6 +73,8 @@ public:
     bool IsTpPathIsolated(const Ptr<UbTransportChannel>& tp) const;
     /** Number of members of the RTP TP group containing local @p tpn (1 if none). */
     uint32_t GetRtpTpGroupSizeForTpn(uint32_t tpn) const;
+    /** Members of that group whose path is not isolated (link sub-health), at least 1. */
+    uint32_t GetRtpTpGroupUsableSizeForTpn(uint32_t tpn) const;
 
 
     // Port management

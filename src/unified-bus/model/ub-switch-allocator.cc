@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "ns3/ub-switch-allocator.h"
 
+#include <cmath>
+
 #include "protocol/ub-routing-process.h"
 #include "protocol/ub-transport.h"
 #include "ub-queue-manager.h"
@@ -88,6 +90,19 @@ TypeId UbSwitchAllocator::GetTypeId(void)
                       BooleanValue(false),
                       MakeBooleanAccessor(&UbSwitchAllocator::m_tpGroupFairShare),
                       MakeBooleanChecker())
+        .AddAttribute("TpGroupFairShareUsableOnly",
+                      "TpGroupFairShare: size the 1/k weight by the group's members whose path is "
+                      "not isolated (link sub-health), not by all members.",
+                      BooleanValue(false),
+                      MakeBooleanAccessor(&UbSwitchAllocator::m_tpGroupFairShareUsableOnly),
+                      MakeBooleanChecker())
+        .AddAttribute("TpGroupFairShareExponent",
+                      "TpGroupFairShare: weight of a k-member group's TP is 1/k^exponent "
+                      "(1 = equal flow shares; >1 lets narrow flows take more of their few ports "
+                      "while wide flows dispatch around them).",
+                      DoubleValue(1.0),
+                      MakeDoubleAccessor(&UbSwitchAllocator::m_tpGroupFairShareExponent),
+                      MakeDoubleChecker<double>(0.0, 4.0))
         .AddAttribute("EnableDirectAllocationCompletion",
                       "Synchronously start an idle egress port after allocation completes.",
                       BooleanValue(true),
@@ -621,12 +636,24 @@ UbSwitchAllocator::ChargeTpGroupFairShare(uint32_t outPort,
     // each, so a plane-limited flow keeps a flow-level share of the ports it shares with
     // many-plane flows. (A single pass shared by the whole group across ports was evaluated and
     // rejected: it serialises a flow's packets across ports and synchronises receivers.)
+    // Optional refinements (both off by default = the v1 rule above):
+    //  * UsableOnly: k counts only members whose path is not isolated, so a flow that lost a plane
+    //    keeps its flow-level share on the planes it still has;
+    //  * Exponent a: weight 1/k^a. With a > 1 a narrow flow gets more than 1/k of each of its few
+    //    ports, so wide flows (which can dispatch elsewhere) yield those ports to it - closer to the
+    //    max-min allocation the LP bound assumes than equal per-flow shares on every port.
     Ptr<UbController> ctrl = NodeList::GetNode(m_nodeId)->GetObject<UbController>();
-    const uint32_t groupSize = ctrl == nullptr ? 1 : ctrl->GetRtpTpGroupSizeForTpn(tp->GetTpn());
+    const uint32_t groupSize =
+        ctrl == nullptr ? 1
+        : m_tpGroupFairShareUsableOnly ? ctrl->GetRtpTpGroupUsableSizeForTpn(tp->GetTpn())
+                                       : ctrl->GetRtpTpGroupSizeForTpn(tp->GetTpn());
+    const double weightInv = m_tpGroupFairShareExponent == 1.0
+                                 ? static_cast<double>(groupSize)
+                                 : std::pow(static_cast<double>(groupSize), m_tpGroupFairShareExponent);
     double& vtime = m_tpVirtualTime[outPort][priority];
     const double start = std::max(tp->GetArbitrationPass(), vtime);
     vtime = start;
-    tp->SetArbitrationPass(start + static_cast<double>(bytes) * groupSize);
+    tp->SetArbitrationPass(start + static_cast<double>(bytes) * weightInv);
 }
 
 void UbSwitchAllocator::CheckDeadlock()

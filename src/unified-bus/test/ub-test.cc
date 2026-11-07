@@ -36386,7 +36386,7 @@ class UbLinkHealthSystemTest : public TestCase
             {
                 f.push_back(field);
             }
-            if (f.size() == 8 && f[1] == "0" && std::stoul(f[2]) == port &&
+            if (f.size() >= 8 && f[1] == "0" && std::stoul(f[2]) == port &&
                 std::stoull(f[0]) <= tNs)
             {
                 best = std::stoull(f[6]);

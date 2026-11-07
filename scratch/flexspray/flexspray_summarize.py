@@ -15,8 +15,10 @@ for r in recs:
     by[(r["scenario"], r["scheme"], r["seed"])][r["fault"]] = r
 def dl(r): return r.get("missing_tasks", 0) > 0 or r.get("rc") != 0 or "error" in r
 schemes = sorted({r["scheme"] for r in recs}, key=lambda s: (s != "flex+spraycc", s))
-scen = [s for s in ["d2d", "d2dread", "h2d", "a2a", "mixed"] if any(r["scenario"] == s for r in recs)]
-faults = ["F0", "F1near", "F1far", "F2up", "F3near", "F3far", "F4"]
+ORDER = ["d2d", "d2dread", "h2d", "a2a", "mixed", "a2aread", "mixedread", "stagger", "staggermixed", "incast"]
+scen = sorted({r["scenario"] for r in recs}, key=lambda s: ORDER.index(s) if s in ORDER else 99)
+FORDER = ["F0", "F1near", "F1far", "F2up", "F3near", "F3far", "F4", "F1ssd", "F3ssd", "F1nic", "F3nic", "F4p4"]
+faults = sorted({r["fault"] for r in recs} | {"F0"}, key=lambda f: FORDER.index(f) if f in FORDER else 99)
 def work(item):
     (sc, scheme, seed), f, r, h = item
     d = dict(eff=None if dl(r) else r["eff"], dl=dl(r))
