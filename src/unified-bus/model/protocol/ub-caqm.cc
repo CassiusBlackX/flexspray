@@ -558,13 +558,16 @@ void UbSwitchCaqm::ResetLocalCc()
             Ptr<UbPort> port = DynamicCast<UbPort>(node->GetDevice(portId));
             const DataRate portRate = port->GetDataRate();
             
-            uint64_t cc = uint64_t(m_lambda *
-                                (m_ccUpdatePeriod.GetSeconds()
-                                * portRate.GetBitRate() / 8
-                                - m_txSize[portId]
-                                + m_idealQueueSize
-                                - totalQueueSize
-                                - m_creditAllocated[portId]));
+            // The credit counter is signed (negative = congested). Compute it in double and convert
+            // to int64_t: converting a negative double to uint64_t is undefined behaviour and made
+            // CAQM's congestion signal depend on compiler/LTO code generation.
+            const double ccValue = m_lambda * (m_ccUpdatePeriod.GetSeconds() *
+                                                   static_cast<double>(portRate.GetBitRate()) / 8.0 -
+                                               static_cast<double>(m_txSize[portId]) +
+                                               static_cast<double>(m_idealQueueSize) -
+                                               static_cast<double>(totalQueueSize) -
+                                               static_cast<double>(m_creditAllocated[portId]));
+            const int64_t cc = static_cast<int64_t>(ccValue);
             m_cc[portId] = cc;
             m_txSize[portId] = 0;
             m_DC[portId] = 0;
