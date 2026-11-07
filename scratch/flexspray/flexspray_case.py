@@ -459,6 +459,9 @@ def scheme_attrs(name):
         d["ns3::UbSwitchAllocator::TpGroupFairShare"] = "true"
         d["ns3::UbJetty::TaSegmentBytes"] = "16384"
         d["ns3::UbTransportChannel::MaxOutstandingReadBytes"] = "196608"
+        # v2: a separate, deeper pipeline for READ segments (requests and responses). The shallow
+        # write depth (2 x 16 KB per TP) starved read alltoall (0.79 -> 0.95 with 8).
+        d["ns3::UbTransportChannel::MaxActiveReadSegments"] = "8"
     else:
         raise KeyError(base)
     cc = "none"
@@ -479,6 +482,8 @@ def scheme_attrs(name):
             cc = "caqm"; g["UB_CC_ENABLED"] = "true"; g["UB_CC_ALGO"] = "CAQM"
         elif opt == "spraycc":
             cc = "spraycc"; g["UB_CC_ENABLED"] = "true"; g["UB_CC_ALGO"] = "SPRAYCC"
+        elif opt.startswith("rd"):  # read pipeline depth (rd0 = shared with writes, v1)
+            d["ns3::UbTransportChannel::MaxActiveReadSegments"] = opt[2:]
         elif opt.startswith("seg"):
             d["ns3::UbJetty::TaSegmentBytes"] = str(int(opt[3:]) * 1024)
         elif opt.startswith("depth"):

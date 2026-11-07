@@ -286,6 +286,16 @@ TypeId UbTransportChannel::GetTypeId(void)
                       UintegerValue(0),
                       MakeUintegerAccessor(&UbTransportChannel::m_maxOutstandingReadBytes),
                       MakeUintegerChecker<uint64_t>())
+        .AddAttribute("MaxActiveReadSegments",
+                      "Separate send-pipeline depth for READ segments (read requests and read "
+                      "responses). Read admission is already bounded by MaxOutstandingReadBytes, "
+                      "and a response's plane is fixed by its request, so a deeper read pipeline "
+                      "costs no dispatch adaptivity; the shallow write depth would otherwise cap "
+                      "each TP's read pipeline at MaxActiveSendSegments x TaSegmentBytes. "
+                      "0 = READ shares MaxActiveSendSegments with writes (legacy).",
+                      UintegerValue(0),
+                      MakeUintegerAccessor(&UbTransportChannel::m_maxActiveReadSegments),
+                      MakeUintegerChecker<uint32_t>())
         .AddAttribute("MaxActiveSendSegments",
                       "Maximum WQE segments per TP that may be admitted but not fully sent "
                       "(shallow send pipeline depth).",
@@ -2460,6 +2470,10 @@ UbTransportChannel::CanContinueAcceptedWqeSegment(Ptr<const UbWqeSegment> segmen
         m_outstandingReadBytes + segment->GetSize() > m_maxOutstandingReadBytes) {
         return false;
     }
+    if (segment != nullptr && m_maxActiveReadSegments > 0) {
+        return !IsWqeSegmentLimited() &&
+               CanScheduleSegmentOfKind(segment->GetType() == UbTransactionOpcode::READ);
+    }
     return segment != nullptr && !IsWqeSegmentLimited() && CanScheduleAnotherSegment();
 }
 
@@ -2596,7 +2610,22 @@ uint32_t UbTransportChannel::GetOutstandingUnackedSegmentCount() const
 
 bool UbTransportChannel::CanScheduleAnotherSegment() const
 {
+    if (m_maxActiveReadSegments > 0) {
+        return CanScheduleSegmentOfKind(false) || CanScheduleSegmentOfKind(true);
+    }
     return GetActiveSendSegmentCount() < m_maxActiveSendSegments;
+}
+
+bool UbTransportChannel::CanScheduleSegmentOfKind(bool read) const
+{
+    uint32_t active = 0;
+    for (const Ptr<UbWqeSegment>& segment : m_wqeSegmentVector) {
+        if (segment != nullptr && !segment->IsSentCompleted() &&
+            (segment->GetType() == UbTransactionOpcode::READ) == read) {
+            ++active;
+        }
+    }
+    return active < (read ? m_maxActiveReadSegments : m_maxActiveSendSegments);
 }
 
 uint64_t

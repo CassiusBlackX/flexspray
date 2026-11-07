@@ -744,6 +744,9 @@ private:
     // Requester-side READ accounting: response bytes requested over this TP and not yet received.
     uint64_t m_outstandingReadBytes{0};
     uint64_t m_maxOutstandingReadBytes{0};
+    // Separate send-pipeline depth for READ segments (0 = shared with writes).
+    uint32_t m_maxActiveReadSegments{0};
+    bool CanScheduleSegmentOfKind(bool read) const;
     double m_arbitrationPass{0.0};
     // Delivery-rate estimator state (see GetDeliveryRateBps).
     Time m_deliveryRateMinInterval;
