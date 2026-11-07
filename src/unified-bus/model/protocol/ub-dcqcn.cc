@@ -352,7 +352,39 @@ UbHostDcqcn::ClampBitRate(uint64_t bitRate) const
 }
 
 void
+UbHostDcqcn::RescalePacingDebt(uint64_t previousBitRate)
+{
+    // The pacing debt (time until the next packet may leave) was accrued at the previous rate.
+    // Re-express it at the current rate in BOTH directions. Rescaling only on rate cuts (as before)
+    // left debt accrued at a near-zero rate in place after recovery: a TP back at line rate could
+    // wait hundreds of milliseconds with nothing in flight, i.e. a permanent stall.
+    const uint64_t nextBitRate = m_currentRate.GetBitRate();
+    const Time now = Simulator::Now();
+    if (previousBitRate == 0 || nextBitRate == 0 || previousBitRate == nextBitRate ||
+        m_nextAvailableSendTime <= now)
+    {
+        return;
+    }
+    const Time outstandingDebt = m_nextAvailableSendTime - now;
+    const double rescale = static_cast<double>(previousBitRate) / static_cast<double>(nextBitRate);
+    m_nextAvailableSendTime = now + Seconds(outstandingDebt.GetSeconds() * rescale);
+    if (m_pacingWakeupEvent.IsPending())
+    {
+        CancelTrackedEvent(m_pacingWakeupEvent, m_pacingTrackedEvents);
+    }
+    SchedulePacingWakeup();
+}
+
+void
 UbHostDcqcn::ApplyRecoveryIncrease(bool byteDriven)
+{
+    const uint64_t previousBitRate = m_currentRate.GetBitRate();
+    ApplyRecoveryIncreaseRate(byteDriven);
+    RescalePacingDebt(previousBitRate);
+}
+
+void
+UbHostDcqcn::ApplyRecoveryIncreaseRate(bool byteDriven)
 {
     if (byteDriven)
     {
@@ -657,19 +689,7 @@ UbHostDcqcn::OnSenderCongestionNotification(TpOpcode opcode,
     const uint64_t nextBitRate = ClampBitRate(static_cast<uint64_t>(cutBitRate));
     const uint64_t previousBitRate = m_currentRate.GetBitRate();
     m_currentRate = DataRate(nextBitRate);
-    const Time now = Simulator::Now();
-    if (previousBitRate > 0 && m_nextAvailableSendTime > now && nextBitRate > 0)
-    {
-        const Time outstandingDebt = m_nextAvailableSendTime - now;
-        const double rescale =
-            static_cast<double>(previousBitRate) / static_cast<double>(nextBitRate);
-        m_nextAvailableSendTime = now + Seconds(outstandingDebt.GetSeconds() * rescale);
-        if (m_pacingWakeupEvent.IsPending())
-        {
-            CancelTrackedEvent(m_pacingWakeupEvent, m_pacingTrackedEvents);
-        }
-        SchedulePacingWakeup();
-    }
+    RescalePacingDebt(previousBitRate);
     m_alpha = (1.0 - m_g) * m_alpha + m_g;
     TraceSenderState("CNP_RATE_CUT");
     ResetRecoveryState();

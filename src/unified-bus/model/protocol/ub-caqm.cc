@@ -334,12 +334,22 @@ UbHostCaqm::ApplySenderCetphFeedback(uint32_t psn, const UbCongestionExtTph& hea
     }
 
     uint32_t sequence = header.GetAckSequence();
-    if (sequence < m_lastSequence && m_lastSequence > DATA_BYTE_RECVD_RESET_NUM) {
+    // A smaller cumulative sequence is either the receiver's 2^31 counter wrap or a stale ACK that
+    // was overtaken by a newer one (ACKs follow the data's per-packet spraying, so they reorder).
+    // Treating a stale ACK as current regressed the acknowledged byte count, left phantom bytes in
+    // flight forever and deadlocked TPs whose window sat at the 1-MTU floor.
+    const bool wrapped = sequence < m_lastSequence && m_lastSequence > DATA_BYTE_RECVD_RESET_NUM &&
+                         (m_lastSequence - sequence) > DATA_BYTE_RECVD_RESET_NUM / 2;
+    if (wrapped) {
         m_dataByteSent = (m_dataByteSent >= DATA_BYTE_RECVD_RESET_NUM)
                              ? (m_dataByteSent - DATA_BYTE_RECVD_RESET_NUM)
                              : 0;
+        m_lastSequence = sequence;
+    } else if (sequence >= m_lastSequence) {
+        m_lastSequence = sequence;
     }
-    m_lastSequence = sequence;
+    // else: stale ACK, keep the newer progress; its congestion feedback below still applies.
+    sequence = m_lastSequence;
     m_inFlight = (m_dataByteSent >= sequence) ? (m_dataByteSent - sequence) : 0;
     uint8_t c_e = header.GetC();
     bool i_e = header.GetI();

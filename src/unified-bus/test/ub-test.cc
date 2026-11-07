@@ -36529,6 +36529,90 @@ class UbFlexSprayUnitTest : public TestCase
  * not stall the sender's other planes: the in-flight cap bounds the backlog on the slow plane and
  * dispatch moves segments to the healthy planes.
  */
+/**
+ * Regression: DCQCN pacing debt accrued at a very low rate must shrink when the rate recovers.
+ * Before the fix only rate cuts rescaled the debt, so a TP back at line rate could wait for
+ * hundreds of milliseconds with nothing in flight (permanent stall under ECMP + DCQCN).
+ */
+class UbDcqcnPacingDebtShrinksOnRecoveryTest : public TestCase
+{
+  public:
+    UbDcqcnPacingDebtShrinksOnRecoveryTest()
+        : TestCase("UnifiedBus - DCQCN pacing debt is rescaled when the rate recovers")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(true));
+        GlobalValue::Bind("UB_CC_ALGO", StringValue("DCQCN"));
+        Config::SetDefault("ns3::UbHostDcqcn::RateIncreaseTimer", TimeValue(MicroSeconds(55)));
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<UbTransportChannel> txTp = topo.sender->GetObject<UbController>()
+                                           ->GetTransportChannelManager()
+                                           ->GetTp(kUrmaWriteRegressionSenderTpn);
+        Ptr<UbHostDcqcn> cc = DynamicCast<UbHostDcqcn>(txTp->GetCongestionCtrlForTest());
+        NS_TEST_ASSERT_MSG_NE(cc, nullptr, "Sender TP should bind a host DCQCN instance");
+        for (int i = 0; i < 12; ++i) // ~400G / 2^12 ~ 100 Mbps
+        {
+            cc->ApplySyntheticCnpForTest();
+        }
+        cc->OnSenderDataPacketSent(0, 4096); // debt accrued at the collapsed rate
+        const Time debtBefore = cc->GetNextAvailableSendTimeForTest() - Simulator::Now();
+        NS_TEST_ASSERT_MSG_GT(debtBefore, MicroSeconds(100), "collapsed rate must create debt");
+        Simulator::Schedule(MicroSeconds(60), [this, cc, debtBefore]() {
+            const Time debtAfter = cc->GetNextAvailableSendTimeForTest() - Simulator::Now();
+            NS_TEST_ASSERT_MSG_LT(debtAfter,
+                                  debtBefore - MicroSeconds(60),
+                                  "a rate increase must rescale the outstanding pacing debt");
+        });
+        Simulator::Stop(MicroSeconds(61));
+        Simulator::Run();
+        Simulator::Destroy();
+        Config::Reset();
+    }
+};
+
+/**
+ * Regression: a stale (reordered) CAQM ACK must not move the acknowledged byte count backwards.
+ * ACKs are sprayed like the data, so they can arrive out of order; treating the older cumulative
+ * sequence as current left phantom in-flight bytes that deadlocked TPs at the 1-MTU window floor.
+ */
+class UbCaqmStaleAckDoesNotRegressInflightTest : public TestCase
+{
+  public:
+    UbCaqmStaleAckDoesNotRegressInflightTest()
+        : TestCase("UnifiedBus - CAQM ignores stale cumulative ACK sequences")
+    {
+    }
+
+    void DoRun() override
+    {
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(true));
+        GlobalValue::Bind("UB_CC_ALGO", StringValue("CAQM"));
+        Ptr<UbHostCaqm> cc = CreateObject<UbHostCaqm>();
+        cc->OnSenderDataPacketSent(0, 4096);
+        cc->OnSenderDataPacketSent(1, 4096);
+        auto ack = [&](uint32_t psn, uint32_t seq) {
+            UbCongestionExtTph h;
+            h.SetAckSequence(seq);
+            h.SetI(true);
+            h.SetC(0);
+            h.SetHint(0);
+            cc->OnSenderCongestionNotification(TpOpcode::TP_OPCODE_ACK_WITH_CETPH, psn, h);
+        };
+        ack(1, 8192);
+        NS_TEST_ASSERT_MSG_EQ(cc->GetInflightForTest(), 0u, "newest ACK acknowledges everything");
+        ack(0, 4096); // overtaken older ACK
+        NS_TEST_ASSERT_MSG_EQ(cc->GetInflightForTest(), 0u, "stale ACK must not resurrect bytes");
+        cc->Dispose();
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(false));
+        Simulator::Destroy();
+    }
+};
+
 class UbFlexSprayFarEndDegradeSystemTest : public TestCase
 {
   public:
@@ -40121,5 +40205,7 @@ class UbFlexSpraySuite : public TestSuite
     {
         AddTestCase(new UbFlexSprayUnitTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbFlexSprayFarEndDegradeSystemTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbDcqcnPacingDebtShrinksOnRecoveryTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbCaqmStaleAckDoesNotRegressInflightTest(), TestCase::Duration::QUICK);
     }
 } g_ubFlexSpraySuite;

@@ -51,6 +51,8 @@ public:
                                         UbCongestionExtTph header) override;
     void OnSenderTransportIdle() override;
     void OnTpDestroyRequested() override;
+    void RescalePacingDebt(uint64_t previousBitRate);
+    void ApplyRecoveryIncreaseRate(bool byteDriven);
 
     DataRate GetCurrentRateForTest() const { return m_currentRate; }
     DataRate GetTargetRateForTest() const { return m_targetRate; }
