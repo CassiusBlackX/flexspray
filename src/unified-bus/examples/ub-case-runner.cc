@@ -7,6 +7,7 @@
 #include "ns3/ub-app.h"
 #include "ns3/ub-link.h"
 #include "ns3/ub-link-fault-schedule.h"
+#include "ns3/ub-link-health.h"
 #include "ns3/ub-next-hop-index.h"
 #include "ns3/ub-port.h"
 #include "ns3/ub-traffic-gen.h"
@@ -665,6 +666,28 @@ void ScheduleResolvedLinkFaults(const std::vector<UbLinkFaultTarget>& targets)
     ScheduleLinkFaults(targets);
 }
 
+/**
+ * @brief Validate and schedule the optional `link_health.csv` (runtime lane degrade / isolation).
+ */
+void ScheduleCaseLinkHealth(const std::string& configPath, const RuntimeSelection& runtime)
+{
+    std::vector<UbLinkHealthRow> rows;
+    std::string error;
+    if (!TryReadLinkHealthSchedule(configPath + "/link_health.csv", rows, error))
+    {
+        NS_ABORT_MSG(error);
+    }
+    if (rows.empty())
+    {
+        return;
+    }
+    NS_ABORT_MSG_IF(runtime.enableMpi || ModeUsesMtp(runtime.mode),
+                    "link_health.csv currently supports single-process, single-thread runs only");
+    UbUtils::Get()->PrintTimestamp("[fault] Schedule " + std::to_string(rows.size()) +
+                                   " link health action(s) from link_health.csv.");
+    ScheduleLinkHealthActions(rows);
+}
+
 void ConfigureTrafficDependencyVisibility(const QuickExampleOptions& options)
 {
     if (!options.dependencyVisibilityDelay.empty())
@@ -1183,6 +1206,8 @@ PhaseTiming RunScenario(const QuickExampleOptions& options,
                                   runtime.mpiRank,
                                   runtime.enableMpi || ModeUsesMtp(runtime.mode));
     ScheduleResolvedLinkFaults(ResolveLinkFaultSchedule(options.configPath));
+    ScheduleCaseLinkHealth(options.configPath, runtime);
+    UbUtils::Get()->StartGoodputSampler();
     ApplyDependencyVisibilityLookaheadBound(runtime);
     UbTrafficGen::Get()->ScheduleNextTasks();
     UbUtils::Get()->PrintTimestamp("[traffic] Scheduled local tasks: " +

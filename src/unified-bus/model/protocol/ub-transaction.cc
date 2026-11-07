@@ -123,7 +123,20 @@ TypeId UbTransaction::GetTypeId(void)
             TimeValue(NanoSeconds(0)),
             MakeTimeAccessor(&UbTransaction::SetTargetExecutionDelay,
                              &UbTransaction::GetTargetExecutionDelay),
-            MakeTimeChecker(TimeStep(0)));
+            MakeTimeChecker(TimeStep(0)))
+        .AddAttribute(
+            "TpgDispatchPolicy",
+            "How a WQE segment picks a TP group member: FIRST_ADMISSIBLE (legacy round-robin "
+            "cursor, first member with free pipeline capacity) or MIN_DRAIN_TIME (admissible "
+            "member with the smallest (backlog + segment) / delivery-rate estimate).",
+            EnumValue(UbTpgDispatchPolicy::FIRST_ADMISSIBLE),
+            MakeEnumAccessor<UbTpgDispatchPolicy>(&UbTransaction::m_tpgDispatchPolicy),
+            MakeEnumChecker(UbTpgDispatchPolicy::FIRST_ADMISSIBLE,
+                            "FIRST_ADMISSIBLE",
+                            UbTpgDispatchPolicy::MIN_DRAIN_TIME,
+                            "MIN_DRAIN_TIME",
+                            UbTpgDispatchPolicy::STATIC_RR,
+                            "STATIC_RR"));
     return tid;
 }
 
@@ -1186,6 +1199,9 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
         selectedGroup = resolution.group;
         const RtpTpgMaterialization& materialization =
             MaterializeRtpTpGroup(jettyNum, reference, selectedGroup);
+        Ptr<UbController> ownerController = GetOwnerController();
+        const bool scoreMembers = m_tpgDispatchPolicy == UbTpgDispatchPolicy::MIN_DRAIN_TIME;
+        double bestDrainNs = 0.0;
         bool hasLiveMember = false;
         for (uint32_t offset = 0; offset < selectedGroup->GetMemberCount(); ++offset)
         {
@@ -1203,11 +1219,38 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
                 continue;
             }
             hasLiveMember = true;
+            if (ownerController != nullptr && ownerController->IsTpPathIsolated(transport))
+            {
+                // Protection-isolated plane/port: keep the member live (so the WQE is deferred,
+                // not rejected) but admit no new segments to it.
+                continue;
+            }
+            if (m_tpgDispatchPolicy == UbTpgDispatchPolicy::STATIC_RR)
+            {
+                // Static striping: only the first live member after the cursor may take it.
+                if (transport->CanAdmitWqeSegment(segment))
+                {
+                    selectedGroupIndex = candidateIndex;
+                    admittedTp = transport;
+                }
+                break;
+            }
             if (transport->CanAdmitWqeSegment(segment))
             {
-                selectedGroupIndex = candidateIndex;
-                admittedTp = transport;
-                break;
+                if (!scoreMembers)
+                {
+                    selectedGroupIndex = candidateIndex;
+                    admittedTp = transport;
+                    break;
+                }
+                // Strict '<' keeps cursor order on ties.
+                const double drainNs = transport->EstimateDrainTimeNs(segment->GetSize());
+                if (admittedTp == nullptr || drainNs < bestDrainNs)
+                {
+                    bestDrainNs = drainNs;
+                    selectedGroupIndex = candidateIndex;
+                    admittedTp = transport;
+                }
             }
         }
         if (admittedTp == nullptr)

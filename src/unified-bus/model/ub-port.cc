@@ -917,6 +917,7 @@ void UbPort::Receive(Ptr<Packet> packet)
         tag.AddPortRecvTrace(GetNode()->GetId(), m_portId, Simulator::Now().GetNanoSeconds());
         packet->AddPacketTag(tag);
     }
+    m_rxBytes += packet->GetSize();
     PortRxNotify(GetNode()->GetId(), m_portId, packet->GetSize());
     PktRcvNotify(packet);
     DispatchReceive(packet);

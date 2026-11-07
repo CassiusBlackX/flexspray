@@ -672,7 +672,7 @@ UbRoutingProcess::SelectCandidate(RoutingKey& key,
     if (m_unavailableOutputs.empty())
     {
         m_lastFailureExcludedAllCandidates = false;
-        return SelectCandidateFromView(key, candidates, selectedShortestPath, inPort);
+        return SelectWithSoftIsolation(key, candidates, selectedShortestPath, inPort);
     }
 
     const auto countLegal = [&candidates](const UbRoutingCandidateView& view) {
@@ -717,7 +717,34 @@ UbRoutingProcess::SelectCandidate(RoutingKey& key,
         return -1;
     }
     m_lastFailureExcludedAllCandidates = false;
-    return SelectCandidateFromView(key, filtered, selectedShortestPath, inPort);
+    return SelectWithSoftIsolation(key, filtered, selectedShortestPath, inPort);
+}
+
+int
+UbRoutingProcess::SelectWithSoftIsolation(RoutingKey& key,
+                                          const UbRoutingCandidateView& candidates,
+                                          bool& selectedShortestPath,
+                                          uint16_t inPort)
+{
+    if (m_isolatedOutputs.empty())
+    {
+        return SelectCandidateFromView(key, candidates, selectedShortestPath, inPort);
+    }
+    const auto isIsolated = [this](uint16_t port) { return IsOutputIsolated(port); };
+    m_softShortest.assign(candidates.shortest.begin(), candidates.shortest.end());
+    m_softNonShortest.assign(candidates.nonShortest.begin(), candidates.nonShortest.end());
+    m_softShortest.erase(std::remove_if(m_softShortest.begin(), m_softShortest.end(), isIsolated),
+                         m_softShortest.end());
+    m_softNonShortest.erase(
+        std::remove_if(m_softNonShortest.begin(), m_softNonShortest.end(), isIsolated),
+        m_softNonShortest.end());
+    const UbRoutingCandidateView soft{m_softShortest, m_softNonShortest, candidates.excludedPort};
+    if (UbRoutingPolicy::Count(soft) == 0)
+    {
+        // Every candidate is isolated: keep using them so traffic already headed there drains.
+        return SelectCandidateFromView(key, candidates, selectedShortestPath, inPort);
+    }
+    return SelectCandidateFromView(key, soft, selectedShortestPath, inPort);
 }
 
 int
@@ -833,6 +860,24 @@ bool
 UbRoutingProcess::IsOutputUnavailable(uint16_t outPort) const
 {
     return m_unavailableOutputs.find(outPort) != m_unavailableOutputs.end();
+}
+
+void
+UbRoutingProcess::SetOutputIsolated(uint16_t outPort)
+{
+    m_isolatedOutputs.insert(outPort);
+}
+
+void
+UbRoutingProcess::ClearOutputIsolated(uint16_t outPort)
+{
+    m_isolatedOutputs.erase(outPort);
+}
+
+bool
+UbRoutingProcess::IsOutputIsolated(uint16_t outPort) const
+{
+    return m_isolatedOutputs.find(outPort) != m_isolatedOutputs.end();
 }
 
 uint64_t

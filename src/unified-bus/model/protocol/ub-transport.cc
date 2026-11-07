@@ -5,6 +5,7 @@
 #include "ub-ta-codec.h"
 #include "ub-transaction-rules.h"
 
+#include "ns3/double.h"
 #include "ns3/log.h"
 #include "ns3/node.h"
 #include "ns3/simulator.h"
@@ -35,8 +36,6 @@ namespace
 using UbTpPsnSequence = UbModuloSequence<24, uint64_t>;
 using UbTpMsnSequence = UbModuloSequence<24, uint64_t>;
 using UbTaSsnSequence = UbModuloSequence<16, uint32_t>;
-
-constexpr uint32_t kShallowPipelineActiveSendDepth = 2;
 
 bool
 IsZeroPayloadReadRequest(const Ptr<UbWqeSegment>& segment)
@@ -271,6 +270,22 @@ TypeId UbTransportChannel::GetTypeId(void)
                       UintegerValue(1000),
                       MakeUintegerAccessor(&UbTransportChannel::m_defaultMaxInflightPacketSize),
                       MakeUintegerChecker<uint32_t>())
+        .AddAttribute("MaxActiveSendSegments",
+                      "Maximum WQE segments per TP that may be admitted but not fully sent "
+                      "(shallow send pipeline depth).",
+                      UintegerValue(2),
+                      MakeUintegerAccessor(&UbTransportChannel::m_maxActiveSendSegments),
+                      MakeUintegerChecker<uint32_t>(1))
+        .AddAttribute("DeliveryRateMinInterval",
+                      "Minimum interval between delivery-rate samples used by TPG dispatch.",
+                      TimeValue(NanoSeconds(2000)),
+                      MakeTimeAccessor(&UbTransportChannel::m_deliveryRateMinInterval),
+                      MakeTimeChecker(TimeStep(1)))
+        .AddAttribute("DeliveryRateGain",
+                      "EWMA gain of the delivery-rate estimator (0, 1].",
+                      DoubleValue(0.25),
+                      MakeDoubleAccessor(&UbTransportChannel::m_deliveryRateGain),
+                      MakeDoubleChecker<double>(1e-6, 1.0))
         .AddAttribute("TpOooThreshold",
                       "Receiver out-of-order PSN window size tracked in bitmap.",
                       UintegerValue(2048),
@@ -783,6 +798,7 @@ UbTransportChannel::AdvanceNewDataSendState(const NewDataSendContext& ctx,
 {
     ctx.segment->UpdateSentBytes(ctx.progressBytes);
     m_psnSndNxt++;
+    utils::UbUtils::AddTpPayloadBytes(m_nodeId, m_sport, false, ctx.payloadBytes);
     TraceTpDebugState(m_nodeId,
                       m_tpn,
                       "SEND_PACKET",
@@ -1777,6 +1793,7 @@ UbTransportChannel::FinalizeTransportAckProgress(const TransportResponseContext&
                                                  uint64_t previousSndUna)
 {
     if (m_psnSndUna > previousSndUna) {
+        UpdateDeliveryRate(previousSndUna);
         if (m_sendWindowLimited && IsInflightLimited() == false) {
             if (!m_congestionCtrl->IsCcLimited(UB_MTU_BYTE)) {
                 m_sendWindowLimited = false;
@@ -2188,6 +2205,7 @@ UbTransportChannel::UpdateReceiveWindowAndCollectCompletedTa(
 
     m_hasReceivedAnyPsn = true;
     m_maxRcvPsn = std::max(m_maxRcvPsn, ctx.psn);
+    utils::UbUtils::AddTpPayloadBytes(m_nodeId, m_sport, true, ctx.payloadBytes);
     m_congestionCtrl->OnReceiverDataPacketReceived(ctx.psn,
                                                    ctx.payloadBytes,
                                                    ctx.networkHeader);
@@ -2530,7 +2548,69 @@ uint32_t UbTransportChannel::GetOutstandingUnackedSegmentCount() const
 
 bool UbTransportChannel::CanScheduleAnotherSegment() const
 {
-    return GetActiveSendSegmentCount() < kShallowPipelineActiveSendDepth;
+    return GetActiveSendSegmentCount() < m_maxActiveSendSegments;
+}
+
+uint64_t
+UbTransportChannel::GetUnsentPayloadBytes() const
+{
+    uint64_t bytes = 0;
+    for (const Ptr<UbWqeSegment>& segment : m_wqeSegmentVector) {
+        if (segment != nullptr) {
+            bytes += segment->GetBytesLeft();
+        }
+    }
+    return bytes;
+}
+
+double
+UbTransportChannel::GetDeliveryRateBps() const
+{
+    if (m_deliveryRateBps > 0.0) {
+        return m_deliveryRateBps;
+    }
+    Ptr<Node> node = NodeList::GetNode(m_nodeId);
+    Ptr<UbPort> port = node == nullptr ? nullptr : DynamicCast<UbPort>(node->GetDevice(m_sport));
+    return port == nullptr ? 0.0 : static_cast<double>(port->GetDataRate().GetBitRate());
+}
+
+double
+UbTransportChannel::EstimateDrainTimeNs(uint64_t extraBytes) const
+{
+    const uint64_t backlogBytes =
+        GetUnsentPayloadBytes() + GetInflightPsns() * UB_MTU_BYTE + extraBytes;
+    // Floor the rate so a member that stopped draining is strongly disfavoured but still finite.
+    const double rate = std::max(GetDeliveryRateBps(), 1e6);
+    return static_cast<double>(backlogBytes) * 8.0 * 1e9 / rate;
+}
+
+void
+UbTransportChannel::UpdateDeliveryRate(uint64_t previousSndUna)
+{
+    const Time now = Simulator::Now();
+    if (!m_rateSampleOpen) {
+        // Start a sample at the first ACK progress after (re)becoming backlogged.
+        m_rateSampleOpen = true;
+        m_rateSampleStart = now;
+        m_rateSampleStartUna = previousSndUna;
+    }
+    const Time elapsed = now - m_rateSampleStart;
+    if (elapsed >= m_deliveryRateMinInterval && elapsed.IsStrictlyPositive()) {
+        const double bits = static_cast<double>(m_psnSndUna - m_rateSampleStartUna) *
+                            UB_MTU_BYTE * 8.0;
+        const double sample = bits * 1e9 / static_cast<double>(elapsed.GetNanoSeconds());
+        m_deliveryRateBps = m_deliveryRateBps <= 0.0
+                                ? sample
+                                : (1.0 - m_deliveryRateGain) * m_deliveryRateBps +
+                                      m_deliveryRateGain * sample;
+        m_rateSampleStart = now;
+        m_rateSampleStartUna = m_psnSndUna;
+    }
+    // An idle TP is app-limited, not capacity-limited: close the sample so idle time does not
+    // depress the estimate (the last estimate is kept).
+    if (GetInflightPsns() == 0 && GetUnsentPayloadBytes() == 0) {
+        m_rateSampleOpen = false;
+    }
 }
 
 bool

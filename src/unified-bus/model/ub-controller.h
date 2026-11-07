@@ -5,6 +5,7 @@
 #include <ns3/core-module.h>
 #include <vector>
 #include <map>
+#include <set>
 #include <unordered_map>
 #include "ub-datatype.h"
 #include "ns3/callback.h"
@@ -62,6 +63,14 @@ public:
         UbDestroyReason reason = UbDestroyReason::EXPLICIT);
     void NotifyRtpTpGroupWorkChanged(
         const UbLifecycleResourceIdentity& groupIdentity);
+
+    // Link sub-health (protection isolation) of RTP TP group members.
+    /** Isolate/restore a local device port: TPs sourced on it admit no new segments. */
+    void SetLocalPortIsolated(uint16_t port, bool isolated);
+    /** Isolate/restore a remote peer port: TPs whose peer is (node, port) admit no new segments. */
+    void SetPeerPortIsolated(uint32_t peerNode, uint16_t peerPort, bool isolated);
+    /** True when @p tp uses an isolated local port or targets an isolated peer port. */
+    bool IsTpPathIsolated(const Ptr<UbTransportChannel>& tp) const;
 
     // Port management
     /**
@@ -247,6 +256,9 @@ public:
     uint64_t m_nextRtpTpGroupId{0};
     std::map<uint64_t, Ptr<UbTransportGroup>> m_rtpTpGroups{};
     std::map<uint32_t, uint64_t> m_rtpTpGroupByTpn{};
+    std::set<uint16_t> m_isolatedLocalPorts{};
+    std::set<std::pair<uint32_t, uint16_t>> m_isolatedPeerPorts{};
+    void WakeRtpTpGroupsAfterIsolationChange();
     std::unordered_map<uint32_t, std::vector<Ptr<UbPort>>> m_portsByDestination{};
     std::map<uint32_t, std::vector<uint16_t>> m_ctpEntityPorts{};
     bool m_ctpEntitiesFrozen{false};

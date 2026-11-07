@@ -30,6 +30,7 @@
 #include "ns3/ub-transaction.h"
 #include "ns3/ub-transport.h"
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <fstream>
@@ -366,6 +367,18 @@ public:
     static bool IsCongestionControlTraceEnabled();
 
     static bool IsQueueTraceEnabled();
+    /** Account TP payload bytes for the goodput sampler (no-op unless it is running). */
+    static void AddTpPayloadBytes(uint32_t nodeId, uint32_t portId, bool rx, uint64_t bytes)
+    {
+        if (!goodput_sampler_enabled || nodeId >= goodput_payload_bytes.size() ||
+            portId >= goodput_payload_bytes[nodeId].size())
+        {
+            return;
+        }
+        goodput_payload_bytes[nodeId][portId][rx ? 1 : 0] += bytes;
+    }
+    void StartGoodputSampler();
+    static void GoodputSampleTick(uint32_t nodeId, uint32_t intervalNs);
 
     static bool IsTpDebugEnabledFor(uint32_t nodeId, uint32_t tpn);
 
@@ -499,6 +512,10 @@ private:
     inline static uint64_t runtime_packet_drop_count = 0;
     inline static std::string runtime_packet_drop_reason;
     inline static bool queue_sampler_started = false;
+    // Goodput sampler (UB_GOODPUT_SAMPLE_INTERVAL_NS): per [node][port] {tx, rx} TP payload bytes.
+    inline static bool goodput_sampler_enabled = false;
+    inline static std::vector<std::vector<std::array<uint64_t, 2>>> goodput_payload_bytes;
+    inline static std::vector<ns3::EventId> goodput_sampler_events;
     inline static std::map<std::pair<uint32_t, uint32_t>, ns3::EventId> queue_sampler_events;
 
     ns3::GlobalValue g_fault_enable =
@@ -694,6 +711,12 @@ private:
                      ns3::UintegerValue(0),
                      ns3::MakeUintegerChecker<uint32_t>());
 
+    ns3::GlobalValue g_goodput_sample_interval =
+        ns3::GlobalValue("UB_GOODPUT_SAMPLE_INTERVAL_NS",
+                         "Interval in ns of cumulative per-port wire/payload byte samples written "
+                         "to runlog/GoodputSample.csv (0 disables).",
+                         ns3::UintegerValue(0),
+                         ns3::MakeUintegerChecker<uint32_t>());
     ns3::GlobalValue g_tp_debug_enable =
     ns3::GlobalValue("UB_TP_DEBUG_ENABLE",
                      "Enable focused TP sender-state debug trace.",

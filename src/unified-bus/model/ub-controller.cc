@@ -517,6 +517,63 @@ UbController::NotifyRtpTpGroupWorkChanged(
     group->ResumeNewOperations();
 }
 
+void
+UbController::SetLocalPortIsolated(uint16_t port, bool isolated)
+{
+    const bool changed = isolated ? m_isolatedLocalPorts.insert(port).second
+                                  : m_isolatedLocalPorts.erase(port) != 0;
+    if (changed && !isolated)
+    {
+        WakeRtpTpGroupsAfterIsolationChange();
+    }
+}
+
+void
+UbController::SetPeerPortIsolated(uint32_t peerNode, uint16_t peerPort, bool isolated)
+{
+    const std::pair<uint32_t, uint16_t> key{peerNode, peerPort};
+    const bool changed = isolated ? m_isolatedPeerPorts.insert(key).second
+                                  : m_isolatedPeerPorts.erase(key) != 0;
+    if (changed && !isolated)
+    {
+        WakeRtpTpGroupsAfterIsolationChange();
+    }
+}
+
+bool
+UbController::IsTpPathIsolated(const Ptr<UbTransportChannel>& tp) const
+{
+    if (tp == nullptr || (m_isolatedLocalPorts.empty() && m_isolatedPeerPorts.empty()))
+    {
+        return false;
+    }
+    return m_isolatedLocalPorts.count(tp->GetSport()) != 0 ||
+           m_isolatedPeerPorts.count({tp->GetDest(), tp->GetDport()}) != 0;
+}
+
+void
+UbController::WakeRtpTpGroupsAfterIsolationChange()
+{
+    if (m_transaction == nullptr)
+    {
+        return;
+    }
+    std::vector<UbLifecycleResourceIdentity> groups;
+    groups.reserve(m_rtpTpGroups.size());
+    for (const auto& [localId, group] : m_rtpTpGroups)
+    {
+        (void)localId;
+        if (group != nullptr)
+        {
+            groups.push_back(group->GetLifecycleIdentity());
+        }
+    }
+    for (const auto& identity : groups)
+    {
+        m_transaction->NotifyRtpTpGroupMemberAvailable(identity);
+    }
+}
+
 // Port management
 void UbController::AddPortDestination(Ptr<UbPort> port, uint32_t destination)
 {

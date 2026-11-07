@@ -69,6 +69,7 @@ build_lib(
 	model/ub-queue-manager.cc
 	model/ub-fault.cc
 	model/ub-link-fault-schedule.cc
+	model/ub-link-health.cc
 	model/ub-tp-connection-manager.cc
 	model/ub-tag.cc
   HEADER_FILES
@@ -121,6 +122,7 @@ build_lib(
 	model/ub-tag.h
 	model/ub-fault.h
 	model/ub-link-fault-schedule.h
+	model/ub-link-health.h
   LIBRARIES_TO_LINK ${libnetwork}
                     ${libinternet}
                     ${libapplications}

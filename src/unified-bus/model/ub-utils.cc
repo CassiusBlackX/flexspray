@@ -2050,6 +2050,13 @@ void UbUtils::Destroy()
     }
     queue_sampler_events.clear();
     queue_sampler_started = false;
+    for (auto& event : goodput_sampler_events)
+    {
+        event.Cancel();
+    }
+    goodput_sampler_events.clear();
+    goodput_sampler_enabled = false;
+    goodput_payload_bytes.clear();
 
     if (UbLifecycleTrace::GetLevel() != UbLifecycleTraceLevel::OFF)
     {
@@ -2271,6 +2278,69 @@ UbUtils::QueueSampleTick(uint32_t nodeId, uint32_t portId, uint32_t intervalNs)
                             nodeId,
                             portId,
                             intervalNs);
+}
+
+void
+UbUtils::StartGoodputSampler()
+{
+    UintegerValue intervalValue;
+    g_goodput_sample_interval.GetValue(intervalValue);
+    const uint32_t intervalNs = intervalValue.Get();
+    if (intervalNs == 0 || goodput_sampler_enabled || trace_path.empty())
+    {
+        return;
+    }
+    goodput_payload_bytes.assign(NodeList::GetNNodes(), {});
+    goodput_sampler_events.assign(NodeList::GetNNodes(), EventId());
+    for (uint32_t nodeId = 0; nodeId < NodeList::GetNNodes(); ++nodeId)
+    {
+        goodput_payload_bytes[nodeId].assign(NodeList::GetNode(nodeId)->GetNDevices(), {0, 0});
+    }
+    goodput_sampler_enabled = true;
+    for (uint32_t nodeId = 0; nodeId < NodeList::GetNNodes(); ++nodeId)
+    {
+        goodput_sampler_events[nodeId] =
+            Simulator::Schedule(NanoSeconds(0), &UbUtils::GoodputSampleTick, nodeId, intervalNs);
+    }
+}
+
+void
+UbUtils::GoodputSampleTick(uint32_t nodeId, uint32_t intervalNs)
+{
+    Ptr<Node> node = NodeList::GetNode(nodeId);
+    const std::string fileName = trace_path + "runlog/GoodputSample.csv";
+    const std::string header =
+        "time_ns,node,port,rate_bps,tx_wire_bytes,rx_wire_bytes,tx_payload_bytes,rx_payload_bytes";
+    const uint64_t nowNs = static_cast<uint64_t>(Simulator::Now().GetNanoSeconds());
+    for (uint32_t portId = 0; portId < node->GetNDevices(); ++portId)
+    {
+        Ptr<UbPort> port = DynamicCast<UbPort>(node->GetDevice(portId));
+        if (port == nullptr || port->GetChannel() == nullptr)
+        {
+            continue;
+        }
+        const auto& payload = goodput_payload_bytes[nodeId][portId];
+        std::string row;
+        row.reserve(96);
+        row += std::to_string(nowNs);
+        row += ',';
+        row += std::to_string(nodeId);
+        row += ',';
+        row += std::to_string(portId);
+        row += ',';
+        row += std::to_string(port->GetDataRate().GetBitRate());
+        row += ',';
+        row += std::to_string(port->GetTxBytes());
+        row += ',';
+        row += std::to_string(port->GetRxBytes());
+        row += ',';
+        row += std::to_string(payload[0]);
+        row += ',';
+        row += std::to_string(payload[1]);
+        AppendCsvRow(fileName, header, row);
+    }
+    goodput_sampler_events[nodeId] =
+        Simulator::Schedule(NanoSeconds(intervalNs), &UbUtils::GoodputSampleTick, nodeId, intervalNs);
 }
 
 void

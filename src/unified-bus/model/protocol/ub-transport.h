@@ -382,6 +382,21 @@ public:
     uint32_t GetOutstandingUnackedSegmentCount() const;
     bool CanScheduleAnotherSegment() const;
 
+    /** Payload bytes of admitted segments not yet put on the wire. */
+    uint64_t GetUnsentPayloadBytes() const;
+    /** Sent but not yet cumulatively acknowledged packets. */
+    uint64_t GetInflightPsns() const { return m_psnSndNxt - m_psnSndUna; }
+    /**
+     * Smoothed delivery rate in bit/s, measured from cumulative-ACK progress only while this TP
+     * was backlogged. Falls back to the local port rate before the first valid sample.
+     */
+    double GetDeliveryRateBps() const;
+    /**
+     * Estimated time to drain this TP's backlog plus @p extraBytes at the delivery rate; used by
+     * TPG dispatch to steer segments toward planes that are actually draining.
+     */
+    double EstimateDrainTimeNs(uint64_t extraBytes) const;
+
     Ptr<UbCongestionControl> GetCongestionCtrlForTest() const
     {
         return m_congestionCtrl;
@@ -718,6 +733,15 @@ private:
     uint32_t m_maxQueueSize;
 
     uint32_t m_maxInflightPacketSize;
+    uint32_t m_maxActiveSendSegments{2};
+    // Delivery-rate estimator state (see GetDeliveryRateBps).
+    Time m_deliveryRateMinInterval;
+    double m_deliveryRateGain{0.25};
+    double m_deliveryRateBps{0.0};
+    bool m_rateSampleOpen{false};
+    Time m_rateSampleStart;
+    uint64_t m_rateSampleStartUna{0};
+    void UpdateDeliveryRate(uint64_t previousSndUna);
     std::vector<Ptr<UbWqeSegment>> m_wqeSegmentVector; // FIFO
     /// TP1: ->port1 0 1 2 (3 4) 5 6
     ///     |->port2        3 4

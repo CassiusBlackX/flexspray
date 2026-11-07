@@ -13,6 +13,7 @@
 #include <ns3/node.h>
 #include <ns3/simple-ref-count.h>
 
+#include <cstdint>
 #include <deque>
 #include <map>
 #include <optional>
@@ -21,6 +22,23 @@
 #include <vector>
 
 namespace ns3 {
+
+/**
+ * @brief How a new WQE segment picks a member of its RTP TP group.
+ *
+ * FIRST_ADMISSIBLE: legacy behaviour, first member after the group cursor with free shallow-pipeline
+ * capacity. MIN_DRAIN_TIME: the admissible member with the smallest estimated drain time
+ * ((unsent + inflight + segment bytes) / delivery rate); ties keep cursor order. STATIC_RR: strict
+ * round-robin striping that waits for the cursor member when it is busy, modelling a static
+ * per-port multi-QP split (isolated or retiring members are skipped).
+ */
+enum class UbTpgDispatchPolicy : uint32_t
+{
+    FIRST_ADMISSIBLE = 0,
+    MIN_DRAIN_TIME = 1,
+    STATIC_RR = 2, //!< strict round-robin striping: wait for the cursor member (static multi-QP)
+};
+
     /**
      * @brief Transaction Service Mode enumeration
      */
@@ -634,6 +652,7 @@ namespace ns3 {
         uint64_t m_rtpTpgMaterializationCount{0};
         UbTargetExecutor m_targetExecutor;
         Time m_targetExecutionDelay{NanoSeconds(0)};
+        UbTpgDispatchPolicy m_tpgDispatchPolicy{UbTpgDispatchPolicy::FIRST_ADMISSIBLE};
         bool m_targetExecutionStarted{false};
     };
 

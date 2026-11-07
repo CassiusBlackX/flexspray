@@ -206,6 +206,8 @@ public:
     bool EnqueueToEgress(PacketEntry packetEntry);
 
     uint64_t GetTxBytes();
+    /** Cumulative wire bytes received on this port. */
+    uint64_t GetRxBytes() const { return m_rxBytes; }
 
     void SetIfIndex(const uint32_t index) override;
 
@@ -374,6 +376,7 @@ private:
     bool m_outputBlocked{false};
 
     uint64_t m_txBytes;
+    uint64_t m_rxBytes{0};
 
     DataRate m_bps;
 

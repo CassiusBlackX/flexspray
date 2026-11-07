@@ -119,6 +119,17 @@ class UbRoutingProcess : public Object
     bool IsOutputUnavailable(uint16_t outPort) const;
 
     /**
+     * @brief Mark one output as protection-isolated (link sub-health, see ub-link-health.h).
+     *
+     * Unlike a detected failure, isolation is soft: isolated outputs are excluded from candidate
+     * selection only while at least one non-isolated candidate remains, so packets whose only
+     * route uses an isolated (but still physically working) link keep draining.
+     */
+    void SetOutputIsolated(uint16_t outPort);
+    void ClearOutputIsolated(uint16_t outPort);
+    bool IsOutputIsolated(uint16_t outPort) const;
+
+    /**
      * @brief Whether the most recent selection failed only because detected failed outputs were
      *        excluded while legal candidates existed before the exclusion.
      */
@@ -204,6 +215,13 @@ class UbRoutingProcess : public Object
     uint64_t m_hotPathLookups{0};
     uint64_t m_hotPathTemporaryContainerAllocations{0};
     std::unordered_set<uint16_t> m_unavailableOutputs;
+    std::unordered_set<uint16_t> m_isolatedOutputs;
+    std::vector<uint16_t> m_softShortest;
+    std::vector<uint16_t> m_softNonShortest;
+    int SelectWithSoftIsolation(RoutingKey& key,
+                                const UbRoutingCandidateView& candidates,
+                                bool& selectedShortestPath,
+                                uint16_t inPort);
     std::vector<uint16_t> m_filteredShortest;
     std::vector<uint16_t> m_filteredNonShortest;
     bool m_lastFailureExcludedAllCandidates{false};

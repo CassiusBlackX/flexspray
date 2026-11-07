@@ -36303,6 +36303,144 @@ class UbQuickExampleMissingCaseFileSystemTest : public TestCase
     }
 };
 
+/**
+ * End-to-end checks for runtime link sub-health (`link_health.csv`) and the goodput sampler on a
+ * three-plane two-host case: lane degrade slows one plane without stalling the transfer, isolation
+ * drains and then stops a plane, and malformed rows abort before simulation.
+ */
+class UbLinkHealthSystemTest : public TestCase
+{
+  public:
+    UbLinkHealthSystemTest()
+        : TestCase("UnifiedBus - link_health.csv degrade/isolate and goodput sampler")
+    {
+    }
+
+  private:
+    std::filesystem::path PrepareCase(const std::string& name, const std::string& healthCsv)
+    {
+        const std::filesystem::path repoRoot = LocateRepoRoot();
+        const std::filesystem::path caseDir = std::filesystem::path(CreateTempDirFilename(name));
+        std::filesystem::remove_all(caseDir);
+        std::filesystem::create_directories(caseDir);
+        for (const char* f : {"node.csv", "topology.csv", "routing_table.csv",
+                              "transport_channel.csv", "network_attribute.txt"})
+        {
+            std::filesystem::copy_file(repoRoot / "scratch/2nodes_multiple-tp" / f, caseDir / f);
+        }
+        {
+            std::ofstream traffic(caseDir / "traffic.csv");
+            traffic << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
+                       "dependOnPhases\n0,0,1,40000000,URMA_WRITE,7,10ns,0,\n";
+        }
+        {
+            std::ofstream attrs(caseDir / "network_attribute.txt", std::ios::app);
+            attrs << "\nglobal UB_PARSE_TRACE_ENABLE \"false\"\n"
+                     "global UB_PACKET_TRACE_ENABLE \"false\"\n"
+                     "global UB_RECORD_PKT_TRACE \"false\"\n"
+                     "global UB_GOODPUT_SAMPLE_INTERVAL_NS \"1000\"\n";
+        }
+        if (!healthCsv.empty())
+        {
+            std::ofstream health(caseDir / "link_health.csv");
+            health << healthCsv;
+        }
+        return caseDir;
+    }
+
+    static uint64_t TaskCompletionPs(const std::filesystem::path& caseDir)
+    {
+        for (const auto& entry : std::filesystem::directory_iterator(caseDir / "runlog"))
+        {
+            if (entry.path().filename().string().rfind("TaskTrace", 0) != 0)
+            {
+                continue;
+            }
+            std::ifstream in(entry.path());
+            std::string line;
+            while (std::getline(in, line))
+            {
+                if (line.find("WQE Completes") != std::string::npos)
+                {
+                    return std::stoull(line.substr(0, line.find(',')));
+                }
+            }
+        }
+        return 0;
+    }
+
+    // Cumulative tx payload bytes of (node 0, port) at the last sample with time <= tNs.
+    static uint64_t TxPayloadAt(const std::filesystem::path& caseDir, uint32_t port, uint64_t tNs)
+    {
+        std::ifstream in(caseDir / "runlog/GoodputSample.csv");
+        std::string line;
+        std::getline(in, line);
+        uint64_t best = 0;
+        while (std::getline(in, line))
+        {
+            std::vector<std::string> f;
+            std::stringstream ss(line);
+            std::string field;
+            while (std::getline(ss, field, ','))
+            {
+                f.push_back(field);
+            }
+            if (f.size() == 8 && f[1] == "0" && std::stoul(f[2]) == port &&
+                std::stoull(f[0]) <= tNs)
+            {
+                best = std::stoull(f[6]);
+            }
+        }
+        return best;
+    }
+
+    void DoRun() override
+    {
+        SetDataDir(NS_TEST_SOURCEDIR);
+        const auto healthy = PrepareCase("ub-link-health-healthy", "");
+        const auto degraded = PrepareCase("ub-link-health-degrade",
+                                          "timeNs,nodeId,portId,action,value\n"
+                                          "20000,0,1,DEGRADE,1/4\n");
+        const auto isolated = PrepareCase("ub-link-health-isolate",
+                                          "timeNs,nodeId,portId,action,value\n"
+                                          "20000,0,1,DEGRADE,100Gbps\n"
+                                          "40000,0,2,ISOLATE,\n");
+        const auto malformed = PrepareCase("ub-link-health-malformed",
+                                           "timeNs,nodeId,portId,action,value\n"
+                                           "1000,0,1,DEGRADE,fast\n");
+        for (const auto& dir : {healthy, degraded, isolated})
+        {
+            auto [status, output] = RunQuickExampleAbsoluteCaseCommand(
+                CreateTempDirFilename(dir.filename().string() + ".log"), "", "", dir);
+            NS_TEST_ASSERT_MSG_EQ(status, 0, "case should complete: " << output);
+        }
+        const double tHealthy = TaskCompletionPs(healthy) / 1e6;  // us
+        const double tDegraded = TaskCompletionPs(degraded) / 1e6;
+        const double tIsolated = TaskCompletionPs(isolated) / 1e6;
+        NS_TEST_ASSERT_MSG_GT(tHealthy, 0.0, "healthy run must complete");
+        // 40 MB over 3x400G vs. 400+400+100G after 20 us: ideal ~357 us; allow 3%.
+        NS_TEST_ASSERT_MSG_GT(tDegraded, tHealthy * 1.2, "degrade must slow the transfer");
+        NS_TEST_ASSERT_MSG_LT(tDegraded, 357.0 * 1.03, "load must rebalance onto healthy planes");
+        // Isolating port 2 at 40 us leaves 500G: ideal ~610 us; allow 3%.
+        NS_TEST_ASSERT_MSG_LT(tIsolated, 610.0 * 1.03, "isolation must not stall the transfer");
+        NS_TEST_ASSERT_MSG_GT(tIsolated, tDegraded, "isolation removes capacity");
+        // After isolation + drain (two 64 KB segments, < 5 us) port 2 carries no new payload.
+        NS_TEST_ASSERT_MSG_EQ(TxPayloadAt(isolated, 2, 50000),
+                              TxPayloadAt(isolated, 2, 200000),
+                              "isolated plane must stop carrying new payload");
+        NS_TEST_ASSERT_MSG_GT(TxPayloadAt(isolated, 0, 200000),
+                              TxPayloadAt(isolated, 0, 50000),
+                              "healthy plane keeps carrying payload");
+
+        auto [status, output] = RunQuickExampleAbsoluteCaseCommand(
+            CreateTempDirFilename("ub-link-health-malformed.log"), "", "", malformed);
+        NS_TEST_ASSERT_MSG_NE(status, 0, "malformed link_health.csv must abort");
+        NS_TEST_ASSERT_MSG_NE(output.find("DEGRADE value must be a data rate"),
+                              std::string::npos,
+                              "malformed row must be diagnosed: " << output);
+    }
+};
+
 class UbQuickExampleHelpTextSystemTest : public TestCase
 {
   public:
@@ -37858,6 +37996,7 @@ class UbQuickExampleSystemTestSuite : public TestSuite
         AddTestCase(new UbQuickExampleEmptyTrafficSystemTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbQuickExampleMissingCaseDirSystemTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbQuickExampleMissingCaseFileSystemTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbLinkHealthSystemTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbQuickExampleHelpTextSystemTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbQuickExampleRuntimeCatalogQuerySystemTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbQuickExampleLocalSingleThreadSystemTest(), TestCase::Duration::QUICK);
