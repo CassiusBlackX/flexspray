@@ -144,6 +144,9 @@ void UbSwitchAllocator::FinalizeDisposeStorage()
     }
     m_portEventState.clear();
     m_ingressSources.clear();
+    m_nonVoqIngressCount.clear();
+    m_inexactSummaryCount.clear();
+    m_nonEmptyByPriority.clear();
     m_running.clear();
     m_runAgain.clear();
     m_nonEmptyIngressCount.clear();
@@ -359,6 +362,42 @@ void UbSwitchAllocator::Init()
     ScheduleDeadlockCheck();
 }
 
+void UbSwitchAllocator::ResizeIngressSources(uint32_t portsNum, uint32_t vlNum)
+{
+    m_ingressSources.resize(portsNum);
+    for (auto& i : m_ingressSources) {
+        i.resize(vlNum);
+    }
+    m_nonVoqIngressCount.resize(portsNum);
+    m_inexactSummaryCount.resize(portsNum);
+    m_nonEmptyByPriority.resize(portsNum);
+    for (uint32_t port = 0; port < portsNum; ++port) {
+        auto& counts = m_nonVoqIngressCount[port];
+        counts.resize(vlNum, 0);
+        m_inexactSummaryCount[port].resize(vlNum, 0);
+        m_nonEmptyByPriority[port].resize(vlNum, 0);
+        for (uint32_t pri = 0; pri < vlNum; ++pri) {
+            uint32_t nonVoq = 0;
+            uint32_t inexact = 0;
+            uint32_t nonEmpty = 0;
+            for (const auto& queue : m_ingressSources[port][pri]) {
+                if (queue->GetIngressQueueType() != IngressQueueType::VOQ) {
+                    ++nonVoq;
+                }
+                if (DynamicCast<UbPacketQueue>(queue) == nullptr) {
+                    ++inexact;
+                }
+                if (queue->m_reportedNonEmpty) {
+                    ++nonEmpty;
+                }
+            }
+            counts[pri] = nonVoq;
+            m_inexactSummaryCount[port][pri] = inexact;
+            m_nonEmptyByPriority[port][pri] = nonEmpty;
+        }
+    }
+}
+
 void UbSwitchAllocator::RegisterUbIngressQueue(Ptr<UbIngressQueue> ingressQueue, uint32_t outPort, uint32_t priority)
 {
     NS_ABORT_MSG_IF(ingressQueue == nullptr, "Cannot register a null ingress queue");
@@ -375,8 +414,12 @@ void UbSwitchAllocator::RegisterUbIngressQueue(Ptr<UbIngressQueue> ingressQueue,
     }
     NS_ABORT_MSG_IF(ingressQueue->m_allocatorOwner != nullptr,
                     "Ingress queue is already registered with an allocator");
+    if (DynamicCast<UbPacketQueue>(ingressQueue) == nullptr) {
+        ++m_inexactSummaryCount[outPort][priority];
+    }
     if (ingressQueue->GetIngressQueueType() != IngressQueueType::VOQ) {
         queues.push_back(ingressQueue);
+        ++m_nonVoqIngressCount[outPort][priority];
         BindIngressSummary(ingressQueue);
         return;
     }
@@ -418,14 +461,36 @@ UbSwitchAllocator::UpdateIngressSummary(UbIngressQueue* ingressQueue, bool nonEm
     const uint32_t outPortId = ingressQueue->GetOutPortId();
     NS_ABORT_MSG_IF(outPortId >= m_nonEmptyIngressCount.size(),
                     "Ingress summary requires initialized output-port state");
+    const uint32_t priority = ingressQueue->GetIngressPriority();
+    const bool trackPriority = outPortId < m_nonEmptyByPriority.size() &&
+                               priority < m_nonEmptyByPriority[outPortId].size();
     if (nonEmpty)
     {
         ++m_nonEmptyIngressCount[outPortId];
+        if (trackPriority)
+        {
+            ++m_nonEmptyByPriority[outPortId][priority];
+        }
         return;
     }
     NS_ABORT_MSG_IF(m_nonEmptyIngressCount[outPortId] == 0,
                     "Ingress summary count cannot underflow");
     --m_nonEmptyIngressCount[outPortId];
+    if (trackPriority)
+    {
+        NS_ABORT_MSG_IF(m_nonEmptyByPriority[outPortId][priority] == 0,
+                        "Per-priority ingress summary count cannot underflow");
+        --m_nonEmptyByPriority[outPortId][priority];
+    }
+}
+
+bool
+UbSwitchAllocator::IsVlProvablyEmpty(uint32_t outPort, uint32_t priority) const
+{
+    return outPort < m_inexactSummaryCount.size() &&
+           priority < m_inexactSummaryCount[outPort].size() &&
+           m_inexactSummaryCount[outPort][priority] == 0 &&
+           m_nonEmptyByPriority[outPort][priority] == 0;
 }
 
 bool
@@ -437,14 +502,7 @@ UbSwitchAllocator::HasNonEmptyIngress(uint32_t outPortId) const
 uint32_t
 UbSwitchAllocator::GetIngressQueueSlotCount(uint32_t outPort, uint32_t priority) const
 {
-    const auto& queues = m_ingressSources[outPort][priority];
-    uint32_t nonVoqCount = 0;
-    for (const auto& queue : queues) {
-        if (queue->GetIngressQueueType() != IngressQueueType::VOQ) {
-            ++nonVoqCount;
-        }
-    }
-    return m_voqIngressSlotCount + nonVoqCount;
+    return m_voqIngressSlotCount + m_nonVoqIngressCount[outPort][priority];
 }
 
 std::optional<UbSwitchAllocator::IngressCandidate>
@@ -557,7 +615,15 @@ void UbSwitchAllocator::UnregisterUbIngressQueue(Ptr<UbIngressQueue> ingressQueu
     {
         return;
     }
+    const size_t before = queues.size();
     queues.erase(std::remove(queues.begin(), queues.end(), ingressQueue), queues.end());
+    const uint32_t removed = static_cast<uint32_t>(before - queues.size());
+    if (ingressQueue->GetIngressQueueType() != IngressQueueType::VOQ) {
+        m_nonVoqIngressCount[outPort][priority] -= removed;
+    }
+    if (DynamicCast<UbPacketQueue>(ingressQueue) == nullptr) {
+        m_inexactSummaryCount[outPort][priority] -= removed;
+    }
     UnbindIngressSummary(ingressQueue);
 }
 
@@ -639,14 +705,11 @@ void UbRoundRobinAllocator::Init()
     }
     m_selectedIngressQueueSlot.assign(portsNum, 0);
     RegisterEgressStauts(portsNum);
-    m_ingressSources.resize(portsNum);
+    ResizeIngressSources(portsNum, vlNum);
     m_running.assign(portsNum, false);
     m_runAgain.assign(portsNum, false);
     m_nonEmptyIngressCount.assign(portsNum, 0);
     m_voqIngressSlotCount = portsNum;
-    for (auto &i : m_ingressSources) {
-        i.resize(vlNum);
-    }
 }
 
 void UbRoundRobinAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
@@ -774,6 +837,11 @@ Ptr<UbIngressQueue> UbRoundRobinAllocator::SelectNextIngressQueue(Ptr<UbPort> ou
         } else if (m_rrIdx[outPortId][pi] >= ingressQueueSlotCount) {
             m_rrIdx[outPortId][pi] %= ingressQueueSlotCount;
         }
+        if (IsVlProvablyEmpty(outPortId, pi)) {
+            // Every source is an empty UbPacketQueue: FindNextEligibleIngressQueue would skip
+            // them all without side effects.
+            continue;
+        }
         auto candidate =
             FindNextEligibleIngressQueue(outPortId, pi, m_rrIdx[outPortId][pi], outPort);
         if (m_disposed) {
@@ -834,10 +902,7 @@ void UbDwrrAllocator::Init()
     m_voqIngressSlotCount = portsNum;
     RegisterEgressStauts(portsNum);
 
-    m_ingressSources.resize(portsNum);
-    for (auto &i : m_ingressSources) {
-        i.resize(vlNum);
-    }
+    ResizeIngressSources(portsNum, vlNum);
 
     ApplyDefaultQuantum();
     ParseAndApplyVlQuantums(m_vlQuantumsStr);

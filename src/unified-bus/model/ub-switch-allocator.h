@@ -104,6 +104,17 @@ protected:
     std::vector<bool> m_runAgain;
     std::vector<uint32_t> m_nonEmptyIngressCount;
     uint32_t m_voqIngressSlotCount = 0;
+    // Cached count of non-VOQ ingress sources per [outPort][priority]; maintained by
+    // Register/UnregisterUbIngressQueue so slot-count queries avoid scanning every source.
+    std::vector<std::vector<uint32_t>> m_nonVoqIngressCount;
+    // Per [outPort][priority]: sources whose emptiness is not exactly mirrored by the allocator
+    // summary (anything other than UbPacketQueue), and sources currently reported non-empty.
+    // When both are zero every source is an empty UbPacketQueue, so the VL can be skipped
+    // without changing the selection outcome.
+    std::vector<std::vector<uint32_t>> m_inexactSummaryCount;
+    std::vector<std::vector<uint32_t>> m_nonEmptyByPriority;
+    bool IsVlProvablyEmpty(uint32_t outPort, uint32_t priority) const;
+    void ResizeIngressSources(uint32_t portsNum, uint32_t vlNum);
     bool m_enableDirectAllocationCompletion = true;
     std::vector<PortEventState> m_portEventState;
     EventId m_deadlockEvent;

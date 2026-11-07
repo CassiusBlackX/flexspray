@@ -1195,9 +1195,12 @@ UbTrafficGen::ApplyTaskCompletion(uint32_t taskId)
                                        cleanupRequest->plannedTpConnections);
     }
 
+#ifdef NS3_LOG_ENABLE
+    // IsCompleted() scans every task state; only pay for it when debug logging can print.
     if (IsCompleted()) {
         NS_LOG_DEBUG("[APPLICATION INFO] All tasks completed");
     }
+#endif
 }
 
 void

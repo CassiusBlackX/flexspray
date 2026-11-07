@@ -2,6 +2,25 @@
 
 **语言**: [English](RELEASE_NOTES_UB_en.md) | [中文](RELEASE_NOTES_UB.md)
 
+## 未发布（开发中）
+
+### 仿真引擎提速（结果逐字节不变）
+
+单线程，`taskset` 绑核，3 次取中位数；对照为同一提交原始代码构建的 release 二进制。黄金回归集（scratch 下 24 个 case + 两个 alltoall 大 case）的 runlog 与改动前逐文件一致。
+
+| case | 改动前 | 改动后（默认 shared 构建） | 再加 `--enable-static` + LTO |
+| --- | --- | --- | --- |
+| 128-host alltoall 4 MB（16,256 task） | 18.67 s | 10.40 s（1.80x） | 9.07 s（2.06x） |
+| 32-host alltoall 32 MB | 15.91 s | 10.79 s（1.47x） | 8.43 s（1.89x） |
+
+- traffic.csv 加载：planned TP 连接查找由全表扫描改为按节点对区间扫描，128-host case 的加载阶段从约 5 s 降到约 0.1 s。
+- 逐包热路径：trace 开关缓存 GlobalValue 指针，不再每包按名字扫描；TP debug trace 先判断开关再构造参数；PortTrace 行按 (node, port) 缓存 sink 并直接格式化；trace 写入的峰值统计不再每行取全局锁。
+- 交换分配器：缓存每个 (出端口, VL) 的非 VOQ 源计数；对源全部为空 `UbPacketQueue` 的 VL 直接跳过扫描。
+- 单线程模式默认使用 `ns3::HeapScheduler`。ns-3 所有调度器都按 (时间戳, uid) 严格出队，事件顺序不变。显式设置 `NS_GLOBAL_VALUE=SchedulerType=...` 或在 network_attribute.txt 中写 `global SchedulerType` 时以用户设置为准。
+- 去掉 release 构建下只用于调试日志的 O(N) 全任务完成检查。
+- `[summary]` 计时修正：原 `run` 实际包含拓扑构建与 traffic 加载，现拆为 `config / setup / load / run / final / trace / total`，其中 `run` 仅为 `Simulator::Run`。
+- 可选：`./ns3 configure ... --enable-static` 后执行 `cmake -DNS3_LINK_TIME_OPTIMIZATION=ON cmake-cache`，可再提速 15–22%，输出同样逐字节一致。不建议 `-march=native`：FMA 收缩可能改变浮点舍入。
+
 ## Release 2.1.0
 
 **发布日期**: 2026 年 9 月

@@ -85,7 +85,7 @@ GetTotalProgressBytes(const Ptr<UbWqeSegment>& segment)
 void
 TraceTpDebugState(uint32_t nodeId,
                   uint32_t tpn,
-                  const std::string& reason,
+                  const char* reason,
                   uint64_t psnSndNxt,
                   uint64_t psnSndUna,
                   uint64_t maxInflightPackets,
@@ -96,6 +96,11 @@ TraceTpDebugState(uint32_t nodeId,
                   uint32_t ackQueueLen,
                   uint32_t cnpQueueLen)
 {
+    // Cheap guard first: avoid building the reason string for the common disabled case.
+    if (!utils::UbUtils::IsTpDebugEnabledFor(nodeId, tpn))
+    {
+        return;
+    }
     const uint64_t inflightPackets = psnSndNxt - psnSndUna;
     utils::UbUtils::TpDebugStateNotify(nodeId,
                                        tpn,

@@ -94,7 +94,10 @@ struct MpiLaunchProbe
 struct PhaseTiming
 {
     std::chrono::high_resolution_clock::time_point programStart;
-    std::chrono::high_resolution_clock::time_point simulationStart;
+    std::chrono::high_resolution_clock::time_point simulationStart; // setup (topology) begins
+    std::chrono::high_resolution_clock::time_point trafficStart;    // traffic.csv load begins
+    std::chrono::high_resolution_clock::time_point runStart;        // Simulator::Run begins
+    std::chrono::high_resolution_clock::time_point runEnd;          // Simulator::Run returns
     std::chrono::high_resolution_clock::time_point simulationEnd;
     std::chrono::high_resolution_clock::time_point traceStart;
     std::chrono::high_resolution_clock::time_point programEnd;
@@ -333,11 +336,27 @@ void PrintTestResult(bool passed, bool enableMpi, uint32_t mpiRank)
     std::cout << "TEST : 00000 : PASSED" << std::endl;
 }
 
+// Every ns-3 scheduler dequeues events in strict (timestamp, uid) order, so the scheduler choice
+// changes wall-clock cost only, never event order or results. The binary-heap scheduler is
+// measurably faster than the ns-3 default MapScheduler for UB workloads. An explicit
+// NS_GLOBAL_VALUE=SchedulerType=... or a "global SchedulerType" line in network_attribute.txt
+// still takes precedence.
+void UseFastDefaultScheduler()
+{
+    const char* env = std::getenv("NS_GLOBAL_VALUE");
+    if (env != nullptr && std::string(env).find("SchedulerType") != std::string::npos)
+    {
+        return;
+    }
+    GlobalValue::Bind("SchedulerType", StringValue("ns3::HeapScheduler"));
+}
+
 void PrepareSimulatorMode(const RuntimeSelection& runtime, uint32_t mtpThreads)
 {
     switch (runtime.mode)
     {
     case RuntimeSelection::Mode::LocalSingle:
+        UseFastDefaultScheduler();
         return;
     case RuntimeSelection::Mode::LocalMtp:
 #ifdef NS3_MTP
@@ -775,9 +794,19 @@ uint32_t ActivateTrafficFromConfig(const std::string& configPath,
                    (!record.hasDstPortId || destinationPort == record.dstPortId);
         };
 
-        for (const auto& [unusedKey, reserved] : driverOwnedConnections)
+        // Every identity stored under a planned key belongs to a connection between that key's
+        // canonical node pair, so only keys with this record's canonical pair can match. Keys are
+        // ordered by (node, node, ...) first; scanning just that range keeps the original visit
+        // order while avoiding an O(keys) scan per new route key.
+        const uint32_t pairLow = std::min(record.sourceNode, record.destNode);
+        const uint32_t pairHigh = std::max(record.sourceNode, record.destNode);
+        for (auto keyIt = driverOwnedConnections.lower_bound(
+                 PlannedConnectionKey{pairLow, pairHigh, false, 0, false, 0, 0});
+             keyIt != driverOwnedConnections.end() && std::get<0>(keyIt->first) == pairLow &&
+             std::get<1>(keyIt->first) == pairHigh;
+             ++keyIt)
         {
-            (void)unusedKey;
+            const auto& reserved = keyIt->second;
             for (const auto& identity : reserved)
             {
                 Ptr<Node> ownerNode = NodeList::GetNode(identity.ownerNodeId);
@@ -1147,6 +1176,7 @@ PhaseTiming RunScenario(const QuickExampleOptions& options,
     ConfigureInitialTaskStartOffset(options, runtime);
     ResetDropAbortState();
     GetDropAbortState().retransEnabled = IsRetransEnabledForRun();
+    timing.trafficStart = std::chrono::high_resolution_clock::now();
     const uint32_t localTaskCount =
         ActivateTrafficFromConfig(options.configPath,
                                   runtime.enableMpi,
@@ -1161,8 +1191,9 @@ PhaseTiming RunScenario(const QuickExampleOptions& options,
     {
         Simulator::Stop(MilliSeconds(options.stopMs));
     }
+    timing.runStart = std::chrono::high_resolution_clock::now();
     Simulator::Run();
-    timing.simulationEnd = std::chrono::high_resolution_clock::now();
+    timing.runEnd = std::chrono::high_resolution_clock::now();
 
     const std::string runtimeStorageSnapshotPath =
         ResolveRuntimeStorageSnapshotPath(options, runtime);
@@ -1175,6 +1206,7 @@ PhaseTiming RunScenario(const QuickExampleOptions& options,
     UbTrafficGen::Get()->WriteCanonicalOutput();
     ShutdownRuntime(runtime);
 
+    timing.simulationEnd = std::chrono::high_resolution_clock::now();
     UbUtils::Get()->PrintTimestamp("[run] Simulation finished.");
     timing.traceStart = std::chrono::high_resolution_clock::now();
     UbUtils::Get()->ParseTrace(options.test);
@@ -1190,10 +1222,16 @@ void ReportResult(const QuickExampleOptions& options,
         std::chrono::duration_cast<std::chrono::microseconds>(timing.simulationStart -
                                                               timing.programStart)
             .count();
-    const double run_wall_us =
-        std::chrono::duration_cast<std::chrono::microseconds>(timing.simulationEnd -
-                                                              timing.simulationStart)
-            .count();
+    const auto us = [](auto from, auto to) {
+        return static_cast<double>(
+            std::chrono::duration_cast<std::chrono::microseconds>(to - from).count());
+    };
+    // setup: topology/routing/TP build; traffic: traffic.csv load + task activation;
+    // run: Simulator::Run only; finalize: trace flush, canonical output, runtime shutdown.
+    const double setup_wall_us = us(timing.simulationStart, timing.trafficStart);
+    const double traffic_wall_us = us(timing.trafficStart, timing.runStart);
+    const double run_wall_us = us(timing.runStart, timing.runEnd);
+    const double finalize_wall_us = us(timing.runEnd, timing.simulationEnd);
     const double trace_wall_us =
         std::chrono::duration_cast<std::chrono::microseconds>(timing.programEnd - timing.traceStart)
             .count();
@@ -1206,7 +1244,10 @@ void ReportResult(const QuickExampleOptions& options,
                                   std::to_string(UbUtils::Get()->GetRuntimePacketDropCount()));
     UbUtils::Get()->PrintTimestamp("[summary] Wall-clock:");
     UbUtils::Get()->PrintTimestamp(FormatSummaryLine("config", config_wall_us));
+    UbUtils::Get()->PrintTimestamp(FormatSummaryLine("setup", setup_wall_us));
+    UbUtils::Get()->PrintTimestamp(FormatSummaryLine("load", traffic_wall_us));
     UbUtils::Get()->PrintTimestamp(FormatSummaryLine("run", run_wall_us));
+    UbUtils::Get()->PrintTimestamp(FormatSummaryLine("final", finalize_wall_us));
     UbUtils::Get()->PrintTimestamp(FormatSummaryLine("trace", trace_wall_us));
     UbUtils::Get()->PrintTimestamp(FormatSummaryLine("total", total_wall_us));
     if (options.test)

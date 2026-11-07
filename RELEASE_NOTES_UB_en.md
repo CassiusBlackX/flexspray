@@ -2,6 +2,29 @@
 
 **Language**: [English](RELEASE_NOTES_UB_en.md) | [中文](RELEASE_NOTES_UB.md)
 
+## Unreleased (in development)
+
+### Simulation engine speedups (byte-identical results)
+
+Single-thread, pinned with `taskset`, median of 3 runs; baseline is a release build of the original code at the same commit. Runlogs of the golden regression set (24 scratch cases plus two large alltoall cases) are byte-identical before and after.
+
+| case | before | after (default shared build) | plus `--enable-static` + LTO |
+| --- | --- | --- | --- |
+| 128-host alltoall 4 MB (16,256 tasks) | 18.67 s | 10.40 s (1.80x) | 9.07 s (2.06x) |
+| 32-host alltoall 32 MB | 15.91 s | 10.79 s (1.47x) | 8.43 s (1.89x) |
+
+- traffic.csv load: planned TP connection lookup scans only the node-pair key range instead of every reserved connection. The 128-host load phase drops from about 5 s to about 0.1 s.
+- Per-packet hot paths:
+  - trace switches cache their GlobalValue pointer instead of a by-name scan per packet;
+  - TP debug trace checks its switch before building arguments;
+  - PortTrace rows use a per-(node, port) cached sink and direct formatting;
+  - the trace writer's peak-buffer statistic no longer takes the global lock on every line.
+- Switch allocator: caches the per-(output, VL) non-VOQ source count, and skips VLs whose sources are all empty `UbPacketQueue`s.
+- Single-thread runs default to `ns3::HeapScheduler`. Every ns-3 scheduler dequeues in strict (timestamp, uid) order, so event order is unchanged. An explicit `NS_GLOBAL_VALUE=SchedulerType=...` or `global SchedulerType` in network_attribute.txt still wins.
+- Removed an O(N) all-task completion scan that only fed a debug log in release builds.
+- `[summary]` timing fix: the old `run` value also included topology build and traffic load. It is now split into `config / setup / load / run / final / trace / total`, where `run` is `Simulator::Run` only.
+- Optional: `./ns3 configure ... --enable-static`, then `cmake -DNS3_LINK_TIME_OPTIMIZATION=ON cmake-cache`, gives another 15–22% with byte-identical output. `-march=native` is not recommended because FMA contraction can change floating-point rounding.
+
 ## Release 2.1.0
 
 **Release Date**: September 2026

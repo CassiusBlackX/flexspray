@@ -26824,11 +26824,7 @@ class UbAllocatorSummaryProbe : public UbRoundRobinAllocator
   public:
     void InitSummaryForTest(uint32_t portsNum, uint32_t vlNum)
     {
-        m_ingressSources.resize(portsNum);
-        for (auto& byPriority : m_ingressSources)
-        {
-            byPriority.resize(vlNum);
-        }
+        ResizeIngressSources(portsNum, vlNum);
         m_nonEmptyIngressCount.assign(portsNum, 0);
     }
 

@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cctype>
 #include <chrono>
 #include <cstdlib>
@@ -37,6 +38,62 @@ using namespace ns3;
 
 namespace
 {
+/**
+ * Hot-path GlobalValue reader.
+ *
+ * GlobalValue::GetValueByNameFailSafe() walks the process-wide GlobalValue vector and copies every
+ * name string. The vector is append-only and name lookup returns the first match, so the first
+ * resolved GlobalValue for a name is stable for the process lifetime. Caching that pointer keeps
+ * lookup semantics identical while still reading the current value on every call.
+ */
+class CachedGlobalValue
+{
+  public:
+    constexpr explicit CachedGlobalValue(const char* name)
+        : m_name(name)
+    {
+    }
+
+    bool Get(AttributeValue& value)
+    {
+        GlobalValue* gv = m_gv.load(std::memory_order_acquire);
+        if (gv == nullptr)
+        {
+            for (auto it = GlobalValue::Begin(); it != GlobalValue::End(); ++it)
+            {
+                if ((*it)->GetName() == m_name)
+                {
+                    gv = *it;
+                    break;
+                }
+            }
+            if (gv == nullptr)
+            {
+                return false; // not registered yet; do not cache a miss
+            }
+            m_gv.store(gv, std::memory_order_release);
+        }
+        gv->GetValue(value);
+        return true;
+    }
+
+  private:
+    const char* m_name;
+    std::atomic<GlobalValue*> m_gv{nullptr};
+};
+
+CachedGlobalValue g_cachedTraceEnable("UB_TRACE_ENABLE");
+CachedGlobalValue g_cachedPacketTraceEnable("UB_PACKET_TRACE_ENABLE");
+CachedGlobalValue g_cachedFlowControlTraceEnable("UB_FLOW_CONTROL_TRACE_ENABLE");
+CachedGlobalValue g_cachedCongestionControlTraceEnable("UB_CONGESTION_CONTROL_TRACE_ENABLE");
+CachedGlobalValue g_cachedQueueTraceEnable("UB_QUEUE_TRACE_ENABLE");
+CachedGlobalValue g_cachedTpgPhaseTraceEnable("UB_TPG_PHASE_TRACE_ENABLE");
+CachedGlobalValue g_cachedTpDebugEnable("UB_TP_DEBUG_ENABLE");
+CachedGlobalValue g_cachedTpDebugNodeId("UB_TP_DEBUG_NODE_ID");
+CachedGlobalValue g_cachedTpDebugTpn("UB_TP_DEBUG_TPN");
+CachedGlobalValue g_cachedTpDebugStartNs("UB_TP_DEBUG_START_NS");
+CachedGlobalValue g_cachedTpDebugEndNs("UB_TP_DEBUG_END_NS");
+
 const char*
 LifecycleResourceKindToString(UbLifecycleResourceKind kind)
 {
@@ -1765,7 +1822,11 @@ UbUtils::AppendTraceLine(const TraceSinkHandle& sink, std::string line)
 
     chunk += line;
     owner.bufferedBytes += line.size();
+    // The global peak is a running max over owner samples. A sample no larger than one this
+    // owner already reported cannot raise it, so only new owner highs take the global lock.
+    if (owner.bufferedBytes > owner.reportedPeakBytes)
     {
+        owner.reportedPeakBytes = owner.bufferedBytes;
         std::lock_guard<std::mutex> filesGuard(files_mutex);
         trace_writer_stats.peakBufferedBytes =
             std::max(trace_writer_stats.peakBufferedBytes, owner.bufferedBytes);
@@ -1828,7 +1889,7 @@ bool
 UbUtils::IsTraceEnabled()
 {
     BooleanValue enabled;
-    if (!GlobalValue::GetValueByNameFailSafe("UB_TRACE_ENABLE", enabled))
+    if (!g_cachedTraceEnable.Get(enabled))
     {
         return false;
     }
@@ -1844,7 +1905,7 @@ UbUtils::IsFlowControlTraceEnabled()
     }
 
     BooleanValue enabled;
-    if (!GlobalValue::GetValueByNameFailSafe("UB_FLOW_CONTROL_TRACE_ENABLE", enabled))
+    if (!g_cachedFlowControlTraceEnable.Get(enabled))
     {
         return false;
     }
@@ -1860,7 +1921,7 @@ UbUtils::IsCongestionControlTraceEnabled()
     }
 
     BooleanValue enabled;
-    if (!GlobalValue::GetValueByNameFailSafe("UB_CONGESTION_CONTROL_TRACE_ENABLE", enabled))
+    if (!g_cachedCongestionControlTraceEnable.Get(enabled))
     {
         return false;
     }
@@ -1876,7 +1937,7 @@ UbUtils::IsQueueTraceEnabled()
     }
 
     BooleanValue enabled;
-    if (!GlobalValue::GetValueByNameFailSafe("UB_QUEUE_TRACE_ENABLE", enabled))
+    if (!g_cachedQueueTraceEnable.Get(enabled))
     {
         return false;
     }
@@ -2096,6 +2157,7 @@ void
 UbUtils::SetTracePathForTest(const std::string& tracePath)
 {
     trace_path = tracePath;
+    trace_path_version.fetch_add(1, std::memory_order_release);
     if (!trace_path.empty() && trace_path.back() != std::filesystem::path::preferred_separator)
     {
         trace_path.push_back(std::filesystem::path::preferred_separator);
@@ -2106,6 +2168,7 @@ void UbUtils::CreateTraceDir()
 {
     ResetRuntimeDropDiagnostics();
     trace_path = PrepareTraceDir(g_config_path);
+    trace_path_version.fetch_add(1, std::memory_order_release);
     queue_sampler_started = false;
     queue_sampler_events.clear();
 
@@ -2320,11 +2383,11 @@ void
 UbUtils::ReliableReroutingNotify(const UbReliableReroutingEvent& record)
 {
     BooleanValue enabled;
-    if (!GlobalValue::GetValueByNameFailSafe("UB_TRACE_ENABLE", enabled) || !enabled.Get())
+    if (!g_cachedTraceEnable.Get(enabled) || !enabled.Get())
     {
         return;
     }
-    if (!GlobalValue::GetValueByNameFailSafe("UB_PACKET_TRACE_ENABLE", enabled) || !enabled.Get())
+    if (!g_cachedPacketTraceEnable.Get(enabled) || !enabled.Get())
     {
         return;
     }
@@ -2363,11 +2426,11 @@ UbUtils::TpgPhaseCreateNotify(uint32_t srcNode,
                               const std::string& strategy)
 {
     BooleanValue enabled;
-    if (!GlobalValue::GetValueByNameFailSafe("UB_TRACE_ENABLE", enabled) || !enabled.Get())
+    if (!g_cachedTraceEnable.Get(enabled) || !enabled.Get())
     {
         return;
     }
-    if (!GlobalValue::GetValueByNameFailSafe("UB_TPG_PHASE_TRACE_ENABLE", enabled) || !enabled.Get())
+    if (!g_cachedTpgPhaseTraceEnable.Get(enabled) || !enabled.Get())
     {
         return;
     }
@@ -2845,26 +2908,68 @@ inline void UbUtils::DagWqeTaskCompletesNotify(uint32_t nodeId, uint32_t jettyNu
                          ""}));
 }
 
+void
+UbUtils::AppendPortTraceRow(uint32_t nodeId,
+                            uint32_t portId,
+                            std::string_view event,
+                            uint32_t size)
+{
+    // Per-thread (node, port) -> sink cache. Produces byte-identical rows to the generic
+    // AppendCsvRow(CsvRow(...)) path: every field is digits or a comma-free literal, so CSV
+    // escaping is the identity.
+    struct PortSinkEntry
+    {
+        uint64_t epoch{0};
+        uint64_t pathVersion{0};
+        TraceSinkHandle sink;
+        bool headerKnown{false};
+    };
+    thread_local std::unordered_map<uint64_t, PortSinkEntry> cache;
+
+    const uint64_t epoch = trace_writer_epoch.load(std::memory_order_acquire);
+    const uint64_t pathVersion = trace_path_version.load(std::memory_order_acquire);
+    PortSinkEntry& entry = cache[(static_cast<uint64_t>(nodeId) << 32) | portId];
+    if (entry.epoch != epoch || entry.pathVersion != pathVersion || !entry.sink.IsValid())
+    {
+        const string fileName = trace_path + "runlog/PortTrace_node_" + to_string(nodeId) +
+                                "_port_" + to_string(portId) + ".csv";
+        entry.sink = GetCachedTraceSink(fileName);
+        entry.epoch = epoch;
+        entry.pathVersion = pathVersion;
+        entry.headerKnown = false;
+    }
+    if (!entry.headerKnown)
+    {
+        std::lock_guard<std::mutex> filesGuard(files_mutex);
+        auto& state = *static_cast<TraceFileState*>(entry.sink.state);
+        if (!state.headerWritten)
+        {
+            state.headerWritten = true;
+            state.csvHeader = "time_ps,event,port_id,packet_size_bytes";
+        }
+        entry.headerKnown = true;
+    }
+
+    char buf[96];
+    char* const end = buf + sizeof(buf);
+    char* p = std::to_chars(buf, end, Simulator::Now().GetPicoSeconds()).ptr;
+    *p++ = ',';
+    p = std::copy(event.begin(), event.end(), p);
+    *p++ = ',';
+    p = std::to_chars(p, end, portId).ptr;
+    *p++ = ',';
+    p = std::to_chars(p, end, size).ptr;
+    AppendTraceLine(entry.sink, std::string(buf, p));
+}
+
 inline void UbUtils::PortTxNotify(uint32_t nodeId, uint32_t portId, uint32_t size)
 {
-    string fileName = trace_path + "runlog/PortTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".csv";
-    AppendCsvRow(fileName,
-                 "time_ps,event,port_id,packet_size_bytes",
-                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
-                         "Port Tx",
-                         std::to_string(portId),
-                         std::to_string(size)}));
+    AppendPortTraceRow(nodeId, portId, "Port Tx", size);
 }
 
 inline void UbUtils::PortRxNotify(uint32_t nodeId, uint32_t portId, uint32_t size)
 {
-    string fileName = trace_path + "runlog/PortTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".csv";
-    AppendCsvRow(fileName,
-                 "time_ps,event,port_id,packet_size_bytes",
-                 CsvRow({std::to_string(Simulator::Now().GetPicoSeconds()),
-                         "Port Rx",
-                         std::to_string(portId),
-                         std::to_string(size)}));
+    AppendPortTraceRow(nodeId, portId, "Port Rx", size);
 }
 
 void UbUtils::PfcStateNotify(uint32_t nodeId,
@@ -3186,7 +3291,7 @@ UbUtils::CaqmSenderStateNotify(uint32_t nodeId,
 bool UbUtils::IsTpDebugEnabledFor(uint32_t nodeId, uint32_t tpn)
 {
     BooleanValue enabledValue;
-    if (!GlobalValue::GetValueByNameFailSafe("UB_TP_DEBUG_ENABLE", enabledValue) || !enabledValue.Get())
+    if (!g_cachedTpDebugEnable.Get(enabledValue) || !enabledValue.Get())
     {
         return false;
     }
@@ -3195,10 +3300,10 @@ bool UbUtils::IsTpDebugEnabledFor(uint32_t nodeId, uint32_t tpn)
     UintegerValue debugTpnValue;
     UintegerValue debugStartNsValue;
     UintegerValue debugEndNsValue;
-    GlobalValue::GetValueByName("UB_TP_DEBUG_NODE_ID", debugNodeIdValue);
-    GlobalValue::GetValueByName("UB_TP_DEBUG_TPN", debugTpnValue);
-    GlobalValue::GetValueByName("UB_TP_DEBUG_START_NS", debugStartNsValue);
-    GlobalValue::GetValueByName("UB_TP_DEBUG_END_NS", debugEndNsValue);
+    NS_ABORT_IF(!g_cachedTpDebugNodeId.Get(debugNodeIdValue));
+    NS_ABORT_IF(!g_cachedTpDebugTpn.Get(debugTpnValue));
+    NS_ABORT_IF(!g_cachedTpDebugStartNs.Get(debugStartNsValue));
+    NS_ABORT_IF(!g_cachedTpDebugEndNs.Get(debugEndNsValue));
 
     if (nodeId != debugNodeIdValue.Get() || tpn != debugTpnValue.Get())
     {

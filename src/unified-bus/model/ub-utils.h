@@ -39,6 +39,7 @@
 #include <memory>
 #include <mutex>
 #include <sstream>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
@@ -450,6 +451,9 @@ private:
         std::mutex mutex;
         std::map<TraceFileState*, std::string> chunks;
         std::size_t bufferedBytes{0};
+        // Largest bufferedBytes already folded into trace_writer_stats.peakBufferedBytes; lets
+        // the common append path skip the global stats lock when the peak cannot change.
+        std::size_t reportedPeakBytes{0};
     };
 
     struct TraceWriterConfig
@@ -489,6 +493,8 @@ private:
     inline static std::size_t trace_open_files = 0;
     inline static uint64_t trace_lru_clock = 0;
     inline static std::atomic<uint64_t> trace_writer_epoch{1};
+    // Bumped whenever trace_path is reassigned so per-port sink caches rebuild file names.
+    inline static std::atomic<uint64_t> trace_path_version{1};
     inline static std::mutex runtime_drop_mutex;
     inline static uint64_t runtime_packet_drop_count = 0;
     inline static std::string runtime_packet_drop_reason;
@@ -832,6 +838,10 @@ private:
     static void DagWqeTaskCompletesNotify(uint32_t nodeId, uint32_t jettyNum, uint32_t taskId);
 
     static void PortTxNotify(uint32_t nodeId, uint32_t portId, uint32_t size);
+    static void AppendPortTraceRow(uint32_t nodeId,
+                                   uint32_t portId,
+                                   std::string_view event,
+                                   uint32_t size);
 
     static void PortRxNotify(uint32_t nodeId, uint32_t portId, uint32_t size);
 
