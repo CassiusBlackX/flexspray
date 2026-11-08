@@ -124,7 +124,7 @@ def key_times(meta, s, notify_ns):
     pre_rate = sum(rate[i] for i in range(len(t)) if tf - 20 <= t[i] < tf - 1) / \
         max(1, len([1 for i in range(len(t)) if tf - 20 <= t[i] < tf - 1]))
     dip = min(rate[i] for i in win if t[i] <= tf + 10)
-    isolation = any(r[3] in ("ISOLATE", "ISOLATE_NODE") for r in meta["fault_rows"])
+    isolation = any(r[3] in ("ISOLATE", "ISOLATE_NODE") for r in meta["fault_rows"])  # not DOWN
     return dict(t_f=tf, t_detect_remote=tf + notify_ns / 1000.0 if isolation else None,
                 t_qpeak=t_qpeak, q_peak_kb=q[ipk], q_base_kb=base, t_settle=settle,
                 q_end_kb=q[win[-1]], rate_pre=pre_rate, rate_post=post_rate,
@@ -173,6 +173,16 @@ def main():
                 axes[2].plot([x[k]], [s["qmax_kb"][k]], marker=mk, ms=8, color=col, mec=SURF,
                              mew=2, zorder=5)
     kt0 = next(iter(res.values()))
+    # Hard link-down: mark transport detection events from the first case (FailureEvent.csv).
+    fe = os.path.join(a.cases[0], "runlog", "FailureEvent.csv")
+    if os.path.exists(fe):
+        import csv as _csv
+        ev = list(_csv.DictReader(open(fe)))
+        dead = [int(r["time_ns"]) / 1000.0 - kt0["t_f"] for r in ev if r["event"] == "probe-timeout"]
+        if dead:
+            kt0["t_remote_dead_first"] = min(dead) + kt0["t_f"]
+            for ax in axes:
+                ax.axvline(min(dead), color=INK2, lw=1, ls=":")
     for ax in axes:
         ax.axvline(0, color=INK, lw=1)
         if kt0["t_detect_remote"] is not None:
@@ -183,7 +193,8 @@ def main():
     axes[0].set_ylabel("affected devices\npayload Gbps")
     axes[1].set_ylabel(f"plane {(meta0.get('fault_info') or {}).get('plane', 3)} share %")
     axes[2].set_ylabel("peak switch queue\non that plane, KB")
-    axes[2].set_xlabel("time relative to fault (µs).  solid: fault;  dashed: remote ends notified\n"
+    axes[2].set_xlabel("µs after fault.  solid: fault;  dashed: remote notified (isolation)\n"
+                       "dotted: first remote probe-timeout (hard down)\n"
                        "●: backlog peak (senders adjusted);  ■: backlog back to pre-fault level")
     axes[0].legend(frameon=False, loc="lower left", labelcolor=INK)
     fi = meta0.get("fault_info") or {}

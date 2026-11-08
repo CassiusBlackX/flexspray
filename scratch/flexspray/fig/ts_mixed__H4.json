@@ -1,0 +1,17 @@
+{
+ "flex+spraycc": {
+  "t_f": 50.0,
+  "t_detect_remote": null,
+  "t_qpeak": null,
+  "q_peak_kb": 65.552734375,
+  "q_base_kb": 154.89453125,
+  "t_settle": 50.0,
+  "q_end_kb": 41.1640625,
+  "rate_pre": 48110.86147368421,
+  "rate_post": 41403.33774834437,
+  "dip_vs_post": -0.010559384149212758,
+  "share_pre": 0.14214117986360336,
+  "share_post": 8.167975343578624e-06,
+  "t_remote_dead_first": 74.0
+ }
+}
