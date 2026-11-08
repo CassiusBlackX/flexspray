@@ -485,11 +485,12 @@ def scheme_attrs(name):
         #  * app-limited guard on the delivery-rate estimator (T10: oversubscribed fabric);
         #  * transport failure detection (suspect -> probe on the control VL -> dead -> re-send the
         #    dead TP's segments on other planes): no oracle for hard link-downs (T1/T3);
-        #  * TP retransmission (selective) for packets lost inside the fabric.
+        #  * TP retransmission (go-back-N) for packets lost inside the fabric. Selective mode cost
+        #    1.5 pp on healthy d2d (0.985 -> 0.970) and recovered H2up worse (0.950 vs 0.965).
         d["ns3::UbTransportChannel::DeliveryRateAppLimitedGuard"] = "true"
         d["ns3::UbTransportChannel::FailureDetection"] = "true"
         d["ns3::UbTransportChannel::EnableRetrans"] = "true"
-        d["ns3::UbTransportChannel::RetransmissionMode"] = "SELECTIVE"
+        d["ns3::UbTransportChannel::RetransmissionMode"] = "GBN"
     else:
         raise KeyError(base)
     cc = "none"
@@ -528,7 +529,7 @@ def scheme_attrs(name):
             d["ns3::UbTransportChannel::FailureDetection"] = "true"
         elif opt == "rtx":   # TP retransmission (recovers packets lost inside the fabric)
             d["ns3::UbTransportChannel::EnableRetrans"] = "true"
-            d["ns3::UbTransportChannel::RetransmissionMode"] = "SELECTIVE"
+            d["ns3::UbTransportChannel::RetransmissionMode"] = "GBN"
         elif opt == "alg":   # app-limited guard on the delivery-rate estimator
             d["ns3::UbTransportChannel::DeliveryRateAppLimitedGuard"] = "true"
         elif opt == "noalg":
