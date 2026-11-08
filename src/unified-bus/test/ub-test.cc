@@ -36692,6 +36692,39 @@ class UbFlexSprayFarEndDegradeSystemTest : public TestCase
  * re-send their unfinished WRITE and READ segments on the surviving planes; every WQE must still
  * complete exactly once (no hang, no abort).
  */
+/**
+ * Regression: a retransmission timeout must release SprayCC's in-flight window. Otherwise the
+ * window stays full of packets lost on a dead link, the window blocks the retransmission itself
+ * and the TP deadlocks (found with a hard uplink failure under READ traffic).
+ */
+class UbSprayCcRetransmissionRollbackTest : public TestCase
+{
+  public:
+    UbSprayCcRetransmissionRollbackTest()
+        : TestCase("UnifiedBus - SprayCC releases in-flight bytes on a retransmission timeout")
+    {
+    }
+
+    void DoRun() override
+    {
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(true));
+        GlobalValue::Bind("UB_CC_ALGO", StringValue("SPRAYCC"));
+        Ptr<UbHostSprayCc> cc = CreateObject<UbHostSprayCc>();
+        for (uint32_t psn = 0; psn < 8; ++psn)
+        {
+            cc->OnSenderDataPacketSent(psn, 4096);
+        }
+        NS_TEST_ASSERT_MSG_EQ(cc->GetInflightBytes(), 8u * 4096, "8 packets in flight");
+        cc->OnSenderRetransmissionRollback(8 * 4096);
+        NS_TEST_ASSERT_MSG_EQ(cc->GetInflightBytes(), 0u, "timeout declares them lost");
+        cc->OnSenderRetransmissionPacketSent(0, 4096);
+        NS_TEST_ASSERT_MSG_EQ(cc->GetInflightBytes(), 4096u, "the retransmission is in flight");
+        cc->Dispose();
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(false));
+        Simulator::Destroy();
+    }
+};
+
 class UbFlexSprayHardLinkDownSystemTest : public TestCase
 {
   public:
@@ -40290,5 +40323,6 @@ class UbFlexSpraySuite : public TestSuite
         AddTestCase(new UbDcqcnPacingDebtShrinksOnRecoveryTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbCaqmStaleAckDoesNotRegressInflightTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbFlexSprayHardLinkDownSystemTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbSprayCcRetransmissionRollbackTest(), TestCase::Duration::QUICK);
     }
 } g_ubFlexSpraySuite;

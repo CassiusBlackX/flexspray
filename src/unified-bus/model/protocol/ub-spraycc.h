@@ -50,6 +50,8 @@ class UbHostSprayCc : public UbCongestionControl
     void OnTpAttached(Ptr<UbTransportChannel> tp) override;
     uint32_t GetRestCwnd() override;
     bool IsCcLimited(uint32_t bytes) override;
+    void OnSenderRetransmissionRollback(uint32_t retransmitBytes) override;
+    void OnSenderRetransmissionPacketSent(uint32_t psn, uint32_t size) override;
     void OnSenderPrepareIpBasedNetworkHeader(UbIpBasedNetworkHeader& header) override;
     void OnSenderDataPacketSent(uint32_t psn, uint32_t size) override;
     void OnReceiverDataPacketReceived(uint64_t psn,

@@ -210,6 +210,35 @@ UbHostSprayCc::HandlePacingWakeup()
     }
 }
 
+void
+UbHostSprayCc::OnSenderRetransmissionRollback(uint32_t retransmitBytes)
+{
+    // A retransmission timeout declares the unacknowledged bytes lost: they are no longer in
+    // flight. Without this the window stays full of packets that will never be acknowledged and
+    // the retransmission itself is blocked by the window (deadlock after a hard link-down).
+    if (!m_congestionCtrlEnabled)
+    {
+        return;
+    }
+    uint64_t removed = 0;
+    while (!m_sent.empty() && removed < retransmitBytes)
+    {
+        removed += m_sent.back().size;
+        m_sent.pop_back();
+    }
+    m_inflight = m_inflight > removed ? m_inflight - removed : 0;
+    if (m_sent.empty())
+    {
+        m_inflight = 0;
+    }
+}
+
+void
+UbHostSprayCc::OnSenderRetransmissionPacketSent(uint32_t psn, uint32_t size)
+{
+    OnSenderDataPacketSent(psn, size);
+}
+
 bool
 UbHostSprayCc::IsCcLimited(uint32_t bytes)
 {
