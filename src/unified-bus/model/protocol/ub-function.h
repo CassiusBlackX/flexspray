@@ -453,6 +453,10 @@ namespace ns3 {
         uint8_t m_dport;
         uint32_t m_inflightMax = 512;
         uint32_t m_taSegmentBytes = UB_WQE_TA_SEGMENT_BYTE;
+        uint32_t SegmentLimitFor(uint64_t bytesLeft, uint32_t segmentLimit) const;
+        uint64_t CountWqeSegments(uint64_t bytes, uint32_t segmentLimit) const;
+        uint64_t m_tailBytes = 0;
+        uint32_t m_tailSegmentBytes = 4096;
 
         // ========== Jetty队列信息 ==========
         // 当前只在WQE推入jetty中才会更新

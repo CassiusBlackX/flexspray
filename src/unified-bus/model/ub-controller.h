@@ -85,6 +85,8 @@ public:
      *  its TP group; the TP admits nothing and sends nothing any more. */
     void DeclareTpDead(const Ptr<UbTransportChannel>& tp, const char* cause);
     bool IsTpDead(const Ptr<UbTransportChannel>& tp) const;
+    /** Replay fence: fence the local TP paired with @p peerNode's TP @p peerTpn. */
+    void FenceInboundTp(uint32_t peerNode, uint32_t peerTpn);
 
 
     // Port management

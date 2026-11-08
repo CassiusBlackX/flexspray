@@ -838,6 +838,7 @@ UbTransportChannel::BuildGbnPacketDescriptor(const NewDataSendContext& ctx,
     descriptor.taOpcode = ctx.segment->GetType();
     descriptor.requestOpcode = ctx.segment->GetRequestOpcode();
     descriptor.segmentKind = ctx.segment->GetSegmentKind();
+    descriptor.supersedesTpn = ctx.segment->GetSupersedesTpn();
     descriptor.taSsn = ctx.segment->GetTaSsn();
     descriptor.requestTaSsn = ctx.segment->GetRequestTassn();
     descriptor.order = ctx.segment->GetOrderType();
@@ -1268,6 +1269,11 @@ UbTransportChannel::BuildRtpDataPacket(const UbGbnPacketDescriptor& descriptor)
                                 vl,
                                 m_routingType,
                                 UbDatalinkHeaderConfig::PACKET_IPV4);
+    if (descriptor.supersedesTpn != UINT32_MAX) {
+        UbReplayFenceTag fence;
+        fence.supersededTpn = descriptor.supersedesTpn;
+        p->AddPacketTag(fence);
+    }
     return p;
 }
 
@@ -2454,6 +2460,20 @@ UbTransportChannel::CompleteInboundTaUnits(
  */
 void UbTransportChannel::RecvDataPacket(Ptr<Packet> p)
 {
+    if (m_inboundFenced) {
+        // Replay fence: the initiator re-sent this TP pair's work elsewhere; an old copy that
+        // arrives now must not be executed (it could land after the initiator's completion).
+        ++m_fencedDrops;
+        utils::UbUtils::RecordRuntimePacketDrop("replay fence");
+        return;
+    }
+    UbReplayFenceTag fence;
+    if (p->PeekPacketTag(fence)) {
+        Ptr<UbController> ctrl = NodeList::GetNode(m_nodeId)->GetObject<UbController>();
+        if (ctrl != nullptr) {
+            ctrl->FenceInboundTp(m_dest, fence.supersededTpn);
+        }
+    }
     ReceivedDataPacketContext ctx;
     if (!ParseReceivedDataPacket(p, ctx)) {
         return;
@@ -2496,6 +2516,10 @@ void UbTransportChannel::RecvDataPacket(Ptr<Packet> p)
 
 void UbTransportChannel::ReTxTimeout()
 {
+    if (m_dead) {
+        // A dead TP's work was re-sent elsewhere; it must not keep retransmitting.
+        return;
+    }
     const UbRetransTimeoutResult timeoutResult = m_retrans->OnTimeout();
     m_congestionCtrl->OnSenderRetransmissionRollback(timeoutResult.retransmitBytes);
     if (timeoutResult.triggerTransmit) {
@@ -2645,6 +2669,14 @@ UbTransportChannel::TryCancelUnsentWqeSegment(
     m_tpPsnCnt -= canceledPsnSize;
     --m_tpMsnCnt;
     RefreshAllocatorSummary();
+    // The freed pipeline slot is a capacity transition: work waiting for this TP (e.g. a
+    // response queued behind the canceled segment) must be woken, after the caller's terminal
+    // bookkeeping finishes.
+    if (!m_capacityWakePending)
+    {
+        m_capacityWakePending = true;
+        Simulator::ScheduleNow(&UbTransportChannel::RunCapacityWake, Ptr<UbTransportChannel>(this));
+    }
     return UbWqeSegmentTerminalDisposition::CANCELED_UNSENT;
 }
 
@@ -3016,6 +3048,15 @@ void UbTransportChannel::WqeSegmentTriggerPortTransmit(Ptr<UbWqeSegment> segment
 Ptr<UbTransaction> UbTransportChannel::GetTransaction()
 {
     return NodeList::GetNode(m_nodeId)->GetObject<UbController>()->GetUbTransaction();
+}
+
+void UbTransportChannel::RunCapacityWake()
+{
+    m_capacityWakePending = false;
+    if (m_isActive && !m_dead && !IsWqeSegmentLimited() && CanScheduleAnotherSegment())
+    {
+        TryContinueJettyTransmission();
+    }
 }
 
 void UbTransportChannel::TryContinueJettyTransmission()

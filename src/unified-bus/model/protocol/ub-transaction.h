@@ -649,6 +649,7 @@ enum class UbTpgDispatchPolicy : uint32_t
                 UbLifecycleLeaseIdentity childLease;
                 UbLifecycleResourceIdentity resolvedTpIdentity;
                 UbLifecycleLeaseIdentity transportWorkLease;
+                uint32_t redispatches{0}; // hard-down recovery moves (measurement)
             };
             std::map<uint32_t, SegmentRecord> segments;
         };
@@ -663,6 +664,7 @@ enum class UbTpgDispatchPolicy : uint32_t
         Time m_targetExecutionDelay{NanoSeconds(0)};
         UbTpgDispatchPolicy m_tpgDispatchPolicy{UbTpgDispatchPolicy::FIRST_ADMISSIBLE};
         double m_tpgDispatchSlack{-1.0};
+        bool m_replayFence{true};
         bool m_targetExecutionStarted{false};
 
       public:

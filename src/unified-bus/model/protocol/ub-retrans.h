@@ -76,6 +76,7 @@ struct UbGbnPacketDescriptor
     bool firstPacket{false};
     bool lastPacket{false};
     uint32_t serializedSizeBytes{0};
+    uint32_t supersedesTpn{UINT32_MAX}; // replay fence: dead initiator TP this packet supersedes
 };
 
 struct UbRetransTimerTestStats

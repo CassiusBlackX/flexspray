@@ -579,6 +579,19 @@ UbController::IsTpDead(const Ptr<UbTransportChannel>& tp) const
 }
 
 void
+UbController::FenceInboundTp(uint32_t peerNode, uint32_t peerTpn)
+{
+    for (const auto& [tpn, tp] : GetTransportChannelManager()->GetTpnMap())
+    {
+        (void)tpn;
+        if (tp != nullptr && tp->GetDest() == peerNode && tp->GetDstTpn() == peerTpn)
+        {
+            tp->SetInboundFenced();
+        }
+    }
+}
+
+void
 UbController::OnLocalPortDown(uint16_t port)
 {
     std::vector<Ptr<UbTransportChannel>> victims;

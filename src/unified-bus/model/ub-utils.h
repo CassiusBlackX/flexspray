@@ -377,6 +377,16 @@ public:
         }
         goodput_payload_bytes[nodeId][portId][rx ? 1 : 0] += bytes;
     }
+    /** Business goodput (completed transaction segments, counted once per segment at its
+     *  initiator) for the goodput sampler; @p rx selects the data destination side. */
+    static void AddBusinessBytes(uint32_t nodeId, bool rx, uint64_t bytes)
+    {
+        if (!goodput_sampler_enabled || nodeId >= goodput_business.size())
+        {
+            return;
+        }
+        goodput_business[nodeId][rx ? 1 : 0] += bytes;
+    }
     /** Receiver reorder statistics for the goodput sampler: a packet arrived `distance` PSNs ahead
      *  of the next expected PSN while the TP held `buffered` out-of-order packets. */
     static void AddRxReorder(uint32_t nodeId, uint32_t portId, uint64_t distance, uint64_t buffered)
@@ -394,6 +404,27 @@ public:
     void StartGoodputSampler();
     static void GoodputSampleTick(uint32_t nodeId, uint32_t intervalNs);
     static void TpSampleTick(uint32_t nodeId);
+    static bool IsRecoveryTraceEnabled();
+    /** Target executed request (initiator, jetty, TaSsn) of @p opcode at @p address. */
+    static void RecoveryExecNotify(uint32_t targetNode,
+                                   uint32_t initiatorNode,
+                                   uint32_t jetty,
+                                   uint32_t taSsn,
+                                   uint32_t opcode,
+                                   uint64_t address,
+                                   uint64_t bytes,
+                                   uint32_t localTpn);
+    /** Initiator completed segment (jetty, wqe, TaSsn) over @p tpn after @p redispatches moves. */
+    static void RecoveryCompleteNotify(uint32_t node,
+                                       uint32_t peer,
+                                       uint32_t jetty,
+                                       uint32_t wqe,
+                                       uint32_t taSsn,
+                                       uint32_t opcode,
+                                       uint64_t address,
+                                       uint64_t bytes,
+                                       uint32_t tpn,
+                                       uint32_t redispatches);
     /** Transport failure-detection / hard-down recovery event (runlog/FailureEvent.csv). */
     static void FailureEventNotify(uint32_t nodeId,
                                    uint32_t tpn,
@@ -538,6 +569,7 @@ private:
     inline static std::vector<std::vector<std::array<uint64_t, 2>>> goodput_payload_bytes;
     // per (node, port): {out-of-order packets, max reorder distance (PSN), max per-TP OOO buffer}
     inline static std::vector<std::vector<std::array<uint64_t, 3>>> goodput_reorder;
+    inline static std::vector<std::array<uint64_t, 2>> goodput_business;
     inline static std::vector<ns3::EventId> goodput_sampler_events;
     inline static std::set<uint32_t> tp_sample_nodes;
     inline static std::map<std::pair<uint32_t, uint32_t>, ns3::EventId> queue_sampler_events;
@@ -764,6 +796,13 @@ private:
                      "Focused TP debug trace start time in ns.",
                      ns3::UintegerValue(0),
                      ns3::MakeUintegerChecker<uint32_t>());
+
+    ns3::GlobalValue g_recovery_trace_enable =
+    ns3::GlobalValue("UB_RECOVERY_TRACE_ENABLE",
+                     "Record every target-side transaction execution (runlog/TargetExec.csv) and every "
+                     "initiator segment completion (runlog/SegComplete.csv) for recovery oracles.",
+                     ns3::BooleanValue(false),
+                     ns3::MakeBooleanChecker());
 
     ns3::GlobalValue g_tp_sample_nodes =
     ns3::GlobalValue("UB_TP_SAMPLE_NODES",

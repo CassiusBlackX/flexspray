@@ -1061,6 +1061,17 @@ TypeId UbJetty::GetTypeId(void)
                                       MakeUintegerAccessor(&UbJetty::SetInflightMax,
                                           &UbJetty::GetInflightMax),
                                       MakeUintegerChecker<uint32_t>())
+                        .AddAttribute("TailBytes",
+                                      "When a WQE has at most this many bytes left, segments use "
+                                      "TailSegmentBytes (0 = off).",
+                                      UintegerValue(0),
+                                      MakeUintegerAccessor(&UbJetty::m_tailBytes),
+                                      MakeUintegerChecker<uint64_t>())
+                        .AddAttribute("TailSegmentBytes",
+                                      "Segment size for the tail of a WQE (see TailBytes).",
+                                      UintegerValue(4096),
+                                      MakeUintegerAccessor(&UbJetty::m_tailSegmentBytes),
+                                      MakeUintegerChecker<uint32_t>(1))
                         .AddAttribute("TaSegmentBytes",
                                       "TA WQE segment size in bytes.",
                                       UintegerValue(UB_WQE_TA_SEGMENT_BYTE),
@@ -1279,7 +1290,8 @@ Ptr<UbWqeSegment> UbJetty::PrepareNextWqeSegment(Ptr<UbWqe> expectedWqe,
     }
 
     uint64_t segmentSize = currentWqe->GetBytesLeft();
-    const uint32_t segmentLimit = std::min(m_taSegmentBytes, maxSegmentBytes);
+    const uint32_t segmentLimit =
+        SegmentLimitFor(currentWqe->GetBytesLeft(), std::min(m_taSegmentBytes, maxSegmentBytes));
     if (segmentSize > segmentLimit && !IsAtomicTransaction(currentWqe->GetType()))
     {
         segmentSize = segmentLimit;
@@ -1484,6 +1496,35 @@ Ptr<UbWqeSegment> UbJetty::GenWqeSegment(Ptr<UbWqe> wqe, uint32_t segmentSize)
     return segment;
 }
 
+uint32_t
+UbJetty::SegmentLimitFor(uint64_t bytesLeft, uint32_t segmentLimit) const
+{
+    if (m_tailBytes > 0 && bytesLeft <= m_tailBytes)
+    {
+        return std::min(segmentLimit, m_tailSegmentBytes);
+    }
+    return segmentLimit;
+}
+
+uint64_t
+UbJetty::CountWqeSegments(uint64_t bytes, uint32_t segmentLimit) const
+{
+    if (m_tailBytes == 0)
+    {
+        return (bytes + segmentLimit - 1) / segmentLimit;
+    }
+    // Same cut sequence as GetNextWqeSegment: full segments while more than TailBytes remain,
+    // then TailSegmentBytes pieces. The TaSsn reservation must match it exactly, or the WQE is
+    // declared complete before (or after) its last segment.
+    uint64_t count = 0;
+    while (bytes > 0)
+    {
+        bytes -= std::min<uint64_t>(bytes, SegmentLimitFor(bytes, segmentLimit));
+        ++count;
+    }
+    return count;
+}
+
 void UbJetty::PushWqe(Ptr<UbWqe> ubWqe)
 {
     PushWqe(ubWqe, m_taSegmentBytes);
@@ -1502,9 +1543,7 @@ void UbJetty::PushWqe(Ptr<UbWqe> ubWqe, uint32_t maxSegmentBytes)
     ubWqe->SetTaSsnStart(m_taSsnCnt);
     const uint32_t segmentLimit = std::min(m_taSegmentBytes, maxSegmentBytes);
     const bool atomic = IsAtomicTransaction(ubWqe->GetType());
-    const uint64_t ssnSize = atomic ? 1 : IsCtpRequester()
-        ? (uint64_t{ubWqe->GetSize()} + segmentLimit - 1) / segmentLimit
-        : (ubWqe->GetSize() + segmentLimit - 1) / segmentLimit;
+    const uint64_t ssnSize = atomic ? 1 : CountWqeSegments(ubWqe->GetSize(), segmentLimit);
     ubWqe->SetTaSsnSize(ssnSize);
     // Assign request identity only after Jetty binding is known.
     ubWqe->SetSegmentKind(UbTransactionSegmentKind::REQUEST);

@@ -2058,6 +2058,7 @@ void UbUtils::Destroy()
     goodput_sampler_enabled = false;
     goodput_payload_bytes.clear();
     goodput_reorder.clear();
+    goodput_business.clear();
 
     if (UbLifecycleTrace::GetLevel() != UbLifecycleTraceLevel::OFF)
     {
@@ -2293,6 +2294,7 @@ UbUtils::StartGoodputSampler()
     }
     goodput_payload_bytes.assign(NodeList::GetNNodes(), {});
     goodput_reorder.assign(NodeList::GetNNodes(), {});
+    goodput_business.assign(NodeList::GetNNodes(), {0, 0});
     goodput_sampler_events.assign(NodeList::GetNNodes(), EventId());
     for (uint32_t nodeId = 0; nodeId < NodeList::GetNNodes(); ++nodeId)
     {
@@ -2328,7 +2330,8 @@ UbUtils::GoodputSampleTick(uint32_t nodeId, uint32_t intervalNs)
     const std::string fileName = trace_path + "runlog/GoodputSample.csv";
     const std::string header =
         "time_ns,node,port,rate_bps,tx_wire_bytes,rx_wire_bytes,tx_payload_bytes,rx_payload_bytes,"
-        "queue_bytes,fc_blocked_ns,ooo_pkts,max_reorder_psn,max_ooo_buffered,hard_drop_bytes";
+        "queue_bytes,fc_blocked_ns,ooo_pkts,max_reorder_psn,max_ooo_buffered,hard_drop_bytes,"
+        "node_biz_tx_bytes,node_biz_rx_bytes,fc_consumed_bytes";
     const uint64_t nowNs = static_cast<uint64_t>(Simulator::Now().GetNanoSeconds());
     Ptr<UbSwitch> sw = node->GetObject<UbSwitch>();
     for (uint32_t portId = 0; portId < node->GetNDevices(); ++portId)
@@ -2377,6 +2380,21 @@ UbUtils::GoodputSampleTick(uint32_t nodeId, uint32_t intervalNs)
         row += std::to_string(reorder[2]);
         row += ',';
         row += std::to_string(port->GetHardDropBytes());
+        row += ',';
+        row += std::to_string(goodput_business[nodeId][0]);
+        row += ',';
+        row += std::to_string(goodput_business[nodeId][1]);
+        // Credits this port consumed that its downstream has not returned yet (all VLs).
+        uint64_t consumed = 0;
+        if (port->GetFlowControl() != nullptr)
+        {
+            for (uint8_t vl = 0; vl < 16; ++vl)
+            {
+                consumed += port->GetFlowControl()->GetDownstreamBacklogBytes(vl);
+            }
+        }
+        row += ',';
+        row += std::to_string(consumed);
         AppendCsvRow(fileName, header, row);
     }
     if (tp_sample_nodes.count(nodeId) != 0)
@@ -2385,6 +2403,67 @@ UbUtils::GoodputSampleTick(uint32_t nodeId, uint32_t intervalNs)
     }
     goodput_sampler_events[nodeId] =
         Simulator::Schedule(NanoSeconds(intervalNs), &UbUtils::GoodputSampleTick, nodeId, intervalNs);
+}
+
+bool
+UbUtils::IsRecoveryTraceEnabled()
+{
+    // Not cached: unit tests toggle it between simulations in one process.
+    if (trace_path.empty())
+    {
+        return false;
+    }
+    BooleanValue v;
+    GlobalValue::GetValueByName("UB_RECOVERY_TRACE_ENABLE", v);
+    return v.Get();
+}
+
+void
+UbUtils::RecoveryExecNotify(uint32_t targetNode,
+                            uint32_t initiatorNode,
+                            uint32_t jetty,
+                            uint32_t taSsn,
+                            uint32_t opcode,
+                            uint64_t address,
+                            uint64_t bytes,
+                            uint32_t localTpn)
+{
+    if (!IsRecoveryTraceEnabled())
+    {
+        return;
+    }
+    std::ostringstream row;
+    row << Simulator::Now().GetNanoSeconds() << ',' << targetNode << ',' << initiatorNode << ','
+        << jetty << ',' << taSsn << ',' << opcode << ',' << address << ',' << bytes << ','
+        << localTpn;
+    AppendCsvRow(trace_path + "runlog/TargetExec.csv",
+                 "time_ns,target,initiator,jetty,tassn,opcode,address,bytes,local_tpn",
+                 row.str());
+}
+
+void
+UbUtils::RecoveryCompleteNotify(uint32_t node,
+                                uint32_t peer,
+                                uint32_t jetty,
+                                uint32_t wqe,
+                                uint32_t taSsn,
+                                uint32_t opcode,
+                                uint64_t address,
+                                uint64_t bytes,
+                                uint32_t tpn,
+                                uint32_t redispatches)
+{
+    if (!IsRecoveryTraceEnabled())
+    {
+        return;
+    }
+    std::ostringstream row;
+    row << Simulator::Now().GetNanoSeconds() << ',' << node << ',' << peer << ',' << jetty << ','
+        << wqe << ',' << taSsn << ',' << opcode << ',' << address << ',' << bytes << ',' << tpn
+        << ',' << redispatches;
+    AppendCsvRow(trace_path + "runlog/SegComplete.csv",
+                 "time_ns,node,peer,jetty,wqe,tassn,opcode,address,bytes,tpn,redispatches",
+                 row.str());
 }
 
 void

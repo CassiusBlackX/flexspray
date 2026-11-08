@@ -145,7 +145,14 @@ TypeId UbTransaction::GetTypeId(void)
             "this fraction. Negative disables deferral.",
             DoubleValue(-1.0),
             MakeDoubleAccessor(&UbTransaction::m_tpgDispatchSlack),
-            MakeDoubleChecker<double>());
+            MakeDoubleChecker<double>())
+        .AddAttribute(
+            "ReplayFence",
+            "Hard link-down recovery: re-dispatched segments carry the dead initiator TPN so the "
+            "target fences that TP pair (drops its later packets) before executing the replay.",
+            BooleanValue(true),
+            MakeBooleanAccessor(&UbTransaction::m_replayFence),
+            MakeBooleanChecker());
     return tid;
 }
 
@@ -1928,6 +1935,8 @@ UbTransaction::RedispatchDeadTpSegments(Ptr<UbTransportChannel> dead,
         dead->ForceRemoveRetainedWqeSegment(record.segment, correlation, deadId);
         Ptr<UbWqeSegment> clone = CopyObject<UbWqeSegment>(record.segment);
         clone->ResetTransportStateForRedispatch();
+        // Replay fence: the target must stop accepting the dead TP pair before executing this.
+        clone->SetSupersedesTpn(m_replayFence ? dead->GetTpn() : UINT32_MAX);
         target->ForceAdmitWqeSegment(clone);
         m_coordinator->ReleaseLease(record.transportWorkLease);
         record.transportWorkLease = m_coordinator->AcquireLease(target->GetLifecycleOwner(),
@@ -1935,6 +1944,7 @@ UbTransaction::RedispatchDeadTpSegments(Ptr<UbTransportChannel> dead,
                                                                 record.identity);
         record.resolvedTpIdentity = target->GetLifecycleOwner();
         record.segment = clone;
+        ++record.redispatches;
         target->WqeSegmentTriggerPortTransmit(clone);
         ++moved;
     }
@@ -1982,6 +1992,28 @@ UbTransaction::RecordSegmentSuccess(uint32_t jettyNum,
     }
 
     const bool awaitingTpSegmentCleanup = operation->second.awaitingTpSegmentCleanup;
+    if (!awaitingTpSegmentCleanup)
+    {
+        // Business goodput: a segment completes at its initiator exactly once (only the record's
+        // current TP generation can complete it), so retransmitted or re-dispatched copies are
+        // never counted twice. Data flows src->dst for writes and dst->src for reads.
+        const Ptr<UbWqeSegment> seg = segment->second.segment;
+        const bool read = seg->GetType() == UbTransactionOpcode::READ;
+        const uint32_t dataSrc = read ? seg->GetDest() : seg->GetSrc();
+        const uint32_t dataDst = read ? seg->GetSrc() : seg->GetDest();
+        utils::UbUtils::AddBusinessBytes(dataSrc, false, seg->GetSize());
+        utils::UbUtils::AddBusinessBytes(dataDst, true, seg->GetSize());
+        utils::UbUtils::RecoveryCompleteNotify(m_nodeId,
+                                               seg->GetDest(),
+                                               jettyNum,
+                                               wqeId,
+                                               taSsn,
+                                               static_cast<uint32_t>(seg->GetType()),
+                                               seg->GetRemoteAddress(),
+                                               seg->GetSize(),
+                                               seg->GetTpn(),
+                                               segment->second.redispatches);
+    }
     Ptr<UbLifecycleCoordinator> coordinator = m_coordinator;
     coordinator->ReleaseLease(segment->second.childLease);
     coordinator->ReleaseLease(segment->second.transportWorkLease);
@@ -2105,6 +2137,14 @@ UbTransaction::RunInboundTransaction(uint32_t localTpn,
         return;
     }
     m_targetExecutionStarted = true;
+    utils::UbUtils::RecoveryExecNotify(m_nodeId,
+                                       request->GetSrc(),
+                                       request->GetOriginJettyNum(),
+                                       request->GetTaSsn(),
+                                       static_cast<uint32_t>(request->GetType()),
+                                       request->GetRemoteAddress(),
+                                       request->GetSize(),
+                                       localTpn);
     const auto* rule = FindTransactionRule(request->GetType());
     NS_ABORT_MSG_IF(rule == nullptr || rule->role != UbTransactionSegmentKind::REQUEST,
                     "target execution requires a validated inbound request rule");

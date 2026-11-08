@@ -1585,6 +1585,11 @@ public:
 
     /** Clear every TP binding so a copy of an admitted segment can be re-sent on another TP of
      *  its group (hard link-down recovery). Transaction identity/correlation are kept. */
+    /** Hard-down replay: this segment re-sends work first admitted to local TP @p tpn, which is
+     *  dead; the target must stop accepting packets of that TP pair (replay fence). */
+    void SetSupersedesTpn(uint32_t tpn) { m_supersedesTpn = tpn; }
+    uint32_t GetSupersedesTpn() const { return m_supersedesTpn; }
+
     void ResetTransportStateForRedispatch()
     {
         ResetSentBytes();
@@ -1855,6 +1860,7 @@ private:
     uint32_t m_wqeSize{0};                          // 所属WQE的size
     OrderType m_orderType{OrderType::ORDER_NO};     // 所属WQE的order类型
     uint32_t m_tpn{UINT32_MAX}; // 当前WqeSegment由哪一个TP进行传输
+    uint32_t m_supersedesTpn{UINT32_MAX}; // replay fence (hard link-down recovery)
     bool m_hasResolvedTpIdentity{false};
     UbLifecycleResourceIdentity m_resolvedTpIdentity;
     bool m_hasTransactionCorrelation{false};

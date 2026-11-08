@@ -66,6 +66,30 @@ enum class UbTpgCleanupMode : uint8_t
     FORCE = 2,
 };
 
+/**
+ * Replay fence (FlexSpray hard link-down recovery). Models a 4-byte request-header extension
+ * carried only by re-dispatched segments: the initiator TPN whose path died. The target stops
+ * accepting packets of that TP pair, so an old copy still queued in the network can never be
+ * executed after the initiator completed the segment. Simulator metadata stands in for the
+ * header field (its 4 bytes are not added to the simulated packet length).
+ */
+class UbReplayFenceTag : public Tag
+{
+  public:
+    static TypeId GetTypeId()
+    {
+        static TypeId tid =
+            TypeId("ns3::UbReplayFenceTag").SetParent<Tag>().AddConstructor<UbReplayFenceTag>();
+        return tid;
+    }
+    TypeId GetInstanceTypeId() const override { return GetTypeId(); }
+    uint32_t GetSerializedSize() const override { return 4; }
+    void Serialize(TagBuffer b) const override { b.WriteU32(supersededTpn); }
+    void Deserialize(TagBuffer b) override { supersededTpn = b.ReadU32(); }
+    void Print(std::ostream& os) const override { os << supersededTpn; }
+    uint32_t supersededTpn{UINT32_MAX};
+};
+
 struct UbTransportGroupMember
 {
     uint32_t tpn{UINT32_MAX};
@@ -397,6 +421,10 @@ public:
     /** The TP's path is gone: it stops sending and detecting; work is re-sent elsewhere. */
     void MarkDead();
     bool IsDead() const { return m_dead; }
+    void RunCapacityWake();
+    /** Replay fence at the target: drop every later data packet of this TP pair. */
+    void SetInboundFenced() { m_inboundFenced = true; }
+    uint64_t GetFencedDrops() const { return m_fencedDrops; }
     uint64_t GetProbesSent() const { return m_fdProbesTotal; }
     uint64_t GetPsnSndUnaValue() const { return m_psnSndUna; }
     bool IsSendWindowLimited() const { return m_sendWindowLimited; }
@@ -768,6 +796,8 @@ private:
     Time m_lastPeerActivity;
     EventId m_fdEvent;
     bool m_dead{false};
+    bool m_inboundFenced{false};
+    uint64_t m_fencedDrops{0};
     bool HasOutstandingPeerWork() const;
     void ArmFailureDetector();
     void OnPeerActivity();
@@ -790,6 +820,7 @@ private:
   private:
     bool HeadSegmentIsCcExempt() const;
     bool m_readQuotaFollowsUsablePlanes{false};
+    bool m_capacityWakePending{false};
     uint64_t EffectiveReadQuotaBytes() const;
     // Separate send-pipeline depth for READ segments (0 = shared with writes).
     uint32_t m_maxActiveReadSegments{0};

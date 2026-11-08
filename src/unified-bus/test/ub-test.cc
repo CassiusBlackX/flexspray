@@ -36697,6 +36697,53 @@ class UbFlexSprayFarEndDegradeSystemTest : public TestCase
  * window stays full of packets lost on a dead link, the window blocks the retransmission itself
  * and the TP deadlocks (found with a hard uplink failure under READ traffic).
  */
+// Regression: tail segmentation (TailBytes / TailSegmentBytes) cuts more, smaller segments than
+// ceil(size / TaSegmentBytes). The WQE's TaSsn reservation must count them exactly; it used to keep
+// the old count, so the jetty declared the WQE complete while its last segments were unsent, the
+// transaction canceled them, and a response queued behind them on the TP waited forever.
+class UbTailSegmentationReservationTest : public TestCase
+{
+  public:
+    UbTailSegmentationReservationTest()
+        : TestCase("UnifiedBus - tail segmentation reserves one TaSsn per cut segment")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<Node> node = topo.sender;
+        Ptr<UbController> controller = node->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        const uint32_t jettyNum = 7;
+        function->CreateJetty(node->GetId(), topo.receiver->GetId(), jettyNum);
+        const std::vector<uint32_t> tpns = {kUrmaWriteRegressionSenderTpn};
+        NS_TEST_ASSERT_MSG_EQ(
+            transaction->JettyBindTp(node->GetId(), topo.receiver->GetId(), jettyNum, false, tpns),
+            true,
+            "one direct TP binding");
+        Ptr<UbJetty> jetty = function->GetJetty(jettyNum);
+        jetty->SetTaSegmentBytes(16384);
+        jetty->SetAttribute("TailBytes", UintegerValue(32768));
+        jetty->SetAttribute("TailSegmentBytes", UintegerValue(4096));
+        // 40000 B: one 16 KB segment (23616 B left <= TailBytes), then 5 x 4096 B + 3136 B.
+        Ptr<UbWqe> wqe = function->CreateWqe(node->GetId(), topo.receiver->GetId(), 40000, 77,
+                                             UbTransactionOpcode::WRITE);
+        function->PushWqeToJetty(wqe, jettyNum);
+        NS_TEST_ASSERT_MSG_EQ(wqe->GetTaSsnSize(), 7u, "reservation = segments actually cut");
+        // Default (tail off) keeps the legacy count.
+        jetty->SetAttribute("TailBytes", UintegerValue(0));
+        Ptr<UbWqe> plain = function->CreateWqe(node->GetId(), topo.receiver->GetId(), 40000, 78,
+                                               UbTransactionOpcode::WRITE);
+        function->PushWqeToJetty(plain, jettyNum);
+        NS_TEST_ASSERT_MSG_EQ(plain->GetTaSsnSize(), 3u, "ceil(40000 / 16384)");
+        Simulator::Destroy();
+    }
+};
+
 class UbSprayCcRetransmissionRollbackTest : public TestCase
 {
   public:
@@ -36719,6 +36766,29 @@ class UbSprayCcRetransmissionRollbackTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(cc->GetInflightBytes(), 0u, "timeout declares them lost");
         cc->OnSenderRetransmissionPacketSent(0, 4096);
         NS_TEST_ASSERT_MSG_EQ(cc->GetInflightBytes(), 4096u, "the retransmission is in flight");
+        // Repeated timeouts (window already released) must not underflow or double-count.
+        cc->OnSenderRetransmissionRollback(8 * 4096);
+        cc->OnSenderRetransmissionRollback(8 * 4096);
+        NS_TEST_ASSERT_MSG_EQ(cc->GetInflightBytes(), 0u, "repeated rollback stays at 0");
+        // Partial ACK, timeout of the rest, retransmission, then a late cumulative ACK.
+        for (uint32_t psn = 8; psn < 16; ++psn)
+        {
+            cc->OnSenderDataPacketSent(psn, 4096);
+        }
+        UbCongestionExtTph h;
+        cc->OnSenderCongestionNotification(TpOpcode::TP_OPCODE_ACK_WITH_CETPH, 11, h);
+        NS_TEST_ASSERT_MSG_EQ(cc->GetInflightBytes(), 4u * 4096, "psn 8..11 acknowledged");
+        cc->OnSenderRetransmissionRollback(4 * 4096);
+        NS_TEST_ASSERT_MSG_EQ(cc->GetInflightBytes(), 0u, "timeout releases psn 12..15");
+        for (uint32_t psn = 12; psn < 16; ++psn)
+        {
+            cc->OnSenderRetransmissionPacketSent(psn, 4096);
+        }
+        NS_TEST_ASSERT_MSG_EQ(cc->GetInflightBytes(), 4u * 4096, "retransmissions in flight");
+        cc->OnSenderCongestionNotification(TpOpcode::TP_OPCODE_ACK_WITH_CETPH, 15, h);
+        NS_TEST_ASSERT_MSG_EQ(cc->GetInflightBytes(), 0u, "late cumulative ACK clears them once");
+        cc->OnSenderCongestionNotification(TpOpcode::TP_OPCODE_ACK_WITH_CETPH, 15, h);
+        NS_TEST_ASSERT_MSG_EQ(cc->GetInflightBytes(), 0u, "duplicate ACK does not underflow");
         cc->Dispose();
         GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(false));
         Simulator::Destroy();
@@ -40324,5 +40394,6 @@ class UbFlexSpraySuite : public TestSuite
         AddTestCase(new UbCaqmStaleAckDoesNotRegressInflightTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbFlexSprayHardLinkDownSystemTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbSprayCcRetransmissionRollbackTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbTailSegmentationReservationTest(), TestCase::Duration::QUICK);
     }
 } g_ubFlexSpraySuite;
