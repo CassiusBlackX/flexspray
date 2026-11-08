@@ -70,6 +70,16 @@ def cases(t):
                             [(t.find_host("NPU", 0, i)["id"], b["id"], 4 * MB, W, 3, "")
                              for i in range(1, 8)],
                             [(0, b["id"], b["ports"][p], "DEGRADE", "1/4")] + near),
+        # negative controls for the failure detector: nothing is lost, B's plane-3 port only runs
+        # at 1/64 rate (a 4 KB data packet takes ~5 us per hop, probes/replies wait behind it),
+        # with a WRITE+READ pair and an incast onto B. Any probe-timeout here is a false death.
+        **{f"slow_far_1_{k}": ([(a["id"], b["id"], 4 * MB, W, 0, ""), (a["id"], b["id"], 4 * MB, R, 0, "")] +
+                               [(t.find_host("NPU", 0, i)["id"], b["id"], 4 * MB, W, 0, "")
+                                for i in range(1, 8)],
+                               [(5000, b["id"], b["ports"][p], "DEGRADE", f"1/{k}")])
+           for k in (1, 2, 4, 8, 16, 64)},
+        "slow_near_1_64": ([(a["id"], b["id"], 4 * MB, W, 0, ""), (b["id"], a["id"], 4 * MB, R, 0, "")],
+                           [(5000, a["id"], a["ports"][p], "DEGRADE", "1/64")]),
         # failure right at the start (before any ACK) and near the end (most data acknowledged)
         "write_far_early": ([(a["id"], b["id"], 4 * MB, W, 0, "")],
                             [(300, b["id"], b["ports"][p], "DOWN", "")]),
@@ -99,7 +109,7 @@ def build(root, name, tasks, faults, scheme):
 def run(args):
     d, binary = args
     with open(os.path.join(d, "stdout.txt"), "w") as out:
-        rc = subprocess.run([binary, f"--case-path={d}", "--stop-ms=1"], stdout=out,
+        rc = subprocess.run([binary, f"--case-path={d}", "--stop-ms=3"], stdout=out,
                             stderr=subprocess.STDOUT, timeout=1800).returncode
     try:
         res = O.check(d)
@@ -131,7 +141,8 @@ def main():
             "P2_every_completion_executed", "P3_coverage_exact", "P4_last_writer",
             "P5_no_exec_after_completion", "duplicate_target_executions", "duplicate_target_bytes",
             "late_execs_after_completion", "redispatched_segments", "P6_credits_returned_on_live_ports",
-            "credits_stuck_live", "credits_stuck_on_down_ports", "error"]
+            "credits_stuck_live", "credits_stuck_on_down_ports", "suspects", "probe_timeouts",
+            "false_dead_no_down", "error"]
     for name in cs:
         r = out[name]
         print(name.ljust(20), " ".join(f"{k.split('_')[0] if k.startswith('P') else k}={r.get(k)}"

@@ -1969,6 +1969,7 @@ void UbTransportChannel::RecvTpAck(Ptr<Packet> p)
     if (!ParseTransportResponsePacket(p, ctx)) {
         return;
     }
+    const bool wasSuspect = m_fdState == FdState::SUSPECT;
     OnPeerActivity();
     if (ctx.opcode == TpOpcode::TP_OPCODE_PROBE) {
         if (!m_dead) {
@@ -1977,6 +1978,13 @@ void UbTransportChannel::RecvTpAck(Ptr<Packet> p)
         return;
     }
     if (ctx.opcode == TpOpcode::TP_OPCODE_PROBE_REPLY) {
+        // CLEARS: the reply ended a suspicion. LATE: the TP was already declared dead (the reply
+        // came after the last retry). DUPLICATE: the TP was healthy (an earlier reply or data
+        // already cleared the suspicion).
+        utils::UbUtils::FailureEventNotify(
+            m_nodeId, m_tpn, m_dest, m_sport,
+            std::string("PROBE_REPLY ") +
+                (m_dead ? "LATE" : (wasSuspect ? "CLEARS" : "DUPLICATE")));
         return;
     }
 
@@ -2521,6 +2529,14 @@ void UbTransportChannel::ReTxTimeout()
         return;
     }
     const UbRetransTimeoutResult timeoutResult = m_retrans->OnTimeout();
+    // Probe / RTO / CC interaction metrics (flexspray_fdreport.py): every timeout, how much it
+    // rolls back, and the detector state it happened in.
+    if (m_fdEnabled || utils::UbUtils::IsRecoveryTraceEnabled()) {
+        utils::UbUtils::FailureEventNotify(
+            m_nodeId, m_tpn, m_dest, m_sport,
+            "RTO bytes=" + std::to_string(timeoutResult.retransmitBytes) +
+                " state=" + (m_fdState == FdState::SUSPECT ? "SUSPECT" : "HEALTHY"));
+    }
     m_congestionCtrl->OnSenderRetransmissionRollback(timeoutResult.retransmitBytes);
     if (timeoutResult.triggerTransmit) {
         TriggerTransportTransmit();
@@ -2777,6 +2793,12 @@ UbTransportChannel::CheckFailure()
     }
     // SUSPECT: probe, or give up after the retries.
     if (m_fdProbesSent > m_fdProbeRetries) {
+        // Silence start = last answer from the peer, or the first send after an idle period:
+        // detection time "from first use" is measured from here.
+        utils::UbUtils::FailureEventNotify(
+            m_nodeId, m_tpn, m_dest, m_sport,
+            "SILENCE start_ns=" + std::to_string(m_lastPeerActivity.GetNanoSeconds()) +
+                " probes=" + std::to_string(m_fdProbesSent));
         Ptr<UbController> ctrl = NodeList::GetNode(m_nodeId)->GetObject<UbController>();
         if (ctrl != nullptr) {
             ctrl->DeclareTpDead(this, "probe-timeout");
@@ -2785,6 +2807,8 @@ UbTransportChannel::CheckFailure()
     }
     ++m_fdProbesSent;
     ++m_fdProbesTotal;
+    utils::UbUtils::FailureEventNotify(m_nodeId, m_tpn, m_dest, m_sport,
+                                       "PROBE n=" + std::to_string(m_fdProbesSent));
     EnqueueProbe(TpOpcode::TP_OPCODE_PROBE);
     m_fdEvent = Simulator::Schedule(m_fdProbeTimeout, &UbTransportChannel::CheckFailure, this);
 }

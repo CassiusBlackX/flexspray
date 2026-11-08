@@ -151,6 +151,17 @@ def check(case):
         res["P6_credits_returned_on_live_ports"] = not live_stuck
         res["credits_stuck_live"] = sum(live_stuck.values())
         res["credits_stuck_on_down_ports"] = sum(v for k, v in last.items() if k in down)
+    # Failure detector: suspicions, probe-timeout deaths; without any DOWN row every probe-timeout
+    # is a false death.
+    fe = os.path.join(case, "runlog", "FailureEvent.csv")
+    ev = list(csv.DictReader(open(fe))) if os.path.exists(fe) else []
+    has_down = False
+    lh = os.path.join(case, "link_health.csv")
+    if os.path.exists(lh):
+        has_down = any(r["action"] in ("DOWN", "DOWN_NODE") for r in csv.DictReader(open(lh)))
+    res["suspects"] = sum(1 for e in ev if e["event"] == "SUSPECT")
+    res["probe_timeouts"] = sum(1 for e in ev if e["event"] == "probe-timeout")
+    res["false_dead_no_down"] = 0 if has_down else res["probe_timeouts"]
     res["P4_last_writer"] = p4  # None = no dependency-ordered overlapping writes in this case
     res["last_writer_violations"] = violations
     return res
