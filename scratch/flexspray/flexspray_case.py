@@ -517,6 +517,13 @@ def scheme_attrs(name):
                 # alone on the port with a window cut by the incast; at 5 % it needed ~33 us to
                 # refill 400G (mixed F1ssd s1 0.899, H4p4 0.870); at 15 % 0.961 / 0.950.
                 d["ns3::UbHostSprayCc::AiFraction"] = "0.15"
+                # v5.3 (round 5): steer READ requests away from planes whose ingress at this
+                # requester is queueing (edge-marked fraction of received READ responses):
+                # member score x (1 + 0.3 x marked fraction). Picked on seen seed 1 (0, 0.3, 1, 4,
+                # 16), robust on seeds 1,2 over 0.15-0.5 (mixedread worst device 0.910-0.927).
+                d["ns3::UbTransaction::ReadIngressMarkWeight"] = "0.3"
+        elif opt == "rim0":  # ablation: no ingress-mark READ steering (v5.2 behaviour)
+            d["ns3::UbTransaction::ReadIngressMarkWeight"] = "0"
         elif opt.startswith("ai") and opt[2:].isdigit():  # ablation: AiFraction in percent (ai5 = v5.1)
             d["ns3::UbHostSprayCc::AiFraction"] = str(int(opt[2:]) / 100)
         elif opt == "v2":    # undo the v3 additions (ablation)

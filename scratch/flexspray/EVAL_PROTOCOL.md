@@ -6,7 +6,7 @@
 ## 基线
 
 - 代码：`git tag flexspray-v4-baseline`（提交 `c954e44e`）。
-- 数据：`/home/cassius/ub/work/exp/{final4,cover4,osub4,buf4}`。
+- 数据：`/home/cassius/ub/work/archive/exp_history/{final4,cover4,osub4,buf4}`。
 - 用例生成器 `flexspray_case.py`：除新增选项外，不修改已有场景、故障和拓扑的定义。
 
 ## 指标（全部报告，不只报一项）
