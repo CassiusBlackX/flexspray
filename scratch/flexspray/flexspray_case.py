@@ -511,6 +511,14 @@ def scheme_attrs(name):
             cc = "caqm"; g["UB_CC_ENABLED"] = "true"; g["UB_CC_ALGO"] = "CAQM"
         elif opt == "spraycc":
             cc = "spraycc"; g["UB_CC_ENABLED"] = "true"; g["UB_CC_ALGO"] = "SPRAYCC"
+            if base == "flex":
+                # v5.2 (round 4): group additive increase 15 % of line rate per 2 us period (was
+                # 5 %). After an incast onto a hotspot that lost a port, the last culprit flow is
+                # alone on the port with a window cut by the incast; at 5 % it needed ~33 us to
+                # refill 400G (mixed F1ssd s1 0.899, H4p4 0.870); at 15 % 0.961 / 0.950.
+                d["ns3::UbHostSprayCc::AiFraction"] = "0.15"
+        elif opt.startswith("ai") and opt[2:].isdigit():  # ablation: AiFraction in percent (ai5 = v5.1)
+            d["ns3::UbHostSprayCc::AiFraction"] = str(int(opt[2:]) / 100)
         elif opt == "v2":    # undo the v3 additions (ablation)
             for k in ("ns3::UbSwitchAllocator::TpGroupFairShareUsableOnly",
                       "ns3::UbTransportChannel::ReadQuotaFollowsUsablePlanes",
