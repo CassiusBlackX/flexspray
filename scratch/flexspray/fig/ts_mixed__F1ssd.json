@@ -1,0 +1,30 @@
+{
+ "flex+spraycc": {
+  "t_f": 50.0,
+  "t_detect_remote": 52.0,
+  "t_qpeak": null,
+  "q_peak_kb": 98.109375,
+  "q_base_kb": 187.9140625,
+  "t_settle": 50.0,
+  "q_end_kb": 98.1015625,
+  "rate_pre": 1539.2336842105265,
+  "rate_post": 771.6755496688742,
+  "dip_vs_post": -0.04457255343082123,
+  "share_pre": 0.49988221580505404,
+  "share_post": 0.0
+ },
+ "spray": {
+  "t_f": 50.0,
+  "t_detect_remote": 52.0,
+  "t_qpeak": null,
+  "q_peak_kb": 314.228515625,
+  "q_base_kb": 326.09375,
+  "t_settle": 50.0,
+  "q_end_kb": 302.12109375,
+  "rate_pre": 1117.0438736842107,
+  "rate_post": 1037.4001589403974,
+  "dip_vs_post": 0.04235958581738308,
+  "share_pre": 0.49996342622659606,
+  "share_post": 0.455676801336376
+ }
+}
