@@ -42,6 +42,24 @@ import flexspray_analyze as A  # noqa: E402
 import flexspray_lossreport as L  # noqa: E402
 
 
+def isolated_resources(meta):
+    """{(group, key)} whose faulted capacity is below the healthy one (eg/ing device ports, l1u/l1d)."""
+    ch = A.capacities(meta, faulted=False)
+    cf = A.capacities(meta, faulted=True)
+    out = set()
+    for (dev, p), c in ch[0].items():
+        if cf[0].get((dev, p), 0.0) < c:
+            out.add(("eg", (dev, p))); out.add(("ing", (dev, p)))
+    for name, i in (("l1u", 1), ("l1d", 2)):
+        for key, c in ch[i].items():
+            if cf[i].get(key, 0.0) < c:
+                out.add((name, key))
+    return out
+
+
+ALLOW = {}  # (group, key) -> bytes the resource may still carry after t_f (graceful drain)
+
+
 def lp(meta, flows, deadline, tf, horizon, ack, scale_obj=False):
     """Feasibility of: every flow with a deadline delivers bits by it (time-indexed LP).
     scale_obj: maximise s with deliveries >= s * bits (s* >= 1 <=> feasible); returns (s, res, rowinfo)."""
@@ -75,12 +93,16 @@ def lp(meta, flows, deadline, tf, horizon, ack, scale_obj=False):
                 if f["cross"]:
                     groups["l1u"][(p, f["ssrv"])].append((v, data_w)); groups["l1d"][(p, f["ssrv"])].append((v, ack_w))
                     groups["l1d"][(p, f["dsrv"])].append((v, data_w)); groups["l1u"][(p, f["dsrv"])].append((v, ack_w))
+        first_post = tf is not None and abs(bps[k] - tf) < 1e-9
         for name, capd in (("eg", cap), ("ing", cap), ("l1u", up), ("l1d", down)):
             for key, terms in groups[name].items():
                 r = len(b)
                 for v, w in terms:
                     rows.append(r); cols.append(v); vals.append(w)
-                b.append(capd.get(key, 0.0))
+                extra = 0.0
+                if first_post and (name, key) in ALLOW:
+                    extra = ALLOW[(name, key)] * 8.0 / 1e3 / (bps[k + 1] - bps[k])  # Gbps over the phase
+                b.append(capd.get(key, 0.0) + extra)
                 info.append((k, bps[k], bps[k + 1], name, key, capd.get(key, 0.0)))
     for fi in deadline:
         r = len(b)
@@ -170,10 +192,38 @@ def main():
     ap.add_argument("fault_case"); ap.add_argument("healthy_case")
     ap.add_argument("--healthy", choices=["measured", "ideal"], default="measured")
     ap.add_argument("--n", choices=["phys", "shared"], default="phys")
+    ap.add_argument("--drain", choices=["zero", "measured", "search"], default="zero",
+                    help="graceful isolation: bytes an isolated resource may still carry after t_f. "
+                         "zero = capacity vanishes at t_f (exact for a hard down, STRICTER than a "
+                         "graceful isolation); measured = what that resource carried after t_f in "
+                         "this run; search = the smallest uniform per-resource allowance D for which "
+                         "'<=' (eps >= 0) and '<' (eps > 1e-4) become feasible")
     a = ap.parse_args()
     meta, flows, cons = setup(a.fault_case, a.healthy_case, a.healthy, a.n)
     ack = meta["ack_bytes"]
     tf = meta["fault_ns"] / 1000.0
+    iso = isolated_resources(meta)
+    dsearch = None
+    if a.drain == "measured":
+        allow, _ = A.drained_after_fault(meta, A.read_samples(a.fault_case))
+        ALLOW.update({k: v for k, v in allow.items()})
+    elif a.drain == "search":
+        dsearch = {}
+        for label, thr in (("le", 0.0), ("lt", 1e-4)):
+            lo, hi = 0.0, 64e6
+            ALLOW.clear(); ALLOW.update({k: hi for k in iso})
+            if max_eps(meta, flows, cons, tf, ack) < thr:
+                dsearch[label] = None  # not even with 64 MB per resource
+                continue
+            for _ in range(24):
+                mid = (lo + hi) / 2
+                ALLOW.clear(); ALLOW.update({k: mid for k in iso})
+                if max_eps(meta, flows, cons, tf, ack) >= thr:
+                    hi = mid
+                else:
+                    lo = mid
+            dsearch[label] = round(hi)
+        ALLOW.clear()
     if a.healthy == "ideal":
         for key, t in ideal_healthy(meta, flows, cons, ack).items():
             cons[key][0] = t
@@ -192,6 +242,9 @@ def main():
                                 cap_gbps=capv, dual=round(float(dv), 6)))
     hosts = {h["id"]: h for h in meta["hosts"]}
     out = dict(fault_case=os.path.basename(a.fault_case.rstrip("/")), healthy=a.healthy, n=a.n,
+               drain=a.drain, isolated_resources=sorted(str(x) for x in iso),
+               drain_allow_bytes={str(k): v for k, v in ALLOW.items()},
+               min_drain_bytes_per_resource=dsearch,
                tf_us=tf, eps_star=round(eps, 5),
                strict_feasible=eps > 1e-4, le_feasible=eps > -1e-4,
                constraints={f"{d}{dr}": dict(type=hosts[d]["type"], T_H_us=round(v[0], 3), N=v[1],
