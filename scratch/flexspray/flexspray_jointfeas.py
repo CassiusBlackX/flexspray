@@ -151,7 +151,9 @@ def deadlines_for(cons, eps, only=None):
 
 def max_eps(meta, flows, cons, tf, ack, only=None):
     horizon = max(c[0] for c in cons.values()) * 50
-    lo, hi = -0.5, 0.5
+    keys = [only] if only is not None else list(cons)
+    nmin = min(cons[k][1] for k in keys)
+    lo, hi = max(-0.5, -(1 - 1.0 / nmin) + 1e-3), 0.5  # keep 1 - 1/N + eps > 0
     if not lp(meta, flows, deadlines_for(cons, lo, only), tf, horizon, ack)[0]:
         return float("-inf")
     for _ in range(30):
