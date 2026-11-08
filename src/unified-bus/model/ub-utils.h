@@ -406,6 +406,14 @@ public:
     static void TpSampleTick(uint32_t nodeId);
     static bool IsRecoveryTraceEnabled();
     /** Target executed request (initiator, jetty, TaSsn) of @p opcode at @p address. */
+    /** Per-segment state events (runlog/SegState.csv, recovery trace only): ADMIT to a TP,
+     *  TX_FIRST / TX_LAST packet sent. Key = (requester node, jetty, TaSsn) for both a request
+     *  and its response, so one business unit's states join. */
+    static void HolDelayNotify(uint32_t node, uint32_t tpn, uint32_t peer, uint32_t port,
+                               uint32_t taOpcode, uint32_t payload, int64_t waitNs);
+    static void SegStateNotify(const char* event, uint32_t node, uint32_t tpn, uint32_t port,
+                               bool response, uint32_t opcode, uint32_t requester,
+                               uint32_t responder, uint32_t jetty, uint32_t taSsn, uint64_t bytes);
     static void RecoveryExecNotify(uint32_t targetNode,
                                    uint32_t initiatorNode,
                                    uint32_t jetty,

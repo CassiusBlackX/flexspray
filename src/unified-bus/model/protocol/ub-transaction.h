@@ -667,6 +667,8 @@ enum class UbTpgDispatchPolicy : uint32_t
         bool m_replayFence{true};
         bool m_responseLateBinding{false};
         double m_responseRebindRatio{4.0};
+        bool m_responseRebindAtSend{false};
+        uint64_t m_sendTimeRebinds{0};
         Ptr<UbTransportChannel> ChooseLateBoundResponseTp(const Ptr<UbTransportChannel>& transport,
                                                           const Ptr<UbWqeSegment>& segment) const;
         uint64_t m_lateBoundResponses{0};

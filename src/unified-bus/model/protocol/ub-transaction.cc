@@ -169,6 +169,15 @@ TypeId UbTransaction::GetTypeId(void)
             MakeBooleanAccessor(&UbTransaction::m_responseLateBinding),
             MakeBooleanChecker())
         .AddAttribute(
+            "ResponseRebindAtSend",
+            "With ResponseLateBinding: choose the READ response TP when the response is admitted "
+            "(no PSN yet), not when it is generated. The rebinding is opportunistic: it happens "
+            "only if the chosen TP admits the segment immediately; otherwise the response stays "
+            "on its queue and waits for that TP's capacity as before. Default off.",
+            BooleanValue(false),
+            MakeBooleanAccessor(&UbTransaction::m_responseRebindAtSend),
+            MakeBooleanChecker())
+        .AddAttribute(
             "ReplayFence",
             "Hard link-down recovery: re-dispatched segments carry the dead initiator TPN so the "
             "target fences that TP pair (drops its later packets) before executing the replay.",
@@ -1557,7 +1566,8 @@ UbTransaction::EnqueueRemoteRtpWqeSegment(uint32_t tpn, Ptr<UbWqeSegment> segmen
     {
         return;
     }
-    if (Ptr<UbTransportChannel> best = ChooseLateBoundResponseTp(transport, segment))
+    if (Ptr<UbTransportChannel> best =
+            m_responseRebindAtSend ? nullptr : ChooseLateBoundResponseTp(transport, segment))
     {
         segment->SetRespOriginTpn(transport->GetDstTpn());
         segment->SetResolvedTpIdentity(best->GetLifecycleOwner());
@@ -1646,6 +1656,51 @@ UbTransaction::RunRemoteRtpWqeSegmentTx(const RtpTxQueueKey& queueKey, const Rtp
     }
 
     Ptr<UbWqeSegment> segment = remote->second.segments.front();
+    if (m_responseRebindAtSend)
+    {
+        // Send-time rebinding (S2 migration: the response exists but has no PSN). The earlier
+        // version re-queued a refused segment under this queue's key while it was bound to the
+        // other TP; that TP's capacity wake goes to its own queue key, and the retry no longer
+        // re-chose (RespOriginTpn already set) yet carried the other TP's identity, so the entry
+        // was never woken (all cases hung). Here the binding is committed only if the chosen TP
+        // admits the segment now; otherwise it is rolled back and this queue's wait path is used.
+        if (Ptr<UbTransportChannel> best = ChooseLateBoundResponseTp(transport, segment))
+        {
+            const bool hadIdentity = segment->HasResolvedTpIdentity();
+            const UbLifecycleResourceIdentity previous =
+                hadIdentity ? segment->GetResolvedTpIdentity() : UbLifecycleResourceIdentity{};
+            segment->SetRespOriginTpn(transport->GetDstTpn());
+            segment->SetResolvedTpIdentity(best->GetLifecycleOwner());
+            if (best->TryContinueAcceptedWqeSegment(segment))
+            {
+                ++m_lateBoundResponses;
+                ++m_sendTimeRebinds;
+                transport = best;
+                remote->second.segments.pop_front();
+                if (!remote->second.segments.empty())
+                {
+                    m_rtpTxQueues[queueKey].pendingTxEntries.push_back(entry);
+                    remote->second.txEntryQueued = true;
+                }
+                else
+                {
+                    remoteWqeSegmentsByTpn->second.erase(remote);
+                    if (remoteWqeSegmentsByTpn->second.empty())
+                    {
+                        m_remoteRtpWqeSegmentsByTpn.erase(remoteWqeSegmentsByTpn);
+                    }
+                }
+                transport->WqeSegmentTriggerPortTransmit(segment);
+                ScheduleRtpTx(queueKey);
+                return;
+            }
+            segment->SetRespOriginTpn(UINT32_MAX);
+            if (hadIdentity)
+            {
+                segment->SetResolvedTpIdentity(previous);
+            }
+        }
+    }
     if (!transport->TryContinueAcceptedWqeSegment(segment))
     {
         RtpTxQueue& queue = m_rtpTxQueues[queueKey];

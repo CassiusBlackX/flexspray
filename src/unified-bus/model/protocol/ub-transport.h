@@ -80,6 +80,27 @@ enum class UbTpgCleanupMode : uint8_t
  * pair of nodes. The requester credits the response bytes to that TP's read quota. Simulator
  * metadata stands in for the field (not added to the packet length; accounted as overhead).
  */
+/**
+ * Sender-informed READ feedback (adapted from SIRD's sender-congestion bit): a READ response
+ * carries this 1-bit flag when the responder TP's admitted-but-unsent backlog exceeds
+ * ReadBacklogThreshold. Simulator metadata stands in for one header bit.
+ */
+class UbRespBacklogTag : public Tag
+{
+  public:
+    static TypeId GetTypeId()
+    {
+        static TypeId tid =
+            TypeId("ns3::UbRespBacklogTag").SetParent<Tag>().AddConstructor<UbRespBacklogTag>();
+        return tid;
+    }
+    TypeId GetInstanceTypeId() const override { return GetTypeId(); }
+    uint32_t GetSerializedSize() const override { return 1; }
+    void Serialize(TagBuffer b) const override { b.WriteU8(1); }
+    void Deserialize(TagBuffer b) override { (void)b.ReadU8(); }
+    void Print(std::ostream& os) const override { os << "backlog"; }
+};
+
 class UbRespOriginTag : public Tag
 {
   public:
@@ -448,6 +469,27 @@ public:
     void RunCapacityWake();
     /** READ response late binding: response bytes for a READ this TP issued arrived on another TP. */
     void CreditForeignResponse(uint64_t bytes);
+    void NotifySegState(const char* event, const Ptr<UbWqeSegment>& seg) const;
+    struct PortReadState
+    {
+        uint64_t outstanding{0};
+        uint32_t active{0}; // TPs of this port with outstanding READ bytes
+        double weight{0.0}; // sum of 1/(group size) over those TPs (per-flow fairness)
+        std::deque<UbTransportChannel*> waiters;
+    };
+    static std::unordered_map<uint64_t, PortReadState>& PortRead();
+    uint64_t PortKey() const { return (uint64_t{m_nodeId} << 16) | m_sport; }
+    void PortReadAdd(int64_t delta);
+    void PortReadRelease();
+    uint64_t m_readPortBudget{0};
+    bool m_portReadCounted{true};
+    mutable bool m_portWaiting{false};
+    double PortShareWeight() const;
+    double m_portWeight{1.0};
+    bool m_readBacklogFeedback{false};
+    uint64_t m_readBacklogThreshold{65536};
+    bool m_rxBacklogFlag{false};
+    void ApplyReadBacklogFeedback(uint64_t bytes, bool flagged);
     uint64_t GetForeignResponseBytes() const { return m_foreignRespBytes; }
     /** EWMA of the marked fraction of READ responses arriving on this TP's local port (all TPs
      *  of the node on that port). */
@@ -658,6 +700,7 @@ private:
         Ptr<const Packet> explicitPayload;
         UbTransactionFields transactionFields;
         uint32_t respOriginTpn{UINT32_MAX}; // READ response late binding (UbRespOriginTag)
+        int64_t arrivalNs{0};               // HOL diagnostics (recovery trace)
     };
 
     struct AckResponseContext

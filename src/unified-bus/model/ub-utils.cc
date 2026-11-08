@@ -2442,6 +2442,39 @@ UbUtils::RecoveryExecNotify(uint32_t targetNode,
 }
 
 void
+UbUtils::HolDelayNotify(uint32_t node, uint32_t tpn, uint32_t peer, uint32_t port,
+                        uint32_t taOpcode, uint32_t payload, int64_t waitNs)
+{
+    if (!IsRecoveryTraceEnabled())
+    {
+        return;
+    }
+    std::ostringstream row;
+    row << Simulator::Now().GetNanoSeconds() << ',' << node << ',' << tpn << ',' << peer << ','
+        << port << ',' << taOpcode << ',' << payload << ',' << waitNs;
+    AppendCsvRow(trace_path + "runlog/HolDelay.csv",
+                 "time_ns,node,tpn,peer,port,ta_opcode,payload,wait_ns", row.str());
+}
+
+void
+UbUtils::SegStateNotify(const char* event, uint32_t node, uint32_t tpn, uint32_t port,
+                        bool response, uint32_t opcode, uint32_t requester, uint32_t responder,
+                        uint32_t jetty, uint32_t taSsn, uint64_t bytes)
+{
+    if (!IsRecoveryTraceEnabled())
+    {
+        return;
+    }
+    std::ostringstream row;
+    row << Simulator::Now().GetNanoSeconds() << ',' << event << ',' << node << ',' << tpn << ','
+        << port << ',' << (response ? 1 : 0) << ',' << opcode << ',' << requester << ','
+        << responder << ',' << jetty << ',' << taSsn << ',' << bytes;
+    AppendCsvRow(trace_path + "runlog/SegState.csv",
+                 "time_ns,event,node,tpn,port,response,opcode,requester,responder,jetty,tassn,bytes",
+                 row.str());
+}
+
+void
 UbUtils::RecoveryCompleteNotify(uint32_t node,
                                 uint32_t peer,
                                 uint32_t jetty,
