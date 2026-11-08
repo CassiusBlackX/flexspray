@@ -1608,6 +1608,10 @@ public:
     /** Hard-down replay: this segment re-sends work first admitted to local TP @p tpn, which is
      *  dead; the target must stop accepting packets of that TP pair (replay fence). */
     void SetSupersedesTpn(uint32_t tpn) { m_supersedesTpn = tpn; }
+    /** READ response late binding: the requester TP that issued the request (set only when the
+     *  response travels on another TP of the pair of nodes). */
+    void SetRespOriginTpn(uint32_t tpn) { m_respOriginTpn = tpn; }
+    uint32_t GetRespOriginTpn() const { return m_respOriginTpn; }
     uint32_t GetSupersedesTpn() const { return m_supersedesTpn; }
 
     void ResetTransportStateForRedispatch()
@@ -1881,6 +1885,7 @@ private:
     OrderType m_orderType{OrderType::ORDER_NO};     // 所属WQE的order类型
     uint32_t m_tpn{UINT32_MAX}; // 当前WqeSegment由哪一个TP进行传输
     uint32_t m_supersedesTpn{UINT32_MAX}; // replay fence (hard link-down recovery)
+    uint32_t m_respOriginTpn{UINT32_MAX}; // READ response late binding
     bool m_hasResolvedTpIdentity{false};
     UbLifecycleResourceIdentity m_resolvedTpIdentity;
     bool m_hasTransactionCorrelation{false};

@@ -74,6 +74,29 @@ enum class UbTpgCleanupMode : uint8_t
  * executed after the initiator completed the segment. Simulator metadata stands in for the
  * header field (its 4 bytes are not added to the simulated packet length).
  */
+/**
+ * READ response late binding (protocol extension, 4 B in the response header): the requester TPN
+ * that issued the READ, carried only by responses the responder sent on another TP of the same
+ * pair of nodes. The requester credits the response bytes to that TP's read quota. Simulator
+ * metadata stands in for the field (not added to the packet length; accounted as overhead).
+ */
+class UbRespOriginTag : public Tag
+{
+  public:
+    static TypeId GetTypeId()
+    {
+        static TypeId tid =
+            TypeId("ns3::UbRespOriginTag").SetParent<Tag>().AddConstructor<UbRespOriginTag>();
+        return tid;
+    }
+    TypeId GetInstanceTypeId() const override { return GetTypeId(); }
+    uint32_t GetSerializedSize() const override { return 4; }
+    void Serialize(TagBuffer b) const override { b.WriteU32(originTpn); }
+    void Deserialize(TagBuffer b) override { originTpn = b.ReadU32(); }
+    void Print(std::ostream& os) const override { os << originTpn; }
+    uint32_t originTpn{UINT32_MAX};
+};
+
 class UbReplayFenceTag : public Tag
 {
   public:
@@ -423,6 +446,9 @@ public:
     void MarkDead();
     bool IsDead() const { return m_dead; }
     void RunCapacityWake();
+    /** READ response late binding: response bytes for a READ this TP issued arrived on another TP. */
+    void CreditForeignResponse(uint64_t bytes);
+    uint64_t GetForeignResponseBytes() const { return m_foreignRespBytes; }
     /** EWMA of the marked fraction of READ responses arriving on this TP's local port (all TPs
      *  of the node on that port). */
     double GetPortResponseMarkFraction() const;
@@ -631,6 +657,7 @@ private:
         UbTransactionCorrelationIdentity transactionCorrelation;
         Ptr<const Packet> explicitPayload;
         UbTransactionFields transactionFields;
+        uint32_t respOriginTpn{UINT32_MAX}; // READ response late binding (UbRespOriginTag)
     };
 
     struct AckResponseContext
@@ -836,6 +863,8 @@ private:
     void NoteReadArrived(uint64_t bytes);
     uint64_t EffectiveReadQuotaBase() const;
     bool m_capacityWakePending{false};
+    uint32_t m_rxRespOriginTpn{UINT32_MAX}; // tag of the data packet being received
+    uint64_t m_foreignRespBytes{0};
     uint64_t EffectiveReadQuotaBytes() const;
     // Separate send-pipeline depth for READ segments (0 = shared with writes).
     uint32_t m_maxActiveReadSegments{0};

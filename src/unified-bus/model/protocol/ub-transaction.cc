@@ -154,6 +154,21 @@ TypeId UbTransaction::GetTypeId(void)
             MakeDoubleAccessor(&UbTransaction::m_readIngressMarkWeight),
             MakeDoubleChecker<double>(0.0))
         .AddAttribute(
+            "ResponseRebindRatio",
+            "ResponseLateBinding only: rebind a READ response only if its request TP's drain-time "
+            "estimate exceeds the best live TP's by this factor.",
+            DoubleValue(4.0),
+            MakeDoubleAccessor(&UbTransaction::m_responseRebindRatio),
+            MakeDoubleChecker<double>(1.0))
+        .AddAttribute(
+            "ResponseLateBinding",
+            "READ responses may leave on any live TP toward the requester (min drain time), not "
+            "only on the TP the request arrived on; the requester credits the issuing TP (4 B "
+            "response-header extension). Default off.",
+            BooleanValue(false),
+            MakeBooleanAccessor(&UbTransaction::m_responseLateBinding),
+            MakeBooleanChecker())
+        .AddAttribute(
             "ReplayFence",
             "Hard link-down recovery: re-dispatched segments carry the dead initiator TPN so the "
             "target fences that TP pair (drops its later packets) before executing the replay.",
@@ -1463,6 +1478,52 @@ UbTransaction::EnqueueRtpWqe(uint32_t jettyNum, Ptr<UbWqe> originatingWqe, bool 
     }
 }
 
+Ptr<UbTransportChannel>
+UbTransaction::ChooseLateBoundResponseTp(const Ptr<UbTransportChannel>& transport,
+                                         const Ptr<UbWqeSegment>& segment) const
+{
+    // READ response late binding: the response may leave on any live TP of this node toward the
+    // requester (another plane), chosen by the request-dispatch drain-time rule. The request's
+    // plane was chosen before the response existed; a path that degraded since (or a hot requester
+    // ingress on that plane) would otherwise hold it. Hysteresis: only rebind when the request's
+    // TP is clearly worse, so the requester's own placement is kept in normal operation.
+    if (!m_responseLateBinding || segment->GetSegmentKind() != UbTransactionSegmentKind::RESPONSE ||
+        segment->GetRequestOpcode() != UbTransactionOpcode::READ ||
+        segment->GetRespOriginTpn() != UINT32_MAX)
+    {
+        return nullptr;
+    }
+    Ptr<UbController> controller = GetOwnerController();
+    Ptr<UbTransportChannelManager> manager =
+        controller == nullptr ? nullptr : controller->GetTransportChannelManager();
+    if (manager == nullptr)
+    {
+        return nullptr;
+    }
+    Ptr<UbTransportChannel> best;
+    double bestNs = std::numeric_limits<double>::infinity();
+    for (const auto& [otherTpn, other] : manager->GetTpnMap())
+    {
+        (void)otherTpn;
+        if (other == nullptr || other == transport || other->GetDest() != transport->GetDest() ||
+            other->GetPriority() != transport->GetPriority() || controller->IsTpDead(other) ||
+            controller->IsTpPathIsolated(other))
+        {
+            continue;
+        }
+        const double ns = other->EstimateDrainTimeNs(segment->GetSize());
+        if (ns < bestNs)
+        {
+            bestNs = ns;
+            best = other;
+        }
+    }
+    const double origNs = (controller->IsTpDead(transport) || controller->IsTpPathIsolated(transport))
+                              ? std::numeric_limits<double>::infinity()
+                              : transport->EstimateDrainTimeNs(segment->GetSize());
+    return (best != nullptr && origNs > m_responseRebindRatio * bestNs) ? best : nullptr;
+}
+
 void
 UbTransaction::EnqueueRemoteRtpWqeSegment(uint32_t tpn, Ptr<UbWqeSegment> segment)
 {
@@ -1495,6 +1556,14 @@ UbTransaction::EnqueueRemoteRtpWqeSegment(uint32_t tpn, Ptr<UbWqeSegment> segmen
     if (transport == nullptr)
     {
         return;
+    }
+    if (Ptr<UbTransportChannel> best = ChooseLateBoundResponseTp(transport, segment))
+    {
+        segment->SetRespOriginTpn(transport->GetDstTpn());
+        segment->SetResolvedTpIdentity(best->GetLifecycleOwner());
+        tpn = best->GetTpn();
+        transport = best;
+        ++m_lateBoundResponses;
     }
 
     UbLifecycleResourceIdentity operationIdentity;

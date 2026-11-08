@@ -188,6 +188,15 @@ LP 不能解释的行：无
 - 配上相同的恢复框架（故障检测 + 重新派发 + GBN）后，对照方案在硬断链下全部完成，但最差值低得多：mixed 0.66、mixedread 0.56–0.60、a2aread 0.72–0.83。
 - 数据：`/home/cassius/ub/work/exp/v5.2/r13_cmp`、`r13_cmphard`。
 
+## 9a. 第六轮补充（分析与实验性机制，默认配置仍为 v5.3）
+
+- **单故障损失的可行性**（FEASIBILITY.md §1–3）：56 行损失 ≥ 1/N_phys，全部属于 A 类，即物理不可行（联合 ε LP 在"≤"下也 < 0，附可人工核对的容量割）。可行的 case 中，实测损失比 LP 最小值高 0.5–2.5 pp。
+- **实际降 lane 档位**（FEASIBILITY.md §4）：1/2 和 1/4 lane 下，a2a / a2aread / mixed / mixedread **不达标**（eff_fixed 0.19–0.76），属于未解决项 T19。原因已测量。尝试过 4 种机制，其中 READ 响应晚绑定（`ResponseLateBinding` + `ResponseRebindRatio=4`）部分有效，默认关闭。
+- **实验性开关**（默认关闭，关闭时 golden 逐位不变）：
+  - `ResponseLateBinding`、`ResponseRebindRatio`：4 B 响应头扩展 `UbRespOriginTag`；
+  - `ReadQuotaDelayTarget`：已否定。
+- 新增的故障档位：`F3near2`、`F3far2`、`F3near3`、`F3far3`。
+
 ## 9. 数据索引
 
 | 目录（`/home/cassius/ub/work/exp/round5/`） | 内容 |

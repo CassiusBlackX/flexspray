@@ -858,6 +858,7 @@ UbTransportChannel::BuildGbnPacketDescriptor(const NewDataSendContext& ctx,
     descriptor.requestOpcode = ctx.segment->GetRequestOpcode();
     descriptor.segmentKind = ctx.segment->GetSegmentKind();
     descriptor.supersedesTpn = ctx.segment->GetSupersedesTpn();
+    descriptor.respOriginTpn = ctx.segment->GetRespOriginTpn();
     descriptor.taSsn = ctx.segment->GetTaSsn();
     descriptor.requestTaSsn = ctx.segment->GetRequestTassn();
     descriptor.order = ctx.segment->GetOrderType();
@@ -1293,6 +1294,11 @@ UbTransportChannel::BuildRtpDataPacket(const UbGbnPacketDescriptor& descriptor)
         fence.supersededTpn = descriptor.supersedesTpn;
         p->AddPacketTag(fence);
     }
+    if (descriptor.respOriginTpn != UINT32_MAX) {
+        UbRespOriginTag origin;
+        origin.originTpn = descriptor.respOriginTpn;
+        p->AddPacketTag(origin);
+    }
     return p;
 }
 
@@ -1327,6 +1333,16 @@ UbTransportChannel::TrackInboundTaPacket(const BufferedInboundPacket& packet)
         state.segment->SetOriginJettyNum(packet.taHeader.GetIniRcId());
         state.segment->SetRequestTassn(logicalTaSsn);
         state.segment->SetResolvedTpIdentity(m_lifecycleOwner);
+        if (packet.respOriginTpn != UINT32_MAX && packet.respOriginTpn != m_tpn) {
+            // Late-bound READ response: it completes the request admitted on the issuing TP.
+            Ptr<UbController> ctrl = NodeList::GetNode(m_nodeId)->GetObject<UbController>();
+            Ptr<UbTransportChannel> issuer =
+                ctrl == nullptr ? nullptr
+                                : ctrl->GetTransportChannelManager()->GetTp(packet.respOriginTpn);
+            if (issuer != nullptr) {
+                state.segment->SetResolvedTpIdentity(issuer->GetLifecycleOwner());
+            }
+        }
         state.segment->SetTpMsn(logicalTpMsn);
         state.segment->SetTpn(m_tpn);
         state.segment->SetRemoteAddress(packet.remoteAddress);
@@ -2363,7 +2379,15 @@ UbTransportChannel::UpdateReceiveWindowAndCollectCompletedTa(
                                  m_sport,
                                  ctx.psn - m_psnRecvNxt,
                                  outOfOrderPacket ? m_bufferedInboundPackets.size() + 1 : 0);
-    if (m_outstandingReadBytes > 0) {
+    if (m_rxRespOriginTpn != UINT32_MAX && m_rxRespOriginTpn != m_tpn) {
+        // Late-bound READ response: credit the TP that issued the request.
+        Ptr<UbController> ctrl = NodeList::GetNode(m_nodeId)->GetObject<UbController>();
+        Ptr<UbTransportChannel> issuer =
+            ctrl == nullptr ? nullptr : ctrl->GetTransportChannelManager()->GetTp(m_rxRespOriginTpn);
+        if (issuer != nullptr) {
+            issuer->CreditForeignResponse(ctx.payloadBytes);
+        }
+    } else if (m_outstandingReadBytes > 0) {
         const uint64_t arrived = std::min<uint64_t>(m_outstandingReadBytes, ctx.payloadBytes);
         m_outstandingReadBytes -= arrived;
         NoteReadArrived(arrived);
@@ -2394,7 +2418,8 @@ UbTransportChannel::UpdateReceiveWindowAndCollectCompletedTa(
         .hasTransactionCorrelation = ctx.hasTransactionCorrelation,
         .transactionCorrelation = ctx.transactionCorrelation,
         .explicitPayload = ctx.explicitPayload,
-        .transactionFields = ctx.transactionFields};
+        .transactionFields = ctx.transactionFields,
+        .respOriginTpn = m_rxRespOriginTpn};
     if (outOfOrderPacket) {
         NS_LOG_DEBUG("Out-of-Order Packet,tpn:{" << m_tpn << "} psn:{"
                      << ctx.psn << "} expectedPsn:{" << m_psnRecvNxt << "}");
@@ -2509,6 +2534,8 @@ void UbTransportChannel::RecvDataPacket(Ptr<Packet> p)
             ctrl->FenceInboundTp(m_dest, fence.supersededTpn);
         }
     }
+    UbRespOriginTag origin;
+    m_rxRespOriginTpn = p->PeekPacketTag(origin) ? origin.originTpn : UINT32_MAX;
     ReceivedDataPacketContext ctx;
     if (!ParseReceivedDataPacket(p, ctx)) {
         return;
@@ -2606,6 +2633,21 @@ UbTransportChannel::TryContinueAcceptedWqeSegment(Ptr<UbWqeSegment> segment)
     UpDateMsnCnt(1);
     PushWqeSegment(segment);
     return true;
+}
+
+void
+UbTransportChannel::CreditForeignResponse(uint64_t bytes)
+{
+    m_foreignRespBytes += bytes;
+    const uint64_t arrived = std::min<uint64_t>(m_outstandingReadBytes, bytes);
+    if (arrived == 0) {
+        return;
+    }
+    m_outstandingReadBytes -= arrived;
+    NoteReadArrived(arrived);
+    if (m_maxOutstandingReadBytes > 0) {
+        TryContinueJettyTransmission();
+    }
 }
 
 void
