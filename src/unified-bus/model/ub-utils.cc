@@ -2300,6 +2300,20 @@ UbUtils::StartGoodputSampler()
         goodput_reorder[nodeId].assign(NodeList::GetNode(nodeId)->GetNDevices(), {0, 0, 0});
     }
     goodput_sampler_enabled = true;
+    tp_sample_nodes.clear();
+    {
+        StringValue nodesValue;
+        g_tp_sample_nodes.GetValue(nodesValue);
+        std::stringstream ss(nodesValue.Get());
+        std::string tok;
+        while (std::getline(ss, tok, ','))
+        {
+            if (!tok.empty())
+            {
+                tp_sample_nodes.insert(static_cast<uint32_t>(std::stoul(tok)));
+            }
+        }
+    }
     for (uint32_t nodeId = 0; nodeId < NodeList::GetNNodes(); ++nodeId)
     {
         goodput_sampler_events[nodeId] =
@@ -2363,8 +2377,59 @@ UbUtils::GoodputSampleTick(uint32_t nodeId, uint32_t intervalNs)
         row += std::to_string(reorder[2]);
         AppendCsvRow(fileName, header, row);
     }
+    if (tp_sample_nodes.count(nodeId) != 0)
+    {
+        TpSampleTick(nodeId);
+    }
     goodput_sampler_events[nodeId] =
         Simulator::Schedule(NanoSeconds(intervalNs), &UbUtils::GoodputSampleTick, nodeId, intervalNs);
+}
+
+void
+UbUtils::TpSampleTick(uint32_t nodeId)
+{
+    Ptr<UbController> ctrl = NodeList::GetNode(nodeId)->GetObject<UbController>();
+    if (ctrl == nullptr || ctrl->GetTransportChannelManager() == nullptr)
+    {
+        return;
+    }
+    const std::string nowNs = std::to_string(Simulator::Now().GetNanoSeconds());
+    const std::string fileName = trace_path + "runlog/TpSample.csv";
+    const std::string header = "time_ns,node,tpn,sport,dest,dport,admitted_bytes,acked_psn,"
+                               "inflight_psn,unsent_bytes,outstanding_read,rate_bps,drain_ns,"
+                               "window_limited";
+    for (const auto& [tpn, tp] : ctrl->GetTransportChannelManager()->GetTpnMap())
+    {
+        if (tp == nullptr)
+        {
+            continue;
+        }
+        std::ostringstream row;
+        row << nowNs << ',' << nodeId << ',' << tpn << ',' << tp->GetSport() << ','
+            << tp->GetDest() << ',' << tp->GetDport() << ',' << tp->GetAdmittedBytes() << ','
+            << tp->GetPsnSndUnaValue() << ',' << tp->GetInflightPsns() << ','
+            << tp->GetUnsentPayloadBytes() << ',' << tp->GetOutstandingReadBytes() << ','
+            << static_cast<uint64_t>(tp->GetDeliveryRateBps()) << ','
+            << static_cast<uint64_t>(tp->EstimateDrainTimeNs(0)) << ','
+            << (tp->IsSendWindowLimited() ? 1 : 0);
+        AppendCsvRow(fileName, header, row.str());
+    }
+    Ptr<UbTransaction> ta = ctrl->GetUbTransaction();
+    if (ta == nullptr)
+    {
+        return;
+    }
+    const std::string deferFile = trace_path + "runlog/DeferSample.csv";
+    for (const auto& [dest, st] : ta->GetSlackDeferStats())
+    {
+        const uint64_t open = st.sinceNs >= 0
+                                  ? static_cast<uint64_t>(Simulator::Now().GetNanoSeconds() - st.sinceNs)
+                                  : 0;
+        AppendCsvRow(deferFile,
+                     "time_ns,node,dest,defer_ns,defer_count",
+                     nowNs + "," + std::to_string(nodeId) + "," + std::to_string(dest) + "," +
+                         std::to_string(st.totalNs + open) + "," + std::to_string(st.count));
+    }
 }
 
 void

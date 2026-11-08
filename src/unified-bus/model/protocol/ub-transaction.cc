@@ -1276,8 +1276,24 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
         {
             // A clearly faster plane will free capacity soon: wait for it rather than queue the
             // segment behind a slow plane. The group's capacity transitions wake this queue.
+            auto& st = m_slackDefer[admittedTp->GetDest()];
+            if (st.sinceNs < 0)
+            {
+                st.sinceNs = Simulator::Now().GetNanoSeconds();
+                ++st.count;
+            }
             admittedTp = nullptr;
             selectedGroupIndex = UINT32_MAX;
+        }
+        else if (admittedTp != nullptr)
+        {
+            auto it = m_slackDefer.find(admittedTp->GetDest());
+            if (it != m_slackDefer.end() && it->second.sinceNs >= 0)
+            {
+                it->second.totalNs +=
+                    static_cast<uint64_t>(Simulator::Now().GetNanoSeconds() - it->second.sinceNs);
+                it->second.sinceNs = -1;
+            }
         }
         if (admittedTp == nullptr)
         {

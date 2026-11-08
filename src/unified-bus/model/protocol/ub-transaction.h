@@ -655,6 +655,23 @@ enum class UbTpgDispatchPolicy : uint32_t
         UbTpgDispatchPolicy m_tpgDispatchPolicy{UbTpgDispatchPolicy::FIRST_ADMISSIBLE};
         double m_tpgDispatchSlack{-1.0};
         bool m_targetExecutionStarted{false};
+
+      public:
+        /** Measurement: time segments of a group toward @p dest waited only because of the
+         *  MIN_DRAIN_TIME slack rule (an admissible member existed). {total ns, count}. */
+        struct SlackDeferStat
+        {
+            int64_t sinceNs{-1};
+            uint64_t totalNs{0};
+            uint64_t count{0};
+        };
+        std::map<uint32_t, SlackDeferStat> GetSlackDeferStats() const
+        {
+            return m_slackDefer;
+        }
+
+      private:
+        std::map<uint32_t, SlackDeferStat> m_slackDefer;
     };
 
 } // namespace ns3

@@ -504,6 +504,10 @@ def scheme_attrs(name):
             d["ns3::UbTransportChannel::ReadRequestVl"] = "4294967295"
         elif opt == "noccxr":
             d["ns3::UbTransportChannel::CcExemptReadResponses"] = "false"
+        elif opt == "alg":   # app-limited guard on the delivery-rate estimator
+            d["ns3::UbTransportChannel::DeliveryRateAppLimitedGuard"] = "true"
+        elif opt == "noalg":
+            d["ns3::UbTransportChannel::DeliveryRateAppLimitedGuard"] = "false"
         elif opt == "ccxr":  # read responses exempt from the CC window (receiver-driven reads)
             d["ns3::UbTransportChannel::CcExemptReadResponses"] = "true"
         elif opt == "rqvl":  # READ requests on the control VL

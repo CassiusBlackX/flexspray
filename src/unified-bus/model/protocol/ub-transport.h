@@ -390,6 +390,10 @@ public:
     uint64_t GetUnsentPayloadBytes() const;
     /** Sent but not yet cumulatively acknowledged packets. */
     uint64_t GetInflightPsns() const { return m_psnSndNxt - m_psnSndUna; }
+    /** Measurement: segment bytes ever admitted to this TP, acked PSNs, outstanding reads. */
+    uint64_t GetAdmittedBytes() const { return m_admittedBytes; }
+    uint64_t GetPsnSndUnaValue() const { return m_psnSndUna; }
+    bool IsSendWindowLimited() const { return m_sendWindowLimited; }
     /** READ response bytes requested over this TP that have not arrived yet. */
     uint64_t GetOutstandingReadBytes() const { return m_outstandingReadBytes; }
     /**
@@ -745,6 +749,9 @@ private:
     uint64_t m_outstandingReadBytes{0};
     uint64_t m_maxOutstandingReadBytes{0};
     uint32_t m_readRequestVl{UINT32_MAX};
+    uint64_t m_admittedBytes{0};
+    bool m_deliveryRateAppLimitedGuard{false};
+    bool m_rateSampleAppLimited{false};
     bool m_ccExemptReadResponses{false};
     bool IsCcExemptSegment(const Ptr<UbWqeSegment>& segment) const;
     static bool IsReadPipelineSegment(const Ptr<const UbWqeSegment>& segment);

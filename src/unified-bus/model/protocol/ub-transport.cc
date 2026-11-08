@@ -329,6 +329,12 @@ TypeId UbTransportChannel::GetTypeId(void)
                       TimeValue(NanoSeconds(2000)),
                       MakeTimeAccessor(&UbTransportChannel::m_deliveryRateMinInterval),
                       MakeTimeChecker(TimeStep(1)))
+        .AddAttribute("DeliveryRateAppLimitedGuard",
+                      "Ignore delivery-rate samples that would lower the estimate when the TP ran "
+                      "out of queued work during the sample (app-limited), as BBR does.",
+                      BooleanValue(false),
+                      MakeBooleanAccessor(&UbTransportChannel::m_deliveryRateAppLimitedGuard),
+                      MakeBooleanChecker())
         .AddAttribute("DeliveryRateGain",
                       "EWMA gain of the delivery-rate estimator (0, 1].",
                       DoubleValue(0.25),
@@ -2477,6 +2483,7 @@ UbTransportChannel::TryContinueAcceptedWqeSegment(Ptr<UbWqeSegment> segment)
     if (IsZeroPayloadReadRequest(segment)) {
         m_outstandingReadBytes += segment->GetSize();
     }
+    m_admittedBytes += segment->GetSize();
     segment->SetTpn(m_tpn);
     segment->SetResolvedTpIdentity(m_lifecycleOwner);
     segment->SetTpMsn(GetMsnCnt());
@@ -2720,17 +2727,31 @@ UbTransportChannel::UpdateDeliveryRate(uint64_t previousSndUna)
         m_rateSampleStart = now;
         m_rateSampleStartUna = previousSndUna;
     }
+    // The TP ran out of queued work at some point in this sample: it was (partly) app-limited,
+    // i.e. it delivered what it was given, not what its path could carry.
+    if (GetUnsentPayloadBytes() == 0) {
+        m_rateSampleAppLimited = true;
+    }
     const Time elapsed = now - m_rateSampleStart;
     if (elapsed >= m_deliveryRateMinInterval && elapsed.IsStrictlyPositive()) {
         const double bits = static_cast<double>(m_psnSndUna - m_rateSampleStartUna) *
                             UB_MTU_BYTE * 8.0;
         const double sample = bits * 1e9 / static_cast<double>(elapsed.GetNanoSeconds());
-        m_deliveryRateBps = m_deliveryRateBps <= 0.0
-                                ? sample
-                                : (1.0 - m_deliveryRateGain) * m_deliveryRateBps +
-                                      m_deliveryRateGain * sample;
+        // App-limited guard (as in BBR): an app-limited sample may raise the estimate but must
+        // not lower it. Otherwise a plane that was briefly slow gets fewer segments from the
+        // MIN_DRAIN_TIME dispatcher, becomes app-limited, keeps measuring a low rate and is
+        // starved for good (found on the oversubscribed fabric with an isolated uplink).
+        const bool ignore = m_deliveryRateAppLimitedGuard && m_rateSampleAppLimited &&
+                            m_deliveryRateBps > 0.0 && sample < m_deliveryRateBps;
+        if (!ignore) {
+            m_deliveryRateBps = m_deliveryRateBps <= 0.0
+                                    ? sample
+                                    : (1.0 - m_deliveryRateGain) * m_deliveryRateBps +
+                                          m_deliveryRateGain * sample;
+        }
         m_rateSampleStart = now;
         m_rateSampleStartUna = m_psnSndUna;
+        m_rateSampleAppLimited = GetUnsentPayloadBytes() == 0;
     }
     // An idle TP is app-limited, not capacity-limited: close the sample so idle time does not
     // depress the estimate (the last estimate is kept).

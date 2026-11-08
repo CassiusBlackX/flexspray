@@ -393,6 +393,7 @@ public:
     }
     void StartGoodputSampler();
     static void GoodputSampleTick(uint32_t nodeId, uint32_t intervalNs);
+    static void TpSampleTick(uint32_t nodeId);
 
     static bool IsTpDebugEnabledFor(uint32_t nodeId, uint32_t tpn);
 
@@ -532,6 +533,7 @@ private:
     // per (node, port): {out-of-order packets, max reorder distance (PSN), max per-TP OOO buffer}
     inline static std::vector<std::vector<std::array<uint64_t, 3>>> goodput_reorder;
     inline static std::vector<ns3::EventId> goodput_sampler_events;
+    inline static std::set<uint32_t> tp_sample_nodes;
     inline static std::map<std::pair<uint32_t, uint32_t>, ns3::EventId> queue_sampler_events;
 
     ns3::GlobalValue g_fault_enable =
@@ -756,6 +758,14 @@ private:
                      "Focused TP debug trace start time in ns.",
                      ns3::UintegerValue(0),
                      ns3::MakeUintegerChecker<uint32_t>());
+
+    ns3::GlobalValue g_tp_sample_nodes =
+    ns3::GlobalValue("UB_TP_SAMPLE_NODES",
+                     "Comma-separated node ids whose TPs are sampled every goodput-sampler tick "
+                     "into runlog/TpSample.csv (and slack deferrals into DeferSample.csv). "
+                     "Empty disables.",
+                     ns3::StringValue(""),
+                     ns3::MakeStringChecker());
 
     ns3::GlobalValue g_tp_debug_end_ns =
     ns3::GlobalValue("UB_TP_DEBUG_END_NS",
