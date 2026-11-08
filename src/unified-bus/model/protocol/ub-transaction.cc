@@ -2892,6 +2892,13 @@ UbTransaction::FinishWqe(uint32_t jettyNum,
                             UbWqeSegmentTerminalDisposition::TRANSPORT_CLEANED,
                     "Forced WQE terminal did not resolve exact TP retained state");
             }
+            // Invariant (T14): a WQE reported COMPLETED has had every segment admitted and
+            // acknowledged, so there is nothing unsent left to cancel. Canceling one here would
+            // silently drop accepted work while reporting success.
+            NS_ABORT_MSG_IF(outcome == UbWorkOutcome::COMPLETED &&
+                                disposition == UbWqeSegmentTerminalDisposition::CANCELED_UNSENT,
+                            "COMPLETED WQE still had an unsent segment (TaSsn "
+                                << segment->first << "): accepted work would be dropped");
             if (disposition != UbWqeSegmentTerminalDisposition::RETAINED || discardRetainedSegments)
             {
                 canceledTaSsns.push_back(segment->first);

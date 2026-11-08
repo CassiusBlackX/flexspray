@@ -11456,6 +11456,131 @@ class UbJettyInflightRepeatedKickIsIdempotentTest : public UbJettyInflightTestCa
     std::vector<uint32_t> m_admittedTaSsns;
 };
 
+// T14 (round 5): unordered WQEs on ONE Jetty interleave their segments on the shared TaSsn
+// cursor (e.g. A0 -> 0, B0 -> 1, A1 -> 2 ...). A WQE may only complete once every one of its own
+// segments has been admitted and acknowledged. Completion by "reserved range end < sndUna" alone
+// completes A too early when more foreign segments interleave into A's reserved range than the
+// Jetty inflight window lets A admit ahead (A's tail is then not even admitted yet).
+class UbJettyInterleavedWqeCompletesAfterOwnSegmentsTest : public UbJettyInflightTestCase
+{
+  public:
+    UbJettyInterleavedWqeCompletesAfterOwnSegmentsTest(uint32_t window, std::vector<uint32_t> sizes)
+        : UbJettyInflightTestCase(
+              "UnifiedBus - interleaved WQEs on one Jetty complete only after their own segments"
+              " (window " + std::to_string(window) + ", " + std::to_string(sizes.size()) + " WQEs)"),
+          m_window(window),
+          m_sizes(std::move(sizes))
+    {
+    }
+
+    void DoRun() override
+    {
+        SetUpRtpFixture();
+        m_tp = m_primaryTp;
+        m_jetty = CreateAndBindInflightJetty(kUrmaWriteRegressionJettyNum, m_window);
+        m_jetty->SetWqeCompletionCallback(
+            MakeCallback(&UbJettyInterleavedWqeCompletesAfterOwnSegmentsTest::OnCompletion, this));
+        m_tp->TraceConnectWithoutContext(
+            "WqeSegmentSendsNotify",
+            MakeCallback(&UbJettyInterleavedWqeCompletesAfterOwnSegmentsTest::OnAdmission, this));
+        for (size_t i = 0; i < m_sizes.size(); ++i)
+        {
+            m_tasks.push_back(kUrmaWriteRegressionTaskId + 140 + static_cast<uint32_t>(i));
+            Ptr<UbWqe> wqe = m_function->CreateWqe(m_topo.sender->GetId(), m_topo.receiver->GetId(),
+                                                   m_sizes[i], m_tasks[i], UbTransactionOpcode::WRITE);
+            wqe->SetOrderType(OrderType::ORDER_NO);
+            m_wqes.push_back(wqe);
+            NS_TEST_ASSERT_MSG_EQ(
+                static_cast<uint32_t>(
+                    m_function->SubmitWqe(wqe, kUrmaWriteRegressionJettyNum).status),
+                static_cast<uint32_t>(UbWqeSubmissionStatus::ACCEPTED),
+                "WQE accepted");
+        }
+        Simulator::Stop(MilliSeconds(1));
+        Simulator::Run();
+
+        if (getenv("DBGT14"))
+        {
+            for (auto& [t, ssn] : m_admitted)
+                std::cerr << "adm task " << t << " ssn " << ssn << std::endl;
+        }
+        bool interleaved = false;
+        for (size_t i = 1; i < m_admitted.size(); ++i)
+        {
+            for (size_t k = i + 1; k < m_admitted.size(); ++k)
+            {
+                interleaved = interleaved || (m_admitted[i].first != m_admitted[i - 1].first &&
+                                              m_admitted[k].first == m_admitted[i - 1].first);
+            }
+        }
+        NS_TEST_ASSERT_MSG_EQ(interleaved, true, "scenario must interleave WQE segments");
+        NS_TEST_ASSERT_MSG_EQ(m_completions, static_cast<uint32_t>(m_sizes.size()),
+                              "every WQE completes exactly once");
+        NS_TEST_ASSERT_MSG_EQ(m_earlyCompletions, 0u,
+                              "no WQE completes before all its segments were admitted and ACKed");
+        uint32_t segments = 0;
+        for (uint32_t b : m_sizes)
+        {
+            segments += (b + 63) / 64;
+        }
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(m_admitted.size()), segments,
+                              "every segment of every WQE is admitted (none silently dropped)");
+        NS_TEST_ASSERT_MSG_EQ(m_jetty->GetTaSsnSndUnaForTest(), segments,
+                              "every admitted segment is acknowledged");
+        TearDownRtpFixture();
+    }
+
+  private:
+    void OnAdmission(uint32_t, uint32_t taskId, uint32_t taSsn)
+    {
+        if (std::find(m_tasks.begin(), m_tasks.end(), taskId) != m_tasks.end())
+        {
+            m_admitted.push_back({taskId, taSsn});
+        }
+    }
+
+    void OnCompletion(UbWqeCompletion completion)
+    {
+        for (size_t i = 0; i < m_tasks.size(); ++i)
+        {
+            if (completion.wqeId != m_tasks[i] || completion.outcome != UbWorkOutcome::COMPLETED)
+            {
+                continue;
+            }
+            ++m_completions;
+            uint32_t own = 0;
+            uint32_t last = 0;
+            for (const auto& [task, ssn] : m_admitted)
+            {
+                if (task == m_tasks[i])
+                {
+                    ++own;
+                    last = std::max(last, ssn);
+                }
+            }
+            if (getenv("DBGT14"))
+            {
+                std::cerr << "complete " << i << " own " << own << " last " << last << " una "
+                          << m_jetty->GetTaSsnSndUnaForTest() << std::endl;
+            }
+            if (own != (m_sizes[i] + 63) / 64 || last >= m_jetty->GetTaSsnSndUnaForTest())
+            {
+                ++m_earlyCompletions;
+            }
+        }
+    }
+
+    uint32_t m_window;
+    std::vector<uint32_t> m_sizes;
+    Ptr<UbTransportChannel> m_tp;
+    Ptr<UbJetty> m_jetty;
+    std::vector<Ptr<UbWqe>> m_wqes;
+    std::vector<uint32_t> m_tasks;
+    uint32_t m_completions{0};
+    uint32_t m_earlyCompletions{0};
+    std::vector<std::pair<uint32_t, uint32_t>> m_admitted;
+};
+
 class UbLifecycleLocalAndRemoteRtpTxEntriesShareFixedOrderTest : public TestCase
 {
   public:
@@ -35145,6 +35270,14 @@ class UbJettyInflightFocusedTestSuite : public TestSuite
         AddTestCase(new UbJettyInflightTerminalProgressWakesWaitingWqeTest(),
                     TestCase::Duration::QUICK);
         AddTestCase(new UbJettyInflightRepeatedKickIsIdempotentTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbJettyInterleavedWqeCompletesAfterOwnSegmentsTest(2, {256, 64}),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbJettyInterleavedWqeCompletesAfterOwnSegmentsTest(2, {512, 256, 256}),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbJettyInterleavedWqeCompletesAfterOwnSegmentsTest(3, {768, 192, 192, 192}),
+                    TestCase::Duration::QUICK);
+        AddTestCase(new UbJettyInterleavedWqeCompletesAfterOwnSegmentsTest(4, {640, 64, 64, 64, 64, 64}),
+                    TestCase::Duration::QUICK);
     }
 };
 

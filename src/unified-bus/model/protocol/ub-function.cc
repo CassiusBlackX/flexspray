@@ -1351,6 +1351,7 @@ void UbJetty::CommitWqeSegmentAdmission(Ptr<UbWqeSegment> segment)
     }
     wqe->SetCanSend(true);
     wqe->UpdateSentBytes(segment->GetSize());
+    wqe->NoteAdmittedTaSsn(segment->GetTaSsn());
     IncreaseTaSsnSndNxt();
 }
 
@@ -1781,12 +1782,20 @@ bool UbJetty::IsWqeCompleted(Ptr<UbWqe> wqe)
         return false;
     }
 
-    // 检查WQE的所有分段是否都已确认
+    // A WQE is complete when all its bytes were admitted as segments and the last of ITS OWN
+    // segments is acknowledged (TaSsns below m_taSsnSndUna are all acknowledged). Segments of
+    // several WQEs of one Jetty interleave on the TaSsn cursor, so the reserved range
+    // [start, start + size) is not where this WQE's segments are: judging by its end completed a
+    // WQE whose remaining segments had not even been admitted, and they were never sent (T14).
+    if (wqe->HasAdmittedTaSsn())
+    {
+        return wqe->IsSentCompleted() && wqe->GetLastAdmittedTaSsn() < m_taSsnSndUna;
+    }
+    // No segment admitted through CommitWqeSegmentAdmission (e.g. zero-length WQE): the reserved
+    // range is the only information.
     uint32_t wqeStartSsn = wqe->GetTaSsnStart();
     uint32_t wqeSsnSize = wqe->GetTaSsnSize();
     uint32_t wqeEndSsn = wqeStartSsn + wqeSsnSize - 1;
-
-    // 如果WQE的最后一个分段已经被确认，则WQE完成
     return (wqeEndSsn < m_taSsnSndUna);
 }
 

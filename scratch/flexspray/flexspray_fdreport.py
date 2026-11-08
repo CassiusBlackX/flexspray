@@ -3,6 +3,8 @@
 
   suspects / recovers   reversible suspicions and how many were cleared (RECOVER)
   dead_local            TPs declared dead by their own port going down
+  dead_fence            TPs declared dead because the peer re-sent their pair's work elsewhere
+                        (received replay fence: the pair is dead in both directions)
   dead_remote           TPs declared dead by probe timeout; false_dead = those whose path was not
                         broken (own port and the peer's port on that plane are up) - must be 0
   probes                PROBEs sent; replies split into CLEARS (ended a suspicion), DUPLICATE (TP
@@ -73,7 +75,7 @@ def one(case):
 
     r = dict(case=os.path.basename(os.path.normpath(case)), scenario=meta["scenario"],
              fault=meta["fault"], scheme=meta["scheme"], seed=meta["seed"], suspects=0,
-             recovers=0, dead_local=0, dead_remote=0, false_dead=0, probes=0, replies_clears=0,
+             recovers=0, dead_local=0, dead_fence=0, dead_remote=0, false_dead=0, probes=0, replies_clears=0,
              replies_duplicate=0, replies_late=0, rto=0, rto_fault_plane=0, rto_spurious=0,
              rto_suspect=0, rto_bytes=0)
     det_fault, det_use = [], []
@@ -90,6 +92,8 @@ def one(case):
                 r["recovers"] += 1
             elif ev == "local-port-down":
                 r["dead_local"] += 1
+            elif ev == "replay-fence":
+                r["dead_fence"] += 1
             elif ev.startswith("SILENCE"):
                 silence[key] = int(ev.split()[1].split("=")[1])
             elif ev == "probe-timeout":
@@ -133,7 +137,7 @@ def main():
     if not a.md:
         print(json.dumps(rows))
         return
-    cols = ["case", "suspects", "recovers", "dead_local", "dead_remote", "false_dead", "probes",
+    cols = ["case", "suspects", "recovers", "dead_local", "dead_fence", "dead_remote", "false_dead", "probes",
             "replies_clears", "replies_duplicate", "replies_late", "unanswered", "rto",
             "rto_fault_plane", "rto_spurious", "rto_suspect", "det_fault_us", "det_use_us"]
     print("| " + " | ".join(cols) + " |")

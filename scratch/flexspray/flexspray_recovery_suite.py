@@ -19,6 +19,8 @@ import flexspray_case as C  # noqa: E402
 import flexspray_recovery_oracle as O  # noqa: E402
 
 MB = 1 << 20
+# Cases whose degraded path needs longer than the default 3 ms to drain.
+STOP_MS = {"slow_far_1_64": 30, "fence_false_death_bidir": 30}
 
 
 def cases(t):
@@ -78,6 +80,14 @@ def cases(t):
                                 for i in range(1, 8)],
                                [(5000, b["id"], b["ports"][p], "DEGRADE", f"1/{k}")])
            for k in (1, 2, 4, 8, 16, 64)},
+        # fence boundary under a FALSE death (1/64 on B's plane-3 port): B also writes to every
+        # incast sender over the same TP pairs, so a fenced TP pair still carries B's own work.
+        "fence_false_death_bidir": ([(a["id"], b["id"], 4 * MB, W, 0, ""), (a["id"], b["id"], 4 * MB, R, 0, "")] +
+                                    [(t.find_host("NPU", 0, i)["id"], b["id"], 4 * MB, W, 0, "")
+                                     for i in range(1, 8)] +
+                                    [(b["id"], t.find_host("NPU", 0, i)["id"], 1 * MB, W, 0, "")
+                                     for i in range(1, 8)],
+                                    [(5000, b["id"], b["ports"][p], "DEGRADE", "1/64")]),
         "slow_near_1_64": ([(a["id"], b["id"], 4 * MB, W, 0, ""), (b["id"], a["id"], 4 * MB, R, 0, "")],
                            [(5000, a["id"], a["ports"][p], "DEGRADE", "1/64")]),
         # failure right at the start (before any ACK) and near the end (most data acknowledged)
@@ -109,7 +119,7 @@ def build(root, name, tasks, faults, scheme):
 def run(args):
     d, binary = args
     with open(os.path.join(d, "stdout.txt"), "w") as out:
-        rc = subprocess.run([binary, f"--case-path={d}", "--stop-ms=3"], stdout=out,
+        rc = subprocess.run([binary, f"--case-path={d}", f"--stop-ms={STOP_MS.get(os.path.basename(d), 3)}"], stdout=out,
                             stderr=subprocess.STDOUT, timeout=1800).returncode
     try:
         res = O.check(d)
@@ -142,7 +152,7 @@ def main():
             "P5_no_exec_after_completion", "duplicate_target_executions", "duplicate_target_bytes",
             "late_execs_after_completion", "redispatched_segments", "P6_credits_returned_on_live_ports",
             "credits_stuck_live", "credits_stuck_on_down_ports", "suspects", "probe_timeouts",
-            "false_dead_no_down", "error"]
+            "false_dead_no_down", "fence_deaths", "error"]
     for name in cs:
         r = out[name]
         print(name.ljust(20), " ".join(f"{k.split('_')[0] if k.startswith('P') else k}={r.get(k)}"

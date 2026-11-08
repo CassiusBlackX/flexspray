@@ -162,6 +162,8 @@ def check(case):
     res["suspects"] = sum(1 for e in ev if e["event"] == "SUSPECT")
     res["probe_timeouts"] = sum(1 for e in ev if e["event"] == "probe-timeout")
     res["false_dead_no_down"] = 0 if has_down else res["probe_timeouts"]
+    # deaths triggered by a received replay fence (the peer abandoned the TP pair)
+    res["fence_deaths"] = sum(1 for e in ev if e["event"] == "replay-fence")
     res["P4_last_writer"] = p4  # None = no dependency-ordered overlapping writes in this case
     res["last_writer_violations"] = violations
     return res

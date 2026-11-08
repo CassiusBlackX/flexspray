@@ -1024,6 +1024,24 @@ public:
         m_taSsnSize = size;
     }
 
+    /** TaSsn of the last segment of this WQE admitted on its Jetty (segments of different WQEs
+     *  of one Jetty may interleave on the TaSsn cursor, so this can exceed start + size - 1). */
+    void NoteAdmittedTaSsn(uint32_t taSsn)
+    {
+        m_lastAdmittedTaSsn = m_hasAdmittedTaSsn ? std::max(m_lastAdmittedTaSsn, taSsn) : taSsn;
+        m_hasAdmittedTaSsn = true;
+    }
+
+    bool HasAdmittedTaSsn() const
+    {
+        return m_hasAdmittedTaSsn;
+    }
+
+    uint32_t GetLastAdmittedTaSsn() const
+    {
+        return m_lastAdmittedTaSsn;
+    }
+
     // ========== 动态信息 ==========
     uint64_t GetBytesLeft() const
     {
@@ -1251,6 +1269,8 @@ private:
     uint64_t m_taMsn;      // TA层消息序号 (Message Sequence Number)
     uint32_t m_taSsnStart; // TA层起始分段序号 (Segment Sequence Number)
     uint32_t m_taSsnSize;  // TA层分段数量
+    uint32_t m_lastAdmittedTaSsn{0};
+    bool m_hasAdmittedTaSsn{false};
     OrderType m_order = OrderType::ORDER_NO;
     UbTransactionSegmentKind m_segmentKind = UbTransactionSegmentKind::REQUEST;
     uint32_t m_originJettyNum = UINT32_MAX;

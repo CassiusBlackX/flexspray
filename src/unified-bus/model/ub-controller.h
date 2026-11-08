@@ -87,6 +87,7 @@ public:
     bool IsTpDead(const Ptr<UbTransportChannel>& tp) const;
     /** Replay fence: fence the local TP paired with @p peerNode's TP @p peerTpn. */
     void FenceInboundTp(uint32_t peerNode, uint32_t peerTpn);
+    void DeclareTpDeadByFence(Ptr<UbTransportChannel> tp);
 
 
     // Port management

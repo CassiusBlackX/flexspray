@@ -586,9 +586,27 @@ UbController::FenceInboundTp(uint32_t peerNode, uint32_t peerTpn)
         (void)tpn;
         if (tp != nullptr && tp->GetDest() == peerNode && tp->GetDstTpn() == peerTpn)
         {
+            const bool first = !tp->IsInboundFenced();
             tp->SetInboundFenced();
+            if (first && m_deadTpns.count(tp->GetTpn()) == 0)
+            {
+                // The peer abandoned its side of this TP pair (it re-sent a dead TP's work
+                // elsewhere). Its dead TP will never return ACKs, TA responses or probe replies,
+                // and the fence drops whatever was still in flight: work this node sent on the
+                // pair (e.g. a WRITE whose packets were acknowledged but whose TAACK is lost) would
+                // wait forever without any outstanding transport work to trigger detection. The
+                // pair is dead in both directions; re-send that work too (after the current
+                // packet is processed).
+                Simulator::ScheduleNow(&UbController::DeclareTpDeadByFence, this, tp);
+            }
         }
     }
+}
+
+void
+UbController::DeclareTpDeadByFence(Ptr<UbTransportChannel> tp)
+{
+    DeclareTpDead(tp, "replay-fence");
 }
 
 void

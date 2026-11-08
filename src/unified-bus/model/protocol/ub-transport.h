@@ -424,6 +424,7 @@ public:
     void RunCapacityWake();
     /** Replay fence at the target: drop every later data packet of this TP pair. */
     void SetInboundFenced() { m_inboundFenced = true; }
+    bool IsInboundFenced() const { return m_inboundFenced; }
     uint64_t GetFencedDrops() const { return m_fencedDrops; }
     uint64_t GetProbesSent() const { return m_fdProbesTotal; }
     uint64_t GetPsnSndUnaValue() const { return m_psnSndUna; }
