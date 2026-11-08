@@ -12,9 +12,8 @@ and the four instants the reviewers asked for:
   t_f       fault injected,
   t_notify  local isolation is immediate; remote ends learn after UB_LINK_HEALTH_REMOTE_NOTIFY_NS
             (isolations only; a lane degrade has no notification at all - in-band signals only),
-  t_adjust  first sample where the faulted plane's share has moved halfway from its pre-fault
-            level to its post-fault level,
-  t_stable  first time after which the affected rate stays within 5% of its post-fault mean.
+  t_qpeak   the faulted plane's switch backlog stops growing (senders have adjusted),
+  t_settle  the backlog is back to its pre-fault level for good.
 Writes PREFIX.png (small multiples, one shared time axis) and PREFIX.json.
 """
 import argparse
@@ -98,39 +97,48 @@ def _queue_samples(case):
 
 
 def key_times(meta, s, notify_ns):
+    """t_detect: when endpoints learn of the fault (isolation: local immediately, remote ends
+    after the management notification; lane degrade: never - in-band signals only).
+    t_qpeak: the faulted plane's switch backlog stops growing = senders have adjusted.
+    t_settle: backlog back under max(2 x pre-fault p95, 64 KB) for good (None = not within
+    the window). Rate dip: lowest 2-us rate in [t_f, t_f+10] vs the post-fault mean."""
     tf = meta["fault_ns"] / 1000.0
-    t = s["t"]
-    pre = [s["share"][i] for i in range(len(t)) if tf - 20 <= t[i] < tf - 1]
-    post_i = [i for i in range(len(t)) if tf + 10 <= t[i] <= tf + 40]
-    post = [s["share"][i] for i in post_i]
-    post_rate = sum(s["rate"][i] for i in post_i) / len(post_i)
-    pre_rate = sum(s["rate"][i] for i in range(len(t)) if tf - 20 <= t[i] < tf - 1) / max(1, len(pre))
-    sp, sq = sum(pre) / len(pre), sum(post) / len(post)
-    mid = (sp + sq) / 2
-    adjust = next((t[i] for i in range(len(t)) if t[i] >= tf and
-                   ((sq < sp and s["share"][i] <= mid) or (sq >= sp and s["share"][i] >= mid))), None)
-    stable = None
+    t, q, rate = s["t"], s["qmax_kb"], s["rate"]
     end = tf + 40
-    for i in range(len(t)):
-        if t[i] < tf:
-            continue
-        if all(abs(s["rate"][j] - post_rate) <= 0.05 * post_rate
-               for j in range(i, len(t)) if t[j] <= end):
-            stable = t[i]
-            break
-    dip = min(s["rate"][i] for i in range(len(t)) if tf <= t[i] <= tf + 10)
+    pre_q = sorted(q[i] for i in range(len(t)) if tf - 20 <= t[i] < tf)
+    base = max(2 * pre_q[int(0.95 * (len(pre_q) - 1))], 64.0) if pre_q else 64.0
+    win = [i for i in range(len(t)) if tf <= t[i] <= end]
+    ipk = max(win, key=lambda i: q[i])
+    settle = None
+    if q[ipk] <= base:
+        # The faulted plane never built a backlog beyond its pre-fault level.
+        t_qpeak, settle = None, tf
+    else:
+        t_qpeak = t[ipk]
+        for i in [k for k in win if k >= ipk]:
+            if all(q[j] <= base for j in win if j >= i):
+                settle = t[i]
+                break
+    post_i = [i for i in range(len(t)) if tf + 10 <= t[i] <= end]
+    post_rate = sum(rate[i] for i in post_i) / len(post_i)
+    pre_rate = sum(rate[i] for i in range(len(t)) if tf - 20 <= t[i] < tf - 1) / \
+        max(1, len([1 for i in range(len(t)) if tf - 20 <= t[i] < tf - 1]))
+    dip = min(rate[i] for i in win if t[i] <= tf + 10)
     isolation = any(r[3] in ("ISOLATE", "ISOLATE_NODE") for r in meta["fault_rows"])
-    return dict(t_f=tf, t_notify=tf + notify_ns / 1000.0 if isolation else None,
-                t_adjust=adjust, t_stable=stable, share_pre=sp, share_post=sq,
-                rate_pre=pre_rate, rate_post=post_rate, rate_dip_first10us=dip,
-                q_peak_kb_after=max(q for tt, q in zip(t, s["qmax_kb"]) if tt >= tf))
+    return dict(t_f=tf, t_detect_remote=tf + notify_ns / 1000.0 if isolation else None,
+                t_qpeak=t_qpeak, q_peak_kb=q[ipk], q_base_kb=base, t_settle=settle,
+                q_end_kb=q[win[-1]], rate_pre=pre_rate, rate_post=post_rate,
+                dip_vs_post=dip / post_rate - 1 if post_rate else None,
+                share_pre=sum(s["share"][i] for i in range(len(t)) if tf - 20 <= t[i] < tf) /
+                max(1, len([1 for i in range(len(t)) if tf - 20 <= t[i] < tf])),
+                share_post=sum(s["share"][i] for i in post_i) / len(post_i))
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("cases", nargs="+")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--window-us", type=float, default=1.0)
+    ap.add_argument("--window-us", type=float, default=2.0)
     ap.add_argument("--notify-ns", type=int, default=2000)
     ap.add_argument("--span", default="-10,40", help="plot range relative to t_f (us)")
     a = ap.parse_args()
@@ -157,24 +165,26 @@ def main():
                      label=meta["scheme"])
         axes[1].plot([x[i] for i in sel], [100 * s["share"][i] for i in sel], color=col, lw=2)
         axes[2].plot([x[i] for i in sel], [s["qmax_kb"][i] for i in sel], color=col, lw=2)
-        for ax_i, key in ((0, "t_adjust"), (0, "t_stable")):
+        for key, mk in (("t_qpeak", "o"), ("t_settle", "s")):
+            if kt["t_qpeak"] is None:
+                break  # no backlog built up: nothing to mark
             if kt[key] is not None and lo <= kt[key] - tf <= hi:
-                axes[ax_i].plot([kt[key] - tf], [s["rate"][min(range(len(x)), key=lambda i: abs(x[i] - (kt[key] - tf)))]],
-                                marker="o" if key == "t_adjust" else "s", ms=8, color=col,
-                                mec=SURF, mew=2, zorder=5)
+                k = min(range(len(x)), key=lambda i: abs(x[i] - (kt[key] - tf)))
+                axes[2].plot([x[k]], [s["qmax_kb"][k]], marker=mk, ms=8, color=col, mec=SURF,
+                             mew=2, zorder=5)
     kt0 = next(iter(res.values()))
     for ax in axes:
         ax.axvline(0, color=INK, lw=1)
-        if kt0["t_notify"] is not None:
-            ax.axvline(kt0["t_notify"] - kt0["t_f"], color=INK2, lw=1, ls="--")
+        if kt0["t_detect_remote"] is not None:
+            ax.axvline(kt0["t_detect_remote"] - kt0["t_f"], color=INK2, lw=1, ls="--")
         ax.grid(axis="y", color=GRID, lw=0.8)
         for sp in ("top", "right"):
             ax.spines[sp].set_visible(False)
     axes[0].set_ylabel("affected devices\npayload Gbps")
     axes[1].set_ylabel(f"plane {(meta0.get('fault_info') or {}).get('plane', 3)} share %")
     axes[2].set_ylabel("peak switch queue\non that plane, KB")
-    axes[2].set_xlabel("time relative to fault (µs);  solid line = fault, dashed = remote notification; "
-                       "● half-way shift, ■ stable")
+    axes[2].set_xlabel("time relative to fault (µs).  solid: fault;  dashed: remote ends notified\n"
+                       "●: backlog peak (senders adjusted);  ■: backlog back to pre-fault level")
     axes[0].legend(frameon=False, loc="lower left", labelcolor=INK)
     fi = meta0.get("fault_info") or {}
     axes[0].set_title(f"{meta0['scenario']} {meta0['fault']}: devices {fi.get('dev')} ({','.join(affected(meta0)[1])})",

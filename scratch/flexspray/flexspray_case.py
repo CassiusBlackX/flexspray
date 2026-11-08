@@ -455,7 +455,10 @@ def scheme_attrs(name):
     elif base == "flex":        # FlexSpray switch layer
         d.update(flow("PER_PACKET_SHORTEST_PATHS")); d["ns3::UbRoutingProcess::MultipathSelector"] = "ADAPTIVE_RATE"
         d["ns3::UbTransaction::TpgDispatchPolicy"] = "MIN_DRAIN_TIME"
-        d["ns3::UbTransaction::TpgDispatchSlack"] = "0.1"
+        # v4: strict deferral (wait whenever the best admissible plane is slower than the best
+        # live plane). With the v3 read path this beats 0.1 in 19 of 79 scenario cells and loses
+        # in 5 (read alltoall with a lane degrade 0.886 -> 0.964). Negative disables deferral.
+        d["ns3::UbTransaction::TpgDispatchSlack"] = "0"
         d["ns3::UbSwitchAllocator::TpGroupFairShare"] = "true"
         d["ns3::UbJetty::TaSegmentBytes"] = "16384"
         d["ns3::UbTransportChannel::MaxOutstandingReadBytes"] = "196608"
