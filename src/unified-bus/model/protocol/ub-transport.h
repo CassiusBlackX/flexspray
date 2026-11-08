@@ -392,6 +392,12 @@ public:
     uint64_t GetInflightPsns() const { return m_psnSndNxt - m_psnSndUna; }
     /** Measurement: segment bytes ever admitted to this TP, acked PSNs, outstanding reads. */
     uint64_t GetAdmittedBytes() const { return m_admittedBytes; }
+    /** Hard link-down recovery: admit an already-admitted segment's copy, no capacity check. */
+    void ForceAdmitWqeSegment(Ptr<UbWqeSegment> segment);
+    /** The TP's path is gone: it stops sending and detecting; work is re-sent elsewhere. */
+    void MarkDead();
+    bool IsDead() const { return m_dead; }
+    uint64_t GetProbesSent() const { return m_fdProbesTotal; }
     uint64_t GetPsnSndUnaValue() const { return m_psnSndUna; }
     bool IsSendWindowLimited() const { return m_sendWindowLimited; }
     /** READ response bytes requested over this TP that have not arrived yet. */
@@ -750,6 +756,23 @@ private:
     uint64_t m_maxOutstandingReadBytes{0};
     uint32_t m_readRequestVl{UINT32_MAX};
     uint64_t m_admittedBytes{0};
+    // Failure detection (FailureDetection attribute) and hard-down state.
+    enum class FdState : uint8_t { HEALTHY, SUSPECT };
+    bool m_fdEnabled{false};
+    Time m_fdSuspectAfter;
+    Time m_fdProbeTimeout;
+    uint32_t m_fdProbeRetries{2};
+    FdState m_fdState{FdState::HEALTHY};
+    uint32_t m_fdProbesSent{0};
+    uint64_t m_fdProbesTotal{0};
+    Time m_lastPeerActivity;
+    EventId m_fdEvent;
+    bool m_dead{false};
+    bool HasOutstandingPeerWork() const;
+    void ArmFailureDetector();
+    void OnPeerActivity();
+    void CheckFailure();
+    void EnqueueProbe(TpOpcode opcode);
     bool m_deliveryRateAppLimitedGuard{false};
     bool m_rateSampleAppLimited{false};
     bool m_ccExemptReadResponses{false};

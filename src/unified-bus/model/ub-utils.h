@@ -394,6 +394,12 @@ public:
     void StartGoodputSampler();
     static void GoodputSampleTick(uint32_t nodeId, uint32_t intervalNs);
     static void TpSampleTick(uint32_t nodeId);
+    /** Transport failure-detection / hard-down recovery event (runlog/FailureEvent.csv). */
+    static void FailureEventNotify(uint32_t nodeId,
+                                   uint32_t tpn,
+                                   uint32_t dest,
+                                   uint32_t sport,
+                                   const std::string& event);
 
     static bool IsTpDebugEnabledFor(uint32_t nodeId, uint32_t tpn);
 

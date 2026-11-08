@@ -329,6 +329,32 @@ TypeId UbTransportChannel::GetTypeId(void)
                       TimeValue(NanoSeconds(2000)),
                       MakeTimeAccessor(&UbTransportChannel::m_deliveryRateMinInterval),
                       MakeTimeChecker(TimeStep(1)))
+        .AddAttribute("FailureDetection",
+                      "Detect a dead path without any oracle: when work is outstanding and the peer "
+                      "has been silent for FailureSuspectAfter, the TP becomes suspect (admits no "
+                      "new segments, reversible) and sends a PROBE on the control VL; the peer "
+                      "answers PROBE_REPLY. A probe bypasses data-VL congestion, so a congested but "
+                      "working path answers within a few microseconds. No answer after "
+                      "FailureProbeRetries+1 probes => the TP is declared dead and its unfinished "
+                      "segments are re-sent on other members of its TP group.",
+                      BooleanValue(false),
+                      MakeBooleanAccessor(&UbTransportChannel::m_fdEnabled),
+                      MakeBooleanChecker())
+        .AddAttribute("FailureSuspectAfter",
+                      "Peer silence (no ACK/data/probe reply) with work outstanding before probing.",
+                      TimeValue(MicroSeconds(10)),
+                      MakeTimeAccessor(&UbTransportChannel::m_fdSuspectAfter),
+                      MakeTimeChecker(NanoSeconds(1)))
+        .AddAttribute("FailureProbeTimeout",
+                      "Wait for a PROBE_REPLY before re-probing / declaring the path dead.",
+                      TimeValue(MicroSeconds(5)),
+                      MakeTimeAccessor(&UbTransportChannel::m_fdProbeTimeout),
+                      MakeTimeChecker(NanoSeconds(1)))
+        .AddAttribute("FailureProbeRetries",
+                      "Extra probes after the first before the TP is declared dead.",
+                      UintegerValue(2),
+                      MakeUintegerAccessor(&UbTransportChannel::m_fdProbeRetries),
+                      MakeUintegerChecker<uint32_t>())
         .AddAttribute("DeliveryRateAppLimitedGuard",
                       "Ignore delivery-rate samples that would lower the estimate when the TP ran "
                       "out of queued work during the sample (app-limited), as BBR does.",
@@ -433,7 +459,9 @@ UbTransportChannel::IsTransportResponseOpcode(uint8_t opcode)
            opcode == static_cast<uint8_t>(TpOpcode::TP_OPCODE_ACK_WITH_CETPH) ||
            opcode == static_cast<uint8_t>(TpOpcode::TP_OPCODE_SACK_WITHOUT_CETPH) ||
            opcode == static_cast<uint8_t>(TpOpcode::TP_OPCODE_SACK_WITH_CETPH) ||
-           opcode == static_cast<uint8_t>(TpOpcode::TP_OPCODE_CNP);
+           opcode == static_cast<uint8_t>(TpOpcode::TP_OPCODE_CNP) ||
+           opcode == static_cast<uint8_t>(TpOpcode::TP_OPCODE_PROBE) ||
+           opcode == static_cast<uint8_t>(TpOpcode::TP_OPCODE_PROBE_REPLY);
 }
 
 void
@@ -630,6 +658,7 @@ UbTransportChannel::UbTransportChannel()
 
 UbTransportChannel::~UbTransportChannel()
 {
+    m_fdEvent.Cancel();
     // Clear WQE queues and release resources
     NS_LOG_INFO("tp release, node:" << m_src << " tpn:" << m_tpn);
     NS_LOG_FUNCTION(this);
@@ -639,6 +668,8 @@ UbTransportChannel::~UbTransportChannel()
 void UbTransportChannel::DoDispose()
 {
     NS_LOG_FUNCTION(this);
+    // The failure-detector timer holds a raw `this`: cancel it before the TP is released.
+    m_fdEvent.Cancel();
     if (m_retrans != nullptr) {
         m_retrans->CancelTimer();
         m_retrans->ClearRetainedState();
@@ -897,6 +928,7 @@ UbTransportChannel::SendNewDataPacket(const NewDataSendContext& ctx)
     if (IsRetransEnabled()) {
         m_retrans->OnNewDataPacketSent(descriptor);
     }
+    ArmFailureDetector();
     NotifyDataPacketSent(descriptor, packet);
     AdvanceNewDataSendState(ctx, packet);
     return packet;
@@ -1603,6 +1635,9 @@ UbTransportChannel::ParseTransportResponsePacket(Ptr<Packet> packet,
     ctx.packet = packet;
     packet->RemoveHeader(ctx.transportHeader);
     ctx.opcode = static_cast<TpOpcode>(ctx.transportHeader.GetTPOpcode());
+    if (ctx.opcode == TpOpcode::TP_OPCODE_PROBE || ctx.opcode == TpOpcode::TP_OPCODE_PROBE_REPLY) {
+        return true; // TP header only
+    }
     ctx.isCnp = ctx.opcode == TpOpcode::TP_OPCODE_CNP;
     ctx.hasCetph = ctx.opcode == TpOpcode::TP_OPCODE_ACK_WITH_CETPH ||
                    ctx.opcode == TpOpcode::TP_OPCODE_SACK_WITH_CETPH;
@@ -1926,6 +1961,16 @@ void UbTransportChannel::RecvTpAck(Ptr<Packet> p)
 {
     TransportResponseContext ctx;
     if (!ParseTransportResponsePacket(p, ctx)) {
+        return;
+    }
+    OnPeerActivity();
+    if (ctx.opcode == TpOpcode::TP_OPCODE_PROBE) {
+        if (!m_dead) {
+            EnqueueProbe(TpOpcode::TP_OPCODE_PROBE_REPLY);
+        }
+        return;
+    }
+    if (ctx.opcode == TpOpcode::TP_OPCODE_PROBE_REPLY) {
         return;
     }
 
@@ -2413,6 +2458,7 @@ void UbTransportChannel::RecvDataPacket(Ptr<Packet> p)
     if (!ParseReceivedDataPacket(p, ctx)) {
         return;
     }
+    OnPeerActivity();
 
     TraceReceivedDataPacket(ctx);
     UbRetransReceiveDecision receiveDecision;
@@ -2600,6 +2646,151 @@ UbTransportChannel::TryCancelUnsentWqeSegment(
     --m_tpMsnCnt;
     RefreshAllocatorSummary();
     return UbWqeSegmentTerminalDisposition::CANCELED_UNSENT;
+}
+
+void
+UbTransportChannel::ForceAdmitWqeSegment(Ptr<UbWqeSegment> segment)
+{
+    // TryContinueAcceptedWqeSegment without the capacity checks: the segment was already admitted
+    // once (to a member that died) and must not wait behind the shallow pipeline limit.
+    if (IsZeroPayloadReadRequest(segment)) {
+        m_outstandingReadBytes += segment->GetSize();
+    }
+    m_admittedBytes += segment->GetSize();
+    segment->SetTpn(m_tpn);
+    segment->SetResolvedTpIdentity(m_lifecycleOwner);
+    segment->SetTpMsn(GetMsnCnt());
+    segment->SetPsnStart(GetPsnCnt());
+    UpdatePsnCnt(segment->GetPsnSize());
+    UpDateMsnCnt(1);
+    PushWqeSegment(segment);
+}
+
+void
+UbTransportChannel::MarkDead()
+{
+    if (m_dead) {
+        return;
+    }
+    m_dead = true;
+    m_fdEvent.Cancel();
+    if (m_retrans != nullptr) {
+        m_retrans->CancelTimer();
+    }
+    RefreshAllocatorSummary();
+}
+
+bool
+UbTransportChannel::HasOutstandingPeerWork() const
+{
+    return m_psnSndNxt > m_psnSndUna || m_outstandingReadBytes > 0;
+}
+
+void
+UbTransportChannel::ArmFailureDetector()
+{
+    if (!m_fdEnabled || m_dead) {
+        return;
+    }
+    if (!HasOutstandingPeerWork()) {
+        // Going from idle to busy: the silence clock starts now, not at the last old answer.
+        m_lastPeerActivity = Simulator::Now();
+    }
+    if (!m_fdEvent.IsPending()) {
+        m_fdEvent = Simulator::Schedule(m_fdSuspectAfter, &UbTransportChannel::CheckFailure, this);
+    }
+}
+
+void
+UbTransportChannel::OnPeerActivity()
+{
+    if (!m_fdEnabled) {
+        return;
+    }
+    m_lastPeerActivity = Simulator::Now();
+    if (m_fdState == FdState::SUSPECT && !m_dead) {
+        m_fdState = FdState::HEALTHY;
+        m_fdProbesSent = 0;
+        Ptr<UbController> ctrl = NodeList::GetNode(m_nodeId)->GetObject<UbController>();
+        if (ctrl != nullptr) {
+            ctrl->SetTpSuspect(this, false);
+        }
+    }
+}
+
+void
+UbTransportChannel::CheckFailure()
+{
+    if (m_dead || !m_fdEnabled) {
+        return;
+    }
+    const Time now = Simulator::Now();
+    if (m_fdState == FdState::HEALTHY) {
+        if (!HasOutstandingPeerWork()) {
+            return; // idle: nothing to expect from the peer; re-armed on the next send
+        }
+        const Time silent = now - m_lastPeerActivity;
+        if (silent < m_fdSuspectAfter) {
+            m_fdEvent = Simulator::Schedule(m_fdSuspectAfter - silent,
+                                            &UbTransportChannel::CheckFailure,
+                                            this);
+            return;
+        }
+        m_fdState = FdState::SUSPECT;
+        m_fdProbesSent = 0;
+        Ptr<UbController> ctrl = NodeList::GetNode(m_nodeId)->GetObject<UbController>();
+        if (ctrl != nullptr) {
+            ctrl->SetTpSuspect(this, true);
+        }
+    }
+    // SUSPECT: probe, or give up after the retries.
+    if (m_fdProbesSent > m_fdProbeRetries) {
+        Ptr<UbController> ctrl = NodeList::GetNode(m_nodeId)->GetObject<UbController>();
+        if (ctrl != nullptr) {
+            ctrl->DeclareTpDead(this, "probe-timeout");
+        }
+        return;
+    }
+    ++m_fdProbesSent;
+    ++m_fdProbesTotal;
+    EnqueueProbe(TpOpcode::TP_OPCODE_PROBE);
+    m_fdEvent = Simulator::Schedule(m_fdProbeTimeout, &UbTransportChannel::CheckFailure, this);
+}
+
+void
+UbTransportChannel::EnqueueProbe(TpOpcode opcode)
+{
+    // PROBE / PROBE_REPLY (TP opcodes 0x4 / 0x7, previously reserved): a bare TP header, no PSN,
+    // sent ahead of data on the control VL (ResponseVl) so data-VL congestion cannot delay it.
+    Ptr<Packet> probe = Create<Packet>(0);
+    UbTransportHeader tpHeader;
+    tpHeader.SetLastPacket(false);
+    tpHeader.SetTPOpcode(opcode);
+    tpHeader.SetNLP(0x0);
+    tpHeader.SetSrcTpn(m_tpn);
+    tpHeader.SetDestTpn(m_dstTpn);
+    tpHeader.SetAckRequest(0);
+    tpHeader.SetErrorFlag(0);
+    tpHeader.SetPsn(0);
+    tpHeader.SetTpMsn(0);
+    probe->AddHeader(tpHeader);
+    UbPort::AddUdpHeader(probe, this);
+    UbPort::AddIpv4Header(probe, this);
+    UbIpBasedNetworkHeader networkHeader;
+    probe->AddHeader(networkHeader);
+    const uint8_t vl = m_responseVl < 16 ? static_cast<uint8_t>(m_responseVl)
+                                         : std::max<uint8_t>(m_priority, 1);
+    UbDataLink::AddPacketHeader(probe, false, false, vl, vl, m_routingType,
+                                UbDatalinkHeaderConfig::PACKET_IPV4);
+    if (m_cnpQ.empty() && m_ackQ.empty() && m_wqeSegmentVector.empty()) {
+        m_headArrivalTime = Simulator::Now();
+    }
+    m_cnpQ.push(probe);
+    RefreshAllocatorSummary();
+    Ptr<UbPort> port = DynamicCast<UbPort>(NodeList::GetNode(m_nodeId)->GetDevice(m_sport));
+    if (port != nullptr) {
+        port->TriggerTransmit();
+    }
 }
 
 UbWqeSegmentTerminalDisposition
@@ -2938,6 +3129,9 @@ bool UbTransportChannel::HasPendingTransmitWork()
 
 bool UbTransportChannel::IsLimited()
 {
+    if (m_dead) {
+        return true;
+    }
     if (!m_cnpQ.empty()) {
         return false;
     }

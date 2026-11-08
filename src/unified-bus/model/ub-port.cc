@@ -815,6 +815,19 @@ UbPort::CommitPacketRateControlCounters(Ptr<Packet> packet)
 
 void UbPort::TransmitPacket(Ptr<Packet> packet, Time delay)
 {
+    if (m_hardDown)
+    {
+        // The link is down: the packet is lost. Free the port at once so the queue (and the
+        // credits of the inputs it came from) keep draining instead of blocking forever.
+        ++m_hardDropPackets;
+        m_hardDropBytes += packet->GetSize();
+        m_sendState = SendState::READY;
+        m_currentPkt = nullptr;
+        m_currentInPortId = 0;
+        m_currentPriority = 0;
+        Simulator::ScheduleNow(&UbPort::TriggerTransmit, this);
+        return;
+    }
     PortTxNotify(GetNode()->GetId(), m_portId, packet->GetSize());
     NS_LOG_DEBUG("[UbPort send] nodetype: " << g_node_type_map[GetNode()->GetObject<UbSwitch>()->GetNodeType()]
         << " NodeId: " << GetNode()->GetId() << " PortId: " << m_portId << " send to:"
@@ -880,6 +893,12 @@ void UbPort::TransmitPacket(Ptr<Packet> packet, Time delay)
 void
 UbPort::TransmitPacketDetached(Ptr<Packet> packet)
 {
+    if (m_hardDown)
+    {
+        ++m_hardDropPackets;
+        m_hardDropBytes += packet->GetSize();
+        return;
+    }
     PortTxNotify(GetNode()->GetId(), m_portId, packet->GetSize());
     NS_LOG_DEBUG("[UbPort detached send] nodetype: " << g_node_type_map[GetNode()->GetObject<UbSwitch>()->GetNodeType()]
         << " NodeId: " << GetNode()->GetId() << " PortId: " << m_portId << " send to:"
@@ -919,6 +938,13 @@ void UbPort::Receive(Ptr<Packet> packet)
         packet->RemovePacketTag(tag);
         tag.AddPortRecvTrace(GetNode()->GetId(), m_portId, Simulator::Now().GetNanoSeconds());
         packet->AddPacketTag(tag);
+    }
+    if (m_hardDown)
+    {
+        // Arrived over (or was in flight on) a link that is down: lost.
+        ++m_hardDropPackets;
+        m_hardDropBytes += packet->GetSize();
+        return;
     }
     m_rxBytes += packet->GetSize();
     PortRxNotify(GetNode()->GetId(), m_portId, packet->GetSize());

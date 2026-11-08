@@ -568,7 +568,8 @@ UbSwitchAllocator::FindNextEligibleIngressQueue(uint32_t outPort,
         if (ingressQueueSlot >= ingressQueueSlotCount || queue->IsEmpty() || queue->IsLimited()) {
             continue;
         }
-        const bool fcLimited = egressPort->GetFlowControl()->IsFcLimited(queue);
+        const bool fcLimited =
+            !egressPort->IsHardDown() && egressPort->GetFlowControl()->IsFcLimited(queue);
         if (m_disposed) {
             return std::nullopt;
         }
@@ -1244,7 +1245,8 @@ void UbDwrrAllocator::AllocateNextPacket(Ptr<UbPort> outPort)
                 if (qq->IsEmpty()) {
                     continue;
                 }
-                const bool fcLimited = outPort->GetFlowControl()->IsFcLimited(qq);
+                const bool fcLimited =
+                    !outPort->IsHardDown() && outPort->GetFlowControl()->IsFcLimited(qq);
                 if (m_disposed) {
                     ClearActiveIngressQueue(outPortId);
                     m_running[outPortId] = false;

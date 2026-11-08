@@ -432,9 +432,11 @@ enum class TpOpcode : uint8_t {
     TP_OPCODE_ACK_WITHOUT_CETPH = 0x2,  // 不带CETPH的TP ACK（典型ACK）
     TP_OPCODE_ACK_WITH_CETPH = 0x3,     // 带CETPH的TP ACK
     TP_OPCODE_RESERVED1 = 0x4,          // 保留
+    TP_OPCODE_PROBE = 0x4,              // FlexSpray failure detection: path probe (was reserved)
     TP_OPCODE_SACK_WITHOUT_CETPH = 0x5, // 不带CETPH的TP SACK
     TP_OPCODE_SACK_WITH_CETPH = 0x6,    // 带CETPH的TP SACK
     TP_OPCODE_RESERVED2 = 0x7,          // 保留
+    TP_OPCODE_PROBE_REPLY = 0x7,        // FlexSpray failure detection: probe answer (was reserved)
     TP_OPCODE_CNP = 0x8                 // CNP拥塞通知包
 };
 
@@ -1579,6 +1581,18 @@ public:
     void ResetSentBytes()
     {
         m_bytesLeft = m_carrierBytes == 0 ? m_size : m_carrierBytes;
+    }
+
+    /** Clear every TP binding so a copy of an admitted segment can be re-sent on another TP of
+     *  its group (hard link-down recovery). Transaction identity/correlation are kept. */
+    void ResetTransportStateForRedispatch()
+    {
+        ResetSentBytes();
+        m_hasStartedSending = false;
+        m_psnStart = 0;
+        m_tpMsn = 0;
+        m_tpn = UINT32_MAX;
+        m_hasResolvedTpIdentity = false;
     }
 
     /**

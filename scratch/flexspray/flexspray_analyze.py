@@ -49,18 +49,18 @@ def capacities(meta, faulted):
         l1_by_node = {v: tuple(map(int, k.split(","))) for k, v in meta["l1"].items()}
         port_of = {(h["id"], h["ports"][p]): p for h in hosts for p in h["planes"]}
         for (_, node, port, action, value) in meta["fault_rows"]:
-            if node in l1_by_node and action == "ISOLATE_NODE":
+            if node in l1_by_node and action in ("ISOLATE_NODE", "DOWN_NODE"):
                 p, s = l1_by_node[node]
                 for h in hosts:
                     if h["server"] == s and p in h["planes"]:
                         cap[(h["id"], p)] = 0.0
-            elif node in l1_by_node and action == "ISOLATE":
+            elif node in l1_by_node and action in ("ISOLATE", "DOWN"):
                 p, s = l1_by_node[node]
                 up[(p, s)] -= rate
                 down[(p, s)] -= rate
             elif (node, port) in port_of:
                 p = port_of[(node, port)]
-                if action == "ISOLATE":
+                if action in ("ISOLATE", "DOWN"):
                     cap[(node, p)] = 0.0
                 elif action == "DEGRADE":
                     num, den = map(int, value.split("/"))

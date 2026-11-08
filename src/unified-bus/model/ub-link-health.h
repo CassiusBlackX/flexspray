@@ -35,6 +35,8 @@ enum class UbLinkHealthAction : uint8_t
     UNISOLATE,      //!< undo ISOLATE
     ISOLATE_NODE,   //!< ISOLATE every attached link of the node (portId ignored)
     UNISOLATE_NODE, //!< undo ISOLATE_NODE
+    DOWN,           //!< hard link-down: both directions lose every packet from now on
+    DOWN_NODE,      //!< DOWN on every attached link of the node (portId ignored)
 };
 
 /** @brief One validated `link_health.csv` row. */
@@ -71,6 +73,7 @@ void UbLinkHealthSetLinkRate(uint32_t nodeId, uint32_t portId, DataRate rate);
 void UbLinkHealthDegradeLanes(uint32_t nodeId, uint32_t portId, uint32_t num, uint32_t den);
 void UbLinkHealthRestoreLinkRate(uint32_t nodeId, uint32_t portId);
 void UbLinkHealthSetLinkIsolated(uint32_t nodeId, uint32_t portId, bool isolated);
+void UbLinkHealthSetLinkDown(uint32_t nodeId, uint32_t portId);
 void UbLinkHealthSetNodeIsolated(uint32_t nodeId, bool isolated);
 /** @brief Forget saved original rates (between independent simulations in one process). */
 void UbLinkHealthReset();

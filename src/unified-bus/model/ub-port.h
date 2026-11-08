@@ -228,6 +228,11 @@ public:
 
     /** Block or unblock this port's output. A detected failed output never unblocks. */
     void SetOutputBlocked(bool blocked) { m_outputBlocked = blocked; }
+    /** Hard link-down (link_health DOWN): every packet sent or received on this port is lost. */
+    void SetHardDown(bool down) { m_hardDown = down; }
+    bool IsHardDown() const { return m_hardDown; }
+    uint64_t GetHardDropPackets() const { return m_hardDropPackets; }
+    uint64_t GetHardDropBytes() const { return m_hardDropBytes; }
     bool IsOutputBlocked() const { return m_outputBlocked; }
 
     void IncreaseRcvQueueSize(Ptr<Packet> p, Ptr<UbPort> port);
@@ -374,6 +379,9 @@ private:
     Ptr<UbReliableRerouting> m_rerouting;
 
     bool m_outputBlocked{false};
+    bool m_hardDown{false};
+    uint64_t m_hardDropPackets{0};
+    uint64_t m_hardDropBytes{0};
 
     uint64_t m_txBytes;
     uint64_t m_rxBytes{0};

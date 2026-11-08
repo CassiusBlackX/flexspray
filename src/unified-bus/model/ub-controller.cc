@@ -543,6 +543,11 @@ UbController::SetPeerPortIsolated(uint32_t peerNode, uint16_t peerPort, bool iso
 bool
 UbController::IsTpPathIsolated(const Ptr<UbTransportChannel>& tp) const
 {
+    if (tp != nullptr && (!m_suspectTpns.empty() || !m_deadTpns.empty()) &&
+        (m_suspectTpns.count(tp->GetTpn()) != 0 || m_deadTpns.count(tp->GetTpn()) != 0))
+    {
+        return true;
+    }
     if (tp == nullptr || (m_isolatedLocalPorts.empty() && m_isolatedPeerPorts.empty()))
     {
         return false;
@@ -567,11 +572,96 @@ UbController::GetRtpTpGroupSizeForTpn(uint32_t tpn) const
     return std::max<uint32_t>(group->second->GetMemberCount(), 1);
 }
 
+bool
+UbController::IsTpDead(const Ptr<UbTransportChannel>& tp) const
+{
+    return tp != nullptr && !m_deadTpns.empty() && m_deadTpns.count(tp->GetTpn()) != 0;
+}
+
+void
+UbController::OnLocalPortDown(uint16_t port)
+{
+    std::vector<Ptr<UbTransportChannel>> victims;
+    for (const auto& [tpn, tp] : GetTransportChannelManager()->GetTpnMap())
+    {
+        (void)tpn;
+        if (tp != nullptr && tp->GetSport() == port)
+        {
+            victims.push_back(tp);
+        }
+    }
+    for (const auto& tp : victims)
+    {
+        DeclareTpDead(tp, "local-port-down");
+    }
+}
+
+void
+UbController::SetTpSuspect(const Ptr<UbTransportChannel>& tp, bool suspect)
+{
+    if (tp == nullptr || m_deadTpns.count(tp->GetTpn()) != 0)
+    {
+        return;
+    }
+    const bool changed = suspect ? m_suspectTpns.insert(tp->GetTpn()).second
+                                 : m_suspectTpns.erase(tp->GetTpn()) != 0;
+    if (changed)
+    {
+        utils::UbUtils::FailureEventNotify(GetObject<Node>()->GetId(), tp->GetTpn(), tp->GetDest(),
+                                           tp->GetSport(), suspect ? "SUSPECT" : "RECOVER");
+        if (!suspect)
+        {
+            WakeRtpTpGroupsAfterIsolationChange();
+        }
+    }
+}
+
+void
+UbController::DeclareTpDead(const Ptr<UbTransportChannel>& tp, const char* cause)
+{
+    if (tp == nullptr || !m_deadTpns.insert(tp->GetTpn()).second)
+    {
+        return;
+    }
+    m_suspectTpns.erase(tp->GetTpn());
+    utils::UbUtils::FailureEventNotify(GetObject<Node>()->GetId(), tp->GetTpn(), tp->GetDest(),
+                                       tp->GetSport(), cause);
+    tp->MarkDead();
+    // Live members of the dead TP's group take over its unfinished segments.
+    std::vector<Ptr<UbTransportChannel>> candidates;
+    const auto membership = m_rtpTpGroupByTpn.find(tp->GetTpn());
+    if (membership != m_rtpTpGroupByTpn.end())
+    {
+        const auto group = m_rtpTpGroups.find(membership->second);
+        if (group != m_rtpTpGroups.end() && group->second != nullptr)
+        {
+            for (uint32_t i = 0; i < group->second->GetMemberCount(); ++i)
+            {
+                Ptr<UbTransportChannel> member =
+                    GetTransportChannelManager()->GetTp(group->second->GetMember(i).tpn);
+                if (member != nullptr && member != tp && !IsTpPathIsolated(member))
+                {
+                    candidates.push_back(member);
+                }
+            }
+        }
+    }
+    if (m_transaction != nullptr)
+    {
+        const uint32_t moved = m_transaction->RedispatchDeadTpSegments(tp, candidates);
+        utils::UbUtils::FailureEventNotify(GetObject<Node>()->GetId(), tp->GetTpn(), tp->GetDest(),
+                                           tp->GetSport(),
+                                           ("REDISPATCH " + std::to_string(moved)).c_str());
+    }
+    WakeRtpTpGroupsAfterIsolationChange();
+}
+
 uint32_t
 UbController::GetRtpTpGroupUsableSizeForTpn(uint32_t tpn) const
 {
     const uint32_t size = GetRtpTpGroupSizeForTpn(tpn);
-    if (size <= 1 || (m_isolatedLocalPorts.empty() && m_isolatedPeerPorts.empty()))
+    if (size <= 1 || (m_isolatedLocalPorts.empty() && m_isolatedPeerPorts.empty() &&
+                      m_suspectTpns.empty() && m_deadTpns.empty()))
     {
         return size;
     }

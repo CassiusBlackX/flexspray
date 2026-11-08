@@ -36686,6 +36686,88 @@ class UbFlexSprayFarEndDegradeSystemTest : public TestCase
     }
 };
 
+/**
+ * Hard link-down recovery: a link of a 3-plane TP group goes DOWN mid-transfer (every packet on
+ * it is lost from then on). Both ends see their own port go down, mark the TPs on it dead and
+ * re-send their unfinished WRITE and READ segments on the surviving planes; every WQE must still
+ * complete exactly once (no hang, no abort).
+ */
+class UbFlexSprayHardLinkDownSystemTest : public TestCase
+{
+  public:
+    UbFlexSprayHardLinkDownSystemTest()
+        : TestCase("UnifiedBus - FlexSpray re-sends a dead TP's segments after a hard link-down")
+    {
+    }
+
+    void DoRun() override
+    {
+        SetDataDir(NS_TEST_SOURCEDIR);
+        const std::filesystem::path repoRoot = LocateRepoRoot();
+        const std::filesystem::path caseDir =
+            std::filesystem::path(CreateTempDirFilename("ub-flexspray-hard-down"));
+        std::filesystem::remove_all(caseDir);
+        std::filesystem::create_directories(caseDir);
+        for (const char* f : {"node.csv", "topology.csv", "routing_table.csv",
+                              "transport_channel.csv", "network_attribute.txt"})
+        {
+            std::filesystem::copy_file(repoRoot / "scratch/2nodes_multiple-tp" / f, caseDir / f);
+        }
+        {
+            std::ofstream traffic(caseDir / "traffic.csv");
+            traffic << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
+                       "dependOnPhases\n0,0,1,8000000,URMA_WRITE,7,10ns,0,\n"
+                       "1,0,1,8000000,URMA_READ,7,10ns,0,\n";
+        }
+        {
+            std::ofstream attrs(caseDir / "network_attribute.txt", std::ios::app);
+            attrs << "\nglobal UB_PARSE_TRACE_ENABLE \"false\"\n"
+                     "global UB_PACKET_TRACE_ENABLE \"false\"\n"
+                     "global UB_RECORD_PKT_TRACE \"false\"\n"
+                     "default ns3::UbApp::RoutingType \"PER_PACKET_SHORTEST_PATHS\"\n"
+                     "default ns3::UbTransportChannel::RoutingType \"PER_PACKET_SHORTEST_PATHS\"\n"
+                     "default ns3::UbTransaction::TpgDispatchPolicy \"MIN_DRAIN_TIME\"\n"
+                     "default ns3::UbTransportChannel::ResponseVl \"1\"\n"
+                     "default ns3::UbTransportChannel::FailureDetection \"true\"\n"
+                     "default ns3::UbJetty::TaSegmentBytes \"16384\"\n";
+        }
+        {
+            std::ofstream health(caseDir / "link_health.csv");
+            health << "timeNs,nodeId,portId,action,value\n15000,1,1,DOWN,\n";
+        }
+        auto [status, output] = RunQuickExampleAbsoluteCaseCommand(
+            CreateTempDirFilename("ub-flexspray-hard-down.log"), "", "", caseDir);
+        NS_TEST_ASSERT_MSG_EQ(status, 0, "case should complete: " << output);
+        uint32_t completed = 0;
+        for (const auto& entry : std::filesystem::directory_iterator(caseDir / "runlog"))
+        {
+            if (entry.path().filename().string().rfind("TaskTrace", 0) != 0)
+            {
+                continue;
+            }
+            std::ifstream in(entry.path());
+            std::string line;
+            while (std::getline(in, line))
+            {
+                completed += line.find("WQE Completes") != std::string::npos ? 1 : 0;
+            }
+        }
+        NS_TEST_ASSERT_MSG_EQ(completed, 2u, "the WRITE and the READ must both complete once");
+        std::ifstream events(caseDir / "runlog/FailureEvent.csv");
+        std::string line;
+        uint32_t moved = 0;
+        while (std::getline(events, line))
+        {
+            const auto pos = line.find("REDISPATCH ");
+            if (pos != std::string::npos)
+            {
+                moved += std::stoul(line.substr(pos + 11));
+            }
+        }
+        NS_TEST_ASSERT_MSG_GT(moved, 0u, "unfinished segments of the dead TP must be re-sent");
+    }
+};
+
 class UbQuickExampleHelpTextSystemTest : public TestCase
 {
   public:
@@ -40207,5 +40289,6 @@ class UbFlexSpraySuite : public TestSuite
         AddTestCase(new UbFlexSprayFarEndDegradeSystemTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbDcqcnPacingDebtShrinksOnRecoveryTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbCaqmStaleAckDoesNotRegressInflightTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbFlexSprayHardLinkDownSystemTest(), TestCase::Duration::QUICK);
     }
 } g_ubFlexSpraySuite;

@@ -100,7 +100,7 @@ def removed_fraction(meta, tasks, devs, dirs, fi):
                 continue
             used += len(planes)
             if fi.get("plane", 3) in planes:
-                removed += 1.0 / meta["lanes"] if action == "DEGRADE" else 1.0
+                removed += 1.0 / meta["lanes"] if action == "DEGRADE" else 1.0  # ISOLATE/DOWN
     return removed / used if used else None
 
 

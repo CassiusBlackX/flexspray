@@ -233,6 +233,22 @@ RunRow(UbLinkHealthRow row)
     case UbLinkHealthAction::UNISOLATE_NODE:
         UbLinkHealthSetNodeIsolated(row.nodeId, false);
         return;
+    case UbLinkHealthAction::DOWN:
+        UbLinkHealthSetLinkDown(row.nodeId, row.portId);
+        return;
+    case UbLinkHealthAction::DOWN_NODE:
+    {
+        Ptr<Node> node = NodeList::GetNode(row.nodeId);
+        for (uint32_t portId = 0; portId < node->GetNDevices(); ++portId)
+        {
+            Ptr<UbPort> port = DynamicCast<UbPort>(node->GetDevice(portId));
+            if (port != nullptr && GetPeer(port) != nullptr)
+            {
+                UbLinkHealthSetLinkDown(row.nodeId, portId);
+            }
+        }
+        return;
+    }
     }
 }
 
@@ -294,6 +310,46 @@ UbLinkHealthSetLinkIsolated(uint32_t nodeId, uint32_t portId, bool isolated)
 }
 
 void
+ApplyDeviceLocalPortDown(uint32_t nodeId, uint16_t portId)
+{
+    Ptr<UbController> ctrl = NodeList::GetNode(nodeId)->GetObject<UbController>();
+    if (ctrl != nullptr)
+    {
+        ctrl->OnLocalPortDown(portId);
+    }
+}
+
+void
+SetEndpointDown(const Ptr<UbPort>& port, bool peerIsSwitch)
+{
+    const uint32_t nodeId = port->GetNode()->GetId();
+    const uint16_t portId = static_cast<uint16_t>(port->GetIfIndex());
+    port->SetHardDown(true);
+    if (IsSwitchNode(nodeId))
+    {
+        // A switch sees its own port go down: stop routing over it when an alternative exists
+        // (switch-to-switch). A device-facing port is the only path to that device port.
+        if (peerIsSwitch)
+        {
+            NodeList::GetNode(nodeId)->GetObject<UbSwitch>()->GetRoutingProcess()->SetOutputIsolated(
+                portId);
+        }
+        return;
+    }
+    // A device only learns about its OWN port (local link detection); remote ends are not told
+    // by the simulator - they must detect the failure themselves (transport failure detector).
+    const uint64_t localNs = GetNs(g_linkHealthLocalDetect);
+    if (localNs == 0)
+    {
+        ApplyDeviceLocalPortDown(nodeId, portId);
+    }
+    else
+    {
+        Simulator::Schedule(NanoSeconds(localNs), &ApplyDeviceLocalPortDown, nodeId, portId);
+    }
+}
+
+void
 UbLinkHealthSetNodeIsolated(uint32_t nodeId, bool isolated)
 {
     Ptr<Node> node = NodeList::GetNode(nodeId);
@@ -305,6 +361,19 @@ UbLinkHealthSetNodeIsolated(uint32_t nodeId, bool isolated)
             UbLinkHealthSetLinkIsolated(nodeId, portId, isolated);
         }
     }
+}
+
+void
+UbLinkHealthSetLinkDown(uint32_t nodeId, uint32_t portId)
+{
+    Ptr<UbPort> port = GetPort(nodeId, portId);
+    Ptr<UbPort> peer = GetPeer(port);
+    NS_ABORT_MSG_IF(port == nullptr || peer == nullptr,
+                    "link_health: node " << nodeId << " port " << portId << " is not attached");
+    const bool portIsSwitch = IsSwitchNode(nodeId);
+    const bool peerIsSwitch = IsSwitchNode(peer->GetNode()->GetId());
+    SetEndpointDown(port, peerIsSwitch);
+    SetEndpointDown(peer, portIsSwitch);
 }
 
 void
@@ -421,6 +490,14 @@ TryReadLinkHealthSchedule(const std::string& path,
         else if (action == "ISOLATE_NODE")
         {
             row.action = UbLinkHealthAction::ISOLATE_NODE;
+        }
+        else if (action == "DOWN")
+        {
+            row.action = UbLinkHealthAction::DOWN;
+        }
+        else if (action == "DOWN_NODE")
+        {
+            row.action = UbLinkHealthAction::DOWN_NODE;
         }
         else if (action == "UNISOLATE_NODE")
         {

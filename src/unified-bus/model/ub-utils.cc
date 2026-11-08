@@ -2328,7 +2328,7 @@ UbUtils::GoodputSampleTick(uint32_t nodeId, uint32_t intervalNs)
     const std::string fileName = trace_path + "runlog/GoodputSample.csv";
     const std::string header =
         "time_ns,node,port,rate_bps,tx_wire_bytes,rx_wire_bytes,tx_payload_bytes,rx_payload_bytes,"
-        "queue_bytes,fc_blocked_ns,ooo_pkts,max_reorder_psn,max_ooo_buffered";
+        "queue_bytes,fc_blocked_ns,ooo_pkts,max_reorder_psn,max_ooo_buffered,hard_drop_bytes";
     const uint64_t nowNs = static_cast<uint64_t>(Simulator::Now().GetNanoSeconds());
     Ptr<UbSwitch> sw = node->GetObject<UbSwitch>();
     for (uint32_t portId = 0; portId < node->GetNDevices(); ++portId)
@@ -2375,6 +2375,8 @@ UbUtils::GoodputSampleTick(uint32_t nodeId, uint32_t intervalNs)
         row += std::to_string(reorder[1]);
         row += ',';
         row += std::to_string(reorder[2]);
+        row += ',';
+        row += std::to_string(port->GetHardDropBytes());
         AppendCsvRow(fileName, header, row);
     }
     if (tp_sample_nodes.count(nodeId) != 0)
@@ -2383,6 +2385,24 @@ UbUtils::GoodputSampleTick(uint32_t nodeId, uint32_t intervalNs)
     }
     goodput_sampler_events[nodeId] =
         Simulator::Schedule(NanoSeconds(intervalNs), &UbUtils::GoodputSampleTick, nodeId, intervalNs);
+}
+
+void
+UbUtils::FailureEventNotify(uint32_t nodeId,
+                            uint32_t tpn,
+                            uint32_t dest,
+                            uint32_t sport,
+                            const std::string& event)
+{
+    if (trace_path.empty())
+    {
+        return;
+    }
+    AppendCsvRow(trace_path + "runlog/FailureEvent.csv",
+                 "time_ns,node,tpn,dest,sport,event",
+                 std::to_string(Simulator::Now().GetNanoSeconds()) + "," + std::to_string(nodeId) +
+                     "," + std::to_string(tpn) + "," + std::to_string(dest) + "," +
+                     std::to_string(sport) + "," + event);
 }
 
 void

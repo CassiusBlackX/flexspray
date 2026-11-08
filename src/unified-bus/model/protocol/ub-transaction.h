@@ -448,6 +448,15 @@ enum class UbTpgDispatchPolicy : uint32_t
             DEFERRED,
             REJECTED,
         };
+      public:
+        /** Hard link-down recovery: move every unfinished WRITE/READ segment pinned to @p dead to
+         *  the live member of @p candidates with the smallest drain-time estimate. Returns the
+         *  number of segments moved. Completion stays exactly-once: only the record's current TP
+         *  generation can complete it, late answers over the old path are ignored. */
+        uint32_t RedispatchDeadTpSegments(Ptr<UbTransportChannel> dead,
+                                          const std::vector<Ptr<UbTransportChannel>>& candidates);
+
+      private:
         RtpSegmentAdmissionResult TryAdmitRtpSegment(
             uint32_t jettyNum,
             Ptr<UbWqe> originatingWqe,

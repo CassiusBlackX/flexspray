@@ -76,6 +76,16 @@ public:
     /** Members of that group whose path is not isolated (link sub-health), at least 1. */
     uint32_t GetRtpTpGroupUsableSizeForTpn(uint32_t tpn) const;
 
+    // Hard link-down (link_health DOWN) and transport failure detection.
+    /** The device's own port @p port went down: every TP sourced on it is dead (local detect). */
+    void OnLocalPortDown(uint16_t port);
+    /** Reversible: a TP whose peer stopped answering admits no new segments while probing. */
+    void SetTpSuspect(const Ptr<UbTransportChannel>& tp, bool suspect);
+    /** Permanent: the TP's path is gone. Its unfinished segments are re-sent on live members of
+     *  its TP group; the TP admits nothing and sends nothing any more. */
+    void DeclareTpDead(const Ptr<UbTransportChannel>& tp, const char* cause);
+    bool IsTpDead(const Ptr<UbTransportChannel>& tp) const;
+
 
     // Port management
     /**
@@ -263,6 +273,8 @@ public:
     std::map<uint32_t, uint64_t> m_rtpTpGroupByTpn{};
     std::set<uint16_t> m_isolatedLocalPorts{};
     std::set<std::pair<uint32_t, uint16_t>> m_isolatedPeerPorts{};
+    std::set<uint32_t> m_suspectTpns{};
+    std::set<uint32_t> m_deadTpns{};
     void WakeRtpTpGroupsAfterIsolationChange();
     std::unordered_map<uint32_t, std::vector<Ptr<UbPort>>> m_portsByDestination{};
     std::map<uint32_t, std::vector<uint16_t>> m_ctpEntityPorts{};

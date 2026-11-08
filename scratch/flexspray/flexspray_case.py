@@ -380,11 +380,18 @@ def fault_rows(t, fault, t_ns, scenario="d2d"):
     if fault == "F4p4":     # server-0 plane-4 L1 isolated: hits SSD0 (and NPUs/no CPU) of server 0
         return [(t_ns, t.l1[(4, 0)], 0, "ISOLATE_NODE", "")], dict(dev="server0", dir="agg", n=t.P,
                                                                     plane=4)
+    # Hard link-down variants (link_health DOWN): packets on the link are lost, nobody is told
+    # except the link's own two ends (local detection); remote ends must detect it themselves.
+    if fault.startswith("H"):
+        rows, info = fault_rows(t, "F" + fault[1:], t_ns, scenario)
+        conv = {"ISOLATE": "DOWN", "ISOLATE_NODE": "DOWN_NODE"}
+        return [(r[0], r[1], r[2], conv[r[3]], r[4]) for r in rows], info
     raise KeyError(fault)
 
 
 FAULTS = ["F0", "F1near", "F1far", "F2up", "F3near", "F3far", "F4",
-          "F1ssd", "F3ssd", "F1nic", "F3nic", "F4p4"]
+          "F1ssd", "F3ssd", "F1nic", "F3nic", "F4p4",
+          "H1near", "H1far", "H2up", "H4", "H1ssd", "H4p4"]
 
 
 # ---------------- schemes ----------------
@@ -474,6 +481,15 @@ def scheme_attrs(name):
         d["ns3::UbTransportChannel::ReadQuotaFollowsUsablePlanes"] = "true"
         d["ns3::UbTransportChannel::ReadRequestVl"] = "1"
         d["ns3::UbTransportChannel::CcExemptReadResponses"] = "true"
+        # v5 (third review round):
+        #  * app-limited guard on the delivery-rate estimator (T10: oversubscribed fabric);
+        #  * transport failure detection (suspect -> probe on the control VL -> dead -> re-send the
+        #    dead TP's segments on other planes): no oracle for hard link-downs (T1/T3);
+        #  * TP retransmission (selective) for packets lost inside the fabric.
+        d["ns3::UbTransportChannel::DeliveryRateAppLimitedGuard"] = "true"
+        d["ns3::UbTransportChannel::FailureDetection"] = "true"
+        d["ns3::UbTransportChannel::EnableRetrans"] = "true"
+        d["ns3::UbTransportChannel::RetransmissionMode"] = "SELECTIVE"
     else:
         raise KeyError(base)
     cc = "none"
@@ -504,6 +520,15 @@ def scheme_attrs(name):
             d["ns3::UbTransportChannel::ReadRequestVl"] = "4294967295"
         elif opt == "noccxr":
             d["ns3::UbTransportChannel::CcExemptReadResponses"] = "false"
+        elif opt == "nofd":
+            d["ns3::UbTransportChannel::FailureDetection"] = "false"
+        elif opt == "nortx":
+            d["ns3::UbTransportChannel::EnableRetrans"] = "false"
+        elif opt == "fd":    # transport failure detection (suspect -> probe -> dead -> re-send)
+            d["ns3::UbTransportChannel::FailureDetection"] = "true"
+        elif opt == "rtx":   # TP retransmission (recovers packets lost inside the fabric)
+            d["ns3::UbTransportChannel::EnableRetrans"] = "true"
+            d["ns3::UbTransportChannel::RetransmissionMode"] = "SELECTIVE"
         elif opt == "alg":   # app-limited guard on the delivery-rate estimator
             d["ns3::UbTransportChannel::DeliveryRateAppLimitedGuard"] = "true"
         elif opt == "noalg":

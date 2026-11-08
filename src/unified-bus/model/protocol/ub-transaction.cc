@@ -1228,6 +1228,11 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
             {
                 continue;
             }
+            if (ownerController != nullptr && ownerController->IsTpDead(transport))
+            {
+                // A dead member is not live: an all-dead group must reject, not defer forever.
+                continue;
+            }
             hasLiveMember = true;
             if (ownerController != nullptr && ownerController->IsTpPathIsolated(transport))
             {
@@ -1847,6 +1852,93 @@ UbTransaction::RetireRtpTxQueue(const UbLifecycleResourceIdentity& identity)
         queueIt->second.activeTxEntry.reset();
     }
     m_rtpTxQueues.erase(queueIt);
+}
+
+uint32_t
+UbTransaction::RedispatchDeadTpSegments(Ptr<UbTransportChannel> dead,
+                                        const std::vector<Ptr<UbTransportChannel>>& candidates)
+{
+    if (dead == nullptr)
+    {
+        return 0;
+    }
+    const UbLifecycleResourceIdentity deadId = dead->GetLifecycleOwner();
+    std::vector<std::pair<std::pair<uint32_t, uint32_t>, uint32_t>> work;
+    for (const auto& [key, operation] : m_operations)
+    {
+        if (operation.ctp || operation.transportReference.IsDirectTp())
+        {
+            continue;
+        }
+        for (const auto& [taSsn, record] : operation.segments)
+        {
+            if (record.resolvedTpIdentity == deadId)
+            {
+                work.push_back({key, taSsn});
+            }
+        }
+    }
+    uint32_t moved = 0;
+    for (const auto& [key, taSsn] : work)
+    {
+        auto operation = m_operations.find(key);
+        if (operation == m_operations.end())
+        {
+            continue;
+        }
+        auto found = operation->second.segments.find(taSsn);
+        if (found == operation->second.segments.end())
+        {
+            continue;
+        }
+        auto& record = found->second;
+        const UbTransactionOpcode type = record.segment->GetType();
+        const bool idempotent = type == UbTransactionOpcode::WRITE ||
+                                type == UbTransactionOpcode::WRITE_WITH_IMMEDIATE ||
+                                type == UbTransactionOpcode::WRITE_WITH_NOTIFY ||
+                                type == UbTransactionOpcode::WRITE_WITH_BE ||
+                                type == UbTransactionOpcode::READ;
+        // Pick the live member that would drain the segment soonest.
+        Ptr<UbTransportChannel> target;
+        double best = 0.0;
+        for (const auto& candidate : candidates)
+        {
+            if (candidate == nullptr || candidate == dead ||
+                !m_coordinator->IsResourceActive(candidate->GetLifecycleOwner()))
+            {
+                continue;
+            }
+            const double drain = candidate->EstimateDrainTimeNs(record.segment->GetSize());
+            if (target == nullptr || drain < best)
+            {
+                best = drain;
+                target = candidate;
+            }
+        }
+        if (target == nullptr || !idempotent)
+        {
+            // Atomics are not idempotent at the target (no TaSsn de-duplication); a group with
+            // no live member cannot carry the segment. Both stay pinned to the dead TP.
+            utils::UbUtils::RecordRuntimePacketDrop(!idempotent ? "dead TP: non-idempotent segment"
+                                                                 : "dead TP: no live group member");
+            continue;
+        }
+        const UbTransactionCorrelationIdentity correlation =
+            record.segment->GetTransactionCorrelation();
+        dead->ForceRemoveRetainedWqeSegment(record.segment, correlation, deadId);
+        Ptr<UbWqeSegment> clone = CopyObject<UbWqeSegment>(record.segment);
+        clone->ResetTransportStateForRedispatch();
+        target->ForceAdmitWqeSegment(clone);
+        m_coordinator->ReleaseLease(record.transportWorkLease);
+        record.transportWorkLease = m_coordinator->AcquireLease(target->GetLifecycleOwner(),
+                                                                UbLifecycleLeaseKind::TRANSPORT_WORK,
+                                                                record.identity);
+        record.resolvedTpIdentity = target->GetLifecycleOwner();
+        record.segment = clone;
+        target->WqeSegmentTriggerPortTransmit(clone);
+        ++moved;
+    }
+    return moved;
 }
 
 bool

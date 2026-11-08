@@ -70,12 +70,12 @@ def isolated_ports(meta):
     out = set()
     l1_by_node = {v: tuple(map(int, k.split(","))) for k, v in meta["l1"].items()}
     for (_, node, port, action, _v) in meta.get("fault_rows") or []:
-        if action == "ISOLATE_NODE" and node in l1_by_node:
+        if action in ("ISOLATE_NODE", "DOWN_NODE") and node in l1_by_node:
             p, s = l1_by_node[node]
             for h in meta["hosts"]:
                 if h["server"] == s and p in h["ports"]:
                     out.add((h["id"], h["ports"][p]))
-        elif action == "ISOLATE" and node < len(meta["hosts"]):
+        elif action in ("ISOLATE", "DOWN") and node < len(meta["hosts"]):
             out.add((node, port))
     return out
 
