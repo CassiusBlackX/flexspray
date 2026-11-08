@@ -15,6 +15,10 @@ For every device and direction (tx / rx), over a steady window, this reports:
   util     meas / ceil  -> "port protocol utilization" (the primary per-device number)
   line     meas / (used ports x line rate) -> payload / line-rate utilization
   wire     wire bytes / (used ports x current rate) -> raw link utilization
+  util_biz (busy window only) business goodput / ceil: every task byte the device sources (tx) or
+           sinks (rx) and that completed inside the window, counted ONCE (GBN retransmissions and
+           hard-down re-dispatched copies are excluded; meas/util count every TP payload byte the
+           ports carried, so util >= util_biz and the gap is the recovery overhead).
   need     the rate the device must sustain to finish with the healthy ideal makespan
            (device bytes in that direction / T_ideal_healthy), as a fraction of ceil: need < 1 means the
            workload does not demand the device's full port capacity, so util < 1 is not a loss.
@@ -118,7 +122,18 @@ def device_windows(case):
         t_last["tx"][f["src"]] = max(t_last["tx"][f["src"]], done[f["task"]])
         t_last["rx"][f["dst"]] = max(t_last["rx"][f["dst"]], done[f["task"]])
 
-    def measure(d, h, dr, t0, t1, skip_iso, dead_after):
+    # Business bytes per device and direction for the busy window (all tasks incl. control, each
+    # byte once, credited when its task completed).
+    biz = []
+    for t in tasks:
+        src, dst = (t["dst"], t["src"]) if t["op"] == "URMA_READ" else (t["src"], t["dst"])
+        if t["task"] in done:
+            biz.append((src, dst, t["bytes"], done[t["task"]]))
+
+    def biz_bits(d, dr, t1):
+        return 8.0 * sum(b for s, e, b, tc in biz if (s if dr == "tx" else e) == d and tc <= t1)
+
+    def measure(d, h, dr, t0, t1, skip_iso, dead_after, with_biz=False):
         planes = used[dr].get(d)
         if not planes or t1 <= t0 + 2:
             return None
@@ -163,8 +178,11 @@ def device_windows(case):
         if nports == 0 or ceil <= 0:
             return None
         need = dev_bits[dr][d] / 1e3 / t_ideal  # Gbit*1e3/us -> Gbps
-        return dict(meas=meas, ceil=ceil, util=meas / ceil, line=meas / cap_line,
-                    wire=wire / cap_cur if cap_cur else 0.0, need=need / ceil, ports=nports)
+        r = dict(meas=meas, ceil=ceil, util=meas / ceil, line=meas / cap_line,
+                 wire=wire / cap_cur if cap_cur else 0.0, need=need / ceil, ports=nports)
+        if with_biz:
+            r["util_biz"] = biz_bits(d, dr, t1) / span / ceil
+        return r
 
     out = {}
     for wname, (t0, t1) in list(wins.items()) + [("busy", (0.0, 0.0))]:
@@ -175,7 +193,7 @@ def device_windows(case):
                 if wname == "busy":
                     if d not in t_last[dr]:
                         continue
-                    r = measure(d, h, dr, 0.0, t_last[dr][d], False, tf)
+                    r = measure(d, h, dr, 0.0, t_last[dr][d], False, tf, with_biz=True)
                     if r:
                         r["t_last_us"] = t_last[dr][d]
                 else:
