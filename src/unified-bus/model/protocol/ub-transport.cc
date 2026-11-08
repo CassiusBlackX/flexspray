@@ -2920,7 +2920,10 @@ UbTransportChannel::UpdateDeliveryRate(uint64_t previousSndUna)
     }
     // The TP ran out of queued work at some point in this sample: it was (partly) app-limited,
     // i.e. it delivered what it was given, not what its path could carry.
-    if (GetUnsentPayloadBytes() == 0) {
+    // Only a TP with no outstanding reads can be app-limited this way: a READ requester with an
+    // empty send queue is usually quota-limited (its responses fill the path), which is network-
+    // limited and must lower the estimate (guarding it over-loaded a degraded SSD plane).
+    if (GetUnsentPayloadBytes() == 0 && m_outstandingReadBytes == 0) {
         m_rateSampleAppLimited = true;
     }
     const Time elapsed = now - m_rateSampleStart;
@@ -2942,7 +2945,7 @@ UbTransportChannel::UpdateDeliveryRate(uint64_t previousSndUna)
         }
         m_rateSampleStart = now;
         m_rateSampleStartUna = m_psnSndUna;
-        m_rateSampleAppLimited = GetUnsentPayloadBytes() == 0;
+        m_rateSampleAppLimited = GetUnsentPayloadBytes() == 0 && m_outstandingReadBytes == 0;
     }
     // An idle TP is app-limited, not capacity-limited: close the sample so idle time does not
     // depress the estimate (the last estimate is kept).
