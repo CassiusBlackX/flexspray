@@ -354,6 +354,15 @@ def fault_rows(t, fault, t_ns, scenario="d2d"):
         sw = t.l1[(p, 0)]
         return [(t_ns, sw, t.l1_up_port[(p, 0, 0, 0)], "ISOLATE", "")], \
             dict(dev=None, dir="agg", n=t.K * t.J)
+    # k lanes lost on one port: F3near2 / F3far2 (x4 -> x2, port at 1/2), F3near3 / F3far3
+    # (x4 -> x1, port at 1/4). n = the port's physical lane count x planes (the original 1/N
+    # requirement counts single-lane loss; k lanes remove k/N of the device's lane capacity).
+    for side, dev, ddir in (("F3near", npu00, near_dir), ("F3far", npu10, far_dir)):
+        if fault.startswith(side) and fault[len(side):].isdigit():
+            k = int(fault[len(side):])
+            assert 1 <= k < t.lanes, f"{fault}: 1 <= lanes lost < {t.lanes}"
+            return [(t_ns, dev["id"], dev["ports"][p], "DEGRADE", f"{t.lanes - k}/{t.lanes}")], \
+                dict(dev=dev["id"], dir=ddir, n=len(dev["planes"]) * t.lanes, lanes_lost=k)
     if fault == "F3near":   # one lane lost on the sender's plane-3 port (x4 -> x3)
         return [(t_ns, npu00["id"], npu00["ports"][p], "DEGRADE", f"{t.lanes - 1}/{t.lanes}")], \
             dict(dev=npu00["id"], dir=near_dir, n=len(npu00["planes"]) * t.lanes)
@@ -391,7 +400,8 @@ def fault_rows(t, fault, t_ns, scenario="d2d"):
 
 FAULTS = ["F0", "F1near", "F1far", "F2up", "F3near", "F3far", "F4",
           "F1ssd", "F3ssd", "F1nic", "F3nic", "F4p4",
-          "H1near", "H1far", "H2up", "H4", "H1ssd", "H4p4"]
+          "H1near", "H1far", "H2up", "H4", "H1ssd", "H4p4",
+          "F3near2", "F3far2", "F3near3", "F3far3"]
 
 
 # ---------------- schemes ----------------

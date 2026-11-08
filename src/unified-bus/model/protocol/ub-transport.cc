@@ -301,6 +301,24 @@ TypeId UbTransportChannel::GetTypeId(void)
                       UintegerValue(UINT32_MAX),
                       MakeUintegerAccessor(&UbTransportChannel::m_readRequestVl),
                       MakeUintegerChecker<uint32_t>())
+        .AddAttribute("ReadQuotaDelayTarget",
+                      "If > 0: per-TP READ quota follows a delay target. Each fully answered READ "
+                      "segment's completion latency L updates Q <- Q (1 + g (T/L - 1)) (T/L "
+                      "clamped to [0.5, 2]), Q in [ReadQuotaMinBytes, MaxOutstandingReadBytes]. "
+                      "0 = fixed byte quota (default).",
+                      TimeValue(Seconds(0)),
+                      MakeTimeAccessor(&UbTransportChannel::m_readDelayTarget),
+                      MakeTimeChecker())
+        .AddAttribute("ReadQuotaGain",
+                      "Gain g of the delay-target READ quota update.",
+                      DoubleValue(0.25),
+                      MakeDoubleAccessor(&UbTransportChannel::m_readQuotaGain),
+                      MakeDoubleChecker<double>(0.0, 1.0))
+        .AddAttribute("ReadQuotaMinBytes",
+                      "Lower bound of the delay-target READ quota (one segment keeps progress).",
+                      UintegerValue(16384),
+                      MakeUintegerAccessor(&UbTransportChannel::m_readQuotaMinBytes),
+                      MakeUintegerChecker<uint64_t>(1))
         .AddAttribute("ReadQuotaFollowsUsablePlanes",
                       "Treat MaxOutstandingReadBytes as a per-flow budget spread over the TP group: "
                       "when members are isolated (link sub-health) each remaining TP's quota grows "
@@ -2348,6 +2366,7 @@ UbTransportChannel::UpdateReceiveWindowAndCollectCompletedTa(
     if (m_outstandingReadBytes > 0) {
         const uint64_t arrived = std::min<uint64_t>(m_outstandingReadBytes, ctx.payloadBytes);
         m_outstandingReadBytes -= arrived;
+        NoteReadArrived(arrived);
         if (arrived > 0) {
             // READ responses arriving on this port: did the last hop (this node's ingress queue
             // on this plane) mark them? Requester-local signal for read-request steering.
@@ -2576,6 +2595,7 @@ UbTransportChannel::TryContinueAcceptedWqeSegment(Ptr<UbWqeSegment> segment)
 
     if (IsZeroPayloadReadRequest(segment)) {
         m_outstandingReadBytes += segment->GetSize();
+        NoteReadIssued(segment->GetSize());
     }
     m_admittedBytes += segment->GetSize();
     segment->SetTpn(m_tpn);
@@ -2588,8 +2608,59 @@ UbTransportChannel::TryContinueAcceptedWqeSegment(Ptr<UbWqeSegment> segment)
     return true;
 }
 
+void
+UbTransportChannel::NoteReadIssued(uint64_t bytes)
+{
+    if (m_readDelayTarget.IsStrictlyPositive()) {
+        m_readIssue.push_back({Simulator::Now(), bytes});
+    }
+}
+
+void
+UbTransportChannel::NoteReadArrived(uint64_t bytes)
+{
+    // Responses of one TP arrive in request order: the oldest outstanding request is the one being
+    // answered. When it is fully answered, its completion latency (request admission -> last
+    // response byte, both observed locally) drives a delay-target READ quota: the TP may commit
+    // about ReadQuotaDelayTarget worth of its own observed service, so a slow path (degraded lane,
+    // congested responder or ingress) holds a bounded amount of committed response data instead
+    // of a fixed byte quota multiplied by its fan-in.
+    while (bytes > 0 && !m_readIssue.empty()) {
+        auto& head = m_readIssue.front();
+        const uint64_t take = std::min(bytes, head.second);
+        head.second -= take;
+        bytes -= take;
+        if (head.second > 0) {
+            break;
+        }
+        const double rtt = std::max(1.0, static_cast<double>((Simulator::Now() - head.first).GetNanoSeconds()));
+        m_readIssue.pop_front();
+        const double target = static_cast<double>(m_readDelayTarget.GetNanoSeconds());
+        if (m_readQuotaDyn <= 0.0) {
+            m_readQuotaDyn = static_cast<double>(m_maxOutstandingReadBytes);
+        }
+        const double ratio = std::clamp(target / rtt, 0.5, 2.0);
+        m_readQuotaDyn *= 1.0 + m_readQuotaGain * (ratio - 1.0);
+        m_readQuotaDyn = std::clamp(m_readQuotaDyn, static_cast<double>(m_readQuotaMinBytes),
+                                    static_cast<double>(m_maxOutstandingReadBytes));
+    }
+}
+
 uint64_t
 UbTransportChannel::EffectiveReadQuotaBytes() const
+{
+    const uint64_t base = EffectiveReadQuotaBase();
+    if (!m_readDelayTarget.IsStrictlyPositive() || m_readQuotaDyn <= 0.0) {
+        return base;
+    }
+    // The dynamic quota scales the base (which may already be re-spread over usable planes).
+    const double scaled = m_readQuotaDyn * static_cast<double>(base) /
+                          static_cast<double>(std::max<uint64_t>(m_maxOutstandingReadBytes, 1));
+    return std::max<uint64_t>(m_readQuotaMinBytes, static_cast<uint64_t>(scaled));
+}
+
+uint64_t
+UbTransportChannel::EffectiveReadQuotaBase() const
 {
     if (!m_readQuotaFollowsUsablePlanes) {
         return m_maxOutstandingReadBytes;
@@ -2711,6 +2782,7 @@ UbTransportChannel::ForceAdmitWqeSegment(Ptr<UbWqeSegment> segment)
     // once (to a member that died) and must not wait behind the shallow pipeline limit.
     if (IsZeroPayloadReadRequest(segment)) {
         m_outstandingReadBytes += segment->GetSize();
+        NoteReadIssued(segment->GetSize());
     }
     m_admittedBytes += segment->GetSize();
     segment->SetTpn(m_tpn);

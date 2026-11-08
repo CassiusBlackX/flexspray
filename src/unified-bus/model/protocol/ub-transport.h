@@ -827,6 +827,14 @@ private:
   private:
     bool HeadSegmentIsCcExempt() const;
     bool m_readQuotaFollowsUsablePlanes{false};
+    Time m_readDelayTarget{Seconds(0)};
+    double m_readQuotaGain{0.25};
+    uint64_t m_readQuotaMinBytes{16384};
+    double m_readQuotaDyn{0.0};
+    std::deque<std::pair<Time, uint64_t>> m_readIssue;
+    void NoteReadIssued(uint64_t bytes);
+    void NoteReadArrived(uint64_t bytes);
+    uint64_t EffectiveReadQuotaBase() const;
     bool m_capacityWakePending{false};
     uint64_t EffectiveReadQuotaBytes() const;
     // Separate send-pipeline depth for READ segments (0 = shared with writes).
