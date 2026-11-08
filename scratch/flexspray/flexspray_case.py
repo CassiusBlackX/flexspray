@@ -566,6 +566,10 @@ def main(argv=None):
     ap.add_argument("--servers", type=int, default=4)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--sample-ns", type=int, default=1000)
+    ap.add_argument("--map", type=int, default=0,
+                    help="held-out traffic mapping: 1 relabels every endpoint (server s -> s+1, "
+                         "device index i -> count-1-i) while the fault stays put, so faults hit "
+                         "different traffic roles than in the tuning runs")
     ap.add_argument("--links-per-pair", type=int, default=3,
                     help="parallel L1-L2 links; 3 = non-blocking (12 up / 11 down), 2 = 1.375:1 "
                          "oversubscribed")
@@ -575,6 +579,12 @@ def main(argv=None):
     t.write(a.out)
     fn = SCENARIOS[a.scenario]
     tasks = fn(t, a.scale, seed=a.seed) if a.scenario in SEEDED else fn(t, a.scale)
+    if a.map:
+        cnt = {typ: c for typ, c, _ in DEVICE_TYPES}
+        def remap(hid):
+            h = t.hosts[hid]
+            return t.find_host(h["type"], (h["server"] + a.map) % t.S, cnt[h["type"]] - 1 - h["idx"])["id"]
+        tasks = [(remap(x[0]), remap(x[1])) + tuple(x[2:]) for x in tasks]
     write_traffic(a.out, tasks)
     cc = write_attrs(a.out, a.scheme, a.sample_ns)
     rows, finfo = fault_rows(t, a.fault, a.fault_ns, a.scenario)
@@ -585,7 +595,7 @@ def main(argv=None):
                 f.write(",".join(map(str, r)) + "\n")
     meta = t.meta()
     meta.update(scenario=a.scenario, fault=a.fault, fault_ns=a.fault_ns if rows else None,
-                fault_rows=rows, fault_info=finfo, scheme=a.scheme, cc=cc,
+                fault_rows=rows, fault_info=finfo, scheme=a.scheme, cc=cc, traffic_map=a.map,
                 ack_bytes=ACK_BYTES[cc], scale=a.scale, seed=a.seed)
     with open(os.path.join(a.out, "case_meta.json"), "w") as f:
         json.dump(meta, f, indent=1)

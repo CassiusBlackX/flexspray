@@ -28,7 +28,7 @@ def work(item):
             d.update(loss=fl["loss"], net=fl["agg_loss"], n=(1.0 / fl["frac"]) if fl.get("frac") else fl["n"], reb=fl["rebalance_us"],
                      ideal=1 - h["t_ideal_us"] / r["t_ideal_us"], full=fl["loss_full"],
                      trans=fl["loss_trans"], expo=r.get("exposure_bytes"), drain=r.get("drain_us"),
-                     effnd=r.get("eff_nodrain"))
+                     effnd=r.get("eff_nodrain"), efffix=r.get("eff_fixed"))
     return (sc, scheme, f), d
 import concurrent.futures as cf
 items = [(k, f, r, fs.get("F0")) for k, fs in by.items() for f, r in fs.items()]
@@ -47,7 +47,8 @@ for k, v in cell.items():
                             loss_max=mx([x.get("loss") for x in v]), full_max=mx([x.get("full") for x in v]),
                             trans_max=mx([x.get("trans") for x in v]), net_max=mx([x.get("net") for x in v]),
                             expo_max=mx([x.get("expo") for x in v]), drain_max=mx([x.get("drain") for x in v]),
-                            effnd=mean([x.get("effnd") for x in v]), eff_min=mn([x["eff"] for x in v]))
+                            effnd=mean([x.get("effnd") for x in v]), eff_min=mn([x["eff"] for x in v]),
+                            efffix_min=mn([x.get("efffix") for x in v]))
 json.dump(out, open(os.path.join(root, "summary.json"), "w"), indent=1)
 def fmt(x, pct=False):
     if x is None: return "-"

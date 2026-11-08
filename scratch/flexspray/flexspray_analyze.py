@@ -24,6 +24,7 @@ from scipy.sparse import coo_matrix
 
 MTU = 4096
 DATA_HDR = 78
+FIXED_NOTIFY_NS = 2000  # fixed-rule reference: remote ends learn of an isolation 2 us after t_f
 
 
 def load_case(case):
@@ -386,6 +387,15 @@ def analyze(case):
     allow, drain = drained_after_fault(meta, samples)
     t_ideal_nodrain = ideal_makespan_us(meta, flows, ack)
     t_ideal = ideal_makespan_us(meta, flows, ack, allow) if allow else t_ideal_nodrain
+    # Scheme-independent reference (fixed rule, agreed before running any scheme): an isolated
+    # resource keeps full capacity until the remote ends are notified (t_f + notify delay) and has
+    # none afterwards; a lane degrade takes effect at t_f. Unlike t_ideal (conditional on the
+    # drain each scheme happened to get), every scheme is measured against the same bound, so
+    # eff_fixed may exceed 1 when a scheme kept using an isolated port (see exposure).
+    t_ideal_fixed = t_ideal_nodrain
+    if meta.get("fault_rows") and any(r[3] in ("ISOLATE", "ISOLATE_NODE") for r in meta["fault_rows"]):
+        shift = dict(meta, fault_ns=meta["fault_ns"] + FIXED_NOTIFY_NS)
+        t_ideal_fixed = ideal_makespan_us(shift, flows, ack)
     start, done = read_tasks(case)
     bulk_ids = [f["task"] for f in flows]
     missing = [i for i in bulk_ids if i not in done]
@@ -395,7 +405,8 @@ def analyze(case):
                fault=meta["fault"], scheme=meta["scheme"], seed=meta["seed"],
                t_ideal_us=t_ideal, makespan_us=makespan, missing_tasks=len(missing),
                eff=t_ideal / makespan if comp and not missing else 0.0,
-               t_ideal_nodrain_us=t_ideal_nodrain,
+               t_ideal_nodrain_us=t_ideal_nodrain, t_ideal_fixed_us=t_ideal_fixed,
+               eff_fixed=t_ideal_fixed / makespan if comp and not missing else 0.0,
                eff_nodrain=t_ideal_nodrain / makespan if comp and not missing else 0.0, **drain)
     by_cls = collections.defaultdict(list)
     for f in flows:
