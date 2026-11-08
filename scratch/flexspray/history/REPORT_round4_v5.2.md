@@ -1,4 +1,8 @@
-# FlexSpray：UB 多平面 Packet-Spray 负载均衡与拥塞控制 —— 实验报告（第四轮，v5.2）
+# FlexSpray 实验报告（历史：第四轮，v5.2）
+
+> **历史文件**。这是第四轮冻结 `flexspray-v5.2` 时的报告，正文未改，只更新了整理后的数据路径。
+> 当前版本见 `../REPORT.md`，交付入口见 `../DELIVERY.md`。
+> 本文的若干结论在第五轮被修正：T14 已被证实并修复；replay fence 存在活性缺陷，已修复；读混跑最差设备已由 0.889 提高。
 
 本文件的第 0 节是**当前版本（v5.2）**的结论；第三轮（v5.1）和第二轮（v4）的内容保留在后面，作为历史记录。
 
@@ -45,7 +49,7 @@ v5.2 = v5.1 + `AiFraction=0.15` + replay fence（默认开启）+ 两处修复�
 5. 未见种子上的终验、消融和对照方案；
 6. 全部分析器。
 
-本报告的数字来自同样的命令（`/home/cassius/ub/work/bin/round11.sh`、`round13.sh`，快速构建树与主树逐字节一致）。
+本报告的数字来自同样的命令（`/home/cassius/ub/work/bin/round11.sh`、`round13.sh`（输出位于 `exp/v5.2/`），快速构建树与主树逐字节一致）。
 
 ### 0.2 按题目要求的结论（当前版本）
 
@@ -233,7 +237,7 @@ oracle 的作用范围：
 
 ### 0.10 数据索引
 
-| 目录（`/home/cassius/ub/work/exp/`） | 内容 |
+| 目录（`/home/cassius/ub/work/exp/v5.2/`） | 内容 |
 |---|---|
 | `recov4`、`recov4off`、`recov6`–`recov8`、`regress1` | 恢复 oracle 的 14 个用例（fence 开 / 关）、降速反例、回归 |
 | `tailhang*`、`tailfix` | 4 KB 尾段挂起的复现与修复后重测 |
@@ -410,7 +414,7 @@ FlexSpray v5.1 = v4，加上以下四项：
 | T1：先核查能力，再做最小闭环；事务正确、无永久 credit 阻塞；报告丢失、重传和恢复 | 能力核查表；64/64 完成；丢失、重发、检测时间分开报告 | 原子操作重发；死 TP 的回收；所有成员都失效时的处理 |
 | 外部依赖 | 无法推进：指定 benchmark（T2）、口径约定（T7）、真实设备对齐（T4） | — |
 
-数据：`/home/cassius/ub/work/exp/{r9_core,r9_cov,r9_osub,r9_map,r10_hard,r10_hardabl,r10_neg,r10_buf,r10_abl,r10_ts}`，对照方案的硬断链结果在 `r8_hard`。
+数据：`/home/cassius/ub/work/archive/exp_history/{r9_core,r9_cov,r9_osub,r9_map,r10_hard,r10_hardabl,r10_neg,r10_buf,r10_abl,r10_ts}`，对照方案的硬断链结果在 `r8_hard`。
 
 ---
 
@@ -571,7 +575,7 @@ v3 各项改动的动机，均来自本轮新覆盖暴露出的根因：
 
 故障瞬态窗口（最初 10 µs）的最差值为 0.919，出现在 F4p4 的 SSD0。
 
-全表见 `/home/cassius/ub/work/exp/final4/portutil.md` 和 `cover4/portutil.md`。
+全表见 `/home/cassius/ub/work/archive/exp_history/final4/portutil.md` 和 `cover4/portutil.md`。
 
 需要说明的一点：在故障场景中，"全程"口径对部分设备偏悲观。如果设备的剩余流量只剩下发往受损对端的那部分，它的其他端口会提前空闲，即使在 LP 的最优调度下也是这样。例如 F4p4 中的 NPU6，它从 SSD 读 KV 只剩平面 5 可用，全程利用率为 0.682，但该 case 的效率是 0.954。所以故障场景以"故障后稳态"和效率为准。
 
