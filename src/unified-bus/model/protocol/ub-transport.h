@@ -4,6 +4,7 @@
 
 #include <memory>
 #include <map>
+#include <unordered_map>
 #include <optional>
 #include <queue>
 #include <deque>
@@ -422,6 +423,11 @@ public:
     void MarkDead();
     bool IsDead() const { return m_dead; }
     void RunCapacityWake();
+    /** EWMA of the marked fraction of READ responses arriving on this TP's local port (all TPs
+     *  of the node on that port). */
+    double GetPortResponseMarkFraction() const;
+    static std::unordered_map<uint64_t, double>& PortResponseMarkEwma();
+    static constexpr double kRespMarkGain = 1.0 / 32;
     /** Replay fence at the target: drop every later data packet of this TP pair. */
     void SetInboundFenced() { m_inboundFenced = true; }
     bool IsInboundFenced() const { return m_inboundFenced; }

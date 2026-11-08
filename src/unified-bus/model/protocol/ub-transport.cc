@@ -12,6 +12,7 @@
 #include "ns3/ub-caqm.h"
 #include "ns3/ub-controller.h"
 #include "ns3/ub-dcqcn.h"
+#include "ns3/ub-spraycc.h"
 #include "ns3/ub-lifecycle.h"
 #include "ns3/ub-modulo-sequence.h"
 #include "ns3/ub-queue-manager.h"
@@ -2347,6 +2348,13 @@ UbTransportChannel::UpdateReceiveWindowAndCollectCompletedTa(
     if (m_outstandingReadBytes > 0) {
         const uint64_t arrived = std::min<uint64_t>(m_outstandingReadBytes, ctx.payloadBytes);
         m_outstandingReadBytes -= arrived;
+        if (arrived > 0) {
+            // READ responses arriving on this port: did the last hop (this node's ingress queue
+            // on this plane) mark them? Requester-local signal for read-request steering.
+            double& ewma = PortResponseMarkEwma()[(uint64_t{m_nodeId} << 16) | m_sport];
+            ewma = (1.0 - kRespMarkGain) * ewma +
+                   kRespMarkGain * (UbHostSprayCc::IsMarked(ctx.networkHeader) ? 1.0 : 0.0);
+        }
         if (arrived > 0 && m_maxOutstandingReadBytes > 0) {
             // Freed read quota is a capacity transition for this TP's group.
             TryContinueJettyTransmission();
@@ -2952,6 +2960,20 @@ UbTransportChannel::GetDeliveryRateBps() const
     Ptr<Node> node = NodeList::GetNode(m_nodeId);
     Ptr<UbPort> port = node == nullptr ? nullptr : DynamicCast<UbPort>(node->GetDevice(m_sport));
     return port == nullptr ? 0.0 : static_cast<double>(port->GetDataRate().GetBitRate());
+}
+
+std::unordered_map<uint64_t, double>&
+UbTransportChannel::PortResponseMarkEwma()
+{
+    static std::unordered_map<uint64_t, double> ewma;
+    return ewma;
+}
+
+double
+UbTransportChannel::GetPortResponseMarkFraction() const
+{
+    const auto it = PortResponseMarkEwma().find((uint64_t{m_nodeId} << 16) | m_sport);
+    return it == PortResponseMarkEwma().end() ? 0.0 : it->second;
 }
 
 double

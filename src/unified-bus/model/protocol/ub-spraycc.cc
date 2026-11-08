@@ -300,6 +300,12 @@ UbHostSprayCc::DecodeFeedback(uint32_t raw, uint32_t& marked, uint32_t& total)
     total = raw & 0xFFFF;
 }
 
+bool
+UbHostSprayCc::IsMarked(const UbIpBasedNetworkHeader& header)
+{
+    return header.GetMode() == kSprayCcMode && header.GetFecn() == kSprayCcMarked;
+}
+
 void
 UbHostSprayCc::OnReceiverDataPacketReceived(uint64_t psn, uint32_t size, UbIpBasedNetworkHeader header)
 {

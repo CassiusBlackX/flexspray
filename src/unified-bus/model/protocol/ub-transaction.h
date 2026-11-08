@@ -665,6 +665,9 @@ enum class UbTpgDispatchPolicy : uint32_t
         UbTpgDispatchPolicy m_tpgDispatchPolicy{UbTpgDispatchPolicy::FIRST_ADMISSIBLE};
         double m_tpgDispatchSlack{-1.0};
         bool m_replayFence{true};
+        double m_readIngressMarkWeight{0.0};
+        double ScoreMember(const Ptr<UbTransportChannel>& transport,
+                           const Ptr<UbWqeSegment>& segment) const;
         bool m_targetExecutionStarted{false};
 
       public:

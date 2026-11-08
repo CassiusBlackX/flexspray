@@ -54,6 +54,8 @@ class UbHostSprayCc : public UbCongestionControl
     void OnSenderRetransmissionPacketSent(uint32_t psn, uint32_t size) override;
     void OnSenderPrepareIpBasedNetworkHeader(UbIpBasedNetworkHeader& header) override;
     void OnSenderDataPacketSent(uint32_t psn, uint32_t size) override;
+    /** True if a switch marked this packet (SprayCC edge marking: queueing at the last hop). */
+    static bool IsMarked(const UbIpBasedNetworkHeader& header);
     void OnReceiverDataPacketReceived(uint64_t psn,
                                       uint32_t size,
                                       UbIpBasedNetworkHeader header) override;

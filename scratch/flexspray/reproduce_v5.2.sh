@@ -19,7 +19,7 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd); FS=$ROOT/scratch/flexspray
 PY=${PY:-python3}; BIN=$ROOT/build/scratch/ns3.44-ub-quick-example
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 mkdir -p "$OUT"; cd "$OUT"
-run() { name=$1; shift; echo "=== $name $(date +%T)"; $PY $FS/flexspray_matrix.py --name $name --jobs $J --stop-ms 3 --bin $BIN "$@" | grep -E "rc=|Traceback|Error" || true; }
+run() { name=$1; shift; echo "=== $name $(date +%T)"; $PY $FS/flexspray_matrix.py --name $name --root "$OUT" --jobs $J --stop-ms 3 --bin $BIN "$@" | grep -E "rc=|Traceback|Error" || true; }
 F7=F0,F1near,F1far,F2up,F3near,F3far,F4; SC=d2d,d2dread,h2d,a2a,mixed,a2aread,mixedread
 V=flex+spraycc; A5=flex+spraycc+ai5
 

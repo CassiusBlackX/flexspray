@@ -64,7 +64,7 @@ def main():
     ap.add_argument("--seeds", default="1")
     ap.add_argument("--jobs", type=int, default=48)
     ap.add_argument("--bin", default=DEFAULT_BIN)
-    ap.add_argument("--root", default="/home/cassius/ub/work/exp")
+    ap.add_argument("--root", default=".", help="parent of the matrix output directory (default: cwd)")
     ap.add_argument("--scale", type=float, default=1.0)
     ap.add_argument("--timeout", type=int, default=3600)
     ap.add_argument("--stop-ms", type=int, default=3, help="simulated-time cap (stalled runs)")

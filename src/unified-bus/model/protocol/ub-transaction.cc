@@ -147,6 +147,13 @@ TypeId UbTransaction::GetTypeId(void)
             MakeDoubleAccessor(&UbTransaction::m_tpgDispatchSlack),
             MakeDoubleChecker<double>())
         .AddAttribute(
+            "ReadIngressMarkWeight",
+            "MIN_DRAIN_TIME only: a READ request member's score is multiplied by (1 + w x the "
+            "marked fraction of READ responses recently received on its local port). 0 = off.",
+            DoubleValue(0.0),
+            MakeDoubleAccessor(&UbTransaction::m_readIngressMarkWeight),
+            MakeDoubleChecker<double>(0.0))
+        .AddAttribute(
             "ReplayFence",
             "Hard link-down recovery: re-dispatched segments carry the dead initiator TPN so the "
             "target fences that TP pair (drops its later packets) before executing the replay.",
@@ -196,6 +203,21 @@ UbTransaction::UbTransaction(Ptr<Node> node)
     m_random = CreateObject<UniformRandomVariable>();
     m_random->SetAttribute("Min", DoubleValue(0.0));
     m_random->SetAttribute("Max", DoubleValue(1.0));
+}
+
+double
+UbTransaction::ScoreMember(const Ptr<UbTransportChannel>& transport,
+                           const Ptr<UbWqeSegment>& segment) const
+{
+    const double own = transport->EstimateDrainTimeNs(segment->GetSize());
+    if (m_readIngressMarkWeight > 0.0 && segment->GetType() == UbTransactionOpcode::READ &&
+        segment->GetSegmentKind() == UbTransactionSegmentKind::REQUEST)
+    {
+        // The response to this request will queue at this node's ingress on the member's plane;
+        // edge marks on recent responses there say that queue is standing.
+        return own * (1.0 + m_readIngressMarkWeight * transport->GetPortResponseMarkFraction());
+    }
+    return own;
 }
 
 void UbTransaction::TpInit(Ptr<UbTransportChannel> tp)
@@ -1259,7 +1281,7 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
             }
             if (scoreMembers && m_tpgDispatchSlack >= 0.0)
             {
-                const double liveNs = transport->EstimateDrainTimeNs(segment->GetSize());
+                const double liveNs = ScoreMember(transport, segment);
                 if (bestLiveDrainNs < 0.0 || liveNs < bestLiveDrainNs)
                 {
                     bestLiveDrainNs = liveNs;
@@ -1274,7 +1296,7 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
                     break;
                 }
                 // Strict '<' keeps cursor order on ties.
-                const double drainNs = transport->EstimateDrainTimeNs(segment->GetSize());
+                const double drainNs = ScoreMember(transport, segment);
                 if (admittedTp == nullptr || drainNs < bestDrainNs)
                 {
                     bestDrainNs = drainNs;
