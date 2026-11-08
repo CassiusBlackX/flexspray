@@ -23,6 +23,8 @@ For every device and direction (tx / rx), over a steady window, this reports:
            (device bytes in that direction / T_ideal_healthy), as a fraction of ceil: need < 1 means the
            workload does not demand the device's full port capacity, so util < 1 is not a loss.
 
+Busy window (the primary per-device number): [first release of the device's flows in that
+direction, last completion]; for workloads without release delays this is [0, last completion].
 Windows: healthy = [10 us, 0.95 * first bulk completion]; with a fault, pre = [10 us, t_f] and
 post = [t_f + 10 us, 0.95 * first completion] (plus `trans` = [t_f, t_f + 10 us] for the
 transient).
@@ -118,9 +120,14 @@ def device_windows(case):
     line = meta["rate_gbps"] * 1e9
     # Last completion per device and direction -> the device's own busy period [0, t_last].
     t_last = {"tx": collections.defaultdict(float), "rx": collections.defaultdict(float)}
+    # First release per device and direction: with staggered starts a device has no work before
+    # its first flow is released, so its busy period is [first release, last completion].
+    t_first = {"tx": {}, "rx": {}}
     for f in flows:
         t_last["tx"][f["src"]] = max(t_last["tx"][f["src"]], done[f["task"]])
         t_last["rx"][f["dst"]] = max(t_last["rx"][f["dst"]], done[f["task"]])
+        for dr, d in (("tx", f["src"]), ("rx", f["dst"])):
+            t_first[dr][d] = min(t_first[dr].get(d, float("inf")), f["release_us"])
 
     # Business bytes per device and direction for the busy window (all tasks incl. control, each
     # byte once, credited when its task completed).
@@ -193,9 +200,11 @@ def device_windows(case):
                 if wname == "busy":
                     if d not in t_last[dr]:
                         continue
-                    r = measure(d, h, dr, 0.0, t_last[dr][d], False, tf, with_biz=True)
+                    t0 = t_first[dr].get(d, 0.0)
+                    r = measure(d, h, dr, t0, t_last[dr][d], False, tf, with_biz=True)
                     if r:
                         r["t_last_us"] = t_last[dr][d]
+                        r["t_first_us"] = t0
                 else:
                     r = measure(d, h, dr, t0, t1, wname == "post", tf)
                 if r:
