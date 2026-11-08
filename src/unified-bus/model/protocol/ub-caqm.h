@@ -88,6 +88,7 @@ public:
                                         UbCongestionExtTph header,
                                         uint32_t retransmitBytes) override;
     void OnSenderRetransmissionRollback(uint32_t retransmitBytes) override;
+    void RollbackInflight(uint32_t retransmitBytes);
     void OnSenderRetransmissionPacketSent(uint32_t psn, uint32_t size) override;
 
   private:

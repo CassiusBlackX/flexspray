@@ -36584,7 +36584,7 @@ class UbCaqmStaleAckDoesNotRegressInflightTest : public TestCase
 {
   public:
     UbCaqmStaleAckDoesNotRegressInflightTest()
-        : TestCase("UnifiedBus - CAQM ignores stale cumulative ACK sequences")
+        : TestCase("UnifiedBus - CAQM ignores stale cumulative ACK sequences and releases on GBN rollback")
     {
     }
 
@@ -36607,6 +36607,27 @@ class UbCaqmStaleAckDoesNotRegressInflightTest : public TestCase
         NS_TEST_ASSERT_MSG_EQ(cc->GetInflightForTest(), 0u, "newest ACK acknowledges everything");
         ack(0, 4096); // overtaken older ACK
         NS_TEST_ASSERT_MSG_EQ(cc->GetInflightForTest(), 0u, "stale ACK must not resurrect bytes");
+        // GBN timeout: psn 2..9 sent, 2..5 acknowledged, 6..9 lost. The rollback must release the
+        // lost bytes (it used to keep them in flight: the retransmission stayed CC-limited and the
+        // TP hung - adaptive+CAQM+rtx on a fabric link-down).
+        for (uint32_t psn = 2; psn < 10; ++psn)
+        {
+            cc->OnSenderDataPacketSent(psn, 4096);
+        }
+        ack(5, 8192 + 4 * 4096);
+        NS_TEST_ASSERT_MSG_EQ(cc->GetInflightForTest(), 4u * 4096, "psn 6..9 in flight");
+        cc->OnSenderRetransmissionRollback(4 * 4096);
+        NS_TEST_ASSERT_MSG_EQ(cc->GetInflightForTest(), 0u, "timeout releases the lost bytes");
+        NS_TEST_ASSERT_MSG_EQ(cc->IsCcLimited(4096), false, "retransmission is not CC-blocked");
+        cc->OnSenderRetransmissionRollback(4 * 4096);
+        NS_TEST_ASSERT_MSG_EQ(cc->GetInflightForTest(), 0u, "repeated timeout: no underflow");
+        for (uint32_t psn = 6; psn < 10; ++psn)
+        {
+            cc->OnSenderRetransmissionPacketSent(psn, 4096);
+        }
+        NS_TEST_ASSERT_MSG_EQ(cc->GetInflightForTest(), 4u * 4096, "retransmissions in flight");
+        ack(9, 8192 + 8 * 4096);
+        NS_TEST_ASSERT_MSG_EQ(cc->GetInflightForTest(), 0u, "late cumulative ACK clears them");
         cc->Dispose();
         GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(false));
         Simulator::Destroy();

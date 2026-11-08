@@ -461,16 +461,7 @@ UbHostCaqm::OnSenderCongestionNotification(TpOpcode opcode,
         return;
     }
 
-    if (m_dataByteSent >= retransmitBytes)
-    {
-        m_dataByteSent -= retransmitBytes;
-    }
-    else
-    {
-        m_dataByteSent = 0;
-    }
-
-    m_inFlight = std::min(m_inFlight, m_dataByteSent);
+    RollbackInflight(retransmitBytes);
     ApplySenderCetphFeedback(psn, header);
 }
 
@@ -481,8 +472,21 @@ UbHostCaqm::OnSenderRetransmissionRollback(uint32_t retransmitBytes)
     {
         return;
     }
-    m_dataByteSent = (m_dataByteSent >= retransmitBytes) ? m_dataByteSent - retransmitBytes : 0;
-    m_inFlight = std::min(m_inFlight, m_dataByteSent);
+    RollbackInflight(retransmitBytes);
+}
+
+void
+UbHostCaqm::RollbackInflight(uint32_t retransmitBytes)
+{
+    // GBN rewinds the send cursor: the rolled-back bytes are no longer in flight. m_dataByteSent
+    // is cumulative (same space as the receiver's acknowledged byte sequence), so the remaining
+    // in-flight is recomputed from the last acknowledged sequence. (min(m_inFlight,
+    // m_dataByteSent) released nothing: lost bytes kept the window full and the retransmission
+    // stayed CC-limited forever - adaptive+CAQM+rtx hung on a fabric link-down.)
+    const uint64_t floor = m_lastSequence;
+    m_dataByteSent = (m_dataByteSent >= floor + retransmitBytes) ? m_dataByteSent - retransmitBytes
+                                                                 : static_cast<uint32_t>(floor);
+    m_inFlight = m_dataByteSent >= floor ? m_dataByteSent - floor : 0;
 }
 
 void
