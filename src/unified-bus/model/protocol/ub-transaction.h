@@ -673,6 +673,7 @@ enum class UbTpgDispatchPolicy : uint32_t
                                                           const Ptr<UbWqeSegment>& segment) const;
         uint64_t m_lateBoundResponses{0};
         double m_readIngressMarkWeight{0.0};
+        bool m_readScoreReturnRate{false};
         double ScoreMember(const Ptr<UbTransportChannel>& transport,
                            const Ptr<UbWqeSegment>& segment) const;
         bool m_targetExecutionStarted{false};

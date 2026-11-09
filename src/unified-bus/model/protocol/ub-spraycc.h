@@ -70,6 +70,7 @@ class UbHostSprayCc : public UbCongestionControl
     double GetRateBps() const { return m_rateBps; }
     double GetAlpha() const { return m_alpha; }
     Time GetSrtt() const { return m_srtt; }
+    Time GetSmoothedRtt() const override { return m_srtt; }
     uint64_t GetInflightBytes() const { return m_inflight; }
     uint64_t GetWindowCapBytes() const;
 

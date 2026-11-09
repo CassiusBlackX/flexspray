@@ -239,6 +239,14 @@ TypeId UbTransportChannel::GetTypeId(void)
                       MakeTimeAccessor(&UbTransportChannel::SetBaseRto,
                                        &UbTransportChannel::GetBaseRto),
                       MakeTimeChecker())
+        .AddAttribute("RtoSrttFactor",
+                      "RTT-aware retransmission timer: the scheduled timeout is at least this "
+                      "factor times the congestion controller's smoothed RTT (which includes "
+                      "queueing delay). Avoids spurious go-back-N timeouts when a degraded "
+                      "bottleneck's queueing delay exceeds BaseRTO. 0 = off (fixed BaseRTO).",
+                      DoubleValue(0.0),
+                      MakeDoubleAccessor(&UbTransportChannel::m_rtoSrttFactor),
+                      MakeDoubleChecker<double>(0.0))
         .AddAttribute("RetransTimeoutMode",
                       "Retransmission timeout mode.",
                       EnumValue(UbRetransTimeoutMode::DYNAMIC),
@@ -339,6 +347,27 @@ TypeId UbTransportChannel::GetTypeId(void)
                       UintegerValue(65536),
                       MakeUintegerAccessor(&UbTransportChannel::m_readBacklogThreshold),
                       MakeUintegerChecker<uint64_t>())
+        .AddAttribute("ReadBudgetScope",
+                      "Scope of ReadPortBudgetBytes: 0 = per (node, port) [round 7], 1 = one "
+                      "budget per node (all ports). A per-port budget redirects refused requests "
+                      "to whichever port still has room, which can be the slow plane of the "
+                      "responder; a node budget refuses everywhere at once.",
+                      UintegerValue(0),
+                      MakeUintegerAccessor(&UbTransportChannel::m_readBudgetScope),
+                      MakeUintegerChecker<uint32_t>(0, 1))
+        .AddAttribute("ReadBudgetStrict",
+                      "Replace the per-TP progress exception (a TP with nothing outstanding may "
+                      "always admit one segment, overdraft up to TPs x segment) by: an idle TP may "
+                      "start only while the total is below the budget (overdraft <= 1 segment).",
+                      BooleanValue(false),
+                      MakeBooleanAccessor(&UbTransportChannel::m_readBudgetStrict),
+                      MakeBooleanChecker())
+        .AddAttribute("ReadBudgetWorkConserving",
+                      "The per-flow fair share of the READ budget binds only while some TP is "
+                      "waiting for budget; otherwise a flow may use unused budget.",
+                      BooleanValue(false),
+                      MakeBooleanAccessor(&UbTransportChannel::m_readBudgetWorkConserving),
+                      MakeBooleanChecker())
         .AddAttribute("ReadQuotaFollowsUsablePlanes",
                       "Treat MaxOutstandingReadBytes as a per-flow budget spread over the TP group: "
                       "when members are isolated (link sub-health) each remaining TP's quota grows "
@@ -356,6 +385,15 @@ TypeId UbTransportChannel::GetTypeId(void)
                       "0 = READ shares MaxActiveSendSegments with writes (legacy).",
                       UintegerValue(0),
                       MakeUintegerAccessor(&UbTransportChannel::m_maxActiveReadSegments),
+                      MakeUintegerChecker<uint32_t>())
+        .AddAttribute("MaxActiveReadResponseSegments",
+                      "Responder-side admission depth for READ responses (admitted to a TP, i.e. "
+                      "PSN-bound, but not fully sent), separate from the requester's READ request "
+                      "pipeline (MaxActiveReadSegments). Responses beyond it wait unbound in the "
+                      "transaction queue, where send-time rebinding may still choose another "
+                      "plane. 0 = responses share MaxActiveReadSegments (legacy).",
+                      UintegerValue(0),
+                      MakeUintegerAccessor(&UbTransportChannel::m_maxActiveReadRespSegments),
                       MakeUintegerChecker<uint32_t>())
         .AddAttribute("MaxActiveSendSegments",
                       "Maximum WQE segments per TP that may be admitted but not fully sent "
@@ -513,6 +551,12 @@ Time
 UbTransportChannel::GetBaseRto() const
 {
     return m_retrans->GetBaseRto();
+}
+
+Time
+UbTransportChannel::GetCcSmoothedRtt() const
+{
+    return m_congestionCtrl == nullptr ? Time(0) : m_congestionCtrl->GetSmoothedRtt();
 }
 
 void
@@ -2720,6 +2764,12 @@ UbTransportChannel::PortReadAdd(int64_t delta)
     }
     auto& st = PortRead()[PortKey()];
     st.outstanding = static_cast<uint64_t>(std::max<int64_t>(0, static_cast<int64_t>(st.outstanding) + delta));
+    st.peak = std::max(st.peak, st.outstanding);
+    static bool dumpScheduled = false;
+    if (!dumpScheduled && getenv("FLEX_BUDGET_STATS") != nullptr) {
+        dumpScheduled = true;
+        Simulator::ScheduleDestroy(&UbTransportChannel::DumpBudgetStats);
+    }
     // m_outstandingReadBytes is already updated by the caller
     const uint64_t before = static_cast<uint64_t>(static_cast<int64_t>(m_outstandingReadBytes) - delta);
     if (before == 0 && m_outstandingReadBytes > 0) {
@@ -2730,10 +2780,21 @@ UbTransportChannel::PortReadAdd(int64_t delta)
         --st.active;
         st.weight = std::max(0.0, st.weight - m_portWeight);
     }
-    if (delta < 0 && !st.waiters.empty()) {
-        // Budget freed on this port: wake the TPs that were refused for it (they re-check).
+    if (delta < 0 && !st.waiters.empty() &&
+        st.outstanding + 16384 <= m_readPortBudget) {
+        // Budget freed: wake refused TPs (they re-check) in FIFO order. Waking every waiter on
+        // every release made the event count quadratic (round 7: ~240k refusals per port); wake a
+        // few per release, and all once occupancy is below half the budget (no stall when the
+        // last outstanding bytes return with many waiters).
         std::deque<UbTransportChannel*> w;
-        w.swap(st.waiters);
+        if (st.outstanding < m_readPortBudget / 2 || st.waiters.size() <= 4) {
+            w.swap(st.waiters);
+        } else {
+            for (int i = 0; i < 4; ++i) {
+                w.push_back(st.waiters.front());
+                st.waiters.pop_front();
+            }
+        }
         for (UbTransportChannel* tp : w) {
             tp->m_portWaiting = false;
             if (!tp->m_capacityWakePending) {
@@ -2741,6 +2802,16 @@ UbTransportChannel::PortReadAdd(int64_t delta)
                 Simulator::ScheduleNow(&UbTransportChannel::RunCapacityWake, Ptr<UbTransportChannel>(tp));
             }
         }
+    }
+}
+
+void
+UbTransportChannel::DumpBudgetStats()
+{
+    // FLEX_BUDGET_STATS=1: per budget scope, peak outstanding READ bytes and refusals (stderr).
+    for (const auto& [key, st] : PortRead()) {
+        std::cerr << "BUDGET node=" << (key >> 16) << " port=" << (key & 0xFFFF)
+                  << " peak=" << st.peak << " refusals=" << st.refusals << "\n";
     }
 }
 
@@ -2821,6 +2892,26 @@ UbTransportChannel::NoteReadIssued(uint64_t bytes)
 void
 UbTransportChannel::NoteReadArrived(uint64_t bytes)
 {
+    // Return-rate sample windows (>= 2 us) cover only time with reads outstanding, i.e. when the
+    // response path (responder egress, fabric, this ingress) limited the rate, not the requester.
+    {
+        const int64_t now = Simulator::Now().GetNanoSeconds();
+        if (m_readRetWinStartNs < 0) {
+            m_readRetWinStartNs = now;
+            m_readRetWinBytes = 0;
+        }
+        m_readRetWinBytes += bytes;
+        const int64_t dt = now - m_readRetWinStartNs;
+        if (dt >= 2000) {
+            const double sample = static_cast<double>(m_readRetWinBytes) * 8e9 / static_cast<double>(dt);
+            m_readRetRateBps = m_readRetRateBps <= 0.0 ? sample : 0.875 * m_readRetRateBps + 0.125 * sample;
+            m_readRetWinStartNs = now;
+            m_readRetWinBytes = 0;
+        }
+        if (m_outstandingReadBytes == 0) {
+            m_readRetWinStartNs = -1;  // idle: the next window starts at the next response
+        }
+    }
     // Responses of one TP arrive in request order: the oldest outstanding request is the one being
     // answered. When it is fully answered, its completion latency (request admission -> last
     // response byte, both observed locally) drives a delay-target READ quota: the TP may commit
@@ -2894,7 +2985,8 @@ UbTransportChannel::CanContinueAcceptedWqeSegment(Ptr<const UbWqeSegment> segmen
         return false;
     }
     if (segment != nullptr && m_readPortBudget > 0 && m_portReadCounted &&
-        m_outstandingReadBytes > 0 && segment->GetType() == UbTransactionOpcode::READ &&
+        (m_outstandingReadBytes > 0 || m_readBudgetStrict) &&
+        segment->GetType() == UbTransactionOpcode::READ &&
         segment->GetSegmentKind() == UbTransactionSegmentKind::REQUEST) {
         // Aggregate READ admission per requester ingress port: every response requested through
         // this port arrives through it, so the port's total outstanding READ bytes is bounded
@@ -2908,8 +3000,21 @@ UbTransportChannel::CanContinueAcceptedWqeSegment(Ptr<const UbWqeSegment> segmen
         const double tot = st.weight + (m_outstandingReadBytes > 0 ? 0.0 : w);
         const uint64_t share = static_cast<uint64_t>(static_cast<double>(m_readPortBudget) * w /
                                                      std::max(tot, w));
-        if (st.outstanding + segment->GetSize() > m_readPortBudget ||
-            m_outstandingReadBytes + segment->GetSize() > std::max<uint64_t>(share, segment->GetSize())) {
+        bool refuse;
+        if (m_readBudgetStrict && m_outstandingReadBytes == 0) {
+            // Progress without a per-TP free segment: an idle TP may start only while the total is
+            // below B, so the aggregate never exceeds B by more than one segment (independent of
+            // the number of TPs). Refused idle TPs wait and are woken when budget is released.
+            refuse = st.outstanding >= m_readPortBudget;
+        } else {
+            const bool overTotal = st.outstanding + segment->GetSize() > m_readPortBudget;
+            const bool overShare =
+                m_outstandingReadBytes + segment->GetSize() > std::max<uint64_t>(share, segment->GetSize());
+            // Work conserving: the fair share binds only while someone is waiting for budget.
+            refuse = overTotal || (overShare && (!m_readBudgetWorkConserving || !st.waiters.empty()));
+        }
+        if (refuse) {
+            ++st.refusals;
             if (!m_portWaiting) {
                 m_portWaiting = true;
                 st.waiters.push_back(const_cast<UbTransportChannel*>(this));
@@ -2918,8 +3023,7 @@ UbTransportChannel::CanContinueAcceptedWqeSegment(Ptr<const UbWqeSegment> segmen
         }
     }
     if (segment != nullptr && m_maxActiveReadSegments > 0) {
-        return !IsWqeSegmentLimited() &&
-               CanScheduleSegmentOfKind(IsReadPipelineSegment(segment));
+        return !IsWqeSegmentLimited() && CanScheduleSegmentClass(PipelineClass(segment));
     }
     return segment != nullptr && !IsWqeSegmentLimited() && CanScheduleAnotherSegment();
 }
@@ -3223,9 +3327,38 @@ uint32_t UbTransportChannel::GetOutstandingUnackedSegmentCount() const
 bool UbTransportChannel::CanScheduleAnotherSegment() const
 {
     if (m_maxActiveReadSegments > 0) {
-        return CanScheduleSegmentOfKind(false) || CanScheduleSegmentOfKind(true);
+        return CanScheduleSegmentClass(0) || CanScheduleSegmentClass(1) ||
+               (m_maxActiveReadRespSegments > 0 && CanScheduleSegmentClass(2));
     }
     return GetActiveSendSegmentCount() < m_maxActiveSendSegments;
+}
+
+int
+UbTransportChannel::PipelineClass(const Ptr<const UbWqeSegment>& segment) const
+{
+    if (!IsReadPipelineSegment(segment)) {
+        return 0;
+    }
+    if (m_maxActiveReadRespSegments > 0 &&
+        segment->GetSegmentKind() == UbTransactionSegmentKind::RESPONSE) {
+        return 2;
+    }
+    return 1;
+}
+
+bool
+UbTransportChannel::CanScheduleSegmentClass(int cls) const
+{
+    uint32_t active = 0;
+    for (const Ptr<UbWqeSegment>& segment : m_wqeSegmentVector) {
+        if (segment != nullptr && !segment->IsSentCompleted() && PipelineClass(segment) == cls) {
+            ++active;
+        }
+    }
+    const uint32_t limit = cls == 0 ? m_maxActiveSendSegments
+                         : cls == 1 ? m_maxActiveReadSegments
+                                    : m_maxActiveReadRespSegments;
+    return active < limit;
 }
 
 bool UbTransportChannel::CanScheduleSegmentOfKind(bool read) const

@@ -1111,11 +1111,22 @@ UbRetransController::ScheduleTimeout()
     {
         ++m_timerTestStats.scheduleCalls;
     }
+    Time delay = m_rto;
+    if (m_transport.GetRtoSrttFactor() > 0.0)
+    {
+        // A timer shorter than the path's current RTT (queueing included) fires spuriously and
+        // go-back-N then re-sends the whole window into the slowest bottleneck.
+        const Time srtt = m_transport.GetCcSmoothedRtt();
+        if (srtt.IsStrictlyPositive())
+        {
+            delay = std::max(delay, srtt * m_transport.GetRtoSrttFactor());
+        }
+    }
     const UbLifecycleResourceIdentity& owner = m_transport.GetLifecycleOwner();
     if (owner.generation == 0)
     {
         m_retransEvent =
-            Simulator::Schedule(m_rto, &UbTransportChannel::ReTxTimeout, &m_transport);
+            Simulator::Schedule(delay, &UbTransportChannel::ReTxTimeout, &m_transport);
         return;
     }
     if (!m_trackedEventsInitialized)
@@ -1126,7 +1137,7 @@ UbRetransController::ScheduleTimeout()
     }
     const uint64_t token = m_trackedEvents.Track(owner);
     m_retransEvent =
-        Simulator::Schedule(m_rto, &UbRetransController::HandleTrackedTimeout, this, token);
+        Simulator::Schedule(delay, &UbRetransController::HandleTrackedTimeout, this, token);
     m_trackedEvents.Attach(owner, token, m_retransEvent, {});
 }
 

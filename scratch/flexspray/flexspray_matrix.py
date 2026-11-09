@@ -29,7 +29,12 @@ DEFAULT_BIN = os.path.join(HERE, "..", "..", "build", "scratch", "ns3.44-ub-quic
 
 
 def case_id(sc, fault, scheme, seed):
-    return f"{sc}__{fault}__{scheme.replace('/', '_')}__s{seed}"
+    cid = f"{sc}__{fault}__{scheme.replace('/', '_')}__s{seed}"
+    if len(cid) > 200:  # filesystem name limit: keep a readable prefix + a stable hash
+        import hashlib
+        h = hashlib.sha1(scheme.encode()).hexdigest()[:12]
+        cid = f"{sc}__{fault}__{scheme[:80].replace('/', '_')}~{h}__s{seed}"
+    return cid
 
 
 def run_one(root, sc, fault, scheme, seed, binary, extra, scale, timeout, stop_ms=3):

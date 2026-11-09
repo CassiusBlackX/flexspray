@@ -154,6 +154,14 @@ TypeId UbTransaction::GetTypeId(void)
             MakeDoubleAccessor(&UbTransaction::m_readIngressMarkWeight),
             MakeDoubleChecker<double>(0.0))
         .AddAttribute(
+            "ReadScoreReturnRate",
+            "MIN_DRAIN_TIME only: score a READ request member by its outstanding READ bytes over "
+            "its measured READ return rate (responses per second while reads were outstanding) "
+            "instead of the TP's own delivery rate. Default off.",
+            BooleanValue(false),
+            MakeBooleanAccessor(&UbTransaction::m_readScoreReturnRate),
+            MakeBooleanChecker())
+        .AddAttribute(
             "ResponseRebindRatio",
             "ResponseLateBinding only: rebind a READ response only if its request TP's drain-time "
             "estimate exceeds the best live TP's by this factor.",
@@ -233,7 +241,17 @@ double
 UbTransaction::ScoreMember(const Ptr<UbTransportChannel>& transport,
                            const Ptr<UbWqeSegment>& segment) const
 {
-    const double own = transport->EstimateDrainTimeNs(segment->GetSize());
+    double own = transport->EstimateDrainTimeNs(segment->GetSize());
+    if (m_readScoreReturnRate && segment->GetType() == UbTransactionOpcode::READ &&
+        segment->GetSegmentKind() == UbTransactionSegmentKind::REQUEST &&
+        transport->GetReadReturnRateBps() > 0.0)
+    {
+        // A READ request's cost is how long the responses already committed on this member take
+        // to come back: outstanding READ bytes over the measured return rate. Unlike the TP's own
+        // delivery rate (request/ACK path), this sees a slow responder egress or response path.
+        own = static_cast<double>(transport->GetOutstandingReadBytes() + segment->GetSize()) * 8e9 /
+              std::max(transport->GetReadReturnRateBps(), 1e6);
+    }
     if (m_readIngressMarkWeight > 0.0 && segment->GetType() == UbTransactionOpcode::READ &&
         segment->GetSegmentKind() == UbTransactionSegmentKind::REQUEST)
     {

@@ -2,6 +2,7 @@
 #ifndef UB_CONGESTION_CTRL_H
 #define UB_CONGESTION_CTRL_H
 
+#include "ns3/nstime.h"
 #include "ns3/object.h"
 #include "ns3/ub-datatype.h"
 #include "ns3/ub-header.h"
@@ -30,6 +31,9 @@ public:
     CongestionCtrlAlgo GetCongestionAlgo() {return m_algoType;}
 
     virtual uint32_t GetRestCwnd() {return UB_MTU_BYTE;}
+
+    /** Smoothed RTT seen by the sender (0 if the algorithm does not measure it). */
+    virtual Time GetSmoothedRtt() const { return Time(0); }
 
     virtual bool IsCcLimited(uint32_t bytes)
     {

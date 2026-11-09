@@ -145,8 +145,16 @@ def check(case):
                         if (n, p) in ends or (r["action"] == "DOWN_NODE" and n in (l["nodeId1"], l["nodeId2"])):
                             down.update(ends)
         last = {}
+        at_completion = {}
+        t_done_ns = max((int(r["time_ns"]) for r in comp), default=None)
         for r in csv.DictReader(open(gp)):
             last[(r["node"], r["port"])] = int(r.get("fc_consumed_bytes") or 0)
+            if t_done_ns is not None and int(r["time_ns"]) <= t_done_ns:
+                at_completion[(r["node"], r["port"])] = int(r.get("fc_consumed_bytes") or 0)
+        # With FLEX_DRAIN_AFTER_US the run continues after the last completion: P6 is judged on the
+        # final (drained) sample; the value at completion is reported for reference only.
+        res["credits_consumed_live_at_completion"] = sum(
+            v for k, v in at_completion.items() if v and k not in down)
         live_stuck = {k: v for k, v in last.items() if v and k not in down}
         res["P6_credits_returned_on_live_ports"] = not live_stuck
         res["credits_stuck_live"] = sum(live_stuck.values())

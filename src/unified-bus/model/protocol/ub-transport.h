@@ -476,9 +476,19 @@ public:
         uint32_t active{0}; // TPs of this port with outstanding READ bytes
         double weight{0.0}; // sum of 1/(group size) over those TPs (per-flow fairness)
         std::deque<UbTransportChannel*> waiters;
+        uint64_t peak{0};     // max outstanding seen (overdraft accounting)
+        uint64_t refusals{0};
     };
     static std::unordered_map<uint64_t, PortReadState>& PortRead();
-    uint64_t PortKey() const { return (uint64_t{m_nodeId} << 16) | m_sport; }
+    // Budget scope: per (node, port) [legacy] or one budget per node (ReadBudgetScope = 1).
+    uint64_t PortKey() const
+    {
+        return (uint64_t{m_nodeId} << 16) | (m_readBudgetScope == 1 ? 0xFFFFu : m_sport);
+    }
+    uint32_t m_readBudgetScope{0};
+    bool m_readBudgetStrict{false};
+    bool m_readBudgetWorkConserving{false};
+    static void DumpBudgetStats();
     void PortReadAdd(int64_t delta);
     void PortReadRelease();
     uint64_t m_readPortBudget{0};
@@ -641,6 +651,9 @@ public:
 
     void SetBaseRto(Time rto);
     Time GetBaseRto() const;
+    /** Retransmission timer floor = RtoSrttFactor x CC smoothed RTT (0 = off). */
+    double GetRtoSrttFactor() const { return m_rtoSrttFactor; }
+    Time GetCcSmoothedRtt() const;
     void SetMaxRetransAttempts(uint16_t attempts);
     uint16_t GetMaxRetransAttempts() const;
     void SetRetransExponentFactor(uint16_t factor);
@@ -902,6 +915,13 @@ private:
     uint64_t m_readQuotaMinBytes{16384};
     double m_readQuotaDyn{0.0};
     std::deque<std::pair<Time, uint64_t>> m_readIssue;
+    // READ return-rate estimate (response bytes per second while reads were outstanding).
+    double m_readRetRateBps{0.0};
+    int64_t m_readRetWinStartNs{-1};
+    uint64_t m_readRetWinBytes{0};
+  public:
+    double GetReadReturnRateBps() const { return m_readRetRateBps; }
+  private:
     void NoteReadIssued(uint64_t bytes);
     void NoteReadArrived(uint64_t bytes);
     uint64_t EffectiveReadQuotaBase() const;
@@ -912,6 +932,11 @@ private:
     // Separate send-pipeline depth for READ segments (0 = shared with writes).
     uint32_t m_maxActiveReadSegments{0};
     bool CanScheduleSegmentOfKind(bool read) const;
+    // Pipeline class: 0 write, 1 READ request (or any READ segment when responses are not
+    // separated), 2 READ response (only when MaxActiveReadResponseSegments > 0).
+    int PipelineClass(const Ptr<const UbWqeSegment>& segment) const;
+    bool CanScheduleSegmentClass(int cls) const;
+    uint32_t m_maxActiveReadRespSegments{0};
     double m_arbitrationPass{0.0};
     // Delivery-rate estimator state (see GetDeliveryRateBps).
     Time m_deliveryRateMinInterval;
@@ -925,6 +950,7 @@ private:
     /// TP1: ->port1 0 1 2 (3 4) 5 6
     ///     |->port2        3 4
     Ptr<UbCongestionControl> m_congestionCtrl;
+    double m_rtoSrttFactor{0.0};
     // ========== TP层动态信息 (发送过程中更新) ==========
     uint64_t        m_psnSndNxt = 0;      // TP层下一个待发送的包序号
     uint64_t        m_psnSndUna = 0;      // TP层未确认的最小包序号

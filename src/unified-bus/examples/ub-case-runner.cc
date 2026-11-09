@@ -228,6 +228,17 @@ void CheckExampleProcess()
         return;
     }
     std::cout << std::endl;
+    // FLEX_DRAIN_AFTER_US (analysis only, default 0): keep simulating this long after the last
+    // task completes, so a credit-conservation check can tell packets still legitimately in flight
+    // at completion (late duplicates, ACKs) from credits that never return. Task completion times
+    // are unaffected.
+    const char* drain = std::getenv("FLEX_DRAIN_AFTER_US");
+    const double drainUs = drain == nullptr ? 0.0 : std::atof(drain);
+    if (drainUs > 0.0)
+    {
+        Simulator::Schedule(MicroSeconds(drainUs), static_cast<void (*)()>(&Simulator::Stop));
+        return;
+    }
     Simulator::ScheduleNow(static_cast<void (*)()>(&Simulator::Stop));
 }
 
