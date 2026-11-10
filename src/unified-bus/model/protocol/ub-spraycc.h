@@ -71,6 +71,7 @@ class UbHostSprayCc : public UbCongestionControl
     double GetAlpha() const { return m_alpha; }
     Time GetSrtt() const { return m_srtt; }
     Time GetSmoothedRtt() const override { return m_srtt; }
+    Time GetRttVar() const override { return m_rttvar; }
     uint64_t GetInflightBytes() const { return m_inflight; }
     uint64_t GetWindowCapBytes() const;
 
@@ -84,6 +85,7 @@ class UbHostSprayCc : public UbCongestionControl
         uint32_t psn;
         uint32_t size;
         Time sendTime;
+        bool retransmitted{false};
     };
 
     using GroupKey = std::tuple<uint32_t, uint32_t, uint16_t>;
@@ -125,6 +127,7 @@ class UbHostSprayCc : public UbCongestionControl
     Time m_nextSend;
     EventId m_pacingEvent;
     Time m_srtt;
+    Time m_rttvar;
     Time m_minRtt;
 
     // Receiver state.

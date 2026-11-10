@@ -340,6 +340,9 @@ UbFault::InitRetransFault(const string &filename)
                 rule.delayNs = static_cast<uint32_t>(stoul(fields[10]));
                 rule.delayCount = static_cast<uint32_t>(stoul(fields[11]));
                 rule.comment = fields[12];
+                if (fields.size() >= 14) {
+                    rule.afterNs = static_cast<uint64_t>(stoull(fields[13]));
+                }
             } else {
                 rule.comment = fields.size() > 10 ? fields[10] : "";
             }
@@ -621,11 +624,17 @@ UbFault::SetRetransFaultPacketDrop(Ptr<Packet> packet, uint32_t taskId, uint32_t
     }
 
     for (auto &rule : retransFaultRules) {
-        if (!MatchRetransFaultRule(rule, info)) {
+        if (!MatchRetransFaultRule(rule, info) ||
+            static_cast<uint64_t>(Simulator::Now().GetNanoSeconds()) < rule.afterNs) {
             continue;
         }
 
         rule.matchCount++;
+        if (rule.droppedCount < rule.dropCount && getenv("FLEX_FAULT_LOG") != nullptr) {
+            std::cerr << "FAULTDROP t=" << Simulator::Now().GetNanoSeconds() << " rule=" << rule.ruleId
+                      << " node=" << info.nodeId << " port=" << info.portId << " task=" << info.taskId
+                      << " psn=" << info.psn << " last=" << info.lastPacket << "\n";
+        }
         if (rule.droppedCount < rule.dropCount) {
             rule.droppedCount++;
             NS_LOG_DEBUG("Retrans fault drop."

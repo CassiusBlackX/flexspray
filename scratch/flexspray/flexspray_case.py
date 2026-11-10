@@ -625,6 +625,9 @@ def main(argv=None):
                     help="held-out traffic mapping: 1 relabels every endpoint (server s -> s+1, "
                          "device index i -> count-1-i) while the fault stays put, so faults hit "
                          "different traffic roles than in the tuning runs")
+    ap.add_argument("--drop", action="append", default=[],
+                    help="deterministic loss (RTO tests): task:node:port:dir:type:psn:last:count:afterNs "
+                         "(any = wildcard); written to retrans_fault.csv, enables UB_FAULT_ENABLE")
     ap.add_argument("--links-per-pair", type=int, default=3,
                     help="parallel L1-L2 links; 3 = non-blocking (12 up / 11 down), 2 = 1.375:1 "
                          "oversubscribed")
@@ -642,6 +645,18 @@ def main(argv=None):
         tasks = [(remap(x[0]), remap(x[1])) + tuple(x[2:]) for x in tasks]
     write_traffic(a.out, tasks)
     cc = write_attrs(a.out, a.scheme, a.sample_ns)
+    if a.drop:
+        with open(os.path.join(a.out, "fault.csv"), "w") as f:
+            f.write("taskId,faultType,dropRate(%),delay(ns),lowerDataRate(node port datrate(Mbps)),"
+                    "shutdownDropPackets(start end),OccasionalDropRate(%)\n")
+        with open(os.path.join(a.out, "retrans_fault.csv"), "w") as f:
+            f.write("ruleId,enabled,taskId,nodeId,portId,direction,packetType,psn,lastPacket,dropCount,"
+                    "delayNs,delayCount,comment,afterNs\n")
+            for i, r in enumerate(a.drop):
+                task, node, port, d, typ, psn, last, cnt, after = r.split(":")
+                f.write(f"drop{i},true,{task},{node},{port},{d},{typ},{psn},{last},{cnt},0,0,flexspray,{after}\n")
+        with open(os.path.join(a.out, "network_attribute.txt"), "a") as f:
+            f.write('global UB_FAULT_ENABLE "true"\n')
     rows, finfo = fault_rows(t, a.fault, a.fault_ns, a.scenario)
     if rows:
         with open(os.path.join(a.out, "link_health.csv"), "w") as f:
@@ -651,6 +666,7 @@ def main(argv=None):
     meta = t.meta()
     meta.update(scenario=a.scenario, fault=a.fault, fault_ns=a.fault_ns if rows else None,
                 fault_rows=rows, fault_info=finfo, scheme=a.scheme, cc=cc, traffic_map=a.map,
+                drop_rules=a.drop,
                 ack_bytes=ACK_BYTES[cc], scale=a.scale, seed=a.seed)
     with open(os.path.join(a.out, "case_meta.json"), "w") as f:
         json.dump(meta, f, indent=1)

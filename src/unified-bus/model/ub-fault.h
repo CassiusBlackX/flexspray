@@ -165,6 +165,7 @@ struct RetransFaultRule {
     uint32_t dropCount = 0;
     uint32_t delayNs = 0;
     uint32_t delayCount = 0;
+    uint64_t afterNs = 0;  // optional 14th column: rule inactive before this simulation time
     uint32_t matchCount = 0;
     uint32_t droppedCount = 0;
     uint32_t delayedCount = 0;

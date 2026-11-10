@@ -477,6 +477,7 @@ public:
         double weight{0.0}; // sum of 1/(group size) over those TPs (per-flow fairness)
         std::deque<UbTransportChannel*> waiters;
         uint64_t peak{0};     // max outstanding seen (overdraft accounting)
+        double nominalBps{0}; // highest port rate seen (budget scaling reference)
         uint64_t refusals{0};
     };
     static std::unordered_map<uint64_t, PortReadState>& PortRead();
@@ -487,6 +488,9 @@ public:
     }
     uint32_t m_readBudgetScope{0};
     bool m_readBudgetStrict{false};
+    bool m_readBudgetScaleByRate{false};
+    uint64_t EffectiveReadBudget(PortReadState& st) const;
+    double GetPortRateBps() const;
     bool m_readBudgetWorkConserving{false};
     static void DumpBudgetStats();
     void PortReadAdd(int64_t delta);
@@ -653,7 +657,10 @@ public:
     Time GetBaseRto() const;
     /** Retransmission timer floor = RtoSrttFactor x CC smoothed RTT (0 = off). */
     double GetRtoSrttFactor() const { return m_rtoSrttFactor; }
+    double GetRtoRttvarK() const { return m_rtoRttvarK; }
+    bool GetRtoFloorFirstOnly() const { return m_rtoFloorFirstOnly; }
     Time GetCcSmoothedRtt() const;
+    Time GetCcRttVar() const;
     void SetMaxRetransAttempts(uint16_t attempts);
     uint16_t GetMaxRetransAttempts() const;
     void SetRetransExponentFactor(uint16_t factor);
@@ -951,6 +958,8 @@ private:
     ///     |->port2        3 4
     Ptr<UbCongestionControl> m_congestionCtrl;
     double m_rtoSrttFactor{0.0};
+    double m_rtoRttvarK{0.0};
+    bool m_rtoFloorFirstOnly{false};
     // ========== TP层动态信息 (发送过程中更新) ==========
     uint64_t        m_psnSndNxt = 0;      // TP层下一个待发送的包序号
     uint64_t        m_psnSndUna = 0;      // TP层未确认的最小包序号

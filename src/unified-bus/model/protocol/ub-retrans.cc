@@ -1112,7 +1112,17 @@ UbRetransController::ScheduleTimeout()
         ++m_timerTestStats.scheduleCalls;
     }
     Time delay = m_rto;
-    if (m_transport.GetRtoSrttFactor() > 0.0)
+    const bool floorAllowed =
+        !m_transport.GetRtoFloorFirstOnly() || m_retransAttemptsLeft == m_maxRetransAttempts;
+    if (floorAllowed && m_transport.GetRtoRttvarK() > 0.0)
+    {
+        const Time srtt = m_transport.GetCcSmoothedRtt();
+        if (srtt.IsStrictlyPositive())
+        {
+            delay = std::max(delay, srtt + m_transport.GetCcRttVar() * m_transport.GetRtoRttvarK());
+        }
+    }
+    if (floorAllowed && m_transport.GetRtoSrttFactor() > 0.0)
     {
         // A timer shorter than the path's current RTT (queueing included) fires spuriously and
         // go-back-N then re-sends the whole window into the slowest bottleneck.

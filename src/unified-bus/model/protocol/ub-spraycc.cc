@@ -237,6 +237,10 @@ void
 UbHostSprayCc::OnSenderRetransmissionPacketSent(uint32_t psn, uint32_t size)
 {
     OnSenderDataPacketSent(psn, size);
+    if (m_congestionCtrlEnabled && !m_sent.empty())
+    {
+        m_sent.back().retransmitted = true;  // Karn: never sample RTT on a retransmitted PSN
+    }
 }
 
 bool
@@ -408,11 +412,27 @@ UbHostSprayCc::OnSenderCongestionNotification(TpOpcode opcode, uint32_t psn, UbC
         if (!sampled)
         {
             // RTT of the oldest newly acknowledged packet (the one that held back the cumulative
-            // ACK under spray reordering, i.e. the slowest path).
-            const Time sample = Simulator::Now() - m_sent.front().sendTime;
-            m_srtt = m_srtt.IsStrictlyPositive() ? (m_srtt * 7 + sample) / 8 : sample;
-            m_minRtt = m_minRtt.IsStrictlyPositive() ? std::min(m_minRtt, sample) : sample;
+            // ACK under spray reordering, i.e. the slowest path). Karn's rule: an ACK covering a
+            // retransmitted PSN is ambiguous (which copy?) and gives no sample.
             sampled = true;
+            const Time sample = Simulator::Now() - m_sent.front().sendTime;
+            // minRtt (window cap) keeps its original update on every sample; only the RTO
+            // estimator (SRTT/RTTVAR, used by no other code) applies Karn's rule.
+            m_minRtt = m_minRtt.IsStrictlyPositive() ? std::min(m_minRtt, sample) : sample;
+            if (!m_sent.front().retransmitted)
+            {
+                if (m_srtt.IsStrictlyPositive())
+                {
+                    const Time err = sample > m_srtt ? sample - m_srtt : m_srtt - sample;
+                    m_rttvar = (m_rttvar * 3 + err) / 4;
+                    m_srtt = (m_srtt * 7 + sample) / 8;
+                }
+                else
+                {
+                    m_srtt = sample;
+                    m_rttvar = sample / 2;
+                }
+            }
         }
         acked += m_sent.front().size;
         m_sent.pop_front();

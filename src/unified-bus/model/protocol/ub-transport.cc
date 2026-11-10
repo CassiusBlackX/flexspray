@@ -247,6 +247,21 @@ TypeId UbTransportChannel::GetTypeId(void)
                       DoubleValue(0.0),
                       MakeDoubleAccessor(&UbTransportChannel::m_rtoSrttFactor),
                       MakeDoubleChecker<double>(0.0))
+        .AddAttribute("RtoFloorFirstOnly",
+                      "Apply the RTT-based timer floors (RtoSrttFactor, RtoRttvarK) only to the "
+                      "first timeout of a recovery episode (no timeout since the last ACK "
+                      "progress); later timeouts use the plain exponential backoff, so lost "
+                      "retransmissions are not each delayed by the floor.",
+                      BooleanValue(false),
+                      MakeBooleanAccessor(&UbTransportChannel::m_rtoFloorFirstOnly),
+                      MakeBooleanChecker())
+        .AddAttribute("RtoRttvarK",
+                      "Jacobson-style retransmission timer floor: the scheduled timeout is at "
+                      "least SRTT + K x RTTVAR of the congestion controller's (Karn-filtered) RTT "
+                      "samples. Combined with RtoSrttFactor by max. 0 = off.",
+                      DoubleValue(0.0),
+                      MakeDoubleAccessor(&UbTransportChannel::m_rtoRttvarK),
+                      MakeDoubleChecker<double>(0.0))
         .AddAttribute("RetransTimeoutMode",
                       "Retransmission timeout mode.",
                       EnumValue(UbRetransTimeoutMode::DYNAMIC),
@@ -355,6 +370,12 @@ TypeId UbTransportChannel::GetTypeId(void)
                       UintegerValue(0),
                       MakeUintegerAccessor(&UbTransportChannel::m_readBudgetScope),
                       MakeUintegerChecker<uint32_t>(0, 1))
+        .AddAttribute("ReadBudgetScaleByRate",
+                      "Per-port READ budget scaled by the port's current / highest-seen link rate "
+                      "(a locally degraded port gets a proportionally smaller byte budget).",
+                      BooleanValue(false),
+                      MakeBooleanAccessor(&UbTransportChannel::m_readBudgetScaleByRate),
+                      MakeBooleanChecker())
         .AddAttribute("ReadBudgetStrict",
                       "Replace the per-TP progress exception (a TP with nothing outstanding may "
                       "always admit one segment, overdraft up to TPs x segment) by: an idle TP may "
@@ -557,6 +578,12 @@ Time
 UbTransportChannel::GetCcSmoothedRtt() const
 {
     return m_congestionCtrl == nullptr ? Time(0) : m_congestionCtrl->GetSmoothedRtt();
+}
+
+Time
+UbTransportChannel::GetCcRttVar() const
+{
+    return m_congestionCtrl == nullptr ? Time(0) : m_congestionCtrl->GetRttVar();
 }
 
 void
@@ -2805,6 +2832,33 @@ UbTransportChannel::PortReadAdd(int64_t delta)
     }
 }
 
+double
+UbTransportChannel::GetPortRateBps() const
+{
+    Ptr<Node> node = NodeList::GetNode(m_nodeId);
+    Ptr<UbPort> port = node == nullptr ? nullptr : DynamicCast<UbPort>(node->GetDevice(m_sport));
+    return port == nullptr ? 0.0 : static_cast<double>(port->GetDataRate().GetBitRate());
+}
+
+uint64_t
+UbTransportChannel::EffectiveReadBudget(PortReadState& st) const
+{
+    // ReadBudgetScaleByRate: the per-port budget is the time a port may be committed ahead
+    // (B / nominal rate); a port whose own link runs slower (lanes lost, known locally) gets a
+    // proportionally smaller byte budget, so its committed READ data drains as fast as the
+    // other ports' instead of becoming the tail.
+    if (!m_readBudgetScaleByRate || m_readBudgetScope == 1) {
+        return m_readPortBudget;
+    }
+    const double rate = GetPortRateBps();
+    st.nominalBps = std::max(st.nominalBps, rate);
+    if (rate <= 0.0 || st.nominalBps <= 0.0) {
+        return m_readPortBudget;
+    }
+    return std::max<uint64_t>(16384, static_cast<uint64_t>(static_cast<double>(m_readPortBudget) *
+                                                           rate / st.nominalBps));
+}
+
 void
 UbTransportChannel::DumpBudgetStats()
 {
@@ -2996,18 +3050,19 @@ UbTransportChannel::CanContinueAcceptedWqeSegment(Ptr<const UbWqeSegment> segmen
         // sharing let early flows hoard the budget and stretched the completion spread).
         // Per-flow fairness: a TP's weight is 1 / (planes of its flow), so a 2-plane flow (e.g. to a
         // storage device) is not starved by many 8-plane flows on the same port.
+        const uint64_t budget = EffectiveReadBudget(st);
         const double w = PortShareWeight();
         const double tot = st.weight + (m_outstandingReadBytes > 0 ? 0.0 : w);
-        const uint64_t share = static_cast<uint64_t>(static_cast<double>(m_readPortBudget) * w /
+        const uint64_t share = static_cast<uint64_t>(static_cast<double>(budget) * w /
                                                      std::max(tot, w));
         bool refuse;
         if (m_readBudgetStrict && m_outstandingReadBytes == 0) {
             // Progress without a per-TP free segment: an idle TP may start only while the total is
             // below B, so the aggregate never exceeds B by more than one segment (independent of
             // the number of TPs). Refused idle TPs wait and are woken when budget is released.
-            refuse = st.outstanding >= m_readPortBudget;
+            refuse = st.outstanding >= budget;
         } else {
-            const bool overTotal = st.outstanding + segment->GetSize() > m_readPortBudget;
+            const bool overTotal = st.outstanding + segment->GetSize() > budget;
             const bool overShare =
                 m_outstandingReadBytes + segment->GetSize() > std::max<uint64_t>(share, segment->GetSize());
             // Work conserving: the fair share binds only while someone is waiting for budget.
