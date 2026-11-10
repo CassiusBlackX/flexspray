@@ -661,6 +661,8 @@ public:
     bool GetRtoFloorFirstOnly() const { return m_rtoFloorFirstOnly; }
     Time GetCcSmoothedRtt() const;
     Time GetCcRttVar() const;
+    /** Standing queueing delay on this TP's path: CC SRTT - min RTT (0 if unknown). */
+    double GetCcQueueDelayNs() const;
     void SetMaxRetransAttempts(uint16_t attempts);
     uint16_t GetMaxRetransAttempts() const;
     void SetRetransExponentFactor(uint16_t factor);

@@ -580,6 +580,20 @@ UbTransportChannel::GetCcSmoothedRtt() const
     return m_congestionCtrl == nullptr ? Time(0) : m_congestionCtrl->GetSmoothedRtt();
 }
 
+double
+UbTransportChannel::GetCcQueueDelayNs() const
+{
+    if (m_congestionCtrl == nullptr) {
+        return 0.0;
+    }
+    const Time srtt = m_congestionCtrl->GetSmoothedRtt();
+    const Time minRtt = m_congestionCtrl->GetMinRtt();
+    if (!srtt.IsStrictlyPositive() || !minRtt.IsStrictlyPositive() || srtt <= minRtt) {
+        return 0.0;
+    }
+    return static_cast<double>((srtt - minRtt).GetNanoSeconds());
+}
+
 Time
 UbTransportChannel::GetCcRttVar() const
 {

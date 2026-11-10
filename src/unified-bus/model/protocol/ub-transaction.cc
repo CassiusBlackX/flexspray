@@ -154,6 +154,13 @@ TypeId UbTransaction::GetTypeId(void)
             MakeDoubleAccessor(&UbTransaction::m_readIngressMarkWeight),
             MakeDoubleChecker<double>(0.0))
         .AddAttribute(
+            "DispatchQueueDelayWeight",
+            "MIN_DRAIN_TIME only: add w x (CC SRTT - min RTT) of a member (its path's standing "
+            "queueing delay) to the drain-time score of non-READ-request segments. 0 = off.",
+            DoubleValue(0.0),
+            MakeDoubleAccessor(&UbTransaction::m_dispatchQueueDelayWeight),
+            MakeDoubleChecker<double>(0.0))
+        .AddAttribute(
             "ReadScoreReturnRate",
             "MIN_DRAIN_TIME only: score a READ request member by its outstanding READ bytes over "
             "its measured READ return rate (responses per second while reads were outstanding) "
@@ -251,6 +258,15 @@ UbTransaction::ScoreMember(const Ptr<UbTransportChannel>& transport,
         // delivery rate (request/ACK path), this sees a slow responder egress or response path.
         own = static_cast<double>(transport->GetOutstandingReadBytes() + segment->GetSize()) * 8e9 /
               std::max(transport->GetReadReturnRateBps(), 1e6);
+    }
+    if (m_dispatchQueueDelayWeight > 0.0 &&
+        !(segment->GetType() == UbTransactionOpcode::READ &&
+          segment->GetSegmentKind() == UbTransactionSegmentKind::REQUEST))
+    {
+        // Data a writer admits now queues behind the standing backlog at the path's bottleneck;
+        // the local estimate (bytes / delivery rate) does not see that remote queue, the SRTT
+        // excess over min RTT does (it is the queueing delay the last ACKed packet met).
+        own += m_dispatchQueueDelayWeight * transport->GetCcQueueDelayNs();
     }
     if (m_readIngressMarkWeight > 0.0 && segment->GetType() == UbTransactionOpcode::READ &&
         segment->GetSegmentKind() == UbTransactionSegmentKind::REQUEST)

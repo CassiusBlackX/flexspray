@@ -72,6 +72,7 @@ class UbHostSprayCc : public UbCongestionControl
     Time GetSrtt() const { return m_srtt; }
     Time GetSmoothedRtt() const override { return m_srtt; }
     Time GetRttVar() const override { return m_rttvar; }
+    Time GetMinRtt() const override { return m_minRtt; }
     uint64_t GetInflightBytes() const { return m_inflight; }
     uint64_t GetWindowCapBytes() const;
 
