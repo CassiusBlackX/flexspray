@@ -66,58 +66,6 @@ enum class UbTpgCleanupMode : uint8_t
     ABORT = 1,
     FORCE = 2,
 };
-
-/**
- * Replay fence (FlexSpray hard link-down recovery). Models a 4-byte request-header extension
- * carried only by re-dispatched segments: the initiator TPN whose path died. The target stops
- * accepting packets of that TP pair, so an old copy still queued in the network can never be
- * executed after the initiator completed the segment. Simulator metadata stands in for the
- * header field (its 4 bytes are not added to the simulated packet length).
- */
-/**
- * READ response late binding (protocol extension, 4 B in the response header): the requester TPN
- * that issued the READ, carried only by responses the responder sent on another TP of the same
- * pair of nodes. The requester credits the response bytes to that TP's read quota. Simulator
- * metadata stands in for the field (not added to the packet length; accounted as overhead).
- */
-/**
- * Sender-informed READ feedback (adapted from SIRD's sender-congestion bit): a READ response
- * carries this 1-bit flag when the responder TP's admitted-but-unsent backlog exceeds
- * ReadBacklogThreshold. Simulator metadata stands in for one header bit.
- */
-class UbRespBacklogTag : public Tag
-{
-  public:
-    static TypeId GetTypeId()
-    {
-        static TypeId tid =
-            TypeId("ns3::UbRespBacklogTag").SetParent<Tag>().AddConstructor<UbRespBacklogTag>();
-        return tid;
-    }
-    TypeId GetInstanceTypeId() const override { return GetTypeId(); }
-    uint32_t GetSerializedSize() const override { return 1; }
-    void Serialize(TagBuffer b) const override { b.WriteU8(1); }
-    void Deserialize(TagBuffer b) override { (void)b.ReadU8(); }
-    void Print(std::ostream& os) const override { os << "backlog"; }
-};
-
-class UbRespOriginTag : public Tag
-{
-  public:
-    static TypeId GetTypeId()
-    {
-        static TypeId tid =
-            TypeId("ns3::UbRespOriginTag").SetParent<Tag>().AddConstructor<UbRespOriginTag>();
-        return tid;
-    }
-    TypeId GetInstanceTypeId() const override { return GetTypeId(); }
-    uint32_t GetSerializedSize() const override { return 4; }
-    void Serialize(TagBuffer b) const override { b.WriteU32(originTpn); }
-    void Deserialize(TagBuffer b) override { originTpn = b.ReadU32(); }
-    void Print(std::ostream& os) const override { os << originTpn; }
-    uint32_t originTpn{UINT32_MAX};
-};
-
 class UbReplayFenceTag : public Tag
 {
   public:
@@ -480,8 +428,6 @@ public:
     void MarkDead();
     bool IsDead() const { return m_dead; }
     void RunCapacityWake();
-    /** READ response late binding: response bytes for a READ this TP issued arrived on another TP. */
-    void CreditForeignResponse(uint64_t bytes);
     void NotifySegState(const char* event, const Ptr<UbWqeSegment>& seg) const;
     struct PortReadState
     {
@@ -522,17 +468,11 @@ public:
     int64_t m_residualAtNs{0};
     int64_t m_lastRetxNs{-1};
     void NoteSegmentAcked(const UbWqeSegment* seg);
-    // Budget scope: per (node, port) [legacy] or one budget per node (ReadBudgetScope = 1).
-    uint64_t PortKey() const
-    {
-        return (uint64_t{m_nodeId} << 16) | (m_readBudgetScope == 1 ? 0xFFFFu : m_sport);
-    }
-    uint32_t m_readBudgetScope{0};
-    bool m_readBudgetStrict{false};
+    // READ budget scope: one budget per (node, port).
+    uint64_t PortKey() const { return (uint64_t{m_nodeId} << 16) | m_sport; }
     bool m_readBudgetScaleByRate{false};
     uint64_t EffectiveReadBudget(PortReadState& st) const;
     double GetPortRateBps() const;
-    bool m_readBudgetWorkConserving{false};
     static void DumpBudgetStats();
     void PortReadAdd(int64_t delta);
     void PortReadRelease();
@@ -541,11 +481,6 @@ public:
     mutable bool m_portWaiting{false};
     double PortShareWeight() const;
     double m_portWeight{1.0};
-    bool m_readBacklogFeedback{false};
-    uint64_t m_readBacklogThreshold{65536};
-    bool m_rxBacklogFlag{false};
-    void ApplyReadBacklogFeedback(uint64_t bytes, bool flagged);
-    uint64_t GetForeignResponseBytes() const { return m_foreignRespBytes; }
     /** EWMA of the marked fraction of READ responses arriving on this TP's local port (all TPs
      *  of the node on that port). */
     double GetPortResponseMarkFraction() const;
@@ -698,12 +633,8 @@ public:
     Time GetBaseRto() const;
     /** Retransmission timer floor = RtoSrttFactor x CC smoothed RTT (0 = off). */
     double GetRtoSrttFactor() const { return m_rtoSrttFactor; }
-    double GetRtoRttvarK() const { return m_rtoRttvarK; }
     bool GetRtoFloorFirstOnly() const { return m_rtoFloorFirstOnly; }
     Time GetCcSmoothedRtt() const;
-    Time GetCcRttVar() const;
-    /** Standing queueing delay on this TP's path: CC SRTT - min RTT (0 if unknown). */
-    double GetCcQueueDelayNs() const;
     double GetCcMinRttNs() const;
     void SetMaxRetransAttempts(uint16_t attempts);
     uint16_t GetMaxRetransAttempts() const;
@@ -763,7 +694,6 @@ private:
         UbTransactionCorrelationIdentity transactionCorrelation;
         Ptr<const Packet> explicitPayload;
         UbTransactionFields transactionFields;
-        uint32_t respOriginTpn{UINT32_MAX}; // READ response late binding (UbRespOriginTag)
         int64_t arrivalNs{0};               // HOL diagnostics (recovery trace)
     };
 
@@ -961,11 +891,6 @@ private:
   private:
     bool HeadSegmentIsCcExempt() const;
     bool m_readQuotaFollowsUsablePlanes{false};
-    Time m_readDelayTarget{Seconds(0)};
-    double m_readQuotaGain{0.25};
-    uint64_t m_readQuotaMinBytes{16384};
-    double m_readQuotaDyn{0.0};
-    std::deque<std::pair<Time, uint64_t>> m_readIssue;
     // READ return-rate estimate (response bytes per second while reads were outstanding).
     double m_readRetRateBps{0.0};
     int64_t m_readRetWinStartNs{-1};
@@ -973,21 +898,16 @@ private:
   public:
     double GetReadReturnRateBps() const { return m_readRetRateBps; }
   private:
-    void NoteReadIssued(uint64_t bytes);
     void NoteReadArrived(uint64_t bytes);
     uint64_t EffectiveReadQuotaBase() const;
     bool m_capacityWakePending{false};
-    uint32_t m_rxRespOriginTpn{UINT32_MAX}; // tag of the data packet being received
-    uint64_t m_foreignRespBytes{0};
     uint64_t EffectiveReadQuotaBytes() const;
     // Separate send-pipeline depth for READ segments (0 = shared with writes).
     uint32_t m_maxActiveReadSegments{0};
     bool CanScheduleSegmentOfKind(bool read) const;
-    // Pipeline class: 0 write, 1 READ request (or any READ segment when responses are not
-    // separated), 2 READ response (only when MaxActiveReadResponseSegments > 0).
+    // Pipeline class: 0 write, 1 READ segment (requests and responses).
     int PipelineClass(const Ptr<const UbWqeSegment>& segment) const;
     bool CanScheduleSegmentClass(int cls) const;
-    uint32_t m_maxActiveReadRespSegments{0};
     double m_arbitrationPass{0.0};
     // Delivery-rate estimator state (see GetDeliveryRateBps).
     Time m_deliveryRateMinInterval;
@@ -1002,7 +922,6 @@ private:
     ///     |->port2        3 4
     Ptr<UbCongestionControl> m_congestionCtrl;
     double m_rtoSrttFactor{0.0};
-    double m_rtoRttvarK{0.0};
     bool m_rtoFloorFirstOnly{false};
     // ========== TP层动态信息 (发送过程中更新) ==========
     uint64_t        m_psnSndNxt = 0;      // TP层下一个待发送的包序号

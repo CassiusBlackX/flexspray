@@ -255,13 +255,6 @@ TypeId UbTransportChannel::GetTypeId(void)
                       BooleanValue(false),
                       MakeBooleanAccessor(&UbTransportChannel::m_rtoFloorFirstOnly),
                       MakeBooleanChecker())
-        .AddAttribute("RtoRttvarK",
-                      "Jacobson-style retransmission timer floor: the scheduled timeout is at "
-                      "least SRTT + K x RTTVAR of the congestion controller's (Karn-filtered) RTT "
-                      "samples. Combined with RtoSrttFactor by max. 0 = off.",
-                      DoubleValue(0.0),
-                      MakeDoubleAccessor(&UbTransportChannel::m_rtoRttvarK),
-                      MakeDoubleChecker<double>(0.0))
         .AddAttribute("RetransTimeoutMode",
                       "Retransmission timeout mode.",
                       EnumValue(UbRetransTimeoutMode::DYNAMIC),
@@ -324,43 +317,12 @@ TypeId UbTransportChannel::GetTypeId(void)
                       UintegerValue(UINT32_MAX),
                       MakeUintegerAccessor(&UbTransportChannel::m_readRequestVl),
                       MakeUintegerChecker<uint32_t>())
-        .AddAttribute("ReadQuotaDelayTarget",
-                      "If > 0: per-TP READ quota follows a delay target. Each fully answered READ "
-                      "segment's completion latency L updates Q <- Q (1 + g (T/L - 1)) (T/L "
-                      "clamped to [0.5, 2]), Q in [ReadQuotaMinBytes, MaxOutstandingReadBytes]. "
-                      "0 = fixed byte quota (default).",
-                      TimeValue(Seconds(0)),
-                      MakeTimeAccessor(&UbTransportChannel::m_readDelayTarget),
-                      MakeTimeChecker())
-        .AddAttribute("ReadQuotaGain",
-                      "Gain g of the delay-target READ quota update.",
-                      DoubleValue(0.25),
-                      MakeDoubleAccessor(&UbTransportChannel::m_readQuotaGain),
-                      MakeDoubleChecker<double>(0.0, 1.0))
-        .AddAttribute("ReadQuotaMinBytes",
-                      "Lower bound of the delay-target READ quota (one segment keeps progress).",
-                      UintegerValue(16384),
-                      MakeUintegerAccessor(&UbTransportChannel::m_readQuotaMinBytes),
-                      MakeUintegerChecker<uint64_t>(1))
         .AddAttribute("ReadPortBudgetBytes",
                       "If > 0: total outstanding READ bytes requested through one local port (all "
                       "TPs of the node on it) may not exceed this; refused TPs are woken when the "
                       "port's budget frees. 0 = off (default).",
                       UintegerValue(0),
                       MakeUintegerAccessor(&UbTransportChannel::m_readPortBudget),
-                      MakeUintegerChecker<uint64_t>())
-        .AddAttribute("ReadBacklogFeedback",
-                      "Sender-informed READ quota (adapted from SIRD): responses carry a 1-bit "
-                      "flag when the responder TP's unsent backlog exceeds ReadBacklogThreshold; "
-                      "the requester's per-TP quota decreases multiplicatively on flagged bytes "
-                      "and increases additively otherwise. Default off.",
-                      BooleanValue(false),
-                      MakeBooleanAccessor(&UbTransportChannel::m_readBacklogFeedback),
-                      MakeBooleanChecker())
-        .AddAttribute("ReadBacklogThreshold",
-                      "Responder TP unsent bytes above which READ responses carry the flag.",
-                      UintegerValue(65536),
-                      MakeUintegerAccessor(&UbTransportChannel::m_readBacklogThreshold),
                       MakeUintegerChecker<uint64_t>())
         .AddAttribute("PortCommitDelay",
                       "If > 0: a data segment (WRITE data or READ response) is admitted to a TP on a "
@@ -380,32 +342,11 @@ TypeId UbTransportChannel::GetTypeId(void)
                       BooleanValue(false),
                       MakeBooleanAccessor(&UbTransportChannel::m_serviceResidual),
                       MakeBooleanChecker())
-        .AddAttribute("ReadBudgetScope",
-                      "Scope of ReadPortBudgetBytes: 0 = per (node, port) [round 7], 1 = one "
-                      "budget per node (all ports). A per-port budget redirects refused requests "
-                      "to whichever port still has room, which can be the slow plane of the "
-                      "responder; a node budget refuses everywhere at once.",
-                      UintegerValue(0),
-                      MakeUintegerAccessor(&UbTransportChannel::m_readBudgetScope),
-                      MakeUintegerChecker<uint32_t>(0, 1))
         .AddAttribute("ReadBudgetScaleByRate",
                       "Per-port READ budget scaled by the port's current / highest-seen link rate "
                       "(a locally degraded port gets a proportionally smaller byte budget).",
                       BooleanValue(false),
                       MakeBooleanAccessor(&UbTransportChannel::m_readBudgetScaleByRate),
-                      MakeBooleanChecker())
-        .AddAttribute("ReadBudgetStrict",
-                      "Replace the per-TP progress exception (a TP with nothing outstanding may "
-                      "always admit one segment, overdraft up to TPs x segment) by: an idle TP may "
-                      "start only while the total is below the budget (overdraft <= 1 segment).",
-                      BooleanValue(false),
-                      MakeBooleanAccessor(&UbTransportChannel::m_readBudgetStrict),
-                      MakeBooleanChecker())
-        .AddAttribute("ReadBudgetWorkConserving",
-                      "The per-flow fair share of the READ budget binds only while some TP is "
-                      "waiting for budget; otherwise a flow may use unused budget.",
-                      BooleanValue(false),
-                      MakeBooleanAccessor(&UbTransportChannel::m_readBudgetWorkConserving),
                       MakeBooleanChecker())
         .AddAttribute("ReadQuotaFollowsUsablePlanes",
                       "Treat MaxOutstandingReadBytes as a per-flow budget spread over the TP group: "
@@ -424,15 +365,6 @@ TypeId UbTransportChannel::GetTypeId(void)
                       "0 = READ shares MaxActiveSendSegments with writes (legacy).",
                       UintegerValue(0),
                       MakeUintegerAccessor(&UbTransportChannel::m_maxActiveReadSegments),
-                      MakeUintegerChecker<uint32_t>())
-        .AddAttribute("MaxActiveReadResponseSegments",
-                      "Responder-side admission depth for READ responses (admitted to a TP, i.e. "
-                      "PSN-bound, but not fully sent), separate from the requester's READ request "
-                      "pipeline (MaxActiveReadSegments). Responses beyond it wait unbound in the "
-                      "transaction queue, where send-time rebinding may still choose another "
-                      "plane. 0 = responses share MaxActiveReadSegments (legacy).",
-                      UintegerValue(0),
-                      MakeUintegerAccessor(&UbTransportChannel::m_maxActiveReadRespSegments),
                       MakeUintegerChecker<uint32_t>())
         .AddAttribute("MaxActiveSendSegments",
                       "Maximum WQE segments per TP that may be admitted but not fully sent "
@@ -599,30 +531,10 @@ UbTransportChannel::GetCcSmoothedRtt() const
 }
 
 double
-UbTransportChannel::GetCcQueueDelayNs() const
-{
-    if (m_congestionCtrl == nullptr) {
-        return 0.0;
-    }
-    const Time srtt = m_congestionCtrl->GetSmoothedRtt();
-    const Time minRtt = m_congestionCtrl->GetMinRtt();
-    if (!srtt.IsStrictlyPositive() || !minRtt.IsStrictlyPositive() || srtt <= minRtt) {
-        return 0.0;
-    }
-    return static_cast<double>((srtt - minRtt).GetNanoSeconds());
-}
-
-double
 UbTransportChannel::GetCcMinRttNs() const
 {
     return m_congestionCtrl == nullptr ? 0.0
                                        : static_cast<double>(m_congestionCtrl->GetMinRtt().GetNanoSeconds());
-}
-
-Time
-UbTransportChannel::GetCcRttVar() const
-{
-    return m_congestionCtrl == nullptr ? Time(0) : m_congestionCtrl->GetRttVar();
 }
 
 void
@@ -992,7 +904,6 @@ UbTransportChannel::BuildGbnPacketDescriptor(const NewDataSendContext& ctx,
     descriptor.requestOpcode = ctx.segment->GetRequestOpcode();
     descriptor.segmentKind = ctx.segment->GetSegmentKind();
     descriptor.supersedesTpn = ctx.segment->GetSupersedesTpn();
-    descriptor.respOriginTpn = ctx.segment->GetRespOriginTpn();
     descriptor.taSsn = ctx.segment->GetTaSsn();
     descriptor.requestTaSsn = ctx.segment->GetRequestTassn();
     descriptor.order = ctx.segment->GetOrderType();
@@ -1439,17 +1350,6 @@ UbTransportChannel::BuildRtpDataPacket(const UbGbnPacketDescriptor& descriptor)
         fence.supersededTpn = descriptor.supersedesTpn;
         p->AddPacketTag(fence);
     }
-    if (m_readBacklogFeedback && descriptor.segmentKind == UbTransactionSegmentKind::RESPONSE &&
-        descriptor.taOpcode == UbTransactionOpcode::READ_RESPONSE &&
-        GetUnsentPayloadBytes() > m_readBacklogThreshold) {
-        // Responses wait here (this TP's egress path is slow or contended): tell the requester.
-        p->AddPacketTag(UbRespBacklogTag());
-    }
-    if (descriptor.respOriginTpn != UINT32_MAX) {
-        UbRespOriginTag origin;
-        origin.originTpn = descriptor.respOriginTpn;
-        p->AddPacketTag(origin);
-    }
     return p;
 }
 
@@ -1484,16 +1384,6 @@ UbTransportChannel::TrackInboundTaPacket(const BufferedInboundPacket& packet)
         state.segment->SetOriginJettyNum(packet.taHeader.GetIniRcId());
         state.segment->SetRequestTassn(logicalTaSsn);
         state.segment->SetResolvedTpIdentity(m_lifecycleOwner);
-        if (packet.respOriginTpn != UINT32_MAX && packet.respOriginTpn != m_tpn) {
-            // Late-bound READ response: it completes the request admitted on the issuing TP.
-            Ptr<UbController> ctrl = NodeList::GetNode(m_nodeId)->GetObject<UbController>();
-            Ptr<UbTransportChannel> issuer =
-                ctrl == nullptr ? nullptr
-                                : ctrl->GetTransportChannelManager()->GetTp(packet.respOriginTpn);
-            if (issuer != nullptr) {
-                state.segment->SetResolvedTpIdentity(issuer->GetLifecycleOwner());
-            }
-        }
         state.segment->SetTpMsn(logicalTpMsn);
         state.segment->SetTpn(m_tpn);
         state.segment->SetRemoteAddress(packet.remoteAddress);
@@ -2535,21 +2425,11 @@ UbTransportChannel::UpdateReceiveWindowAndCollectCompletedTa(
                                  m_sport,
                                  ctx.psn - m_psnRecvNxt,
                                  outOfOrderPacket ? m_bufferedInboundPackets.size() + 1 : 0);
-    if (m_rxRespOriginTpn != UINT32_MAX && m_rxRespOriginTpn != m_tpn) {
-        // Late-bound READ response: credit the TP that issued the request.
-        Ptr<UbController> ctrl = NodeList::GetNode(m_nodeId)->GetObject<UbController>();
-        Ptr<UbTransportChannel> issuer =
-            ctrl == nullptr ? nullptr : ctrl->GetTransportChannelManager()->GetTp(m_rxRespOriginTpn);
-        if (issuer != nullptr) {
-            issuer->CreditForeignResponse(ctx.payloadBytes);
-            issuer->ApplyReadBacklogFeedback(ctx.payloadBytes, m_rxBacklogFlag);
-        }
-    } else if (m_outstandingReadBytes > 0) {
+    if (m_outstandingReadBytes > 0) {
         const uint64_t arrived = std::min<uint64_t>(m_outstandingReadBytes, ctx.payloadBytes);
         m_outstandingReadBytes -= arrived;
         PortReadAdd(-static_cast<int64_t>(arrived));
         NoteReadArrived(arrived);
-        ApplyReadBacklogFeedback(arrived, m_rxBacklogFlag);
         if (arrived > 0) {
             // READ responses arriving on this port: did the last hop (this node's ingress queue
             // on this plane) mark them? Requester-local signal for read-request steering.
@@ -2578,7 +2458,6 @@ UbTransportChannel::UpdateReceiveWindowAndCollectCompletedTa(
         .transactionCorrelation = ctx.transactionCorrelation,
         .explicitPayload = ctx.explicitPayload,
         .transactionFields = ctx.transactionFields,
-        .respOriginTpn = m_rxRespOriginTpn,
         .arrivalNs = Simulator::Now().GetNanoSeconds()};
     if (outOfOrderPacket) {
         if (!IsRetransEnabled()) {
@@ -2703,10 +2582,6 @@ void UbTransportChannel::RecvDataPacket(Ptr<Packet> p)
             ctrl->FenceInboundTp(m_dest, fence.supersededTpn);
         }
     }
-    UbRespOriginTag origin;
-    m_rxRespOriginTpn = p->PeekPacketTag(origin) ? origin.originTpn : UINT32_MAX;
-    UbRespBacklogTag backlog;
-    m_rxBacklogFlag = p->PeekPacketTag(backlog);
     ReceivedDataPacketContext ctx;
     if (!ParseReceivedDataPacket(p, ctx)) {
         return;
@@ -2795,7 +2670,6 @@ UbTransportChannel::TryContinueAcceptedWqeSegment(Ptr<UbWqeSegment> segment)
     if (IsZeroPayloadReadRequest(segment)) {
         m_outstandingReadBytes += segment->GetSize();
         PortReadAdd(static_cast<int64_t>(segment->GetSize()));
-        NoteReadIssued(segment->GetSize());
     }
     m_admittedBytes += segment->GetSize();
     NotifySegState("ADMIT", segment);
@@ -2900,7 +2774,7 @@ UbTransportChannel::EffectiveReadBudget(PortReadState& st) const
     // (B / nominal rate); a port whose own link runs slower (lanes lost, known locally) gets a
     // proportionally smaller byte budget, so its committed READ data drains as fast as the
     // other ports' instead of becoming the tail.
-    if (!m_readBudgetScaleByRate || m_readBudgetScope == 1) {
+    if (!m_readBudgetScaleByRate) {
         return m_readPortBudget;
     }
     const double rate = GetPortRateBps();
@@ -2951,52 +2825,6 @@ UbTransportChannel::PortReadRelease()
 }
 
 void
-UbTransportChannel::CreditForeignResponse(uint64_t bytes)
-{
-    m_foreignRespBytes += bytes;
-    const uint64_t arrived = std::min<uint64_t>(m_outstandingReadBytes, bytes);
-    if (arrived == 0) {
-        return;
-    }
-    m_outstandingReadBytes -= arrived;
-        PortReadAdd(-static_cast<int64_t>(arrived));
-    NoteReadArrived(arrived);
-    if (m_maxOutstandingReadBytes > 0) {
-        TryContinueJettyTransmission();
-    }
-}
-
-void
-UbTransportChannel::ApplyReadBacklogFeedback(uint64_t bytes, bool flagged)
-{
-    // Per-TP READ quota AIMD on the responder's backlog bit (SIRD's sender-informed loop, applied
-    // per plane-TP): shrink the credit a requester keeps at a responder/path that cannot drain it,
-    // grow it back additively otherwise. Bounds: [ReadQuotaMinBytes, MaxOutstandingReadBytes].
-    if (!m_readBacklogFeedback || bytes == 0 || m_maxOutstandingReadBytes == 0) {
-        return;
-    }
-    if (m_readQuotaDyn <= 0.0) {
-        m_readQuotaDyn = static_cast<double>(m_maxOutstandingReadBytes);
-    }
-    const double frac = static_cast<double>(bytes) / 16384.0;
-    if (flagged) {
-        m_readQuotaDyn *= std::max(0.0, 1.0 - 0.0625 * frac);
-    } else {
-        m_readQuotaDyn += 0.125 * static_cast<double>(bytes);
-    }
-    m_readQuotaDyn = std::clamp(m_readQuotaDyn, static_cast<double>(m_readQuotaMinBytes),
-                                static_cast<double>(m_maxOutstandingReadBytes));
-}
-
-void
-UbTransportChannel::NoteReadIssued(uint64_t bytes)
-{
-    if (m_readDelayTarget.IsStrictlyPositive()) {
-        m_readIssue.push_back({Simulator::Now(), bytes});
-    }
-}
-
-void
 UbTransportChannel::NoteReadArrived(uint64_t bytes)
 {
     // Return-rate sample windows (>= 2 us) cover only time with reads outstanding, i.e. when the
@@ -3019,44 +2847,12 @@ UbTransportChannel::NoteReadArrived(uint64_t bytes)
             m_readRetWinStartNs = -1;  // idle: the next window starts at the next response
         }
     }
-    // Responses of one TP arrive in request order: the oldest outstanding request is the one being
-    // answered. When it is fully answered, its completion latency (request admission -> last
-    // response byte, both observed locally) drives a delay-target READ quota: the TP may commit
-    // about ReadQuotaDelayTarget worth of its own observed service, so a slow path (degraded lane,
-    // congested responder or ingress) holds a bounded amount of committed response data instead
-    // of a fixed byte quota multiplied by its fan-in.
-    while (bytes > 0 && !m_readIssue.empty()) {
-        auto& head = m_readIssue.front();
-        const uint64_t take = std::min(bytes, head.second);
-        head.second -= take;
-        bytes -= take;
-        if (head.second > 0) {
-            break;
-        }
-        const double rtt = std::max(1.0, static_cast<double>((Simulator::Now() - head.first).GetNanoSeconds()));
-        m_readIssue.pop_front();
-        const double target = static_cast<double>(m_readDelayTarget.GetNanoSeconds());
-        if (m_readQuotaDyn <= 0.0) {
-            m_readQuotaDyn = static_cast<double>(m_maxOutstandingReadBytes);
-        }
-        const double ratio = std::clamp(target / rtt, 0.5, 2.0);
-        m_readQuotaDyn *= 1.0 + m_readQuotaGain * (ratio - 1.0);
-        m_readQuotaDyn = std::clamp(m_readQuotaDyn, static_cast<double>(m_readQuotaMinBytes),
-                                    static_cast<double>(m_maxOutstandingReadBytes));
-    }
 }
 
 uint64_t
 UbTransportChannel::EffectiveReadQuotaBytes() const
 {
-    const uint64_t base = EffectiveReadQuotaBase();
-    if ((!m_readDelayTarget.IsStrictlyPositive() && !m_readBacklogFeedback) || m_readQuotaDyn <= 0.0) {
-        return base;
-    }
-    // The dynamic quota scales the base (which may already be re-spread over usable planes).
-    const double scaled = m_readQuotaDyn * static_cast<double>(base) /
-                          static_cast<double>(std::max<uint64_t>(m_maxOutstandingReadBytes, 1));
-    return std::max<uint64_t>(m_readQuotaMinBytes, static_cast<uint64_t>(scaled));
+    return EffectiveReadQuotaBase();
 }
 
 uint64_t
@@ -3086,7 +2882,7 @@ bool
 UbTransportChannel::ReadBudgetRefuses(Ptr<const UbWqeSegment> segment) const
 {
     if (segment == nullptr || m_readPortBudget == 0 || !m_portReadCounted ||
-        !(m_outstandingReadBytes > 0 || m_readBudgetStrict) ||
+        m_outstandingReadBytes == 0 ||
         segment->GetType() != UbTransactionOpcode::READ ||
         segment->GetSegmentKind() != UbTransactionSegmentKind::REQUEST) {
         return false;
@@ -3104,17 +2900,10 @@ UbTransportChannel::ReadBudgetRefuses(Ptr<const UbWqeSegment> segment) const
     const double tot = st.weight + (m_outstandingReadBytes > 0 ? 0.0 : w);
     const uint64_t share = static_cast<uint64_t>(static_cast<double>(budget) * w /
                                                  std::max(tot, w));
-    if (m_readBudgetStrict && m_outstandingReadBytes == 0) {
-        // Progress without a per-TP free segment: an idle TP may start only while the total is
-        // below B, so the aggregate never exceeds B by more than one segment (independent of
-        // the number of TPs). Refused idle TPs wait and are woken when budget is released.
-        return st.outstanding >= budget;
-    }
     const bool overTotal = st.outstanding + segment->GetSize() > budget;
     const bool overShare =
         m_outstandingReadBytes + segment->GetSize() > std::max<uint64_t>(share, segment->GetSize());
-    // Work conserving: the fair share binds only while someone is waiting for budget.
-    return overTotal || (overShare && (!m_readBudgetWorkConserving || !st.waiters.empty()));
+    return overTotal || overShare;
 }
 
 bool
@@ -3448,7 +3237,6 @@ UbTransportChannel::ForceAdmitWqeSegment(Ptr<UbWqeSegment> segment)
     if (IsZeroPayloadReadRequest(segment)) {
         m_outstandingReadBytes += segment->GetSize();
         PortReadAdd(static_cast<int64_t>(segment->GetSize()));
-        NoteReadIssued(segment->GetSize());
     }
     m_admittedBytes += segment->GetSize();
     NotifySegState("ADMIT", segment);
@@ -3667,8 +3455,7 @@ uint32_t UbTransportChannel::GetOutstandingUnackedSegmentCount() const
 bool UbTransportChannel::CanScheduleAnotherSegment() const
 {
     if (m_maxActiveReadSegments > 0) {
-        return CanScheduleSegmentClass(0) || CanScheduleSegmentClass(1) ||
-               (m_maxActiveReadRespSegments > 0 && CanScheduleSegmentClass(2));
+        return CanScheduleSegmentClass(0) || CanScheduleSegmentClass(1);
     }
     return GetActiveSendSegmentCount() < m_maxActiveSendSegments;
 }
@@ -3676,14 +3463,7 @@ bool UbTransportChannel::CanScheduleAnotherSegment() const
 int
 UbTransportChannel::PipelineClass(const Ptr<const UbWqeSegment>& segment) const
 {
-    if (!IsReadPipelineSegment(segment)) {
-        return 0;
-    }
-    if (m_maxActiveReadRespSegments > 0 &&
-        segment->GetSegmentKind() == UbTransactionSegmentKind::RESPONSE) {
-        return 2;
-    }
-    return 1;
+    return IsReadPipelineSegment(segment) ? 1 : 0;
 }
 
 bool
@@ -3695,9 +3475,7 @@ UbTransportChannel::CanScheduleSegmentClass(int cls) const
             ++active;
         }
     }
-    const uint32_t limit = cls == 0 ? m_maxActiveSendSegments
-                         : cls == 1 ? m_maxActiveReadSegments
-                                    : m_maxActiveReadRespSegments;
+    const uint32_t limit = cls == 0 ? m_maxActiveSendSegments : m_maxActiveReadSegments;
     return active < limit;
 }
 

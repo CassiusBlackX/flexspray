@@ -35,7 +35,6 @@ public:
     /** Smoothed RTT seen by the sender (0 if the algorithm does not measure it). */
     virtual Time GetSmoothedRtt() const { return Time(0); }
     /** Mean deviation of the RTT samples (0 if not measured). */
-    virtual Time GetRttVar() const { return Time(0); }
     /** Minimum RTT seen (0 if not measured). */
     virtual Time GetMinRtt() const { return Time(0); }
 

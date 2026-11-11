@@ -154,20 +154,13 @@ TypeId UbTransaction::GetTypeId(void)
             MakeDoubleAccessor(&UbTransaction::m_readIngressMarkWeight),
             MakeDoubleChecker<double>(0.0))
         .AddAttribute(
-            "DispatchQueueDelayWeight",
-            "MIN_DRAIN_TIME only: add w x (CC SRTT - min RTT) of a member (its path's standing "
-            "queueing delay) to the drain-time score of non-READ-request segments. 0 = off.",
-            DoubleValue(0.0),
-            MakeDoubleAccessor(&UbTransaction::m_dispatchQueueDelayWeight),
-            MakeDoubleChecker<double>(0.0))
-        .AddAttribute(
             "ServiceTimeScore",
-            "MIN_DRAIN_TIME (and READ response rebinding): score a member by one completion-time "
+            "MIN_DRAIN_TIME: score a member by one completion-time "
             "estimate: start = max(this port's admitted-but-unsent data / port link rate, the "
             "TP's own unsent / its delivery rate), plus service = (in-flight + outstanding READ + "
             "segment) / rate (READ requests with ReadScoreReturnRate: over the measured return "
             "rate), plus the wait for READ budget on the port. The slack rule (wait vs. take a "
-            "worse member) and response rebinding compare the same estimate. Default off.",
+            "worse member) compares the same estimate. Default off.",
             BooleanValue(false),
             MakeBooleanAccessor(&UbTransaction::m_serviceTimeScore),
             MakeBooleanChecker())
@@ -178,30 +171,6 @@ TypeId UbTransaction::GetTypeId(void)
             "instead of the TP's own delivery rate. Default off.",
             BooleanValue(false),
             MakeBooleanAccessor(&UbTransaction::m_readScoreReturnRate),
-            MakeBooleanChecker())
-        .AddAttribute(
-            "ResponseRebindRatio",
-            "ResponseLateBinding only: rebind a READ response only if its request TP's drain-time "
-            "estimate exceeds the best live TP's by this factor.",
-            DoubleValue(4.0),
-            MakeDoubleAccessor(&UbTransaction::m_responseRebindRatio),
-            MakeDoubleChecker<double>(1.0))
-        .AddAttribute(
-            "ResponseLateBinding",
-            "READ responses may leave on any live TP toward the requester (min drain time), not "
-            "only on the TP the request arrived on; the requester credits the issuing TP (4 B "
-            "response-header extension). Default off.",
-            BooleanValue(false),
-            MakeBooleanAccessor(&UbTransaction::m_responseLateBinding),
-            MakeBooleanChecker())
-        .AddAttribute(
-            "ResponseRebindAtSend",
-            "With ResponseLateBinding: choose the READ response TP when the response is admitted "
-            "(no PSN yet), not when it is generated. The rebinding is opportunistic: it happens "
-            "only if the chosen TP admits the segment immediately; otherwise the response stays "
-            "on its queue and waits for that TP's capacity as before. Default off.",
-            BooleanValue(false),
-            MakeBooleanAccessor(&UbTransaction::m_responseRebindAtSend),
             MakeBooleanChecker())
         .AddAttribute(
             "ReplayFence",
@@ -288,14 +257,7 @@ UbTransaction::ScoreMember(const Ptr<UbTransportChannel>& transport,
 {
     if (m_serviceTimeScore)
     {
-        double own = ServiceTimeNs(transport, segment);
-        if (m_dispatchQueueDelayWeight > 0.0 &&
-            !(segment->GetType() == UbTransactionOpcode::READ &&
-              segment->GetSegmentKind() == UbTransactionSegmentKind::REQUEST))
-        {
-            own += m_dispatchQueueDelayWeight * transport->GetCcQueueDelayNs();
-        }
-        return own;
+        return ServiceTimeNs(transport, segment);
     }
     double own = transport->EstimateDrainTimeNs(segment->GetSize());
     if (m_readScoreReturnRate && segment->GetType() == UbTransactionOpcode::READ &&
@@ -307,15 +269,6 @@ UbTransaction::ScoreMember(const Ptr<UbTransportChannel>& transport,
         // delivery rate (request/ACK path), this sees a slow responder egress or response path.
         own = static_cast<double>(transport->GetOutstandingReadBytes() + segment->GetSize()) * 8e9 /
               std::max(transport->GetReadReturnRateBps(), 1e6);
-    }
-    if (m_dispatchQueueDelayWeight > 0.0 &&
-        !(segment->GetType() == UbTransactionOpcode::READ &&
-          segment->GetSegmentKind() == UbTransactionSegmentKind::REQUEST))
-    {
-        // Data a writer admits now queues behind the standing backlog at the path's bottleneck;
-        // the local estimate (bytes / delivery rate) does not see that remote queue, the SRTT
-        // excess over min RTT does (it is the queueing delay the last ACKed packet met).
-        own += m_dispatchQueueDelayWeight * transport->GetCcQueueDelayNs();
     }
     if (m_readIngressMarkWeight > 0.0 && segment->GetType() == UbTransactionOpcode::READ &&
         segment->GetSegmentKind() == UbTransactionSegmentKind::REQUEST)
@@ -1605,18 +1558,6 @@ UbTransaction::StartRtpWqeSegmentTx(uint32_t jettyNum, Ptr<UbWqe> originatingWqe
 }
 
 void
-UbTransaction::RetryRtpTx(RtpTxQueueKey queueKey)
-{
-    const auto queueIt = m_rtpTxQueues.find(queueKey);
-    if (queueIt == m_rtpTxQueues.end() || !queueIt->second.waitingForTransportCapacity)
-    {
-        return;
-    }
-    queueIt->second.waitingForTransportCapacity = false;
-    ScheduleRtpTx(queueKey);
-}
-
-void
 UbTransaction::ScheduleRtpTx(const RtpTxQueueKey& queueKey)
 {
     const auto queueIt = m_rtpTxQueues.find(queueKey);
@@ -1669,54 +1610,6 @@ UbTransaction::EnqueueRtpWqe(uint32_t jettyNum, Ptr<UbWqe> originatingWqe, bool 
     }
 }
 
-Ptr<UbTransportChannel>
-UbTransaction::ChooseLateBoundResponseTp(const Ptr<UbTransportChannel>& transport,
-                                         const Ptr<UbWqeSegment>& segment) const
-{
-    // READ response late binding: the response may leave on any live TP of this node toward the
-    // requester (another plane), chosen by the request-dispatch drain-time rule. The request's
-    // plane was chosen before the response existed; a path that degraded since (or a hot requester
-    // ingress on that plane) would otherwise hold it. Hysteresis: only rebind when the request's
-    // TP is clearly worse, so the requester's own placement is kept in normal operation.
-    if (!m_responseLateBinding || segment->GetSegmentKind() != UbTransactionSegmentKind::RESPONSE ||
-        segment->GetRequestOpcode() != UbTransactionOpcode::READ ||
-        segment->GetRespOriginTpn() != UINT32_MAX)
-    {
-        return nullptr;
-    }
-    Ptr<UbController> controller = GetOwnerController();
-    Ptr<UbTransportChannelManager> manager =
-        controller == nullptr ? nullptr : controller->GetTransportChannelManager();
-    if (manager == nullptr)
-    {
-        return nullptr;
-    }
-    Ptr<UbTransportChannel> best;
-    double bestNs = std::numeric_limits<double>::infinity();
-    for (const auto& [otherTpn, other] : manager->GetTpnMap())
-    {
-        (void)otherTpn;
-        if (other == nullptr || other == transport || other->GetDest() != transport->GetDest() ||
-            other->GetPriority() != transport->GetPriority() || controller->IsTpDead(other) ||
-            controller->IsTpPathIsolated(other))
-        {
-            continue;
-        }
-        const double ns = m_serviceTimeScore ? ServiceTimeNs(other, segment)
-                                             : other->EstimateDrainTimeNs(segment->GetSize());
-        if (ns < bestNs)
-        {
-            bestNs = ns;
-            best = other;
-        }
-    }
-    const double origNs = (controller->IsTpDead(transport) || controller->IsTpPathIsolated(transport))
-                              ? std::numeric_limits<double>::infinity()
-                              : (m_serviceTimeScore ? ServiceTimeNs(transport, segment)
-                                                    : transport->EstimateDrainTimeNs(segment->GetSize()));
-    return (best != nullptr && origNs > m_responseRebindRatio * bestNs) ? best : nullptr;
-}
-
 void
 UbTransaction::EnqueueRemoteRtpWqeSegment(uint32_t tpn, Ptr<UbWqeSegment> segment)
 {
@@ -1749,15 +1642,6 @@ UbTransaction::EnqueueRemoteRtpWqeSegment(uint32_t tpn, Ptr<UbWqeSegment> segmen
     if (transport == nullptr)
     {
         return;
-    }
-    if (Ptr<UbTransportChannel> best =
-            m_responseRebindAtSend ? nullptr : ChooseLateBoundResponseTp(transport, segment))
-    {
-        segment->SetRespOriginTpn(transport->GetDstTpn());
-        segment->SetResolvedTpIdentity(best->GetLifecycleOwner());
-        tpn = best->GetTpn();
-        transport = best;
-        ++m_lateBoundResponses;
     }
 
     UbLifecycleResourceIdentity operationIdentity;
@@ -1840,66 +1724,12 @@ UbTransaction::RunRemoteRtpWqeSegmentTx(const RtpTxQueueKey& queueKey, const Rtp
     }
 
     Ptr<UbWqeSegment> segment = remote->second.segments.front();
-    if (m_responseRebindAtSend)
-    {
-        // Send-time rebinding (S2 migration: the response exists but has no PSN). The earlier
-        // version re-queued a refused segment under this queue's key while it was bound to the
-        // other TP; that TP's capacity wake goes to its own queue key, and the retry no longer
-        // re-chose (RespOriginTpn already set) yet carried the other TP's identity, so the entry
-        // was never woken (all cases hung). Here the binding is committed only if the chosen TP
-        // admits the segment now; otherwise it is rolled back and this queue's wait path is used.
-        if (Ptr<UbTransportChannel> best = ChooseLateBoundResponseTp(transport, segment))
-        {
-            const bool hadIdentity = segment->HasResolvedTpIdentity();
-            const UbLifecycleResourceIdentity previous =
-                hadIdentity ? segment->GetResolvedTpIdentity() : UbLifecycleResourceIdentity{};
-            segment->SetRespOriginTpn(transport->GetDstTpn());
-            segment->SetResolvedTpIdentity(best->GetLifecycleOwner());
-            if (best->TryContinueAcceptedWqeSegment(segment))
-            {
-                ++m_lateBoundResponses;
-                ++m_sendTimeRebinds;
-                transport = best;
-                remote->second.segments.pop_front();
-                if (!remote->second.segments.empty())
-                {
-                    m_rtpTxQueues[queueKey].pendingTxEntries.push_back(entry);
-                    remote->second.txEntryQueued = true;
-                }
-                else
-                {
-                    remoteWqeSegmentsByTpn->second.erase(remote);
-                    if (remoteWqeSegmentsByTpn->second.empty())
-                    {
-                        m_remoteRtpWqeSegmentsByTpn.erase(remoteWqeSegmentsByTpn);
-                    }
-                }
-                transport->WqeSegmentTriggerPortTransmit(segment);
-                ScheduleRtpTx(queueKey);
-                return;
-            }
-            segment->SetRespOriginTpn(UINT32_MAX);
-            if (hadIdentity)
-            {
-                segment->SetResolvedTpIdentity(previous);
-            }
-        }
-    }
     if (!transport->TryContinueAcceptedWqeSegment(segment))
     {
         RtpTxQueue& queue = m_rtpTxQueues[queueKey];
         queue.pendingTxEntries.push_front(entry);
         remote->second.txEntryQueued = true;
         queue.waitingForTransportCapacity = true;
-        Ptr<UbController> ctrl = GetOwnerController();
-        if (m_responseRebindAtSend && ctrl != nullptr &&
-            (ctrl->IsTpDead(transport) || ctrl->IsTpPathIsolated(transport)))
-        {
-            // The response's own TP will never gain capacity again and the live TP chosen for
-            // rebinding refused it (e.g. PortCommitDelay): no capacity transition of this queue's
-            // TP can wake it, so retry the send-time choice shortly.
-            Simulator::Schedule(NanoSeconds(500), &UbTransaction::RetryRtpTx, this, queueKey);
-        }
         return;
     }
 

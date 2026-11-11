@@ -417,21 +417,11 @@ UbHostSprayCc::OnSenderCongestionNotification(TpOpcode opcode, uint32_t psn, UbC
             sampled = true;
             const Time sample = Simulator::Now() - m_sent.front().sendTime;
             // minRtt (window cap) keeps its original update on every sample; only the RTO
-            // estimator (SRTT/RTTVAR, used by no other code) applies Karn's rule.
+            // estimator (SRTT, used by no other code) applies Karn's rule.
             m_minRtt = m_minRtt.IsStrictlyPositive() ? std::min(m_minRtt, sample) : sample;
             if (!m_sent.front().retransmitted)
             {
-                if (m_srtt.IsStrictlyPositive())
-                {
-                    const Time err = sample > m_srtt ? sample - m_srtt : m_srtt - sample;
-                    m_rttvar = (m_rttvar * 3 + err) / 4;
-                    m_srtt = (m_srtt * 7 + sample) / 8;
-                }
-                else
-                {
-                    m_srtt = sample;
-                    m_rttvar = sample / 2;
-                }
+                m_srtt = m_srtt.IsStrictlyPositive() ? (m_srtt * 7 + sample) / 8 : sample;
             }
         }
         acked += m_sent.front().size;
