@@ -665,17 +665,43 @@ std::vector<Ptr<UbJetty>>
 UbTransaction::GetJettiesUsingTpn(uint32_t tpn)
 {
     NS_LOG_DEBUG(this);
+    // Same result and order as testing tpn against every jetty's live TPs (GetJettyLiveTps), but
+    // only the member(s) whose TPN matches are resolved: materializing every group member of every
+    // jetty on each TP capacity transition dominated the run time (round 12 profile, ~20 %).
     std::vector<Ptr<UbJetty>> jetties;
+    Ptr<UbController> controller = GetOwnerController();
+    Ptr<UbTransportChannelManager> manager =
+        controller == nullptr ? nullptr : controller->GetTransportChannelManager();
+    if (manager == nullptr)
+    {
+        return jetties;
+    }
     for (const auto& [jettyNum, reference] : m_jettyRtpReferences)
     {
-        (void)reference;
-        const std::vector<Ptr<UbTransportChannel>> transports = GetJettyLiveTps(jettyNum);
-        const bool jettyUsesTpn =
-            std::any_of(transports.begin(),
-                        transports.end(),
-                        [tpn](const Ptr<UbTransportChannel>& transport) {
-                            return transport != nullptr && transport->GetTpn() == tpn;
-                        });
+        bool jettyUsesTpn = false;
+        if (reference.IsDirectTp())
+        {
+            jettyUsesTpn = reference.GetDirectTpn() == tpn &&
+                           manager->ResolveLiveTp(tpn, reference.GetIdentity()) != nullptr;
+        }
+        else
+        {
+            Ptr<UbTransportGroup> group = controller->ResolveRtpTpGroup(reference.GetIdentity());
+            if (group != nullptr)
+            {
+                for (uint32_t index = 0; index < group->GetMemberCount() && !jettyUsesTpn; ++index)
+                {
+                    const UbTransportGroupMember& member = group->GetMember(index);
+                    if (member.tpn != tpn)
+                    {
+                        continue;
+                    }
+                    Ptr<UbTransportChannel> transport =
+                        manager->ResolveLiveTp(member.tpn, member.tpIdentity);
+                    jettyUsesTpn = transport != nullptr && transport->GetTpn() == tpn;
+                }
+            }
+        }
         Ptr<UbJetty> jetty = jettyUsesTpn ? GetJetty(jettyNum) : nullptr;
         if (jetty != nullptr)
         {

@@ -353,6 +353,7 @@ private:
     uint32_t m_vlNum = 16;
     Time m_inPortProcessingDelay {NanoSeconds(0)};
     std::vector<InPortProcessingEvent> m_inPortProcessingEvents;
+    size_t m_inPortPruneThreshold = 64;
     uint32_t m_forcedInPortEventResidue = 0;
     uint64_t m_forcedInPortByteResidue = 0;
     uint64_t m_forcedVoqPacketResidue = 0;

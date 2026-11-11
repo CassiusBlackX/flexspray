@@ -555,6 +555,9 @@ UbSwitchAllocator::FindNextEligibleIngressQueue(uint32_t outPort,
     double bestPass = 0.0;
     uint32_t bestPassOrder = 0;
     bool allEligibleAreTp = true;
+    // Loop invariants (the egress port and its flow control do not change during the scan).
+    const bool egressHardDown = egressPort->IsHardDown();
+    const auto flowControl = egressHardDown ? nullptr : egressPort->GetFlowControl();
 
     for (const auto& queue : queues) {
         uint32_t ingressQueueSlot;
@@ -568,8 +571,7 @@ UbSwitchAllocator::FindNextEligibleIngressQueue(uint32_t outPort,
         if (ingressQueueSlot >= ingressQueueSlotCount || queue->IsEmpty() || queue->IsLimited()) {
             continue;
         }
-        const bool fcLimited =
-            !egressPort->IsHardDown() && egressPort->GetFlowControl()->IsFcLimited(queue);
+        const bool fcLimited = !egressHardDown && flowControl->IsFcLimited(queue);
         if (m_disposed) {
             return std::nullopt;
         }
@@ -579,9 +581,10 @@ UbSwitchAllocator::FindNextEligibleIngressQueue(uint32_t outPort,
 
         IngressCandidate candidate{queue, ingressQueueSlot};
         if (fairShare) {
-            Ptr<UbTransportChannel> tp = queue->GetIngressQueueType() == IngressQueueType::TP
-                                             ? DynamicCast<UbTransportChannel>(queue)
-                                             : nullptr;
+            // A TP-typed ingress queue is always a UbTransportChannel.
+            UbTransportChannel* tp = queue->GetIngressQueueType() == IngressQueueType::TP
+                                         ? static_cast<UbTransportChannel*>(PeekPointer(queue))
+                                         : nullptr;
             if (tp == nullptr) {
                 allEligibleAreTp = false;
             } else {

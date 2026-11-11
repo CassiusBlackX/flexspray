@@ -531,7 +531,13 @@ UbSwitch::CompleteInPortProcessing(Ptr<Packet> packet,
                                    uint32_t outPort,
                                    uint32_t priority)
 {
-    PruneResolvedInPortEvents();
+    // Amortized: every reader of m_inPortProcessingEvents checks IsPending(), so resolved entries
+    // may stay until the vector doubles (pruning on every completion was O(n) per packet).
+    if (m_inPortProcessingEvents.size() > m_inPortPruneThreshold)
+    {
+        PruneResolvedInPortEvents();
+        m_inPortPruneThreshold = std::max<size_t>(64, 2 * m_inPortProcessingEvents.size());
+    }
 
     if (outPort == m_detectedFailedOutput)
     {
