@@ -539,6 +539,7 @@ enum class UbTpgDispatchPolicy : uint32_t
         void EnqueueRtpWqe(uint32_t jettyNum, Ptr<UbWqe> originatingWqe, bool restoreWaitingFront);
         void EnqueueRemoteRtpWqeSegment(uint32_t tpn, Ptr<UbWqeSegment> segment);
         void RunRemoteRtpWqeSegmentTx(const RtpTxQueueKey& queueKey, const RtpTxQueueEntry& entry);
+        void RetryRtpTx(RtpTxQueueKey queueKey);
         void ScheduleRtpTx(const RtpTxQueueKey& queueKey);
         void FinishActiveRtpTxEntry(uint32_t jettyNum, Ptr<UbWqe> originatingWqe);
         void CancelRtpWqeSegmentTx(RtpTxQueueKey queueKey,
@@ -674,7 +675,17 @@ enum class UbTpgDispatchPolicy : uint32_t
         uint64_t m_lateBoundResponses{0};
         double m_readIngressMarkWeight{0.0};
         bool m_readScoreReturnRate{false};
+        bool m_serviceTimeScore{false};
+        double ServiceTimeNs(const Ptr<UbTransportChannel>& transport,
+                             const Ptr<UbWqeSegment>& segment) const;
         double m_dispatchQueueDelayWeight{0.0};
+        void TraceDefer(const Ptr<UbWqeSegment>& segment, const std::string& why);
+        void TraceDispatchPred(const Ptr<UbTransportChannel>& tp,
+                               const Ptr<UbWqeSegment>& segment,
+                               double scoreNs,
+                               double bestAltNs,
+                               uint32_t nAdmissible);
+        std::unordered_map<const UbWqeSegment*, std::string> m_deferTrace;
         double ScoreMember(const Ptr<UbTransportChannel>& transport,
                            const Ptr<UbWqeSegment>& segment) const;
         bool m_targetExecutionStarted{false};

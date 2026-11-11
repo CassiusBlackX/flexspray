@@ -161,6 +161,17 @@ TypeId UbTransaction::GetTypeId(void)
             MakeDoubleAccessor(&UbTransaction::m_dispatchQueueDelayWeight),
             MakeDoubleChecker<double>(0.0))
         .AddAttribute(
+            "ServiceTimeScore",
+            "MIN_DRAIN_TIME (and READ response rebinding): score a member by one completion-time "
+            "estimate: start = max(this port's admitted-but-unsent data / port link rate, the "
+            "TP's own unsent / its delivery rate), plus service = (in-flight + outstanding READ + "
+            "segment) / rate (READ requests with ReadScoreReturnRate: over the measured return "
+            "rate), plus the wait for READ budget on the port. The slack rule (wait vs. take a "
+            "worse member) and response rebinding compare the same estimate. Default off.",
+            BooleanValue(false),
+            MakeBooleanAccessor(&UbTransaction::m_serviceTimeScore),
+            MakeBooleanChecker())
+        .AddAttribute(
             "ReadScoreReturnRate",
             "MIN_DRAIN_TIME only: score a READ request member by its outstanding READ bytes over "
             "its measured READ return rate (responses per second while reads were outstanding) "
@@ -245,9 +256,47 @@ UbTransaction::UbTransaction(Ptr<Node> node)
 }
 
 double
+UbTransaction::ServiceTimeNs(const Ptr<UbTransportChannel>& transport,
+                             const Ptr<UbWqeSegment>& segment) const
+{
+    const bool rreq = segment->GetType() == UbTransactionOpcode::READ &&
+                      segment->GetSegmentKind() == UbTransactionSegmentKind::REQUEST;
+    const double rate = std::max(transport->GetDeliveryRateBps(), 1e6);
+    // Local part: until the segment (after this TP's earlier PSNs) has left the port.
+    const double local = transport->GetLocalServiceNs(segment->GetBytesLeft());
+    if (rreq)
+    {
+        // A request's cost is its departure plus the return of the responses already committed
+        // on this member (and the wait for READ budget on its port).
+        const double ret = m_readScoreReturnRate && transport->GetReadReturnRateBps() > 0.0
+                               ? transport->GetReadReturnRateBps()
+                               : rate;
+        return local +
+               static_cast<double>(transport->GetOutstandingReadBytes() + segment->GetSize()) *
+                   8e9 / std::max(ret, 1e6) +
+               transport->GetReadBudgetWaitNs(segment->GetSize());
+    }
+    // Data: departure, the TP's bytes already in flight ahead of it, and the post-send residual
+    // (remote queueing and ACK return seen by this TP's own segments).
+    return local + static_cast<double>(transport->GetInflightPsns() * UB_MTU_BYTE) * 8e9 / rate +
+           transport->GetServiceResidualNs();
+}
+
+double
 UbTransaction::ScoreMember(const Ptr<UbTransportChannel>& transport,
                            const Ptr<UbWqeSegment>& segment) const
 {
+    if (m_serviceTimeScore)
+    {
+        double own = ServiceTimeNs(transport, segment);
+        if (m_dispatchQueueDelayWeight > 0.0 &&
+            !(segment->GetType() == UbTransactionOpcode::READ &&
+              segment->GetSegmentKind() == UbTransactionSegmentKind::REQUEST))
+        {
+            own += m_dispatchQueueDelayWeight * transport->GetCcQueueDelayNs();
+        }
+        return own;
+    }
     double own = transport->EstimateDrainTimeNs(segment->GetSize());
     if (m_readScoreReturnRate && segment->GetType() == UbTransactionOpcode::READ &&
         segment->GetSegmentKind() == UbTransactionSegmentKind::REQUEST &&
@@ -276,6 +325,56 @@ UbTransaction::ScoreMember(const Ptr<UbTransportChannel>& transport,
         return own * (1.0 + m_readIngressMarkWeight * transport->GetPortResponseMarkFraction());
     }
     return own;
+}
+
+void
+UbTransaction::TraceDispatchPred(const Ptr<UbTransportChannel>& tp,
+                                 const Ptr<UbWqeSegment>& segment,
+                                 double scoreNs,
+                                 double bestAltNs,
+                                 uint32_t nAdmissible)
+{
+    const bool resp = segment->GetSegmentKind() == UbTransactionSegmentKind::RESPONSE;
+    const bool rreq = segment->GetType() == UbTransactionOpcode::READ && !resp;
+    std::ostringstream row;
+    row << Simulator::Now().GetNanoSeconds() << ',' << m_nodeId << ',' << tp->GetSport() << ','
+        << tp->GetDest() << ',' << (resp ? 2 : (rreq ? 1 : 0)) << ','
+        << (resp ? segment->GetDest() : segment->GetSrc()) << ','
+        << (resp ? segment->GetOriginJettyNum() : segment->GetJettyNum()) << ','
+        << (resp ? segment->GetRequestTassn() : segment->GetTaSsn()) << ',' << segment->GetSize()
+        << ',' << static_cast<int64_t>(scoreNs) << ',' << static_cast<int64_t>(bestAltNs) << ','
+        << nAdmissible << ',' << tp->GetUnsentPayloadBytes() << ','
+        << tp->GetInflightPsns() * UB_MTU_BYTE << ',' << tp->GetOutstandingReadBytes() << ','
+        << static_cast<int64_t>(tp->GetDeliveryRateBps()) << ','
+        << static_cast<int64_t>(tp->GetReadReturnRateBps()) << ','
+        << tp->GetCcSmoothedRtt().GetNanoSeconds() << ','
+        << static_cast<int64_t>(tp->GetCcMinRttNs());
+    utils::UbUtils::DispatchPredNotify(row.str());
+}
+
+void
+UbTransaction::TraceDefer(const Ptr<UbWqeSegment>& segment, const std::string& why)
+{
+    // Recovery trace: one DEFER row per change of the per-member refusal pattern of a waiting
+    // segment (member order; '.' admissible, 'q' per-TP READ quota, 'b' port READ budget,
+    // 'p' pipeline, 'i' isolated, 's' slack deferral, 'a' inactive, 'x' not selectable).
+    const UbWqeSegment* key = PeekPointer(segment);
+    if (why.empty())
+    {
+        m_deferTrace.erase(key);
+        return;
+    }
+    auto it = m_deferTrace.find(key);
+    if (it != m_deferTrace.end() && it->second == why)
+    {
+        return;
+    }
+    m_deferTrace[key] = why;
+    const std::string ev = "DEFER_" + why;
+    utils::UbUtils::SegStateNotify(ev.c_str(), m_nodeId, UINT32_MAX, UINT32_MAX, false,
+                                   static_cast<uint32_t>(segment->GetType()), segment->GetSrc(),
+                                   segment->GetDest(), segment->GetJettyNum(),
+                                   segment->GetTaSsn(), segment->GetSize());
 }
 
 void UbTransaction::TpInit(Ptr<UbTransportChannel> tp)
@@ -1300,6 +1399,14 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
         double bestDrainNs = 0.0;
         double bestLiveDrainNs = -1.0;
         bool hasLiveMember = false;
+        const bool traceDefer = utils::UbUtils::IsRecoveryTraceEnabled();
+        double bestAltNs = -1.0;
+        uint32_t nAdmissible = 0;
+        std::string why;
+        if (traceDefer)
+        {
+            why.assign(selectedGroup->GetMemberCount(), 'x');
+        }
         for (uint32_t offset = 0; offset < selectedGroup->GetMemberCount(); ++offset)
         {
             const uint32_t candidateIndex = selectedGroup->GetMemberIndexAtOffset(offset);
@@ -1325,7 +1432,15 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
             {
                 // Protection-isolated plane/port: keep the member live (so the WQE is deferred,
                 // not rejected) but admit no new segments to it.
+                if (traceDefer)
+                {
+                    why[candidateIndex] = 'i';
+                }
                 continue;
+            }
+            if (traceDefer)
+            {
+                why[candidateIndex] = transport->AdmissionBlockReason(segment);
             }
             if (m_tpgDispatchPolicy == UbTpgDispatchPolicy::STATIC_RR)
             {
@@ -1355,6 +1470,15 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
                 }
                 // Strict '<' keeps cursor order on ties.
                 const double drainNs = ScoreMember(transport, segment);
+                ++nAdmissible;
+                if (admittedTp != nullptr && drainNs >= bestDrainNs)
+                {
+                    bestAltNs = bestAltNs < 0.0 ? drainNs : std::min(bestAltNs, drainNs);
+                }
+                else if (admittedTp != nullptr)
+                {
+                    bestAltNs = bestAltNs < 0.0 ? bestDrainNs : std::min(bestAltNs, bestDrainNs);
+                }
                 if (admittedTp == nullptr || drainNs < bestDrainNs)
                 {
                     bestDrainNs = drainNs;
@@ -1374,6 +1498,10 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
                 st.sinceNs = Simulator::Now().GetNanoSeconds();
                 ++st.count;
             }
+            if (traceDefer)
+            {
+                why[selectedGroupIndex] = 's';
+            }
             admittedTp = nullptr;
             selectedGroupIndex = UINT32_MAX;
         }
@@ -1385,6 +1513,14 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
                 it->second.totalNs +=
                     static_cast<uint64_t>(Simulator::Now().GetNanoSeconds() - it->second.sinceNs);
                 it->second.sinceNs = -1;
+            }
+        }
+        if (traceDefer)
+        {
+            TraceDefer(segment, admittedTp == nullptr ? why : std::string());
+            if (admittedTp != nullptr && scoreMembers)
+            {
+                TraceDispatchPred(admittedTp, segment, bestDrainNs, bestAltNs, nAdmissible);
             }
         }
         if (admittedTp == nullptr)
@@ -1466,6 +1602,18 @@ UbTransaction::StartRtpWqeSegmentTx(uint32_t jettyNum, Ptr<UbWqe> originatingWqe
         event,
         MakeCallback(&UbTransaction::CancelRtpWqeSegmentTx, this)
             .Bind(queueKey, jettyNum, originatingWqe));
+}
+
+void
+UbTransaction::RetryRtpTx(RtpTxQueueKey queueKey)
+{
+    const auto queueIt = m_rtpTxQueues.find(queueKey);
+    if (queueIt == m_rtpTxQueues.end() || !queueIt->second.waitingForTransportCapacity)
+    {
+        return;
+    }
+    queueIt->second.waitingForTransportCapacity = false;
+    ScheduleRtpTx(queueKey);
 }
 
 void
@@ -1554,7 +1702,8 @@ UbTransaction::ChooseLateBoundResponseTp(const Ptr<UbTransportChannel>& transpor
         {
             continue;
         }
-        const double ns = other->EstimateDrainTimeNs(segment->GetSize());
+        const double ns = m_serviceTimeScore ? ServiceTimeNs(other, segment)
+                                             : other->EstimateDrainTimeNs(segment->GetSize());
         if (ns < bestNs)
         {
             bestNs = ns;
@@ -1563,7 +1712,8 @@ UbTransaction::ChooseLateBoundResponseTp(const Ptr<UbTransportChannel>& transpor
     }
     const double origNs = (controller->IsTpDead(transport) || controller->IsTpPathIsolated(transport))
                               ? std::numeric_limits<double>::infinity()
-                              : transport->EstimateDrainTimeNs(segment->GetSize());
+                              : (m_serviceTimeScore ? ServiceTimeNs(transport, segment)
+                                                    : transport->EstimateDrainTimeNs(segment->GetSize()));
     return (best != nullptr && origNs > m_responseRebindRatio * bestNs) ? best : nullptr;
 }
 
@@ -1741,6 +1891,15 @@ UbTransaction::RunRemoteRtpWqeSegmentTx(const RtpTxQueueKey& queueKey, const Rtp
         queue.pendingTxEntries.push_front(entry);
         remote->second.txEntryQueued = true;
         queue.waitingForTransportCapacity = true;
+        Ptr<UbController> ctrl = GetOwnerController();
+        if (m_responseRebindAtSend && ctrl != nullptr &&
+            (ctrl->IsTpDead(transport) || ctrl->IsTpPathIsolated(transport)))
+        {
+            // The response's own TP will never gain capacity again and the live TP chosen for
+            // rebinding refused it (e.g. PortCommitDelay): no capacity transition of this queue's
+            // TP can wake it, so retry the send-time choice shortly.
+            Simulator::Schedule(NanoSeconds(500), &UbTransaction::RetryRtpTx, this, queueKey);
+        }
         return;
     }
 

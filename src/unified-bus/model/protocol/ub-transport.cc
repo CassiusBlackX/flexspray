@@ -362,6 +362,24 @@ TypeId UbTransportChannel::GetTypeId(void)
                       UintegerValue(65536),
                       MakeUintegerAccessor(&UbTransportChannel::m_readBacklogThreshold),
                       MakeUintegerChecker<uint64_t>())
+        .AddAttribute("PortCommitDelay",
+                      "If > 0: a data segment (WRITE data or READ response) is admitted to a TP on a "
+                      "local port only while all TPs of that port together hold less than this "
+                      "drain time of admitted-but-unsent data at the port's current link rate "
+                      "(an idle port always admits one). A port that lost lanes is then committed "
+                      "for the same time, not the same bytes, as a healthy one. 0 = off (default).",
+                      TimeValue(Seconds(0)),
+                      MakeTimeAccessor(&UbTransportChannel::m_portCommitDelay),
+                      MakeTimeChecker(Seconds(0)))
+        .AddAttribute("ServiceResidual",
+                      "Track per TP the post-send residual of its segments: time from a segment's "
+                      "last byte sent to the TP ACK that completes it (remote queueing + path + "
+                      "ACK return), EWMA 1/4. With no work in flight its excess over the smallest "
+                      "residual seen halves every max(residual, 5 us), so an unused slow plane is "
+                      "retried instead of abandoned. Used by ServiceTimeScore. Default off.",
+                      BooleanValue(false),
+                      MakeBooleanAccessor(&UbTransportChannel::m_serviceResidual),
+                      MakeBooleanChecker())
         .AddAttribute("ReadBudgetScope",
                       "Scope of ReadPortBudgetBytes: 0 = per (node, port) [round 7], 1 = one "
                       "budget per node (all ports). A per-port budget redirects refused requests "
@@ -594,6 +612,13 @@ UbTransportChannel::GetCcQueueDelayNs() const
     return static_cast<double>((srtt - minRtt).GetNanoSeconds());
 }
 
+double
+UbTransportChannel::GetCcMinRttNs() const
+{
+    return m_congestionCtrl == nullptr ? 0.0
+                                       : static_cast<double>(m_congestionCtrl->GetMinRtt().GetNanoSeconds());
+}
+
 Time
 UbTransportChannel::GetCcRttVar() const
 {
@@ -751,6 +776,7 @@ UbTransportChannel::OnSelectiveRetransmissionPacketSent(uint64_t psn, uint32_t p
 {
     m_congestionCtrl->OnSenderRetransmissionPacketSent(UbTpPsnSequence::ToWire(psn), payloadBytes);
     m_traceSelectiveRetransmit(m_nodeId, m_tpn, psn, payloadBytes);
+    m_lastRetxNs = Simulator::Now().GetNanoSeconds();
 }
 
 void
@@ -795,6 +821,7 @@ void UbTransportChannel::DoDispose()
     // The failure-detector timer holds a raw `this`: cancel it before the TP is released.
     m_fdEvent.Cancel();
     PortReadRelease();
+    EgressRelease();
     if (m_retrans != nullptr) {
         m_retrans->CancelTimer();
         m_retrans->ClearRetainedState();
@@ -802,6 +829,7 @@ void UbTransportChannel::DoDispose()
     m_ackQ = queue<Ptr<Packet>>();
     m_cnpQ = queue<Ptr<Packet>>();
     m_wqeSegmentVector.clear();
+    m_txLastNs.clear();
     m_inboundTaUnits.clear();
     m_inboundTpMsnReferences.clear();
     m_inboundTaSsnReferences.clear();
@@ -1021,11 +1049,15 @@ UbTransportChannel::AdvanceNewDataSendState(const NewDataSendContext& ctx,
     const bool firstPacket = !ctx.segment->HasStartedSending();
     ctx.segment->UpdateSentBytes(ctx.progressBytes);
     m_psnSndNxt++;
+    EgressSync();
     if (firstPacket) {
         NotifySegState("TX_FIRST", ctx.segment);
     }
     if (ctx.segment->IsSentCompleted()) {
         NotifySegState("TX_LAST", ctx.segment);
+        if (m_serviceResidual) {
+            m_txLastNs[PeekPointer(ctx.segment)] = Simulator::Now().GetNanoSeconds();
+        }
     }
     utils::UbUtils::AddTpPayloadBytes(m_nodeId, m_sport, false, ctx.payloadBytes);
     TraceTpDebugState(m_nodeId,
@@ -2025,7 +2057,11 @@ UbTransportChannel::CompleteAckedWqeSegments(const TransportResponseContext& ctx
                                       UbTaSsnSequence::ToWire(segment->GetTaSsn()));
         }
 
+        if (m_serviceResidual) {
+            NoteSegmentAcked(PeekPointer(segment));
+        }
         m_wqeSegmentVector.erase(m_wqeSegmentVector.begin() + i);
+        EgressSync();
         if (CanScheduleAnotherSegment()) {
             TryContinueJettyTransmission();
         }
@@ -2062,6 +2098,7 @@ UbTransportChannel::FinalizeTransportAckProgress(const TransportResponseContext&
 {
     if (m_psnSndUna > previousSndUna) {
         UpdateDeliveryRate(previousSndUna);
+        EgressSync();
         if (m_sendWindowLimited && IsInflightLimited() == false) {
             if (!m_congestionCtrl->IsCcLimited(UB_MTU_BYTE)) {
                 m_sendWindowLimited = false;
@@ -2726,6 +2763,7 @@ void UbTransportChannel::ReTxTimeout()
                 " state=" + (m_fdState == FdState::SUSPECT ? "SUSPECT" : "HEALTHY"));
     }
     m_congestionCtrl->OnSenderRetransmissionRollback(timeoutResult.retransmitBytes);
+    m_lastRetxNs = Simulator::Now().GetNanoSeconds();
     if (timeoutResult.triggerTransmit) {
         TriggerTransportTransmit();
     }
@@ -2768,6 +2806,7 @@ UbTransportChannel::TryContinueAcceptedWqeSegment(Ptr<UbWqeSegment> segment)
     UpdatePsnCnt(segment->GetPsnSize());
     UpDateMsnCnt(1);
     PushWqeSegment(segment);
+    EgressSync();
     return true;
 }
 
@@ -3044,57 +3083,283 @@ UbTransportChannel::CanAdmitWqeSegment(Ptr<const UbWqeSegment> segment) const
 }
 
 bool
-UbTransportChannel::CanContinueAcceptedWqeSegment(Ptr<const UbWqeSegment> segment) const
+UbTransportChannel::ReadBudgetRefuses(Ptr<const UbWqeSegment> segment) const
 {
-    if (segment != nullptr && m_maxOutstandingReadBytes > 0 && m_outstandingReadBytes > 0 &&
-        segment->GetType() == UbTransactionOpcode::READ &&
-        segment->GetSegmentKind() == UbTransactionSegmentKind::REQUEST &&
-        m_outstandingReadBytes + segment->GetSize() > EffectiveReadQuotaBytes()) {
+    if (segment == nullptr || m_readPortBudget == 0 || !m_portReadCounted ||
+        !(m_outstandingReadBytes > 0 || m_readBudgetStrict) ||
+        segment->GetType() != UbTransactionOpcode::READ ||
+        segment->GetSegmentKind() != UbTransactionSegmentKind::REQUEST) {
         return false;
     }
-    if (segment != nullptr && m_readPortBudget > 0 && m_portReadCounted &&
-        (m_outstandingReadBytes > 0 || m_readBudgetStrict) &&
-        segment->GetType() == UbTransactionOpcode::READ &&
-        segment->GetSegmentKind() == UbTransactionSegmentKind::REQUEST) {
-        // Aggregate READ admission per requester ingress port: every response requested through
-        // this port arrives through it, so the port's total outstanding READ bytes is bounded
-        // (a TP with nothing outstanding may always take one segment: progress).
+    // Aggregate READ admission per requester ingress port: every response requested through
+    // this port arrives through it, so the port's total outstanding READ bytes is bounded
+    // (a TP with nothing outstanding may always take one segment: progress).
+    auto& st = PortRead()[PortKey()];
+    // Max-min fair share of the port budget among the TPs active on the port (first-come
+    // sharing let early flows hoard the budget and stretched the completion spread).
+    // Per-flow fairness: a TP's weight is 1 / (planes of its flow), so a 2-plane flow (e.g. to a
+    // storage device) is not starved by many 8-plane flows on the same port.
+    const uint64_t budget = EffectiveReadBudget(st);
+    const double w = PortShareWeight();
+    const double tot = st.weight + (m_outstandingReadBytes > 0 ? 0.0 : w);
+    const uint64_t share = static_cast<uint64_t>(static_cast<double>(budget) * w /
+                                                 std::max(tot, w));
+    if (m_readBudgetStrict && m_outstandingReadBytes == 0) {
+        // Progress without a per-TP free segment: an idle TP may start only while the total is
+        // below B, so the aggregate never exceeds B by more than one segment (independent of
+        // the number of TPs). Refused idle TPs wait and are woken when budget is released.
+        return st.outstanding >= budget;
+    }
+    const bool overTotal = st.outstanding + segment->GetSize() > budget;
+    const bool overShare =
+        m_outstandingReadBytes + segment->GetSize() > std::max<uint64_t>(share, segment->GetSize());
+    // Work conserving: the fair share binds only while someone is waiting for budget.
+    return overTotal || (overShare && (!m_readBudgetWorkConserving || !st.waiters.empty()));
+}
+
+bool
+UbTransportChannel::ReadQuotaRefuses(Ptr<const UbWqeSegment> segment) const
+{
+    return segment != nullptr && m_maxOutstandingReadBytes > 0 && m_outstandingReadBytes > 0 &&
+           segment->GetType() == UbTransactionOpcode::READ &&
+           segment->GetSegmentKind() == UbTransactionSegmentKind::REQUEST &&
+           m_outstandingReadBytes + segment->GetSize() > EffectiveReadQuotaBytes();
+}
+
+char
+UbTransportChannel::AdmissionBlockReason(Ptr<const UbWqeSegment> segment) const
+{
+    // Side-effect-free classification of why this TP would not admit the segment now (trace).
+    if (!m_isActive) {
+        return 'a';
+    }
+    if (ReadQuotaRefuses(segment)) {
+        return 'q';
+    }
+    if (ReadBudgetRefuses(segment)) {
+        return 'b';
+    }
+    if (EgressRefuses(segment)) {
+        return 'e';
+    }
+    const bool pipe = segment != nullptr && m_maxActiveReadSegments > 0
+                          ? (IsWqeSegmentLimited() || !CanScheduleSegmentClass(PipelineClass(segment)))
+                          : (IsWqeSegmentLimited() || !CanScheduleAnotherSegment());
+    return pipe ? 'p' : '.';
+}
+
+bool
+UbTransportChannel::CanContinueAcceptedWqeSegment(Ptr<const UbWqeSegment> segment) const
+{
+    if (ReadQuotaRefuses(segment)) {
+        return false;
+    }
+    if (ReadBudgetRefuses(segment)) {
         auto& st = PortRead()[PortKey()];
-        // Max-min fair share of the port budget among the TPs active on the port (first-come
-        // sharing let early flows hoard the budget and stretched the completion spread).
-        // Per-flow fairness: a TP's weight is 1 / (planes of its flow), so a 2-plane flow (e.g. to a
-        // storage device) is not starved by many 8-plane flows on the same port.
-        const uint64_t budget = EffectiveReadBudget(st);
-        const double w = PortShareWeight();
-        const double tot = st.weight + (m_outstandingReadBytes > 0 ? 0.0 : w);
-        const uint64_t share = static_cast<uint64_t>(static_cast<double>(budget) * w /
-                                                     std::max(tot, w));
-        bool refuse;
-        if (m_readBudgetStrict && m_outstandingReadBytes == 0) {
-            // Progress without a per-TP free segment: an idle TP may start only while the total is
-            // below B, so the aggregate never exceeds B by more than one segment (independent of
-            // the number of TPs). Refused idle TPs wait and are woken when budget is released.
-            refuse = st.outstanding >= budget;
-        } else {
-            const bool overTotal = st.outstanding + segment->GetSize() > budget;
-            const bool overShare =
-                m_outstandingReadBytes + segment->GetSize() > std::max<uint64_t>(share, segment->GetSize());
-            // Work conserving: the fair share binds only while someone is waiting for budget.
-            refuse = overTotal || (overShare && (!m_readBudgetWorkConserving || !st.waiters.empty()));
+        ++st.refusals;
+        if (!m_portWaiting) {
+            m_portWaiting = true;
+            st.waiters.push_back(const_cast<UbTransportChannel*>(this));
         }
-        if (refuse) {
-            ++st.refusals;
-            if (!m_portWaiting) {
-                m_portWaiting = true;
-                st.waiters.push_back(const_cast<UbTransportChannel*>(this));
-            }
-            return false;
+        return false;
+    }
+    if (EgressRefuses(segment)) {
+        auto& eg = PortEgress()[EgressKey()];
+        ++eg.refusals;
+        if (!m_egWaiting) {
+            m_egWaiting = true;
+            eg.waiters.push_back(const_cast<UbTransportChannel*>(this));
         }
+        return false;
     }
     if (segment != nullptr && m_maxActiveReadSegments > 0) {
         return !IsWqeSegmentLimited() && CanScheduleSegmentClass(PipelineClass(segment));
     }
     return segment != nullptr && !IsWqeSegmentLimited() && CanScheduleAnotherSegment();
+}
+
+void
+UbTransportChannel::NoteSegmentAcked(const UbWqeSegment* seg)
+{
+    const auto it = m_txLastNs.find(seg);
+    if (it == m_txLastNs.end()) {
+        return;
+    }
+    const int64_t now = Simulator::Now().GetNanoSeconds();
+    const double sample = static_cast<double>(now - it->second);
+    const bool ambiguous = m_lastRetxNs >= it->second;
+    m_txLastNs.erase(it);
+    if (ambiguous) {
+        // Karn's rule: a timeout or retransmission after the segment's last byte left makes the
+        // ACK time ambiguous (it measures recovery, not the path's service).
+        return;
+    }
+    m_residualNs = m_residualNs < 0.0 ? sample : 0.75 * m_residualNs + 0.25 * sample;
+    m_residualMinNs = m_residualMinNs < 0.0 ? sample : std::min(m_residualMinNs, sample);
+    m_residualAtNs = now;
+}
+
+double
+UbTransportChannel::GetServiceResidualNs() const
+{
+    if (!m_serviceResidual || m_residualNs < 0.0) {
+        return 0.0;
+    }
+    if (GetInflightPsns() > 0 || m_residualNs <= m_residualMinNs) {
+        return m_residualNs;
+    }
+    const double age = static_cast<double>(Simulator::Now().GetNanoSeconds() - m_residualAtNs);
+    const double half = std::max(m_residualNs, 5000.0);
+    return m_residualMinNs + (m_residualNs - m_residualMinNs) * std::exp2(-age / half);
+}
+
+std::unordered_map<uint64_t, UbTransportChannel::PortEgressState>&
+UbTransportChannel::PortEgress()
+{
+    static auto* m = new std::unordered_map<uint64_t, PortEgressState>();
+    return *m;
+}
+
+uint64_t
+UbTransportChannel::EgressCapBytes() const
+{
+    const double rate = GetPortRateBps();
+    const double bytes = rate * m_portCommitDelay.GetSeconds() / 8.0;
+    return std::max<uint64_t>(16384, static_cast<uint64_t>(bytes));
+}
+
+void
+UbTransportChannel::EgressSync()
+{
+    if (!m_portCommitDelay.IsStrictlyPositive() || !m_egCounted) {
+        return;
+    }
+    // Only bytes the port itself is holding back count: a TP that is dead, suspect, or blocked by
+    // its own window / CC (e.g. behind a broken or congested remote path) does not occupy the
+    // port, and counting it would refuse healthy TPs on an idle link.
+    const bool eligible = !m_dead && m_fdState != FdState::SUSPECT && !IsInflightLimited() &&
+                          !(m_congestionCtrl != nullptr && m_congestionCtrl->IsCcLimited(UB_MTU_BYTE) &&
+                            !HeadSegmentIsCcExempt());
+    const uint64_t now = eligible ? GetUnsentPayloadBytes() : 0;
+    if (now == m_egReported) {
+        return;
+    }
+    auto& st = PortEgress()[EgressKey()];
+    st.unsent = st.unsent + now >= m_egReported ? st.unsent + now - m_egReported : 0;
+    st.peak = std::max(st.peak, st.unsent);
+    if (m_egReported == 0 && now > 0) {
+        ++st.active;
+    } else if (m_egReported > 0 && now == 0 && st.active > 0) {
+        --st.active;
+    }
+    const bool decreased = now < m_egReported;
+    m_egReported = now;
+    if (decreased) {
+        EgressWake(st);
+    }
+}
+
+void
+UbTransportChannel::EgressWake(PortEgressState& st)
+{
+    if (st.waiters.empty() || st.unsent + 16384 > EgressCapBytes()) {
+        return;
+    }
+    std::deque<UbTransportChannel*> w;
+    w.swap(st.waiters);
+    for (UbTransportChannel* tp : w) {
+        tp->m_egWaiting = false;
+        if (!tp->m_capacityWakePending) {
+            tp->m_capacityWakePending = true;
+            Simulator::ScheduleNow(&UbTransportChannel::RunCapacityWake, Ptr<UbTransportChannel>(tp));
+        }
+    }
+}
+
+void
+UbTransportChannel::EgressRelease()
+{
+    if (!m_egCounted) {
+        return;
+    }
+    if (m_portCommitDelay.IsStrictlyPositive()) {
+        auto& st = PortEgress()[EgressKey()];
+        st.unsent -= std::min(st.unsent, m_egReported);
+        if (m_egReported > 0 && st.active > 0) {
+            --st.active;
+        }
+        st.waiters.erase(std::remove(st.waiters.begin(), st.waiters.end(), this), st.waiters.end());
+        m_egReported = 0;
+        // Released bytes are a capacity transition for the port's other TPs (no lost wake-up
+        // when a dead TP held the port above its cap).
+        EgressWake(st);
+    }
+    m_egReported = 0;
+    m_egCounted = false;
+    m_egWaiting = false;
+}
+
+bool
+UbTransportChannel::EgressRefuses(Ptr<const UbWqeSegment> segment) const
+{
+    if (!m_portCommitDelay.IsStrictlyPositive() || !m_egCounted || segment == nullptr ||
+        segment->GetBytesLeft() == 0) {
+        return false;
+    }
+    const auto it = PortEgress().find(EgressKey());
+    if (it == PortEgress().end() || it->second.unsent == 0) {
+        return false;  // an idle port always admits one segment (progress)
+    }
+    return it->second.unsent + segment->GetBytesLeft() > EgressCapBytes();
+}
+
+double
+UbTransportChannel::GetLocalServiceNs(uint64_t extraBytes) const
+{
+    // Time until this TP's earlier PSNs and the new bytes have left: at most the TP's own rate,
+    // and at most a fair share of the port among its TPs holding data (an idle TP on a busy port
+    // gets C/(n+1), it does not wait for every other TP's backlog), never slower than draining the
+    // whole port.
+    const double own = static_cast<double>(GetUnsentPayloadBytes() + extraBytes);
+    const double rate = std::max(GetDeliveryRateBps(), 1e6);
+    const double portRate = std::max(GetPortRateBps(), 1e6);
+    double portNs = own * 8e9 / portRate;
+    if (m_portCommitDelay.IsStrictlyPositive()) {
+        const auto it = PortEgress().find(EgressKey());
+        if (it != PortEgress().end()) {
+            const double n = static_cast<double>(it->second.active + (m_egReported == 0 ? 1 : 0));
+            const double whole = static_cast<double>(it->second.unsent + extraBytes);
+            portNs = std::min(own * std::max(n, 1.0), std::max(whole, own)) * 8e9 / portRate;
+        }
+    }
+    return std::max(own * 8e9 / rate, portNs);
+}
+
+double
+UbTransportChannel::GetPortEgressWaitNs() const
+{
+    if (!m_portCommitDelay.IsStrictlyPositive()) {
+        return static_cast<double>(GetUnsentPayloadBytes()) * 8e9 / std::max(GetPortRateBps(), 1e6);
+    }
+    const auto it = PortEgress().find(EgressKey());
+    const uint64_t unsent = it == PortEgress().end() ? 0 : it->second.unsent;
+    return static_cast<double>(unsent) * 8e9 / std::max(GetPortRateBps(), 1e6);
+}
+
+double
+UbTransportChannel::GetReadBudgetWaitNs(uint64_t extraBytes) const
+{
+    if (m_readPortBudget == 0 || !m_portReadCounted) {
+        return 0.0;
+    }
+    auto& st = PortRead()[PortKey()];
+    const uint64_t budget = EffectiveReadBudget(st);
+    const uint64_t need = st.outstanding + extraBytes;
+    if (need <= budget) {
+        return 0.0;
+    }
+    // Responses requested through this port drain at most at its link rate.
+    return static_cast<double>(need - budget) * 8e9 / std::max(GetPortRateBps(), 1e6);
 }
 
 UbWqeSegmentTerminalDisposition
@@ -3160,6 +3425,7 @@ UbTransportChannel::TryCancelUnsentWqeSegment(
         (*suffix)->SetTpMsn((*suffix)->GetTpMsn() - 1);
     }
     m_wqeSegmentVector.erase(retained);
+    EgressSync();
     m_tpPsnCnt -= canceledPsnSize;
     --m_tpMsnCnt;
     RefreshAllocatorSummary();
@@ -3193,6 +3459,7 @@ UbTransportChannel::ForceAdmitWqeSegment(Ptr<UbWqeSegment> segment)
     UpdatePsnCnt(segment->GetPsnSize());
     UpDateMsnCnt(1);
     PushWqeSegment(segment);
+    EgressSync();
 }
 
 void
@@ -3203,6 +3470,7 @@ UbTransportChannel::MarkDead()
     }
     m_dead = true;
     PortReadRelease();
+    EgressRelease();
     m_fdEvent.Cancel();
     if (m_retrans != nullptr) {
         m_retrans->CancelTimer();
@@ -3241,6 +3509,7 @@ UbTransportChannel::OnPeerActivity()
     if (m_fdState == FdState::SUSPECT && !m_dead) {
         m_fdState = FdState::HEALTHY;
         m_fdProbesSent = 0;
+        EgressSync();
         Ptr<UbController> ctrl = NodeList::GetNode(m_nodeId)->GetObject<UbController>();
         if (ctrl != nullptr) {
             ctrl->SetTpSuspect(this, false);
@@ -3268,6 +3537,7 @@ UbTransportChannel::CheckFailure()
         }
         m_fdState = FdState::SUSPECT;
         m_fdProbesSent = 0;
+        EgressSync();
         Ptr<UbController> ctrl = NodeList::GetNode(m_nodeId)->GetObject<UbController>();
         if (ctrl != nullptr) {
             ctrl->SetTpSuspect(this, true);
@@ -3362,6 +3632,7 @@ UbTransportChannel::ForceRemoveRetainedWqeSegment(
                                             segment->GetPsnStart() + segment->GetPsnSize());
     }
     m_wqeSegmentVector.erase(retained);
+    EgressSync();
     if (m_wqeSegmentVector.empty() && m_retrans != nullptr)
     {
         m_retrans->CancelTimer();

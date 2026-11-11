@@ -411,6 +411,8 @@ public:
      *  and its response, so one business unit's states join. */
     static void HolDelayNotify(uint32_t node, uint32_t tpn, uint32_t peer, uint32_t port,
                                uint32_t taOpcode, uint32_t payload, int64_t waitNs);
+    /** Recovery trace: one row of runlog/DispatchPred.csv (dispatch prediction vs outcome). */
+    static void DispatchPredNotify(const std::string& row);
     static void SegStateNotify(const char* event, uint32_t node, uint32_t tpn, uint32_t port,
                                bool response, uint32_t opcode, uint32_t requester,
                                uint32_t responder, uint32_t jetty, uint32_t taSsn, uint64_t bytes);

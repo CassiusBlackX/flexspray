@@ -436,6 +436,19 @@ public:
     bool CanAdmitWqeSegment(Ptr<const UbWqeSegment> segment) const;
     bool TryContinueAcceptedWqeSegment(Ptr<UbWqeSegment> segment);
     bool CanContinueAcceptedWqeSegment(Ptr<const UbWqeSegment> segment) const;
+    /** Side-effect-free reason this TP would refuse the segment now: 'a' inactive, 'q' per-TP
+     *  READ quota, 'b' port READ budget, 'p' pipeline depth, '.' admissible (trace only). */
+    char AdmissionBlockReason(Ptr<const UbWqeSegment> segment) const;
+    bool EgressRefuses(Ptr<const UbWqeSegment> segment) const;
+    /** Round 10 service-time terms (ns): time until this port's admitted-but-unsent data drains
+     *  at the port's current link rate, and the extra wait for READ budget on this port. */
+    double GetPortEgressWaitNs() const;
+    double GetLocalServiceNs(uint64_t extraBytes) const;
+    double GetServiceResidualNs() const;
+    double GetReadBudgetWaitNs(uint64_t extraBytes) const;
+    bool IsPortCommitEnabled() const { return m_portCommitDelay.IsStrictlyPositive(); }
+    bool ReadBudgetRefuses(Ptr<const UbWqeSegment> segment) const;
+    bool ReadQuotaRefuses(Ptr<const UbWqeSegment> segment) const;
     bool IsAcceptingNewWorkForTest() const { return m_isActive; }
     UbWqeSegmentTerminalDisposition TryCancelUnsentWqeSegment(
         Ptr<UbWqeSegment> segment,
@@ -481,6 +494,34 @@ public:
         uint64_t refusals{0};
     };
     static std::unordered_map<uint64_t, PortReadState>& PortRead();
+    // Round 10, PortCommitDelay: admitted-but-unsent data bytes of all TPs on one local port.
+    struct PortEgressState
+    {
+        uint64_t unsent{0};
+        std::deque<UbTransportChannel*> waiters;
+        uint64_t peak{0};
+        uint64_t refusals{0};
+        uint32_t active{0}; // TPs of the port currently holding counted bytes
+    };
+    static std::unordered_map<uint64_t, PortEgressState>& PortEgress();
+    void EgressWake(PortEgressState& st);
+    uint64_t EgressKey() const { return (uint64_t{m_nodeId} << 16) | m_sport; }
+    /** Re-sum this TP's unsent payload into its port's total (self-correcting; cheap). */
+    void EgressSync();
+    void EgressRelease();
+    uint64_t EgressCapBytes() const;
+    bool m_egCounted{true};
+    uint64_t m_egReported{0};
+    mutable bool m_egWaiting{false};
+    Time m_portCommitDelay{Seconds(0)};
+    // Round 10, ServiceResidual: post-send residual (last byte sent -> TP ACK) per TP.
+    bool m_serviceResidual{false};
+    std::unordered_map<const UbWqeSegment*, int64_t> m_txLastNs;
+    double m_residualNs{-1.0};
+    double m_residualMinNs{-1.0};
+    int64_t m_residualAtNs{0};
+    int64_t m_lastRetxNs{-1};
+    void NoteSegmentAcked(const UbWqeSegment* seg);
     // Budget scope: per (node, port) [legacy] or one budget per node (ReadBudgetScope = 1).
     uint64_t PortKey() const
     {
@@ -663,6 +704,7 @@ public:
     Time GetCcRttVar() const;
     /** Standing queueing delay on this TP's path: CC SRTT - min RTT (0 if unknown). */
     double GetCcQueueDelayNs() const;
+    double GetCcMinRttNs() const;
     void SetMaxRetransAttempts(uint16_t attempts);
     uint16_t GetMaxRetransAttempts() const;
     void SetRetransExponentFactor(uint16_t factor);

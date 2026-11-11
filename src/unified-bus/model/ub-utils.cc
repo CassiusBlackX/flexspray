@@ -2457,6 +2457,19 @@ UbUtils::HolDelayNotify(uint32_t node, uint32_t tpn, uint32_t peer, uint32_t por
 }
 
 void
+UbUtils::DispatchPredNotify(const std::string& row)
+{
+    if (!IsRecoveryTraceEnabled())
+    {
+        return;
+    }
+    AppendCsvRow(trace_path + "runlog/DispatchPred.csv",
+                 "time_ns,node,port,peer,kind,requester,jetty,tassn,size,score_ns,best_alt_ns,"
+                 "n_adm,unsent,inflight,outread,rate_bps,ret_bps,srtt_ns,minrtt_ns",
+                 row);
+}
+
+void
 UbUtils::SegStateNotify(const char* event, uint32_t node, uint32_t tpn, uint32_t port,
                         bool response, uint32_t opcode, uint32_t requester, uint32_t responder,
                         uint32_t jetty, uint32_t taSsn, uint64_t bytes)
