@@ -5,13 +5,14 @@ Per (fault semantics, scenario, fault, scheme): worst damaged device over device
 For every window (steady / tdev / trans) and every N reading (N_dev, 4N = total lanes, Nscope =
 planes the device's flows can use), a cell passes iff loss < 1/N (the original strict relation).
 Classification of a failing cell:
-  phys  physical limit:
-          tdev window   - the per-device LP lower bound itself is >= 1/N (capacity cut, provable);
-          steady/trans  - the capacity removed from the device's usable planes (lane k: k/4 of one
-                          of Nscope planes; port or L1-node fault: 1 of Nscope planes) is >= 1/N
-                          (a port-bound device cannot do better; "if port-bound");
+  phys  physical limit, proven: tdev window - the per-device LP lower bound itself is >= 1/N;
+  phys* steady / trans windows - the capacity removed from the device's usable planes (lane k: k/4
+        of one of Nscope planes; port or L1-node fault: 1 of Nscope planes) is >= 1/N. NOT an LP
+        proof: valid only if the device is port-bound in that window;
   impl  not excluded by those bounds: protocol or implementation shortfall;
-  miss  tasks missing (P0).
+  miss  tasks missing (P0);
+  na    not judged (steady window shorter than 10 us): counted separately, never dropped from the
+        denominator (the n/a rows are often the worst completion-time rows).
 Usage: flexspray_losstable.py ROWS.jsonl [ROWS.jsonl ...] [--names a=b,...] [--detail]
 """
 import argparse
@@ -87,25 +88,28 @@ def main():
                 cells[(w, nk)] = (st, loss)
                 if st != "na":
                     tot[(sem, sch, w, nk)] += 1
-                    cnt[(sem, sch, w, nk, st)] += 1
+                cnt[(sem, sch, w, nk, st)] += 1
         reb = max((r["t_rebal_us"] for r in rows if r["t_rebal_us"] is not None), default=None)
         lp = max((r["lp_lb"] for r in rows if r["lp_lb"] is not None), default=None)
         detail.append((sem, sc, f, sch, cells, reb, lp))
-    print("## Pass counts: cells with loss %s 1/N (worst device, worst seed); failing cells split "
-          "into phys / impl / miss\n" % ("<" if REL == "lt" else "<="))
+    print("## Pass counts: cells with loss %s 1/N (worst device, worst seed) / all cells; the rest "
+          "split into phys (LP-proven, tdev) or phys* (removed capacity, port-bound assumption, "
+          "steady / trans), impl, miss, n/a (not judged)\n" % ("<" if REL == "lt" else "<="))
     print("| semantics | scheme | window | " + " | ".join(NS) + " |")
     print("|---|---|---|" + "---|" * len(NS))
     for sem in ("graceful", "hard", "lane"):
         for sch in schemes:
             for w in WIN:
-                if not any(tot[(sem, sch, w, nk)] for nk in NS):
+                if not any(tot[(sem, sch, w, nk)] + cnt[(sem, sch, w, nk, "na")] for nk in NS):
                     continue
                 parts = []
                 for nk in NS:
                     t = tot[(sem, sch, w, nk)]
-                    parts.append("%d/%d (phys %d, impl %d, miss %d)" % (
-                        cnt[(sem, sch, w, nk, "pass")], t, cnt[(sem, sch, w, nk, "phys")],
-                        cnt[(sem, sch, w, nk, "impl")], cnt[(sem, sch, w, nk, "miss")]))
+                    phys = "phys" if w == "tdev" else "phys*"
+                    parts.append("%d/%d (%s %d, impl %d, miss %d, n/a %d)" % (
+                        cnt[(sem, sch, w, nk, "pass")], t + cnt[(sem, sch, w, nk, "na")], phys,
+                        cnt[(sem, sch, w, nk, "phys")], cnt[(sem, sch, w, nk, "impl")],
+                        cnt[(sem, sch, w, nk, "miss")], cnt[(sem, sch, w, nk, "na")]))
                 print("| %s | %s | %s | %s |" % (sem, sch, w, " | ".join(parts)))
     if a.detail:
         print("\n## Rows (loss %% per window: steady / tdev / trans; marks per N_dev,4N,Nscope: "
