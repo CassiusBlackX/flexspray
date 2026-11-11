@@ -174,6 +174,29 @@ def wl_d2d_read(t, scale):
             for s in range(t.S) for i in range(8)]
 
 
+def _d2io(t, scale, op, cls):
+    """Cross-server compute <-> IO device P2P (round 13): NPU0 of server s and SSD of server s+1,
+    NPU1 of server s and NIC of server s+1; one exclusive pair per IO device, demand at the IO
+    device's 2-plane line rate. WRITE: data NPU -> IO device; READ: the NPU reads (data IO -> NPU)."""
+    r = 2 * t.rate * EFF_UNI
+    tasks = []
+    for s in range(t.S):
+        n = (s + 1) % t.S
+        tasks.append((t.find_host("NPU", s, 0)["id"], t.find_host("SSD", n, 0)["id"],
+                      _bytes(r, scale), op, BULK_PRIO, 0, cls + "_ssd"))
+        tasks.append((t.find_host("NPU", s, 1)["id"], t.find_host("NIC", n, 0)["id"],
+                      _bytes(r, scale), op, BULK_PRIO, 0, cls + "_nic"))
+    return tasks
+
+
+def wl_d2io(t, scale):
+    return _d2io(t, scale, "URMA_WRITE", "d2io")
+
+
+def wl_d2io_read(t, scale):
+    return _d2io(t, scale, "URMA_READ", "d2io_read")
+
+
 def p2p_io_flows(t, scale):
     """Host/IO point-to-point set with exclusive endpoints (all device ports demanded at line rate):
     H2D CPU0->NPU6, RH2D CPU1->NPU7(next server), D2H NPU6->CPU1, NIC->CPU0 (network to host),
@@ -311,7 +334,8 @@ def wl_mixed(t, scale, seed=1):
 
 SCENARIOS = {"d2d": wl_d2d, "d2dread": wl_d2d_read, "h2d": wl_h2d, "a2a": wl_a2a,
              "mixed": wl_mixed, "a2aread": wl_a2a_read, "mixedread": wl_mixed_read,
-             "stagger": wl_stagger, "staggermixed": wl_stagger_mixed, "incast": wl_incast}
+             "stagger": wl_stagger, "staggermixed": wl_stagger_mixed, "incast": wl_incast,
+             "d2io": wl_d2io, "d2ioread": wl_d2io_read}
 import flexspray_bench  # noqa: E402  (benchmark v1, multi-phase workloads)
 SCENARIOS.update(flexspray_bench.BENCH)
 SEEDED = {"mixed", "mixedread", "stagger", "staggermixed", "incast"} | set(flexspray_bench.BENCH)
