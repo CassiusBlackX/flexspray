@@ -76,7 +76,28 @@ FlexSpray 是 UB 多平面超节点上的逐包喷洒负载均衡 + 拥塞控制
 - **结论**：降 lane 的 x2 / x1 档在默认配置下仍是**最大的工程缺口**。在完成时间口径下它们是实现不足，远离物理界。
 - **N = 4·N_dev**：丢 ≥ 2 条 lane 时物理上不可达（LP）。丢 1 条时损失落在界附近，"<"与"≤"下都只部分达到。
 - **最初 10 µs 与重均衡时间**：见 FEASIBILITY §9.3。重均衡时间是相对故障后已经降低的水平计算的，不能证明重均衡的质量。
-- **拖尾是一次性的还是每阶段复现**：第十二轮在多阶段负载上判定，见 FEASIBILITY §10。
+- **拖尾是一次性的还是每阶段复现**：第十二轮判定为每阶段复现，见 §2b、FEASIBILITY §10。
+
+## 2b. 多阶段负载上的拖尾性质（第十二轮，benchmark v1）
+
+**负载**：`BENCHMARK.md`，生成器 `flexspray_bench.py`。
+- ring allreduce（RS + AG）；
+- DeepSeek-V3 式的 MoE dispatch / combine；
+- Mooncake trace 驱动的 KV；
+- 以上的混合。
+
+**评价器**：`flexspray_phaseinfl.py`，计算故障后每个阶段超出容量损失的额外时间。
+
+**结论**【有限条件下成立：本负载、本拓扑】：
+- 默认 v5.3 与 B1 在 x2 / x1 下，受影响的集合通信阶段**每个都复现拖尾**：
+  - ring / MoE：x2 每阶段超出 21–45%，x1 超出 64–77%；
+  - ring 50 步累计 94–165 µs。
+- 候选 C 把 ring x2 降为一次性的 4–10%，x1 降到 15%，MoE 降到 10–53%；但 b_mix 中 MoE 的 dispatch 在 x1 下更差，而且 C 未过预言机（T21）。
+- 详见 FEASIBILITY §10。
+
+**仿真提速**：同一 case 从 96.5 s 降到 56.1 s（1.72×），各步逐位相同，golden 25/25；**未达到 3× 的目标**。
+- 代码优化：a1a0cf0d；
+- 静态链接 + LTO + PGO：`<work>/frozen/r12pgo`，复现脚本为 `<work>/bin/pgo_build.sh`。
 
 ## 3. 报告与图
 

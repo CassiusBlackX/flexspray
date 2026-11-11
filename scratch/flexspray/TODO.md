@@ -12,7 +12,7 @@ Each item is labelled:
 
 | # | Item | Status / evidence | Next step |
 |---|---|---|---|
-| T2 | Benchmark traffic and topology with public sources (REQUESTS §6, CLAUDE.md §5) | **open, our responsibility** (no longer external): all results use our own one-shot t = 0 workloads (~175 µs jobs, 48 endpoints, no ring collectives). Independent review route P1 (work/REVIEW_judge_2026-11-11.md) | BENCHMARK.md with sourced parameters; ring / MoE / KVCache phases; ms-scale jobs |
+| T2 | Benchmark traffic and topology with public sources (REQUESTS §6, CLAUDE.md §5) | **partly done (round 12)**: benchmark v1 workloads with sources in BENCHMARK.md (ring, MoE, Mooncake KV, control); topology still our own 4-server assumption, scale 48 endpoints. Independent review route P1 (work/REVIEW_judge_2026-11-11.md) | BENCHMARK.md with sourced parameters; ring / MoE / KVCache phases; ms-scale jobs |
 | T4 | Real switch arbitration, VOQ, buffer and credit granularity; endpoint cost of per-packet SFQ, read steering and replay fence | **external** | Optional arbiter in `UbSwitchAllocator`; hardware review |
 | T5 | Larger scale (hundreds of endpoints), higher oversubscription, MTP/MPI with `link_health` | Not in this round's scope | `link_health` across partitions; LP scaling (column generation) |
 | T7 | Metric conventions (see DELIVERY.md §6 for the concrete questions) | **external** | — |
@@ -27,6 +27,10 @@ Each item is labelled:
 | T22 | links-per-pair 1 + H2up after the T20 fix: completes, but read workloads recover slowly (default a2aread 0.37, mixedread 0.46 vs healthy 0.81 / 0.73) | **open (performance)** | Check the in-flight loss window (2 us withdrawal) and the GBN / probe interplay on the affected plane |
 | T23 | `UB_LINK_HEALTH_FABRIC_WITHDRAW_NS` = 2 us is an assumption | **assumption**; sensitivity: liveness holds at 2 / 20 / 200 us, mixed eff 0.70 / 0.70 / 0.50 | Source for fabric route convergence time (BENCHMARK.md) |
 | T24 | Rebalance-time metric unreliable on read workloads (5 us rate fluctuates > 5 %) | **evaluator limit** | Longer jobs (P1) or a smoothed / byte-based definition |
+| T25 | Simulator speed: 1.72x reached (96.5 -> 56.1 s, bit-identical), target 3x not reached | **open**. After the three hot-path fixes the profile is flat (top self 3.8 %) | Allocator active set of non-empty ingress queues; remove per-packet lifecycle map lookups; both need a bit-identity proof |
+| T26 | Benchmark v1 assumptions (BENCHMARK.md section 7): ring size, MoE tokens per rank and compute times, KV block bytes and time compression, per-step global barrier | **open (sensitivity not done)** | x0.5 / x2 sweeps; neighbour-only ring dependency |
+| T27 | The whole-job makespan LP (eff_fixed in flexspray_matrix) is not valid for phased workloads (relative delays read as absolute releases) and fails to solve on large b_mix cases | **evaluator limit** | Use flexspray_phaseinfl.py for b_* scenarios; mark eff_fixed n/a |
+| T28 | Per-phase tail recurs after x2 / x1 faults (default, B1); C reduces it but MoE dispatch at x1 is worse with C | **open** (FEASIBILITY §10.3) | Fix T21 first; then the completion estimate for multi-destination dispatch phases |
 | T1-rest | Atomic operations are not replayed; a WQE whose TP group has lost every member is rejected; dead TPs are kept, never recycled | **boundary**. The replay fence keys on the TPN, so TP recycling would need a generation field in the fence tag | Only if TP recycling or atomic recovery becomes a requirement |
 
 ## Closed (with evidence)

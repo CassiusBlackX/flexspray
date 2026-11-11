@@ -93,3 +93,17 @@
 **故障模型新增参数**：`UB_LINK_HEALTH_FABRIC_WITHDRAW_NS`（默认 2 µs，**假设**；T23）。
 
 **本轮没有使用新的未见样本**。T20 的 case 重用第十轮用过的种子 14、lpp 1。
+
+## 第十二轮补充（2026-11-11）
+
+**多阶段负载**（`flexspray_bench.py`：b_ring / b_moe / b_kv / b_mix）用 `flexspray_phaseinfl.py` 评价：
+- 每个阶段对比只含该阶段流量的 LP；
+- excess = (D_fault − D_healthy) − (L_fault − L_healthy)；
+- 判定阈值：故障后阶段的 excess 中位数 > 健康阶段时长的 10%，即为"每阶段复现"；
+- 这些场景的 `eff_fixed` 不适用（T27）。
+
+**稳态窗口**：只作附加列；n/a 单独计数，留在分母中；稳态与瞬态窗口的物理类判据标为 phys*（假设设备受端口限制，不是 LP 证明）。
+
+**已用过的样本**：b_* 场景的种子 1、2（调参种子），故障 F0 / F3near2 / F3far2 / F3near3 / F3far3。
+
+**计时**：提速的计时只在空闲机器上采信；与矩阵并发运行时测得的时间作废（本轮第一次 PGO 计时 66.2 s 即被作废）。
