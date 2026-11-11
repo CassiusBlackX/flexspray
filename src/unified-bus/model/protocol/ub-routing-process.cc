@@ -9,8 +9,15 @@
 #include "ns3/ub-routing-policy.h"
 #include "ns3/ub-rule-routing.h"
 #include "ns3/hash.h"
+#include "ns3/global-value.h"
+#include "ns3/node-list.h"
+#include "ns3/uinteger.h"
+#include "ns3/ub-link.h"
+#include "ns3/ub-port.h"
+#include "ns3/ub-switch.h"
 
 #include <algorithm>
+#include <limits>
 #include <sstream>
 
 namespace ns3 {
@@ -637,6 +644,119 @@ UbRoutingProcess::SelectAdaptiveOutPort(RoutingKey& key,
     return UbRoutingPolicy::SelectAdaptive(key, candidates, m_nodeId, selectedShortestPath);
 }
 
+namespace
+{
+GlobalValue g_fabricWithdrawNs("UB_LINK_HEALTH_FABRIC_WITHDRAW_NS",
+                               "Delay (ns) per hop before an upstream switch stops using a "
+                               "neighbour switch that has no live path left toward a destination "
+                               "(fabric route withdrawal after a switch-to-switch hard down).",
+                               UintegerValue(2000),
+                               MakeUintegerChecker<uint64_t>());
+
+int64_t
+FabricWithdrawNs()
+{
+    UintegerValue value;
+    g_fabricWithdrawNs.GetValue(value);
+    return static_cast<int64_t>(value.Get());
+}
+} // namespace
+
+void
+UbRoutingProcess::NoteOutputDown(uint16_t outPort)
+{
+    m_downSinceNs.emplace(outPort, Simulator::Now().GetNanoSeconds());
+    s_fabricDown = true;
+}
+
+std::pair<Ptr<UbRoutingProcess>, uint16_t>
+UbRoutingProcess::NeighborRouting(uint16_t outPort)
+{
+    const auto it = m_neighborRouting.find(outPort);
+    if (it != m_neighborRouting.end())
+    {
+        return it->second;
+    }
+    std::pair<Ptr<UbRoutingProcess>, uint16_t> out{nullptr, UINT16_MAX};
+    Ptr<Node> node = m_nodeId < NodeList::GetNNodes() ? NodeList::GetNode(m_nodeId) : nullptr;
+    Ptr<UbPort> port = (node == nullptr || outPort >= node->GetNDevices())
+                           ? nullptr
+                           : DynamicCast<UbPort>(node->GetDevice(outPort));
+    Ptr<UbLink> link = port == nullptr ? nullptr : DynamicCast<UbLink>(port->GetChannel());
+    Ptr<UbPort> peer = link == nullptr ? nullptr : link->GetDestination(port);
+    Ptr<UbSwitch> sw = peer == nullptr ? nullptr : peer->GetNode()->GetObject<UbSwitch>();
+    if (sw != nullptr && sw->GetNodeType() == UB_SWITCH)
+    {
+        out = {sw->GetRoutingProcess(), static_cast<uint16_t>(peer->GetIfIndex())};
+    }
+    m_neighborRouting.emplace(outPort, out);
+    return out;
+}
+
+int64_t
+UbRoutingProcess::UnreachableSinceNs(uint32_t dip, uint16_t inPort, int depth)
+{
+    constexpr int64_t kReachable = std::numeric_limits<int64_t>::max();
+    // The same shortest candidates forwarding would use (rule / next-hop index / table).
+    std::vector<uint16_t> shortest;
+    std::vector<uint16_t> other;
+    if (!TryGetRuleCandidatesWithPrimaryFallback(dip, inPort, shortest, other) &&
+        !TryGetIndexedCandidatesWithPrimaryFallback(dip, inPort, shortest, other))
+    {
+        uint32_t lookup = dip;
+        const auto table = LookupCandidatePorts(lookup, true);
+        shortest.assign(table.begin(), table.end());
+    }
+    if (shortest.empty())
+    {
+        return kReachable;
+    }
+    int64_t since = std::numeric_limits<int64_t>::min();
+    for (uint16_t port : shortest)
+    {
+        const auto down = m_downSinceNs.find(port);
+        int64_t t;
+        if (down != m_downSinceNs.end())
+        {
+            t = down->second;  // own link: known locally at once
+        }
+        else if (depth > 0)
+        {
+            const auto next = NeighborRouting(port);
+            const int64_t u = next.first == nullptr
+                                  ? kReachable
+                                  : next.first->UnreachableSinceNs(dip, next.second, depth - 1);
+            if (u == kReachable)
+            {
+                return kReachable;
+            }
+            t = u + FabricWithdrawNs();
+        }
+        else
+        {
+            return kReachable;
+        }
+        since = std::max(since, t);
+    }
+    return since;
+}
+
+bool
+UbRoutingProcess::WithdrawnVia(uint16_t outPort, uint32_t dip, int64_t nowNs)
+{
+    if (m_downSinceNs.count(outPort) != 0)
+    {
+        return false;  // own failed output: handled by isolation / failure filtering
+    }
+    const auto next = NeighborRouting(outPort);
+    if (next.first == nullptr)
+    {
+        return false;
+    }
+    const int64_t u = next.first->UnreachableSinceNs(dip, next.second, 2);
+    return u != std::numeric_limits<int64_t>::max() && u + FabricWithdrawNs() <= nowNs;
+}
+
 int
 UbRoutingProcess::SelectCandidate(RoutingKey& key,
                                   const UbRoutingCandidateView& candidates,
@@ -644,6 +764,30 @@ UbRoutingProcess::SelectCandidate(RoutingKey& key,
                                   uint16_t inPort,
                                   bool failureDetour)
 {
+    if (s_fabricDown && !m_inWithdrawFilter)
+    {
+        // Fabric route withdrawal (see NoteOutputDown): drop candidates whose next switch has
+        // withdrawn this destination; keep the original set if that would leave nothing.
+        const int64_t now = Simulator::Now().GetNanoSeconds();
+        const auto withdrawn = [&](uint16_t port) { return WithdrawnVia(port, key.dip, now); };
+        m_wdShortest.assign(candidates.shortest.begin(), candidates.shortest.end());
+        m_wdNonShortest.assign(candidates.nonShortest.begin(), candidates.nonShortest.end());
+        const size_t before = m_wdShortest.size() + m_wdNonShortest.size();
+        m_wdShortest.erase(std::remove_if(m_wdShortest.begin(), m_wdShortest.end(), withdrawn),
+                           m_wdShortest.end());
+        m_wdNonShortest.erase(
+            std::remove_if(m_wdNonShortest.begin(), m_wdNonShortest.end(), withdrawn),
+            m_wdNonShortest.end());
+        const UbRoutingCandidateView kept{m_wdShortest, m_wdNonShortest, candidates.excludedPort};
+        if (m_wdShortest.size() + m_wdNonShortest.size() != before &&
+            UbRoutingPolicy::Count(kept) > 0)
+        {
+            m_inWithdrawFilter = true;
+            const int out = SelectCandidate(key, kept, selectedShortestPath, inPort, failureDetour);
+            m_inWithdrawFilter = false;
+            return out;
+        }
+    }
     if (failureDetour && RoutingTypeUsesShortestPaths(key.routingType))
     {
         const UbRoutingCandidateView shortest{candidates.shortest, {}, candidates.excludedPort};

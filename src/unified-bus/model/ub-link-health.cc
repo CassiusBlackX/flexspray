@@ -331,8 +331,10 @@ SetEndpointDown(const Ptr<UbPort>& port, bool peerIsSwitch)
         // (switch-to-switch). A device-facing port is the only path to that device port.
         if (peerIsSwitch)
         {
-            NodeList::GetNode(nodeId)->GetObject<UbSwitch>()->GetRoutingProcess()->SetOutputIsolated(
-                portId);
+            Ptr<UbRoutingProcess> routing =
+                NodeList::GetNode(nodeId)->GetObject<UbSwitch>()->GetRoutingProcess();
+            routing->SetOutputIsolated(portId);
+            routing->NoteOutputDown(portId);
         }
         return;
     }

@@ -130,6 +130,20 @@ class UbRoutingProcess : public Object
     bool IsOutputIsolated(uint16_t outPort) const;
 
     /**
+     * @brief Record that this switch's output toward another switch went hard down.
+     *
+     * Fabric route withdrawal: a neighbour that has no live shortest output left toward a
+     * destination stops being a candidate for that destination at upstream switches once the
+     * withdrawal could have reached them (fault time + UB_LINK_HEALTH_FABRIC_WITHDRAW_NS per hop).
+     * Without it, a spine that lost its only link to a leaf silently drops every packet sprayed to
+     * it for that leaf (links-per-pair 1), and end-to-end probes still succeed via other spines.
+     */
+    void NoteOutputDown(uint16_t outPort);
+    /** Earliest time (ns) from which this switch has no live shortest output toward @p dip, as
+     *  known along withdrawals up to @p depth hops away; INT64_MAX if it can still reach it. */
+    int64_t UnreachableSinceNs(uint32_t dip, uint16_t inPort, int depth);
+
+    /**
      * @brief Whether the most recent selection failed only because detected failed outputs were
      *        excluded while legal candidates existed before the exclusion.
      */
@@ -208,6 +222,14 @@ class UbRoutingProcess : public Object
                                 uint16_t inPort);
 
     uint32_t m_nodeId{0};
+    std::unordered_map<uint16_t, int64_t> m_downSinceNs;
+    std::unordered_map<uint16_t, std::pair<Ptr<UbRoutingProcess>, uint16_t>> m_neighborRouting;
+    std::vector<uint16_t> m_wdShortest;
+    std::vector<uint16_t> m_wdNonShortest;
+    bool m_inWithdrawFilter{false};
+    inline static bool s_fabricDown{false};
+    std::pair<Ptr<UbRoutingProcess>, uint16_t> NeighborRouting(uint16_t outPort);
+    bool WithdrawnVia(uint16_t outPort, uint32_t dip, int64_t nowNs);
     MultipathSelector m_multipathSelector{MultipathSelector::HASH64};
     UbRoutingTable m_table;
     std::shared_ptr<const UbNextHopIndex> m_nextHopIndex;
