@@ -312,17 +312,24 @@ def wl_mixed(t, scale, seed=1):
 SCENARIOS = {"d2d": wl_d2d, "d2dread": wl_d2d_read, "h2d": wl_h2d, "a2a": wl_a2a,
              "mixed": wl_mixed, "a2aread": wl_a2a_read, "mixedread": wl_mixed_read,
              "stagger": wl_stagger, "staggermixed": wl_stagger_mixed, "incast": wl_incast}
-SEEDED = {"mixed", "mixedread", "stagger", "staggermixed", "incast"}
+import flexspray_bench  # noqa: E402  (benchmark v1, multi-phase workloads)
+SCENARIOS.update(flexspray_bench.BENCH)
+SEEDED = {"mixed", "mixedread", "stagger", "staggermixed", "incast"} | set(flexspray_bench.BENCH)
 
 
 def write_traffic(out, tasks):
+    """7-tuples (src, dst, bytes, op, prio, delay_ns, cls) are background phase 0; 9-tuples add
+    (phase, deps): released delay_ns after every task of the phases in deps completed
+    (flexspray_bench.py)."""
+    rows = [x if len(x) == 9 else tuple(x) + (0, []) for x in tasks]
     with open(os.path.join(out, "traffic.csv"), "w") as f:
         f.write("taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,dependOnPhases\n")
-        for i, (a, b, n, op, pr, d, _) in enumerate(tasks):
-            f.write(f"{i},{a},{b},{n},{op},{pr},{d}ns,0,\n")
+        for i, (a, b, n, op, pr, d, _c, ph, deps) in enumerate(rows):
+            f.write(f"{i},{a},{b},{n},{op},{pr},{d}ns,{ph},{' '.join(str(x) for x in deps)}\n")
     with open(os.path.join(out, "tasks_meta.json"), "w") as f:
-        json.dump([dict(task=i, src=a, dst=b, bytes=n, op=op, prio=pr, delay_ns=d, cls=c)
-                   for i, (a, b, n, op, pr, d, c) in enumerate(tasks)], f)
+        json.dump([dict(task=i, src=a, dst=b, bytes=n, op=op, prio=pr, delay_ns=d, cls=c,
+                        phase=ph, deps=list(deps))
+                   for i, (a, b, n, op, pr, d, c, ph, deps) in enumerate(rows)], f)
 
 
 # ---------------- faults ----------------
