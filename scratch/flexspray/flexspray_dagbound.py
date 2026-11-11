@@ -20,7 +20,9 @@ latency. This evaluator adds the measured unavoidable latency and evaluates requ
                             EF(deps) + min_f delay_f + B_p )      (earliest finish, from t = 0)
                   Ignores contention between phases, so it is a valid lower bound.
   device bound  B_dev = max( max_{p involves dev} EF_p,
-                             ES_dev + bytes_dir(dev) * hdr / cap(dev) + alpha_min )  per direction.
+                             max_t [ t + bytes released at or after t (by the tasks' earliest
+                                     starts) * hdr / cap(dev) + alpha_min ] )  per direction
+                  (the backlog bound: bursty releases such as KV requests at one trace time).
 
 Outputs per case: per phase (cls, D, LP, B, eff = B/D, overlap = fraction of the phase's window
 during which another bulk phase is active), per device (T_dev, B_dev, eff_total = B_dev/T_dev,
@@ -112,6 +114,12 @@ def evaluate(case):
             dev_ph[f["dst"]].add(p)
             dev_bits[f["src"]][0] += f["bits"]
             dev_bits[f["dst"]][1] += f["bits"]
+    # earliest start of every task (lower bound): EF of its phase's deps + its own delay
+    t_es = {}
+    for p in order:
+        base = max((EF[d] for d in deps[p]), default=0.0)
+        for t in ph[p]:
+            t_es[t["task"]] = base + t.get("delay_ns", 0) / 1000.0
     for d, ps in sorted(dev_ph.items()):
         ids = [t["task"] for p in ps for t in ph[p]]
         if any(i not in done for i in ids):
@@ -119,14 +127,62 @@ def evaluate(case):
             continue
         T = max(done[i] for i in ids)
         cap = len(hosts[d]["planes"]) * meta["rate_gbps"] * 1e3
-        es = min(ES[p] for p in ps)
-        load = max(dev_bits[d]) * (A.MTU + A.DATA_HDR) / A.MTU / cap + ALPHA_US[False]
+        # backlog bound per direction: bytes released at or after t all cross the device after t
+        best_load, best_t = 0.0, 0.0
+        for side in ("src", "dst"):
+            rel = sorted(((t_es[i], flows[i]["bits"], flows[i]["cross"]) for i in ids
+                          if flows[i][side] == d), reverse=True)
+            acc, amin = 0.0, None
+            for t0, bits, cross in rel:
+                acc += bits
+                amin = ALPHA_US[cross] if amin is None else min(amin, ALPHA_US[cross])
+                v = t0 + acc * (A.MTU + A.DATA_HDR) / A.MTU / cap + amin
+                if v > best_load:
+                    best_load, best_t = v, t0
         crit = max(ps, key=lambda p: EF[p])
-        bdev = max(EF[crit], es + load)
-        fixed = delay_sum[crit] if EF[crit] >= es + load else es
+        bdev = max(EF[crit], best_load)
+        fixed = delay_sum[crit] if EF[crit] >= best_load else best_t
         rows.append(dict(kind="device", dev=d, type=hosts[d]["type"], T=T, B=bdev,
                          eff_total=bdev / T, eff_comm=(bdev - fixed) / (T - fixed) if T > fixed else None,
-                         bound_by="chain" if EF[crit] >= es + load else "load"))
+                         bound_by="chain" if EF[crit] >= best_load else "backlog"))
+    # Busy periods per device and direction (requirement 2 under bursty demand): maximal unions of
+    # the device's [start, done] task intervals. Conditional bound: given the tasks' actual release
+    # (WQE start) times -- upstream phases are judged on their own -- bound = max(backlog bound
+    # max_t (t + bits released at or after t / device capacity + alpha), period LP with those
+    # releases + alpha). eff = (bound - s) / (end - s): utilisation while the device has backlog.
+    for d, ps in sorted(dev_ph.items()):
+        cap = len(hosts[d]["planes"]) * meta["rate_gbps"] * 1e3
+        for side in ("src", "dst"):
+            iv = sorted((start[i], done[i], i) for p in ps for t in ph[p]
+                        for i in [t["task"]] if flows[i][side] == d and i in start and i in done)
+            periods, cur = [], []
+            for a0, b0, i in iv:
+                if cur and a0 > max(x[1] for x in cur):
+                    periods.append(cur)
+                    cur = []
+                cur.append((a0, b0, i))
+            if cur:
+                periods.append(cur)
+            for per in periods:
+                s0 = min(x[0] for x in per)
+                e0 = max(x[1] for x in per)
+                rel = sorted(((start[i], flows[i]["bits"], flows[i]["cross"])
+                              for _, _, i in per), reverse=True)
+                acc, amin, bnd = 0.0, None, 0.0
+                for t0, bits, cross in rel:
+                    acc += bits
+                    amin = ALPHA_US[cross] if amin is None else min(amin, ALPHA_US[cross])
+                    bnd = max(bnd, t0 + acc * (A.MTU + A.DATA_HDR) / A.MTU / cap + amin)
+                lp = None
+                if acc * (A.MTU + A.DATA_HDR) / A.MTU / cap >= 5.0:
+                    fl = [dict(flows[i], release_us=start[i] - s0) for _, _, i in per]
+                    lp = A.ideal_makespan_timeindexed_us(copy.deepcopy(meta), fl, meta["ack_bytes"],
+                                                         None, with_fault=False)
+                    bnd = max(bnd, s0 + lp + amin)
+                rows.append(dict(kind="busy", dev=d, type=hosts[d]["type"], lp=lp,
+                                 dir="tx" if side == "src" else "rx", s=s0, e=e0, B=bnd,
+                                 work_us=acc * (A.MTU + A.DATA_HDR) / A.MTU / cap, n=len(per),
+                                 eff=(bnd - s0) / (e0 - s0) if e0 > s0 else None))
     allT = max(done[f] for f in flows if f in done)
     job = max(EF.values())
     rows.append(dict(kind="job", T=allT, B=job, eff_total=job / allT))

@@ -411,6 +411,12 @@ def fault_rows(t, fault, t_ns, scenario="d2d"):
     if fault == "F3ssd":
         return [(t_ns, ssd0["id"], ssd0["ports"][4], "DEGRADE", f"{t.lanes - 1}/{t.lanes}")], \
             dict(dev=ssd0["id"], dir="both", n=2 * t.lanes, plane=4)
+    for side, dev, pl in (("F3ssd", ssd0, 4), ("F3nic", nic0, 0)):  # round 13: x2 / x1 levels
+        if fault.startswith(side) and fault[len(side):].isdigit():
+            k = int(fault[len(side):])
+            assert 1 <= k < t.lanes, f"{fault}: 1 <= lanes lost < {t.lanes}"
+            return [(t_ns, dev["id"], dev["ports"][pl], "DEGRADE", f"{t.lanes - k}/{t.lanes}")], \
+                dict(dev=dev["id"], dir="both", n=2 * t.lanes, plane=pl, lanes_lost=k)
     if fault == "F1nic":
         return [(t_ns, nic0["id"], nic0["ports"][0], "ISOLATE", "")], \
             dict(dev=nic0["id"], dir="both", n=2, plane=0)
@@ -432,7 +438,7 @@ def fault_rows(t, fault, t_ns, scenario="d2d"):
 FAULTS = ["F0", "F1near", "F1far", "F2up", "F3near", "F3far", "F4",
           "F1ssd", "F3ssd", "F1nic", "F3nic", "F4p4",
           "H1near", "H1far", "H2up", "H4", "H1ssd", "H4p4",
-          "F3near2", "F3far2", "F3near3", "F3far3"]
+          "F3near2", "F3far2", "F3near3", "F3far3", "F3ssd2", "F3ssd3", "F3nic2", "F3nic3"]
 
 
 # ---------------- schemes ----------------
