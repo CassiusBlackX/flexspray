@@ -53,6 +53,23 @@ def alone_us(meta, f):
     return f["bits"] * (A.MTU + A.DATA_HDR) / A.MTU / (len(f["planes"]) * rate)
 
 
+FAULT_AWARE = False
+
+
+def phase_lp(meta, fl, es_us):
+    """Fluid LP of a phase released together at its earliest start es_us. Healthy runs (or
+    --fault-aware off): no fault. Fault-aware: capacities degrade at t_f relative to es_us (the
+    earliest start is never later than the real one, so using healthy capacity before t_f keeps
+    this a lower bound)."""
+    m = copy.deepcopy(meta)
+    fls = [dict(f, release_us=0.0) for f in fl]
+    if not FAULT_AWARE or not meta.get("fault_rows"):
+        return A.ideal_makespan_timeindexed_us(m, fls, m["ack_bytes"], None, with_fault=False)
+    tf = meta["fault_ns"] / 1000.0
+    m["fault_ns"] = max(0.0, tf - es_us) * 1000.0
+    return A.ideal_makespan_timeindexed_us(m, fls, m["ack_bytes"], None, with_fault=True)
+
+
 def evaluate(case):
     meta, tasks = A.load_case(case)
     start, done = A.read_tasks(case)
@@ -67,14 +84,12 @@ def evaluate(case):
     for p in order:
         fl = [flows[t["task"]] for t in ph[p]]
         al = [ALPHA_US[f["cross"]] for f in fl]
-        lp = A.ideal_makespan_timeindexed_us(
-            copy.deepcopy(meta), [dict(f, release_us=0.0) for f in fl], meta["ack_bytes"], None,
-            with_fault=False)
-        B[p] = max(lp + min(al), max(alone_us(meta, f) + a for f, a in zip(fl, al)))
-        LP[p] = lp
         base = max((EF[d] for d in deps[p]), default=0.0)
         dl = [t.get("delay_ns", 0) / 1000.0 for t in ph[p]]
         ES[p] = base + min(dl)
+        lp = phase_lp(meta, fl, ES[p])
+        B[p] = max(lp + min(al), max(alone_us(meta, f) + a for f, a in zip(fl, al)))
+        LP[p] = lp
         EF[p] = max(max(base + d + alone_us(meta, f) + a for d, f, a in zip(dl, fl, al)),
                     ES[p] + B[p])
         prev = max(deps[p], key=lambda d: EF[d]) if deps[p] else None
@@ -197,7 +212,12 @@ def main():
     ap.add_argument("out")
     ap.add_argument("cases", nargs="+")
     ap.add_argument("--jobs", type=int, default=32)
+    ap.add_argument("--fault-aware", action="store_true",
+                    help="phase LPs use the fault (lane degrade / isolation) from t_f on: a lower "
+                         "bound for the damaged device's completion under the fault")
     a = ap.parse_args()
+    global FAULT_AWARE
+    FAULT_AWARE = a.fault_aware  # inherited by the forked workers
     with cf.ProcessPoolExecutor(a.jobs) as ex, open(a.out, "w") as fo:
         for rows in ex.map(evaluate, a.cases, chunksize=1):
             for r in rows:
