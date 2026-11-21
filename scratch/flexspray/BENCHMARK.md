@@ -87,3 +87,27 @@
 - **跨服务器计算设备 ↔ IO 设备的 P2P**（`flexspray_case.py` 的 d2io / d2ioread）：服务器 s 的 NPU0 ↔ 服务器 s+1 的 SSD，NPU1 ↔ NIC；每个 IO 设备独占一对，需求取 IO 设备 2 个平面的线速；写方向数据为 NPU → IO，读方向为 IO → NPU。**假设**（覆盖要求 1 中"计算设备与网络或存储设备间"的 P2P）。
 - **基础时延 α**（用于计入时延的上界）：本仿真拓扑上实测（服务器内 0.37 µs、跨服务器 1.35 µs），属于**推导**自本模型的参数（20 ns 主机链路、100 ns fabric 链路、100 ns 交换转发），这些链路与转发参数本身是**假设**。
 - **SSD / NIC 端口的 lane 档位**：x3 / x2 / x1，与 NPU 端口相同（**假设**：4-lane 端口）。
+
+---
+
+## 9. 第十六轮补充：公开超节点拓扑与开源 AI 工作负载套件（Stage 2）
+
+为使评估脱离单一合成 Pod 假设、对齐顶级会议审稿标准，Round 16（提交 `f2676403`）新增 **3 套公开文献超节点拓扑**（[flexspray_topo_public.py](file:///home/cassius/ub/ns-3-ub/scratch/flexspray/flexspray_topo_public.py)）与 **5 套开源 AI 基准负载**（[flexspray_aicb.py](file:///home/cassius/ub/ns-3-ub/scratch/flexspray/flexspray_aicb.py)）：
+
+### 9.1 公开超节点拓扑（`400 Gbps × 4 lanes`，`host_link_ns=20`，`switch_fwd_ns=100`）
+
+| 拓扑标识 | 文献来源 | 节点配置（每 Pod） | 平面 / 交换层结构 | 建模假设与局限 |
+|---|---|---|---|---|
+| `cm_pod` | `arXiv:2506.12708`（CloudMatrix384 §3.3，1/12 缩比） | `4` 服务器 × (`8` Ascend 910 NPU + `4` CPU + `1` NIC + `1` SSD) = `56` 主机（`32` NPU） | `7` 独立 UB 平面（NPU 接 `0..6`，CPU 接 `0..3`，NIC `0..1`，SSD `5..6`）；`K=4` Spine × `J=4` 上行链路/对（`16 up >= 13 down`，**1:1 无阻塞**）；fabric 延迟 `100 ns` | 规模缩比为 1/12（48→4 节点），保留 7 平面与 NPU:CPU 2:1 异构比例；未显式建模节点内 PCIe/HCCS 层级差异 |
+| `cm_pod_osub` | 同上超分变体 | 同上（`56` 主机） | `K=3` Spine × `J=2` 上行链路/对（`6 up vs 13 down`，**~2.17:1 上行超分**） | 用于检验超分骨干拥塞与故障重路由叠加下的表现 |
+| `ub_mesh` | `arXiv:2503.20377`（UB-Mesh §3.2–3.3） | `4` 主板 × (`8` NPU + `2` CPU + `1` NIC + `1` SSD) = `48` 主机（`32` NPU） | 每 NPU `10` 口（`4.0 Tbps`）：**`6` 条 1-hop 直连边**（3 板内 4-NPU 全连接 `20 ns` + 3 跨板同秩全连接 `40 ns`）+**`4` 条 LRS 低基数交换轨道**（板间 LRS 直连 `lrs_links=3 × 400G`，`100 ns`，无 L2 Spine） | 按节点内/间直连边静态编号为 1-hop 平面 `p>=4`，单跳直连边受损时全局 `a2a` 对特定远端对缺乏全对称多平面绕行（`lm_r17` 含 `phys=4` 物理不可行） |
+
+### 9.2 开源 AI 基准工作负载（`flexspray_aicb.py`）
+
+| 负载标识 | 开源 / 学术来源 | DAG 阶段结构与规模 | 关键参数（代码常量） | 建模声明 |
+|---|---|---|---|---|
+| `b_aicb_tp_ep` | `aliyun/aicb`（Megatron + DeepSeek 混合并行） | 4 层 × (板内 TP Ring AllGather → `ep_pool` 24-NPU EP Dispatch → EP Combine → TP ReduceScatter) + 跨板 DP Ring AllReduce | `GAP_PIPE_NS=2000`, `GAP_COMP_NS=10000`, `FP8_FACTOR=(1+4/128)/2=0.515625` | 用 `ep_pool=NPU0..5`（24 NPU）与 NPU6..7 共存制造平面竞争；不建模 GPU kernel 计算内部细节 |
+| `b_deepep_skew` | DeepSeek-V3 / DeepEP MoE | 8 层交替 Dispatch (`FP8_FACTOR`) + 反向 Combine (`BF16`)，共 16 屏障阶段 | 目标专家权重按 **Zipf `alpha=1.0`** 排序分配，每层按 `seed` 洗牌 | 用固定 Zipf(1.0) 近似真实 token 路由器偏斜 |
+| `b_deepep_prefill` | DeepSeek-V3 / AICB 双模态服务 | 2 层重流量 Prefill (`~115 us` Combine) + 4 层短爆发 Decode (`~22 us` Combine) | 消息尺寸 ±15%（Prefill）/ ±20%（Decode）随机抖动 | 检验大流量排队与后续微秒级 Decode 低时延需求在同一故障残留下的切换 |
+| `b_nccl_pipe` | NCCL 双环多块流水线 Ring AllReduce | 6 个宏观流水阶段 × 2 并发切片 × 双向双环邻居交换 | `GAP_PIPE_NS=2000`, 单阶段目标 `65 us`, 约 `400 us` 连续流 | 去除全局每步强屏障，聚焦持续流控与尾段拖延 |
+| `b_kv_skew` | Mooncake (`FAST'25`) KVCache 读写混合 | 4 轮并发（`20 us` 轮间隔）：随机 `>=4` 个 `NPU6..7` 从 `SSD0` 热读扇入 + 全部 `NPU6..7` 向其余 SSD 异步写卸载 | 读阶段目标 `70 us`（`SSD0` 吸收 60% 读请求）、写阶段目标 `25 us`，支持 `--scale 0.5 / 1.0 / 2.0` | 通过 **SSD 平面 `4,5`**（在 `ub_pod` 中对应 port `4,5`）收发，故故障测试必须使用 `F3ssd3 / H1ssd`（`r17_kv_io`），`F3far3 / H1far` 不穿过 SSD 口 |

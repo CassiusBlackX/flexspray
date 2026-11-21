@@ -138,7 +138,20 @@ TypeId UbTransaction::GetTypeId(void)
                             UbTpgDispatchPolicy::MIN_DRAIN_TIME,
                             "MIN_DRAIN_TIME",
                             UbTpgDispatchPolicy::STATIC_RR,
-                            "STATIC_RR"))
+                            "STATIC_RR",
+                            UbTpgDispatchPolicy::REPS_CACHE,
+                            "REPS_CACHE",
+                            UbTpgDispatchPolicy::MPRDMA_OOO,
+                            "MPRDMA_OOO",
+                            UbTpgDispatchPolicy::PINNED_PLANE,
+                            "PINNED_PLANE"))
+        .AddAttribute(
+            "MpRdmaOooThreshold",
+            "MPRDMA_OOO only: maximum out-of-order lag (packets) relative to the fastest live "
+            "member before slower members are pruned from dispatch. Default 8.",
+            UintegerValue(8),
+            MakeUintegerAccessor(&UbTransaction::m_mpRdmaOooThreshold),
+            MakeUintegerChecker<uint32_t>())
         .AddAttribute(
             "TpgDispatchSlack",
             "MIN_DRAIN_TIME only: defer a segment (wait for a better member) when the best "
@@ -1544,6 +1557,228 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
             why.assign(selectedGroup->GetMemberCount(), 'x');
         }
         Ptr<UbWqeSegment> admittedSegment = segment;
+        auto isLiveMember = [&](uint32_t idx, Ptr<UbTransportChannel>& outTp) -> bool {
+            if (!selectedGroup->IsMemberSelectable(idx))
+            {
+                return false;
+            }
+            const UbTransportGroupMember& m = selectedGroup->GetMember(idx);
+            Ptr<UbTransportChannel> tp = materialization.indexedTransports[idx];
+            if (tp == nullptr || tp->GetLifecycleOwner() != m.tpIdentity ||
+                !m_coordinator->IsResourceActive(m.tpIdentity))
+            {
+                return false;
+            }
+            if (ownerController != nullptr && ownerController->IsTpDead(tp))
+            {
+                return false;
+            }
+            outTp = tp;
+            return true;
+        };
+        if (m_tpgDispatchPolicy == UbTpgDispatchPolicy::PINNED_PLANE)
+        {
+            std::ostringstream pk;
+            pk << "HPN_PIN:" << m_nodeId << ':' << originatingWqe->GetDest() << ':' << jettyNum
+               << ':' << originatingWqe->GetWqeId();
+            const uint32_t memberCount = selectedGroup->GetMemberCount();
+            const uint32_t pinStart = static_cast<uint32_t>(Hash64(pk.str()) % memberCount);
+            for (uint32_t offset = 0; offset < memberCount; ++offset)
+            {
+                const uint32_t candidateIndex = (pinStart + offset) % memberCount;
+                Ptr<UbTransportChannel> transport;
+                if (!isLiveMember(candidateIndex, transport))
+                {
+                    continue;
+                }
+                hasLiveMember = true;
+                if (ownerController != nullptr && ownerController->IsTpPathIsolated(transport))
+                {
+                    if (traceDefer)
+                    {
+                        why[candidateIndex] = 'i';
+                    }
+                    continue;
+                }
+                if (traceDefer)
+                {
+                    why[candidateIndex] = transport->AdmissionBlockReason(segment);
+                }
+                if (transport->CanAdmitWqeSegment(segment))
+                {
+                    selectedGroupIndex = candidateIndex;
+                    admittedTp = transport;
+                    admittedSegment = segment;
+                }
+                break; // Pinned flow stays on its live pinned plane until dead/isolated.
+            }
+        }
+        else if (m_tpgDispatchPolicy == UbTpgDispatchPolicy::REPS_CACHE)
+        {
+            const uint32_t cacheAvail = selectedGroup->PeekRepsCacheCount();
+            const Time now = Simulator::Now();
+            for (uint32_t k = 0; k < cacheAvail; ++k)
+            {
+                const uint32_t candidateIndex = selectedGroup->PopRepsCachedIndex(now);
+                if (candidateIndex == UINT32_MAX)
+                {
+                    break;
+                }
+                Ptr<UbTransportChannel> transport;
+                if (!isLiveMember(candidateIndex, transport))
+                {
+                    continue;
+                }
+                hasLiveMember = true;
+                if (ownerController != nullptr && ownerController->IsTpPathIsolated(transport))
+                {
+                    if (traceDefer)
+                    {
+                        why[candidateIndex] = 'i';
+                    }
+                    continue;
+                }
+                if (traceDefer)
+                {
+                    why[candidateIndex] = transport->AdmissionBlockReason(segment);
+                }
+                if (transport->CanAdmitWqeSegment(segment))
+                {
+                    selectedGroupIndex = candidateIndex;
+                    admittedTp = transport;
+                    admittedSegment = segment;
+                    break;
+                }
+            }
+            if (admittedTp == nullptr)
+            {
+                const uint32_t memberCount = selectedGroup->GetMemberCount();
+                const uint32_t exploreStart = selectedGroup->NextRepsExploreOffset();
+                for (uint32_t offset = 0; offset < memberCount; ++offset)
+                {
+                    const uint32_t candidateIndex = (exploreStart + offset) % memberCount;
+                    Ptr<UbTransportChannel> transport;
+                    if (!isLiveMember(candidateIndex, transport))
+                    {
+                        continue;
+                    }
+                    hasLiveMember = true;
+                    if (ownerController != nullptr && ownerController->IsTpPathIsolated(transport))
+                    {
+                        if (traceDefer)
+                        {
+                            why[candidateIndex] = 'i';
+                        }
+                        continue;
+                    }
+                    if (traceDefer)
+                    {
+                        why[candidateIndex] = transport->AdmissionBlockReason(segment);
+                    }
+                    if (transport->CanAdmitWqeSegment(segment))
+                    {
+                        selectedGroupIndex = candidateIndex;
+                        admittedTp = transport;
+                        admittedSegment = segment;
+                        break;
+                    }
+                }
+            }
+        }
+        else if (m_tpgDispatchPolicy == UbTpgDispatchPolicy::MPRDMA_OOO)
+        {
+            const uint32_t memberCount = selectedGroup->GetMemberCount();
+            std::vector<uint64_t> lagPkts(memberCount, UINT64_MAX);
+            std::vector<double> srttNs(memberCount, 0.0);
+            std::vector<bool> liveNonIso(memberCount, false);
+            uint64_t minLagPkts = UINT64_MAX;
+            double minSrttNs = 0.0;
+            uint32_t liveNonIsoCount = 0;
+            for (uint32_t idx = 0; idx < memberCount; ++idx)
+            {
+                Ptr<UbTransportChannel> tp;
+                if (!isLiveMember(idx, tp))
+                {
+                    continue;
+                }
+                hasLiveMember = true;
+                if (ownerController != nullptr && ownerController->IsTpPathIsolated(tp))
+                {
+                    if (traceDefer)
+                    {
+                        why[idx] = 'i';
+                    }
+                    continue;
+                }
+                liveNonIso[idx] = true;
+                ++liveNonIsoCount;
+                const uint64_t lag =
+                    tp->GetInflightPsns() +
+                    (tp->GetUnsentPayloadBytes() + UB_MTU_BYTE - 1) / UB_MTU_BYTE +
+                    (tp->GetOutstandingReadBytes() + UB_MTU_BYTE - 1) / UB_MTU_BYTE;
+                lagPkts[idx] = lag;
+                minLagPkts = std::min(minLagPkts, lag);
+                const double rtt = static_cast<double>(tp->GetCcSmoothedRtt().GetNanoSeconds());
+                srttNs[idx] = rtt;
+                if (rtt > 0.0 && (minSrttNs <= 0.0 || rtt < minSrttNs))
+                {
+                    minSrttNs = rtt;
+                }
+            }
+            std::vector<bool> pruned(memberCount, false);
+            bool hasUnprunedLive = false;
+            for (uint32_t idx = 0; idx < memberCount; ++idx)
+            {
+                if (!liveNonIso[idx])
+                {
+                    continue;
+                }
+                const bool lagTooHigh =
+                    liveNonIsoCount > 1 && lagPkts[idx] > minLagPkts + m_mpRdmaOooThreshold;
+                const bool rttTooHigh = liveNonIsoCount > 1 && srttNs[idx] > 0.0 &&
+                                        minSrttNs > 0.0 &&
+                                        (srttNs[idx] - minSrttNs) >
+                                            static_cast<double>(m_mpRdmaOooThreshold) * 82.0;
+                pruned[idx] = lagTooHigh || rttTooHigh;
+                if (!pruned[idx])
+                {
+                    hasUnprunedLive = true;
+                }
+            }
+            uint64_t bestLag = UINT64_MAX;
+            for (uint32_t offset = 0; offset < memberCount; ++offset)
+            {
+                const uint32_t candidateIndex = selectedGroup->GetMemberIndexAtOffset(offset);
+                if (!liveNonIso[candidateIndex])
+                {
+                    continue;
+                }
+                if (hasUnprunedLive && pruned[candidateIndex])
+                {
+                    if (traceDefer)
+                    {
+                        why[candidateIndex] = 's';
+                    }
+                    continue;
+                }
+                Ptr<UbTransportChannel> transport =
+                    materialization.indexedTransports[candidateIndex];
+                if (traceDefer)
+                {
+                    why[candidateIndex] = transport->AdmissionBlockReason(segment);
+                }
+                if (transport->CanAdmitWqeSegment(segment) &&
+                    (admittedTp == nullptr || lagPkts[candidateIndex] < bestLag))
+                {
+                    bestLag = lagPkts[candidateIndex];
+                    selectedGroupIndex = candidateIndex;
+                    admittedTp = transport;
+                    admittedSegment = segment;
+                }
+            }
+        }
+        else
+        {
         for (uint32_t offset = 0; offset < selectedGroup->GetMemberCount(); ++offset)
         {
             const uint32_t candidateIndex = selectedGroup->GetMemberIndexAtOffset(offset);
@@ -1676,6 +1911,7 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
                 }
             }
         }
+        } // end else standard/FlexSpray dispatch policy
         bool allowSlack = scoreMembers && m_tpgDispatchSlack >= 0.0;
         if (allowSlack && m_slackTailOnly)
         {

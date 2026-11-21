@@ -23649,6 +23649,7 @@ class UbExplicitTpDestroyDrainsAndRematerializesTest : public TestCase
 
     void DoRun() override
     {
+        m_callbackCount = 0;
         Config::Reset();
         GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(true));
         GlobalValue::Bind("UB_CC_ALGO", StringValue("DCQCN"));
@@ -37107,6 +37108,131 @@ class UbFlexSprayV6FarEndDegradeSystemTest : public TestCase
     }
 };
 
+class UbRepsCacheAndComparatorPoliciesTest : public TestCase
+{
+  public:
+    UbRepsCacheAndComparatorPoliciesTest()
+        : TestCase("UnifiedBus - SOTA comparator dispatch policies (REPS_CACHE, MPRDMA_OOO, PINNED_PLANE)")
+    {
+    }
+
+    void DoRun() override
+    {
+        // 1. Unit check of UbTransportGroup REPS circular buffer: ECN-free caching, ECN skip,
+        //    timeout purge/freeze, and RemoveMember index shifting.
+        Ptr<UbTransportGroup> group = CreateObject<UbTransportGroup>();
+        const UbLifecycleResourceIdentity gid{0, UbLifecycleResourceKind::RTP_TPG, 1, 1};
+        const UbLifecycleResourceIdentity tp0{0, UbLifecycleResourceKind::RTP_ENDPOINT, 10, 1};
+        const UbLifecycleResourceIdentity tp1{0, UbLifecycleResourceKind::RTP_ENDPOINT, 11, 1};
+        const UbLifecycleResourceIdentity tp2{0, UbLifecycleResourceKind::RTP_ENDPOINT, 12, 1};
+        group->Init(gid,
+                    {{10, tp0, UbTransportGroupMemberState::ACTIVE},
+                     {11, tp1, UbTransportGroupMemberState::ACTIVE},
+                     {12, tp2, UbTransportGroupMemberState::ACTIVE}},
+                    0);
+        const Time t0 = MicroSeconds(10);
+        group->RecordRepsAck(tp0, false, t0);
+        group->RecordRepsAck(tp1, true, t0);  // ECN-marked: must NOT enter cache
+        group->RecordRepsAck(tp2, false, t0);
+        NS_TEST_ASSERT_MSG_EQ(group->PeekRepsCacheCount(), 2u, "ECN-marked ACK omitted");
+        NS_TEST_ASSERT_MSG_EQ(group->PopRepsCachedIndex(t0), 0u, "FIFO pop tp0");
+        // Timeout on tp2 purges it and freezes cache for 20 us.
+        group->OnRepsTimeout(tp2, t0, MicroSeconds(20));
+        NS_TEST_ASSERT_MSG_EQ(group->PeekRepsCacheCount(), 0u, "timed-out member purged");
+        NS_TEST_ASSERT_MSG_EQ(group->IsRepsFrozenForTest(MicroSeconds(25)), true, "frozen within 20 us");
+        NS_TEST_ASSERT_MSG_EQ(group->PopRepsCachedIndex(MicroSeconds(25)), UINT32_MAX, "no pop while frozen");
+        // After freeze expires: populate [tp0, tp1, tp2], then RemoveMember(0) shifts indices down.
+        group->RecordRepsAck(tp0, false, MicroSeconds(35));
+        group->RecordRepsAck(tp1, false, MicroSeconds(35));
+        group->RecordRepsAck(tp2, false, MicroSeconds(35));
+        group->RemoveMember(0); // Removes tp0; tp1 becomes 0, tp2 becomes 1.
+        NS_TEST_ASSERT_MSG_EQ(group->PeekRepsCacheCount(), 2u, "removed member purged cleanly");
+        NS_TEST_ASSERT_MSG_EQ(group->PopRepsCachedIndex(MicroSeconds(35)), 0u, "tp1 shifted to idx 0");
+        NS_TEST_ASSERT_MSG_EQ(group->PopRepsCachedIndex(MicroSeconds(35)), 1u, "tp2 shifted to idx 1");
+        NS_TEST_ASSERT_MSG_EQ(group->PopRepsCachedIndex(MicroSeconds(35)), UINT32_MAX, "cache drained");
+
+        // 2. End-to-end 3-plane sanity checks on scratch/2nodes_multiple-tp.
+        SetDataDir(NS_TEST_SOURCEDIR);
+        const std::filesystem::path repoRoot = LocateRepoRoot();
+        auto runPolicy = [&](const std::string& tag, const std::string& extraAttrs, const std::string& healthCsv) {
+            const std::filesystem::path caseDir =
+                std::filesystem::path(CreateTempDirFilename("ub-sota-" + tag));
+            std::filesystem::remove_all(caseDir);
+            std::filesystem::create_directories(caseDir);
+            for (const char* f : {"node.csv", "topology.csv", "routing_table.csv",
+                                  "transport_channel.csv", "network_attribute.txt"})
+            {
+                std::filesystem::copy_file(repoRoot / "scratch/2nodes_multiple-tp" / f, caseDir / f);
+            }
+            {
+                std::ofstream traffic(caseDir / "traffic.csv");
+                traffic << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
+                           "dependOnPhases\n0,0,1,4000000,URMA_WRITE,7,10ns,0,\n";
+            }
+            {
+                std::ofstream attrs(caseDir / "network_attribute.txt", std::ios::app);
+                attrs << "\nglobal UB_PARSE_TRACE_ENABLE \"false\"\n"
+                         "global UB_PACKET_TRACE_ENABLE \"false\"\n"
+                         "global UB_RECORD_PKT_TRACE \"false\"\n"
+                         "default ns3::UbTransportChannel::ResponseVl \"1\"\n"
+                         "default ns3::UbTransportChannel::FailureDetection \"true\"\n"
+                         "default ns3::UbTransportChannel::EnableRetrans \"true\"\n"
+                         "default ns3::UbTransportChannel::RetransmissionMode \"GBN\"\n"
+                         "default ns3::UbJetty::TaSegmentBytes \"16384\"\n"
+                      << extraAttrs;
+            }
+            if (!healthCsv.empty())
+            {
+                std::ofstream health(caseDir / "link_health.csv");
+                health << healthCsv;
+            }
+            auto [status, output] = RunQuickExampleAbsoluteCaseCommand(
+                CreateTempDirFilename("ub-sota-" + tag + ".log"), "", "", caseDir);
+            NS_TEST_ASSERT_MSG_EQ(status, 0, tag << " must complete: " << output);
+            uint32_t done = 0;
+            for (const auto& entry : std::filesystem::directory_iterator(caseDir / "runlog"))
+            {
+                if (entry.path().filename().string().rfind("TaskTrace", 0) != 0)
+                {
+                    continue;
+                }
+                std::ifstream in(entry.path());
+                std::string line;
+                while (std::getline(in, line))
+                {
+                    done += line.find("WQE Completes") != std::string::npos ? 1 : 0;
+                }
+            }
+            NS_TEST_ASSERT_MSG_EQ(done, 1u, tag << " WQE must complete once");
+        };
+        runPolicy("reps",
+                  "global UB_CC_ENABLED \"true\"\n"
+                  "global UB_CC_ALGO \"DCQCN\"\n"
+                  "default ns3::UbApp::RoutingType \"PER_PACKET_SHORTEST_PATHS\"\n"
+                  "default ns3::UbTransportChannel::RoutingType \"PER_PACKET_SHORTEST_PATHS\"\n"
+                  "default ns3::UbRoutingProcess::MultipathSelector \"HASH64\"\n"
+                  "default ns3::UbTransaction::TpgDispatchPolicy \"REPS_CACHE\"\n",
+                  "timeNs,nodeId,portId,action,value\n20000,1,1,DEGRADE,1/4\n");
+        runPolicy("mprdma",
+                  "global UB_CC_ENABLED \"true\"\n"
+                  "global UB_CC_ALGO \"DCQCN\"\n"
+                  "default ns3::UbApp::RoutingType \"PER_PACKET_SHORTEST_PATHS\"\n"
+                  "default ns3::UbTransportChannel::RoutingType \"PER_PACKET_SHORTEST_PATHS\"\n"
+                  "default ns3::UbRoutingProcess::MultipathSelector \"HASH64\"\n"
+                  "default ns3::UbTransaction::TpgDispatchPolicy \"MPRDMA_OOO\"\n"
+                  "default ns3::UbTransaction::MpRdmaOooThreshold \"8\"\n",
+                  "timeNs,nodeId,portId,action,value\n20000,1,1,DEGRADE,1/4\n");
+        runPolicy("hpn",
+                  "global UB_CC_ENABLED \"true\"\n"
+                  "global UB_CC_ALGO \"CAQM\"\n"
+                  "default ns3::UbApp::RoutingType \"PER_FLOW_SHORTEST_PATHS\"\n"
+                  "default ns3::UbTransportChannel::RoutingType \"PER_FLOW_SHORTEST_PATHS\"\n"
+                  "default ns3::UbRoutingProcess::MultipathSelector \"HASH64\"\n"
+                  "default ns3::UbTransaction::TpgDispatchPolicy \"PINNED_PLANE\"\n",
+                  "timeNs,nodeId,portId,action,value\n5000,1,0,DOWN,\n5000,1,1,DOWN,\n");
+    }
+};
+
 class UbSprayCcRetransmissionRollbackTest : public TestCase
 {
   public:
@@ -40746,6 +40872,106 @@ class UbTransactionExtensionsSuite : public TestSuite
     }
 } g_ubTransactionExtensionsSuite;
 
+class UbDcqcnLateCnpDuringDrainTest : public TestCase
+{
+  public:
+    UbDcqcnLateCnpDuringDrainTest()
+        : TestCase("UnifiedBus - late DCQCN CNP during drain or after retirement does not mutate retired TP lifecycle")
+    {
+    }
+
+  private:
+    void OnDestroyed(UbLifecycleResourceIdentity identity, UbDestroyStatus status)
+    {
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(status),
+                              static_cast<uint32_t>(UbDestroyStatus::COMPLETED),
+                              "Destroy callback should report completion");
+        NS_TEST_ASSERT_MSG_EQ(
+            m_controller->GetTransportChannelManager()->GetTp(
+                static_cast<uint32_t>(identity.localId)),
+            nullptr,
+            "Destroy callback should run after canonical endpoint erase");
+        ++m_callbackCount;
+    }
+
+    void DoRun() override
+    {
+        m_callbackCount = 0;
+        Config::Reset();
+        GlobalValue::Bind("UB_CC_ENABLED", BooleanValue(true));
+        GlobalValue::Bind("UB_CC_ALGO", StringValue("DCQCN"));
+
+        LocalTpTopology topo = BuildLocalTpTopology();
+        Ptr<UbController> sender = topo.sender->GetObject<UbController>();
+        m_controller = sender;
+        sender->GetTpConnManager()->ReserveTpnsForTraffic(true,
+                                                          topo.sender->GetId(),
+                                                          topo.receiver->GetId(),
+                                                          kUrmaWriteRegressionPriority);
+        const auto senderTpns = sender->GetTpConnManager()->GetTpnsByPeerNodePriority(
+            topo.sender->GetId(), topo.receiver->GetId(), kUrmaWriteRegressionPriority);
+        NS_TEST_ASSERT_MSG_EQ(senderTpns.size(), 1u, "Expected one sender reservation");
+        const uint32_t tpn = senderTpns[0].first;
+        Ptr<UbTransportChannel> tp =
+            sender->GetTransportChannelManager()->CreateReservedTpEndpoint(tpn);
+        NS_TEST_ASSERT_MSG_NE(tp, nullptr, "Sender TP endpoint should materialize");
+        Ptr<UbHostDcqcn> cc = DynamicCast<UbHostDcqcn>(tp->GetCongestionCtrlForTest());
+        NS_TEST_ASSERT_MSG_NE(cc, nullptr, "Sender TP should bind a host DCQCN instance");
+
+        const UbLifecycleResourceIdentity identity = tp->GetLifecycleOwner();
+        Ptr<UbLifecycleCoordinator> coordinator = UbLifecycleCoordinator::GetOrCreate(topo.sender);
+        (void)cc->IsCcLimited(1);
+        cc->ApplySyntheticCnpForTest();
+        NS_TEST_ASSERT_MSG_GT(coordinator->GetSnapshot(identity).activeTrackedEventLeases,
+                              0u,
+                              "Active CNP should arm tracked DCQCN recovery timers");
+
+        const UbLifecycleLeaseIdentity gate = coordinator->AcquireLease(
+            identity, UbLifecycleLeaseKind::TRANSPORT_WORK, identity);
+        const UbDestroyStatus pending = sender->GetTransportChannelManager()->DestroyTp(
+            tpn,
+            UbDestroyReason::EXPLICIT,
+            MakeCallback(&UbDcqcnLateCnpDuringDrainTest::OnDestroyed, this));
+        NS_TEST_ASSERT_MSG_EQ(static_cast<uint32_t>(pending),
+                              static_cast<uint32_t>(UbDestroyStatus::PENDING),
+                              "Work lease should keep endpoint in DRAINING state");
+        NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(identity).activeTrackedEventLeases,
+                              0u,
+                              "Destroy freeze must cancel tracked DCQCN timers");
+
+        // Back-to-back late CNPs or FECN data packets during drain must not re-arm tracked timers.
+        cc->ApplySyntheticCnpForTest();
+        cc->ApplySyntheticCnpForTest();
+        UbIpBasedNetworkHeader marked;
+        marked.SetMode(0b100);
+        marked.SetFecn(0x1);
+        marked.SetLocation(false);
+        cc->OnReceiverDataPacketReceived(1, 256, marked);
+        NS_TEST_ASSERT_MSG_EQ(coordinator->GetSnapshot(identity).activeTrackedEventLeases,
+                              0u,
+                              "Late CNPs or FECN packets during drain must not acquire leases");
+
+        coordinator->ReleaseLease(gate);
+        NS_TEST_ASSERT_MSG_EQ(m_callbackCount, 1u, "Releasing work lease should retire TP once");
+        NS_TEST_ASSERT_MSG_EQ(coordinator->IsResourceActive(identity),
+                              false,
+                              "TP lifecycle owner should now be retired");
+
+        // Late CNPs after retirement must also be safely ignored without mutating retired leases.
+        cc->ApplySyntheticCnpForTest();
+        cc->ApplySyntheticCnpForTest();
+        cc->OnReceiverDataPacketReceived(2, 256, marked);
+        NS_TEST_ASSERT_MSG_EQ(m_callbackCount, 1u, "Retired callback count must remain 1");
+
+        Simulator::Destroy();
+        m_controller = nullptr;
+        Config::Reset();
+    }
+
+    Ptr<UbController> m_controller;
+    uint32_t m_callbackCount{0};
+};
+
 class UbFlexSpraySuite : public TestSuite
 {
   public:
@@ -40760,5 +40986,7 @@ class UbFlexSpraySuite : public TestSuite
         AddTestCase(new UbTailSegmentationReservationTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbTimeQuantumAndOooWindowTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbFlexSprayV6FarEndDegradeSystemTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbRepsCacheAndComparatorPoliciesTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbDcqcnLateCnpDuringDrainTest(), TestCase::Duration::QUICK);
     }
 } g_ubFlexSpraySuite;

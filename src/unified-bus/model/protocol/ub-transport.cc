@@ -1800,6 +1800,9 @@ UbTransportChannel::HandleReceivedCnp(const TransportResponseContext& ctx)
     }
 
     // CNP is a congestion-control path; it does not advance ACK state.
+    if (ctx.cnpHeader.GetEcn() != 0) {
+        m_lastCnpRxTime = Simulator::Now();
+    }
     const uint64_t cnpPsn = UbTpPsnSequence::Unwrap(ctx.transportHeader.GetPsn(), m_psnSndUna);
     UbCongestionExtTph notification;
     notification.SetAckSequence(0);
@@ -2060,6 +2063,28 @@ UbTransportChannel::FinalizeTransportAckProgress(const TransportResponseContext&
         // Only real ACK progress resets the RTO state and reschedules timeout.
         if (IsRetransEnabled()) {
             m_retrans->RestartTimerAfterAckProgress();
+        }
+        Ptr<Node> hostNode =
+            m_nodeId < NodeList::GetNNodes() ? NodeList::GetNode(m_nodeId) : nullptr;
+        Ptr<UbController> ctrl = hostNode == nullptr ? nullptr : hostNode->GetObject<UbController>();
+        Ptr<UbTransaction> tx = ctrl == nullptr ? nullptr : ctrl->GetUbTransaction();
+        if (tx != nullptr && tx->GetTpgDispatchPolicy() == UbTpgDispatchPolicy::REPS_CACHE) {
+            bool ecnMarked = false;
+            if (ctx.hasCetph && m_congestionCtrl != nullptr) {
+                if (m_congestionCtrl->GetCongestionAlgo() == CongestionCtrlAlgo::SPRAYCC) {
+                    uint32_t marked = 0;
+                    uint32_t total = 0;
+                    UbHostSprayCc::DecodeFeedback(ctx.congestionHeader.GetRawBytes4to7(), marked, total);
+                    ecnMarked = marked > 0;
+                } else if (m_congestionCtrl->GetCongestionAlgo() == CongestionCtrlAlgo::CAQM) {
+                    ecnMarked = ctx.congestionHeader.GetC() != 0 || ctx.congestionHeader.GetHint() != 0;
+                }
+            } else {
+                ecnMarked = (Simulator::Now() - m_lastCnpRxTime) <= NanoSeconds(4000);
+            }
+            if (Ptr<UbTransportGroup> tpGroup = ctrl->ResolveRtpTpGroupForMember(m_lifecycleOwner)) {
+                tpGroup->RecordRepsAck(m_lifecycleOwner, ecnMarked, Simulator::Now());
+            }
         }
     }
 
@@ -2679,6 +2704,15 @@ void UbTransportChannel::ReTxTimeout()
     }
     m_congestionCtrl->OnSenderRetransmissionRollback(timeoutResult.retransmitBytes);
     m_lastRetxNs = Simulator::Now().GetNanoSeconds();
+    Ptr<Node> hostNode =
+        m_nodeId < NodeList::GetNNodes() ? NodeList::GetNode(m_nodeId) : nullptr;
+    Ptr<UbController> ctrl = hostNode == nullptr ? nullptr : hostNode->GetObject<UbController>();
+    Ptr<UbTransaction> tx = ctrl == nullptr ? nullptr : ctrl->GetUbTransaction();
+    if (tx != nullptr && tx->GetTpgDispatchPolicy() == UbTpgDispatchPolicy::REPS_CACHE) {
+        if (Ptr<UbTransportGroup> tpGroup = ctrl->ResolveRtpTpGroupForMember(m_lifecycleOwner)) {
+            tpGroup->OnRepsTimeout(m_lifecycleOwner, Simulator::Now(), MicroSeconds(20));
+        }
+    }
     if (timeoutResult.triggerTransmit) {
         TriggerTransportTransmit();
     }
@@ -4121,6 +4155,31 @@ UbTransportGroup::RemoveMember(uint32_t index)
     NS_ABORT_MSG_IF(index >= m_members.size(), "Cannot remove an unknown TPG member");
     UbTransportGroupMember removed = m_members[index];
     m_members.erase(m_members.begin() + index);
+    if (m_repsCount > 0)
+    {
+        std::array<uint32_t, kRepsCacheSize> nextBuf{};
+        uint32_t nextCount = 0;
+        for (uint32_t k = 0; k < m_repsCount; ++k)
+        {
+            const uint32_t entry = m_repsBuf[(m_repsHead + k) % kRepsCacheSize];
+            if (entry == index || entry > m_members.size())
+            {
+                continue;
+            }
+            nextBuf[nextCount++] = entry > index ? entry - 1 : entry;
+        }
+        m_repsBuf = nextBuf;
+        m_repsHead = 0;
+        m_repsCount = nextCount;
+    }
+    if (!m_members.empty())
+    {
+        m_repsExploreCursor %= m_members.size();
+    }
+    else
+    {
+        m_repsExploreCursor = 0;
+    }
     if (m_members.empty())
     {
         m_selectionCursor = 0;
@@ -4225,6 +4284,84 @@ UbTpgCleanupMode
 UbTransportGroup::GetCleanupMode() const
 {
     return m_cleanupMode;
+}
+
+void
+UbTransportGroup::RecordRepsAck(const UbLifecycleResourceIdentity& tpId, bool ecnMarked, Time now)
+{
+    if (ecnMarked || now < m_repsFrozenUntil || m_members.empty())
+    {
+        return;
+    }
+    const int32_t idx = FindMemberIndex(tpId);
+    if (idx < 0 || !IsMemberSelectable(static_cast<uint32_t>(idx)))
+    {
+        return;
+    }
+    const uint32_t uidx = static_cast<uint32_t>(idx);
+    if (m_repsCount < kRepsCacheSize)
+    {
+        const uint32_t tail = (m_repsHead + m_repsCount) % kRepsCacheSize;
+        m_repsBuf[tail] = uidx;
+        ++m_repsCount;
+    }
+    else
+    {
+        m_repsBuf[m_repsHead] = uidx;
+        m_repsHead = (m_repsHead + 1) % kRepsCacheSize;
+    }
+}
+
+void
+UbTransportGroup::OnRepsTimeout(const UbLifecycleResourceIdentity& tpId, Time now, Time freezeDur)
+{
+    const int32_t idx = FindMemberIndex(tpId);
+    if (idx >= 0 && m_repsCount > 0)
+    {
+        const uint32_t target = static_cast<uint32_t>(idx);
+        std::array<uint32_t, kRepsCacheSize> nextBuf{};
+        uint32_t nextCount = 0;
+        for (uint32_t k = 0; k < m_repsCount; ++k)
+        {
+            const uint32_t entry = m_repsBuf[(m_repsHead + k) % kRepsCacheSize];
+            if (entry != target)
+            {
+                nextBuf[nextCount++] = entry;
+            }
+        }
+        m_repsBuf = nextBuf;
+        m_repsHead = 0;
+        m_repsCount = nextCount;
+    }
+    if (now + freezeDur > m_repsFrozenUntil)
+    {
+        m_repsFrozenUntil = now + freezeDur;
+    }
+}
+
+uint32_t
+UbTransportGroup::PopRepsCachedIndex(Time now)
+{
+    if (now < m_repsFrozenUntil || m_repsCount == 0)
+    {
+        return UINT32_MAX;
+    }
+    const uint32_t idx = m_repsBuf[m_repsHead];
+    m_repsHead = (m_repsHead + 1) % kRepsCacheSize;
+    --m_repsCount;
+    return idx < m_members.size() ? idx : UINT32_MAX;
+}
+
+uint32_t
+UbTransportGroup::NextRepsExploreOffset()
+{
+    if (m_members.empty())
+    {
+        return 0;
+    }
+    const uint32_t off = m_repsExploreCursor % m_members.size();
+    m_repsExploreCursor = (m_repsExploreCursor + 1) % m_members.size();
+    return off;
 }
 
 } // namespace ns3

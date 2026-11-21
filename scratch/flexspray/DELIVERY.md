@@ -1,258 +1,85 @@
-# FlexSpray — 当前交付（默认配置 = v5.3 + T20 修复；第十三轮，2026-11-11）
+# FlexSpray — 当前交付（默认配置 = v6；第十七轮 / Stage 3，2026-11-21）
 
-本文件是交付的唯一入口。所有数字的来源都写在 `REPORT.md` 和 `FEASIBILITY.md` 中，标明了种子、映射和原始结果目录。
+本文件是当前仓库唯一对外交付入口。**最新冻结验证二进制为 `r17cand2`**（位于 `/home/cassius/ub/work/frozen/r17cand2/`，基于提交 `f2676403` 与 Stage 3 未提交补丁 `uncommitted_diff_sha256: 8231c8142c0d968e`，本轮收口后将作为 Stage 3 提交合入 `feat/flexspray`）。
 
-**结论：默认配置不变。第十三轮给出了按三条性能要求逐项判定的完整表格（§2c），并找到读侧降 lane 的主因；但没有候选同时满足全部门槛。**
-- 第十三轮只以 REQUESTS 的三条性能要求为目标，仿真提速不再是工作项。
-- 健康状态：计入实测路径时延后，ring 0.98、MoE combine 0.94、新增的计算设备 ↔ SSD/NIC P2P 0.99；**MoE dispatch（解码尺寸）只有 0.84**，属实现不足（T29）。
-- 降 lane：把 READ 授信从 30 µs 改为 8 µs 的排空时间，消除了旧矩阵上全部读侧 x1 失败。候选 D 在旧矩阵 28 个 x2 / x1 行上只剩 1 行（物理不可行）失败；但它在 a2aread 的端口 / 平面故障上回退 6–8 pp（H4 不达标），h2d x1 回退约 3.5 pp，短阶段 MoE 的拖尾仍每阶段复现，所以**不进默认**。
-- T21 定性：P6 失败不是授信泄漏（10 ms 排空后全部归还）。
-- 第六至十轮的分节在 `history/DELIVERY_rounds6-10.md`。
+> 历史交付归档：`v5.3`（第十三轮 `ea030dd2`）报告指标见本分支历史提交，Rounds 4–10 历史材料保留在 `scratch/flexspray/history/`。自第十五轮起，`flexspray_case.py` 中 `flex+spraycc` 默认启用 **FlexSpray v6（Time-Quantum Commitment & Reachability-Aware Pooling）**；全量 C++ `TypeId` 默认值保持关闭以保障 Golden 25/25 逐位一致。
 
-## 1. 方案与适用范围
+---
 
-FlexSpray 是 UB 多平面超节点上的逐包喷洒负载均衡 + 拥塞控制方案，由以下部分组成：
-- 交换机：`ADAPTIVE_RATE` 平面内选路，TPG 公平份额；
-- 端点：
-  - `MIN_DRAIN_TIME` 跨平面分发（严格等待、速率估计的应用受限保护）；
-  - SprayCC（边沿打标，组加性增量 15%）；
-  - READ 请求走控制 VL，读响应豁免 CC 窗口；
-  - **入口打标 READ 调度**（v5.3）；
-- 故障：
-  - 本地 / 远端检测（PROBE / PROBE_REPLY）、死 TP 的段重新派发、replay fence、GBN 重传；
-  - **fabric 路由撤回**（第十一轮，68aeeb91）：交换机间链路硬断后，上游交换机在每跳 2 µs（假设值）之后不再把流量喷向已无活路径的邻居。
+## 1. 一键复现与回归验证门禁（`r17cand2` 全部已过）
 
-**适用范围**：
-- 拓扑：4 台服务器 × 12 个设备（NPU 8 个平面，CPU 4 个，NIC / SSD 各 2 个），L1/L2 两级，400G；
-- 业务：RTP 的 URMA WRITE/READ；
-- 故障：单故障，包括优雅隔离、降 lane（x4 → x3 / x2 / x1）和硬断链。
+最后一次 C++ 修改完成后的完整验证结果：
 
-**范围外**：原子操作重放、整组平面同时失效、TP 回收、更大规模和 MTP（见 `TODO.md`）。
-
-机制细节和证据见 `REPORT.md` 第 1、4、5 节。
-
-## 2. 需求对应表（当前版本 v5.3）
-
-三个数字依次为：调参种子 1、2 / **未见种子 7、8**（v5.3 冻结后首次运行）/ map 3。
-
-| 要求 | 指标 | 结果 | 最差的 case | 通过 | 证据 |
-|---|---|---|---|---|---|
-| P2P ≥ 95% | eff_fixed（LP 效率） | ≥ 0.982 / 0.982 / 0.982 | h2d F4 | 是 | `exp/round5/t11_core`、`f_core`、`f_map` |
-| alltoall ≥ 90% | eff_fixed | 写 0.957 / 0.957 / 0.962；读 0.965 / 0.965 / 0.960 | a2a F4 | 是 | 同上 |
-| 混跑每类设备 ≥ 90%：写 | 逐设备逐方向全程利用率（业务字节） | 0.925 / 0.925 / 0.925 | NPU tx | 是 | `final_pu.jsonl` |
-| 混跑每类设备 ≥ 90%：读 | 同上 | 0.921 / 0.921 / 0.932（v5.2 为 0.879–0.889） | NPU tx（种子 7） | 是，**对权重敏感** | `t11_sens`、`f_core` |
-| 浅缓冲读混跑 | 同上 | 0.924 / 0.924 | — | 是 | `t11_buf`、`f_buf` |
-| 49 种（场景 × 优雅故障）组合 | eff_fixed | 0.932 / 0.934 / 0.935 | mixed F0 | 是 | `t11_core`、`f_core`、`f_map` |
-| 上行收敛 fabric，F2up | eff_fixed | 0.914 / 0.912 | mixed | 是 | `t11_osub`、`f_osub` |
-| SSD/NIC 平面故障 | eff_fixed | ≥ 0.930 / ≥ **0.926** | F4p4 种子 7 | 是 | `t11_cov`、`f_cov` |
-| 硬断链 | 完成数 / eff_fixed | 64/64、64/64；0.933 / **0.911** | mixed H4p4 种子 7 | 是 | `t11_hard`、`f_hard` |
-| incast 下的受害方 | 受害方效率 / SSD 热点利用率 | 0.966–0.970 / 0.988–0.994 | — | 是 | `f_cov`、`f_buf` |
-| 单故障损失 < 1/N（含降 lane） | 按 N 的四种解释和三个窗口并列 | 见 §2a | — | 部分口径达标 | §2a、`FEASIBILITY.md §9` |
-
-- "证据"列中的目录都相对于 `/home/cassius/ub/work/exp/round5/`。
-- 未见集上的最低值（F4p4 0.926、H4p4 0.911）与关闭 v5.3 机制时相同，原因是 KV incast 的不公平（T12）。
-
-## 2a. 故障损失：完整口径（REQUESTS 性能 4；第十一轮，第十二轮按独立评审修正措辞）
-
-**来源**：`<work>/exp/round11/lm/table_lt.md`、`table_le.md`、`detail_lt.txt`。
-- 评价器：`flexspray_lossmatrix.py` / `flexspray_losstable.py`。
-- 运行于冻结构建 r10cand / r11cand，种子 1、2，7 种负载。
-- 每格取受损设备与种子中最差的值；格式为"通过 / 全部"。
-- 未判定（n/a，稳态窗口不足 10 µs）单独计数，**不从分母中去掉**：这些行往往正是完成时间最差的行。
-
-**主列**：按受损设备完成时间计算的损失，并用逐设备 LP 判定物理界（phys = LP 证明）。
-
-**附加列**：重均衡后的稳态带宽。
-- 只说明受损设备的其余端口没有空闲：端口保持忙碌时，它必然等于移除的容量。
-- 它**不衡量**剩余工作是否按容量分配，所以**不能作为达标依据**。
-- 它的 phys* 判据（移除容量 ≥ 1/N）没有经过 LP 证明，只在设备受端口限制时成立。
-
-| 故障语义 | **主列：完成时间**，N_dev | 完成时间，N = 4·N_dev | 附加列：稳态，N_dev | 默认 v5.3 的失败归类（主列） |
-|---|---|---|---|---|
-| 降 lane x3/x2/x1 | 默认 31/42；B1 31/42；C 37/42 | 默认 13/42 | 默认 38/42（n/a 3） | 10 行 impl，远离物理界：a2aread x1 为 75.9–81.8%（LP 下界 3.9–4.0%）；mixedread x1 为 64–66%；mixed x1 为 35%；a2a x1 为 30–41%。另有 1 行 phys（h2d x1 远端） |
-| 优雅隔离（端口 / L1 节点） | 默认 24/28 | 默认 11/28 | 默认 19/28（n/a 5） | 4 行 phys（h2d，以及少平面设备在 L1 节点故障下：LP 下界 17.7%） |
-| 硬断（端口 / 上行 / L1 节点） | 默认 24/28 | 默认 6/28 | 默认 19/28（n/a 1） | 4 行 phys |
-
-- **结论**：降 lane 的 x2 / x1 档在默认配置下仍是**最大的工程缺口**。在完成时间口径下它们是实现不足，远离物理界。
-- **N = 4·N_dev**：丢 ≥ 2 条 lane 时物理上不可达（LP）。丢 1 条时损失落在界附近，"<"与"≤"下都只部分达到。
-- **最初 10 µs 与重均衡时间**：见 FEASIBILITY §9.3。重均衡时间是相对故障后已经降低的水平计算的，不能证明重均衡的质量。
-- **拖尾是一次性的还是每阶段复现**：第十二轮判定为每阶段复现，见 §2b、FEASIBILITY §10。
-
-## 2b. 多阶段负载上的拖尾性质（第十二轮，benchmark v1）
-
-**负载**：`BENCHMARK.md`，生成器 `flexspray_bench.py`。
-- ring allreduce（RS + AG）；
-- DeepSeek-V3 式的 MoE dispatch / combine；
-- Mooncake trace 驱动的 KV；
-- 以上的混合。
-
-**评价器**：`flexspray_phaseinfl.py`，计算故障后每个阶段超出容量损失的额外时间。
-
-**结论**【有限条件下成立：本负载、本拓扑】：
-- 默认 v5.3 与 B1 在 x2 / x1 下，受影响的集合通信阶段**每个都复现拖尾**：
-  - ring / MoE：x2 每阶段超出 21–45%，x1 超出 64–77%；
-  - ring 50 步累计 94–165 µs。
-- 候选 C 把 ring x2 降为一次性的 4–10%，x1 降到 15%，MoE 降到 10–53%；但 b_mix 中 MoE 的 dispatch 在 x1 下更差，而且 C 未过预言机（T21）。
-- 详见 FEASIBILITY §10。
-
-**仿真提速**：同一 case 从 96.5 s 降到 56.1 s（1.72×），各步逐位相同，golden 25/25；**未达到 3× 的目标**。
-- 代码优化：a1a0cf0d；
-- 静态链接 + LTO + PGO：`<work>/frozen/r12pgo`，复现脚本为 `<work>/bin/pgo_build.sh`。
-
-## 2c. 三条性能要求的逐项判定（第十三轮；默认 = B0，候选 = D）
-
-**说明**：
-- 旧负载：一次性满载大流，约 175 µs 作业（`flexspray_case.py` 的 d2d / d2dread / h2d / a2a / a2aread / mixed / mixedread）；
-- benchmark v1：多阶段、带依赖（`flexspray_bench.py` 的 b_ring / b_moe / b_mix / b_kv，参数出处见 `BENCHMARK.md`）；
-- 新增 d2io / d2ioread：跨服务器计算设备 ↔ SSD / NIC 的 P2P。
-- 故障损失：受损设备完成时间损失 < 1/N_dev（原文 "<"），种子 1、2 取最差（benchmark v1 只有种子 1）；"phys"表示逐设备 LP 下界 ≥ 1/N_dev，即物理不可行；"impl"表示不是物理限制。
-- 候选 D = `candidates/r13_D.spec`（全部是已有的默认关闭属性）。
-- 数据：`<work>/exp/round13/{ds,dcore,cov,hb}`，旧矩阵 B0 / B1 参照取 `round11/lm`。
-
-**要求 1：P2P ≥ 95%、alltoall ≥ 90%（健康）**
-
-| 场景 | 指标 | 默认 B0 | 候选 D | 判定 / 类别 |
-|---|---|---|---|---|
-| d2d / d2dread / h2d（旧） | eff_fixed | 0.985 / 0.988 / 0.983 | 0.985 / 0.988 / 0.983 | 达标 |
-| d2io / d2ioread（新增） | eff_fixed | 0.987 / 0.991 | — | 达标 |
-| b_ring 每步（环，P2P 流） | 计入时延的上界 | 0.983–0.986 | 同 | 达标 |
-| a2a / a2aread（旧） | eff_fixed | 0.960 / 0.965 | 0.965 / 0.966 | 达标 |
-| b_moe combine | 计入时延的上界 | 0.940 | 0.94 | 达标 |
-| **b_moe dispatch（128 tokens/rank）** | 计入时延的上界 | **0.843**（最低 0.765） | 同 | **不达标，impl**：时延感知 LP 证明 18.56 µs 可达，实测 21.97 µs；每阶段约 3 µs 固定开销；每 rank ≥ 256 tokens 时为 0.94（T29） |
-
-**要求 2：混跑时各类设备端口 ≥ 90%（健康）**
-
-| 场景 | 指标 | 默认 B0 | 候选 D | 判定 / 类别 |
-|---|---|---|---|---|
-| mixed / mixedread（旧，饱和） | 逐设备全程利用率 | 0.925 / 0.921 | 0.930 / 0.978（eff_fixed） | 达标；读混跑余量小 |
-| b_mix 的 EP NPU | 忙期条件上界 | 0.88（加权） | 0.88 | **不达标，impl**（同 T29） |
-| b_mix / b_kv 的 KV 读（SSD 发） | 忙期条件上界 | 约 1.0 | 同 | 达标 |
-| b_mix / b_kv 的 KV 写（瓶颈为写方 NPU 的 2 平面） | 忙期 | 0.86–0.88 | 同 | **不达标，impl**；SSD 收方向受写方限制，不按自身容量判 |
-
-**要求 3：单故障带宽损失 < 1/N_dev（完成时间口径）**
-
-| 故障 | 负载 | 默认 B0 | 候选 D | 判定 / 类别 |
-|---|---|---|---|---|
-| 端侧单平面 F1near / F1far（优雅） | 旧 7 种 | h2d far 18.5% phys，其余全过 | 同；a2aread 回退到 8.9–10.3%（B0 1.9–2.2%） | 可行行全过 |
-| 同上 | b_moe / b_ring / b_mix | 8.4–11.4% | 同 | 达标（ring 11.3%，余量小） |
-| 单平面 L1 故障 F4（优雅） | 旧 | h2d / mixed / mixedread 18.6–19.2% phys | 同 | 可行行全过 |
-| 交换侧单端口 F2up / H2up | 全部 | ≤ 3.7% | ≤ 2.3% | 达标 |
-| 硬断 H1near / H1far / H4 | 旧 | h2d / mixed / mixedread H4 phys，其余全过 | **a2aread H4 13.2% impl**（B0 9.7%） | B0 可行行全过；D 不过 |
-| 硬断 H1 / H4 | **b_ring** | 17.6–18.1%；**作业 ×4（第十四轮）后为 12.7%** | 同（×4：12.7%） | **重新定性（第十四轮）**：主要是固定检测时延（约 9 µs）摊在短作业上。作业变长后损失趋于 1 − 7/8 = 12.5%，从上方逼近，严格"<"在界上不可达（端口受限设备失去 1/8 平面，phys 边界）；优先级下调（T31） |
-| 硬断 H1 / H4 | b_moe / b_mix | 8.5–10.7% | 同 | 达标 |
-| 降 1 lane（x3） | 旧 | 全过 | 全过 | 达标（按 N = 总 lane 数时只在界上，见 §2a） |
-| **降 lane x2 / x1** | 旧 7 种 × 近 / 远 | **11 / 28 不过**（a2a / a2aread / mixed / mixedread 的 x1，a2aread x2；损失 25–82%，LP 下界 ≤ 4%） | **1 / 28 不过**，且为 phys（h2d x1 远端，LP 12.7%）；h2d x1 比 B0 差 3.3–3.5 pp | B0 impl；D 的可行行全过 |
-| **降 lane x2 / x1，原文口径（第十四轮重算）** | b_ring / b_moe / b_mix（种子 1、2 取最差） | **2 / 12 过**：ring 29–41%、MoE 15–38%、mix x1 28–30%；只有 mix 的 x2 过 | **4 / 8 过**：ring x2 10.0%，x1 14.9% 不过；MoE x2 11.2–12.4% 过，x1 27–30% 不过；b_mix 未跑 D（C：mix x1 22%） | **全部 impl**：带故障的 DAG 下界（`flexspray_dagbound.py --fault-aware`）给出的损失下界 ≤ 0；每阶段超出只作附加列（ring x1 15%、MoE x1 50%） |
-| SSD / NIC 端口故障（F1ssd / F3ssd / x2 / x1 / H1ssd、F1nic / F3nic） | d2io / d2ioread / b_kv / b_mix | 全部 < 1/N_dev（N = 2） | 同 | 达标；LP 下界与实测相差 ≤ 1.5 pp（d2io），D 在 x1 上比 B0 差 3.5 pp |
-
-**第十四轮补充**：
-- **T32 诊断**（a2aread F1near / F4 / H4，种子 1，DEFER 跟踪）：D 在失去端口后，剩余端口的入口只有线速的 0.88–0.92（B1 为 0.92–0.97）；79–80% 的拒绝来自端口 READ 预算；读时延 8.3–9.0 µs。B1 不设预算、提交很深（读时延约 82 µs），优雅隔离时还在被隔离的端口上继续以 0.63–0.66 的线速排空已提交的数据。
-- **试验 D'**：按当前可用端口容量比例分摊节点的 READ 预算（失去一个端口时每个剩余端口为 8/7 B）。
-  - 结果：H4 从 13.2% 降到 12.6%，仍不过；a2aread x1 远端从 11.4% 回退到 13.8%。
-  - 原因：读时延随预算同比例上升（8.8–9.4 µs），入口仍约 0.91，所以瓶颈不只是预算。
-  - 假说（**未验证**）：响应方按 TP 公平仲裁，提交浅时请求方的 TP 在响应方时断时续地空，丢掉份额。
-  - **D' 已否定，代码未提交**，diff 存于 `<work>/frozen/r14dev1/uncommitted.diff`。
-
-**汇总**：
-- 默认配置下，**不达标的可行项**有：
-  - 短阶段 alltoall 的健康效率（MoE dispatch 0.84），以及它造成的混跑瓶颈设备 0.86–0.88；
-  - 降 lane x2 / x1：旧矩阵 11 行；benchmark v1 按原文口径 10 / 12 行不过（第十四轮），全部 impl；
-  - ring 上的硬断：17.6–18.1% 主要来自固定检测时延（作业 ×4 后为 12.7%，趋于 1/N 的界，第十四轮重新定性为边界项）。
-- 候选 D 消除了旧矩阵上降 lane 的全部可行失败，但仍有以下问题：
-  - benchmark v1 的 x1 仍然不过（ring 14.9%，MoE 27–30%）；
-  - a2aread 端口故障回退（H4 不过，T32；第十四轮试验 D' 未能修复）；
-  - h2d 回退（T19f）。
-- 其余失败均已由逐设备 LP 证明物理不可行：h2d 与少平面设备的 F1far / F4 / H4，以及 h2d x1 远端。
-
-## 3. 报告与图
-
-- `REPORT.md`：当前版本的全部结果、机制、敏感性、正确性审计、1/N 分析和数据索引。
-- `fig/t11_tail_v52_v53.png`：读混跑尾段，v5.2 与 v5.3 对比（热点读者各平面的入口和 SSD0 的出口）。
-- 历史：`history/REPORT_round4_v5.2.md`（v5.2、v5.1、v4）、`history/fig/`（v5.1 的硬断链时间序列）。
-
-## 4. 评估规则与复现
-
-- 规则：`EVAL_PROTOCOL.md`。
-  - 分母事先固定；不改流量、种子或窗口来达标；
-  - 分析器修正单独提交，并对旧版和新版一致重算（`fcea5973` util_biz；`5fa48eaf` 错峰负载的 busy 窗口）。
-  - 说明：`5fa48eaf` 中还意外带入了已暂存的纯文件重命名（`REPORT.md`、`TODO.md` 和 v5.1 时间序列图移入 `history/`，内容零改动）。这些重命名不影响分析结果；按"不改写历史"的约束，没有拆分这个提交。
-- **复现入口**：`scratch/flexspray/reproduce.sh OUT_DIR [JOBS]`，所有输出写在 `OUT_DIR` 下。依次执行：
-  1. 构建；
-  2. 全部单元测试；
-  3. 回归；
-  4. 调参种子上的门限集（含敏感性）；
-  5. 未见种子上的验收与消融；
-  6. 分析器。
-  - 每一步可以用 `SKIP_<STEP>=1` 跳过。
-  - v5.2 用标签 `flexspray-v5.2` 中的 `reproduce_v5.2.sh`；本分支也可以用方案选项 `rim0` 复现 v5.2 的行为。
-- **第十一轮实际执行的验证**（冻结构建 r11dev3 / r11cand，对应提交 9f4dc077）：
-  - golden 25/25 SAME；
-  - 50 个单测套件在默认、B1、候选 C 三种配置下全部通过，顺序执行；
-  - `flexspray_regress.py`：fence_on 22/22、fence_off 负对照、tail4k 三项 PASS；
-  - 恢复预言机：B1 22/22；C 有 2 例 P6 不过（§6）；
-  - 删除开关前后，34 个抽样 FlexSpray 运行逐位相同。
-
-- **第十三轮实际执行的验证**：本轮没有 C++ 改动（估计器"取大"的试验改动已撤回）。
-  - golden 25/25 SAME（`cmp_s131.log`，r13dev1；r13dev2 与第十二轮源码相同）；
-  - 单测：默认 50/50（`tests-r13def`），候选 D 的属性下 50/50（`tests-r13Ds`）；
-  - 恢复预言机（D）：P1–P5 22/22；P6 在 200 µs 下 20/22，延长到 10 ms 后 22/22（§2c、FEASIBILITY §11.3）；
-  - 所有矩阵运行 rc = 0、无缺任务。
-
-## 5. 正确性审计与回归
-
-`REPORT.md` 第 5 节有完整说明。
-
-- **T14 已证实并修复**（`20ff1dde`）：同一 Jetty 上交错的无序 WQE 会被提前判完成，并静默丢掉 192 B。
-  - FlexSpray 矩阵不受影响，因为每个任务有自己的 Jetty。
-  - 新的单元测试覆盖 4 种交错模式，在旧代码上失败。
-- **replay fence 的活性缺陷已修复**（`20ff1dde`）：误判死亡后，目标端经由被封 TP 对的工作曾永久挂起。现在收到 fence 即判本端 TP 也已死亡并重发。
-  - 回归 `fence_false_death_bidir`：v5.2 上 2 个任务挂起，修复后 P1–P6 全部通过。
-- **恢复语义**：
-  - 完成恰好一次、完成时已执行、覆盖完整、最后写者正确、完成后不再执行、credit 守恒：成立；
-  - **远端执行恰好一次：不成立**，会重复执行，WRITE/READ 是幂等的；
-  - 原子操作、整组失效：范围之外。
-- **fence 的协议开销**：只在重发段上携带 4 B 请求头扩展。目标端本地状态由收到的报文驱动。前提是 TP 不回收。
-
-## 6. 未达标项、边界与需要出题方回答的问题
-
-**未达标项与边界**（详见 `TODO.md`）：
-
-| 项目 | 现状 | 性质 |
+| 验证门禁 | 命令与目标 | 结果 |
 |---|---|---|
-| 读混跑的新机制对权重敏感 | 权重 0.15–0.5 时 ≥ 0.91，权重 ≥ 1 时变差；只在本负载 / 拓扑上验证过 | 有限条件下成立 |
-| T12：KV incast 在单口热点上不公平 | 未见种子上 F4p4 0.926、H4p4 0.911；F1ssd 种子 6 比 v5.1 低 4.5 pp | 未解决 |
-| T17：fence 活性修复后，a2a H4 −1.2 pp | 原因未查明 | 仍是假说 |
-| **T19：1/2 和 1/4 lane** | 重均衡后的稳态损失等于移除的容量，全部方案都达标；完成时间窗口的拖尾在默认配置下有 10 行不达标（§2a） | **未解决**（实现不足） |
-| T20：lpp 1 + 上行硬断时缺任务（默认配置也复现） | 由 fabric 路由撤回修复；撤回延迟取 2 / 20 / 200 µs 时都能完成 | **已修复**；延迟是假设值，恢复后 a2aread 的效率只有 0.37（T22） |
-| T19e：晚绑定的响应在其平面硬断后无法恢复 | 属协议限制（重放由请求方驱动）；机制已删除，M、S4 不再是候选 | **边界**（协议限制） |
-| 候选 C（B1 + 时间承诺 + 完成时间估计） | 单测 50/50 通过，无挂死；恢复预言机 slow_far_1_64 与 fence_false_death_bidir 两例 P6 不过：误判死亡后重派的旧副本按 1/64 的速率缓慢排空，排空 3 ms 后后者通过，前者仍余 0.84 MB | **未通过候选门槛** |
-| T13：1/8–1/64 连续限速压力测试叠加 incast 时尾段很长 | 不对应 4-lane 端口的 lane 档位 | 扩展边界 |
-| T15：固定的探测超时 | 1/16 及以上没有误判；1/64 时误判 4 次 | 扩展边界 |
-| 单故障 < 1/N | 见下 | 依赖定义 |
+| **编译构建** | `./ns3 build ub-quick-example unified-bus-test test-runner` | **exit 0**（release） |
+| **FlexSpray 专项单测** | `/home/cassius/ub/work/frozen/r17cand2/testrunner --test-name=unified-bus-flexspray --verbose` | **11 / 11 PASS**（`1.345 s`，含新增 `UbDcqcnLateCnpDuringDrainTest`） |
+| **Golden 逐位回归** | `J=16 /home/cassius/ub/work/bin/golden.sh r17def2 .../r17cand2/sim` + `cmpgold.sh s131 r17def2`（`a128_4m` `11.16 s`、`a32_32m` `11.68 s`） | **25 / 25 SAME** |
+| **全量 UB 单元套件** | `/home/cassius/ub/work/bin/alltests_frozen.sh r17cand2 r17def2` | **50 / 50 suites PASS**（`rc=0`） |
+| **系统级恢复与尾段回归** | `flexspray_regress.py --out .../reg_r17cand2 --bin .../r17cand2/sim` | **exit 0**（`fence_on 22/22` 全过；`fence_off P5=False, late_execs=9`；`tail4k missing_tasks=0, eff=0.9344`） |
 
-**需要出题方回答的问题**：
+> 完整细节与全机制文档见 [REPORT.md](file:///home/cassius/ub/ns-3-ub/scratch/flexspray/REPORT.md)、[FEASIBILITY.md](file:///home/cassius/ub/ns-3-ub/scratch/flexspray/FEASIBILITY.md)（§13）、[BENCHMARK.md](file:///home/cassius/ub/ns-3-ub/scratch/flexspray/BENCHMARK.md)、[RESEARCH.md](file:///home/cassius/ub/ns-3-ub/scratch/flexspray/RESEARCH.md)（§9.6）及 [TODO.md](file:///home/cassius/ub/ns-3-ub/scratch/flexspray/TODO.md)。
 
-1. **1/N 的 N 怎么取？**
-   - 按设备自身的平面数，则 8 平面 NPU 在部分 case 中损失超过 1/8。原因是它的对端（4 平面 CPU、2 平面 SSD）丢了更大比例的容量；同一故障下流体 LP 的最优解同样有这个损失（REPORT §6）。
-   - 按受损设备中最小的 N：h2d F1far / H1far 仍不满足（唯一受损设备是 8 平面的 NPU6，损失 0.187）。
-   - 统一按 8 平面，则不满足。
-   - 原题写的是"<"，我们报告的是"≤"。
-   - 请确认采用哪种口径，或者是否改为"不超过被移除容量加上一个容差"。
-2. **"每类设备 ≥ 90%"的窗口**：全程是指 [设备第一条流的释放时刻, 最后完成时刻]（我们的定义），还是 [0, makespan]？
-3. **故障语义**：优雅隔离（由管理面通知）能否作为单独的故障类，与硬断链分开计入？
-4. **指定 benchmark 与拓扑**（T2）：目前全部使用自定义负载；需要提供官方流量和拓扑规格。
-5. **硬件对齐**（T4）：交换机仲裁、VOQ 与缓冲规格；端侧逐包 SFQ、读调度和 fence 的实现代价。
+---
 
-## 7. 历史归档与原始数据
+## 2. FlexSpray v6 核心交付能力与实现位置
 
-- **工作区**（`/home/cassius/ub/work`）：
-  - `exp/round5/`：当前版本的数据；
-  - `exp/v5.2/`：v5.2 的数据；
-  - `archive/`：v5.1 及更早的数据，见 `archive/INDEX.md`。
-- 整理记录：`/home/cassius/ub/work/CLEANUP_MANIFEST.tsv`，每个动作一行，含原路径、新路径、原因、版本、校验和字节数。
-- 仓库内的历史：`scratch/flexspray/history/`、`BASELINE_v5.1.md`。
-- **标签**：
-  - `flexspray-v4-baseline`、`flexspray-v5.1-baseline`、`flexspray-v5.2`（均未移动）；
-  - `flexspray-v5.3` 指向 v5.3 交付的提交；
-  - `flexspray-r10-pre-audit`（68aeeb91）保留删除开关之前的代码。
-- **工作树状态**：交付提交后只剩一个未跟踪目录 `scratch/2nodes_single-tp/test/`。它是 `unified-bus-examples-compat` 测试每次运行生成的输出，可再生，所以保留、不纳入版本库。
+FlexSpray v6 在 `v5.3`（SprayCC + MIN_DRAIN_TIME + TpGroupFairShare + 12 µs 探测故障检测 + ReplayFence + T20 fabric 路由撤回 + 尾段切分）之上新增 4 项核心能力（20 项属性，见 [KNOBS.md](file:///home/cassius/ub/ns-3-ub/scratch/flexspray/KNOBS.md)）：
+
+1. **M1 时间量子分段与尾窗控制**（`ub-transaction.{h,cc}`）：`TimeQuantumSeg=true` 按成员相对速率分档（4/8/16 KB）分配 WRITE 段量子；`ReadQuantumBytes=8192` 拆分 READ 请求；`QuantumTailBytes=49152` + `SlackTailOnly=true` 消除末端单平面长尾串行化。
+2. **M2 可达性感知 READ 重池化与工作守恒**（`ub-transport.{h,cc}`）：`ReadPortBudgetBytes=409600` + `ReadScoreReturnRate=true` + `ReadBudgetScaleByRate=true` + `ReadBudgetRepoolDead=true` + `ReadBudgetWorkConserving=true`，仅将 `HardDown`/隔离端口的配额按比例重池化到健康端口（**绝不扩大降 Lane 慢口配额**），并在未饱和时工作守恒推进。
+3. **M3 去自排队残差与队列感知速率**（`ub-transport.{h,cc}`、`ub-spraycc.{h,cc}`）：`PortCommitDelay=6us` + `ServiceTimeScore=true` + `ServiceResidual=true` + `ResidualSubtractOwn=true` + `ResidualIdleHalfLife=150us` + `DeliveryRateQueueAware=true`，配合 `RtoSrttFactor=8, RtoFloorFirstOnly=true` 防止降速链路误触发超时与重传风暴。
+4. **T29 调度协同与 DCQCN Teardown 修复**：`DesyncTpgCursor=true` + `PrioritizeHeavyWqe=true` + `CoalescePortTrigger=true`；Round 17 新增 `UbHostDcqcn::IsTpLifecycleActive()` / `m_tpDestroyRequested`（`ub-dcqcn.{h,cc}`），根除 TP 退场瞬间晚到 CNP 的竞态中止（`UbDcqcnLateCnpDuringDrainTest`）。
+
+---
+
+## 3. 核心实验结论（全仿真，未见种子 `s15, s16`，`r17cand2/sim`）
+
+### 3a. 跨 SOTA 基线全 blind 矩阵对比（`756` 主矩阵 + `42` `r17_kv_io` SSD 专项 = `798` runs，`0` `rc!=0`）
+
+所有对照策略均先在**可见种子 `s1, s2`**（`tune_s12` `504` 次运行）择优调参锁定最优组合（`mprdma+dq2+ooo2` 优于 `ooo4..32` 与 `dcqcn`；`reps+spraycc` / `reps+dq2`；`hpn+caqm`；`ecmp+dq2+rtx+fd`；`adaptive+caqm+rtx+fd`），再在**未见种子 `s15, s16`** 盲测：
+
+| 方案 | 主矩阵总均效 (`n=108`) | `F0` | `F3far3` | `H1far` | 丢任务 (`n=108`) | `ub_pod` | `cm_pod` | `cm_osub` | `ub_mesh` | `kv_io F3ssd3` | `dag_r17_fa` (`n=54`) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **`flex+spraycc` (v6)** | **0.8271** | **0.8323** | **0.8206** | **0.8284** | **0** | **0.7779** | **0.8667** | **0.8283** | **0.9106** | **0.7654** | **0.9336** |
+| `mprdma+dq2+ooo2` | 0.6354 | 0.7497 | 0.3820 | 0.7747 | 0 | 0.6137 | 0.6348 | 0.5939 | 0.6937 | 0.4128 | 0.7926 |
+| `adaptive+caqm+rtx+fd` | 0.5953 | 0.6718 | 0.4202 | 0.6938 | 0 | 0.5391 | 0.6050 | 0.5566 | 0.7151 | 0.4070 | 0.6610 |
+| `reps+spraycc` | 0.5929 | 0.7374 | 0.3413 | 0.6999 | 2 | 0.5546 | 0.5973 | 0.5965 | 0.6193 | 0.3878 | 0.7979 |
+| `reps+dq2` | 0.5311 | 0.7076 | 0.1533 | 0.7324 | 8 | 0.4935 | 0.5312 | 0.4953 | 0.5940 | 0.3702 | 0.7103 |
+| `ecmp+dq2+rtx+fd` | 0.5099 | 0.6484 | 0.2128 | 0.6684 | 1 | 0.5141 | 0.5252 | 0.4144 | 0.5260 | 0.3830 | 0.6694 |
+| `hpn+caqm` | 0.2735 | 0.2846 | 0.2218 | 0.3142 | 0 | 0.2262 | 0.2772 | 0.2319 | 0.3487 | 0.3619 | 0.3471 |
+
+### 3b. 单故障损失约束 `< 1/N`（严格按 `flexspray_losstable.py` 全口径并列 `<` 与 `<=`）
+
+| 口径 / 数据集 | 语义 | `flex+spraycc` `tdev/N_dev` (`<` / `<=`) | `4N` / `N_scope` | `steady` (`n/a` 计分母) / `trans` | 最强 SOTA 对照 `tdev/N_dev` |
+|---|---|---|---:|---|---:|
+| **R17 主矩阵逐格 (`n=17`/语义)** | `hard` | `13/17` / `13/17` (`P=1, I=3`) | `1/17` / `13/17` | `6/17 (na=7)` / `13/17` | `mprdma`/`reps+dq2` `14/17` (`P=1,I=2`) |
+| **R17 主矩阵逐格 (`n=17`/语义)** | `lane` | **`14/17` / `14/17`** (`P=1, I=2`) | `0/17` / **`14/17`** | **`9/17 (na=6)`** / `14/17` | `hpn` / `reps+spraycc` **`1/17`**, 余 `0/17` |
+| **R17 主矩阵逐行 (`n=34`/语义)** | `hard` / `lane` | `26/34` / **`29/34`** (总 **`55/68`** `P=4,I=9`) | `3/68` / `55/68` | `28/68 (na=28)` / `55/68` | `mprdma` `28/34` / `1/34` (总 `29/68`) |
+| **R17 联合 `kv_io` 逐行 (`n=36`/语义)** | `hard` / `lane` | `28/36` / **`31/36`** (总 **`59/72`**) | `3/72` / `59/72` | `28/72 (na=32)` / `57/72` | `mprdma` `30/36` / `1/36` (总 `31/72`) |
+| **R15 `lm_old_cov` (`130` 格)** | `lane` | **`57/58`** (`P=0, I=1`) vs B1 `47/58` | `24/58` / **`58/58`** | **`57/58 (na=0)`** / `57/58` | 仅 B1 对比（已超越） |
+| **R15 `lm_bench` (`50` 格)** | `lane` | **`20/20`** (`P=0, I=0`) vs B1 `8/20` | `8/20` / **`20/20`** | `8/20 (na=12)` / `16/20` | `lm_aicb` (R16): **`18/18`** vs B1 `14/18` |
+
+### 3c. 多阶段尾膨胀与公开超节点 / AI Benchmark 总结
+
+- **多阶段尾膨胀（`flexspray_phaseinfl.py`）**：
+  - `R15 phase_bench`（`112` 例）：v6 **`112/112 one-off（0 per-phase）`**，中位超额均值 **`1.06%`**（max `8.75%`），B1 为 `91/21`（`10.07%` / max `92.88%`）。
+  - `R16 pi_bench` 非 KV（`216` 例）：v6 **`216/216 one-off`**（`1.45%` / max `8.76%`）vs B1 `184/32` / v53 `49/7`。
+  - `R17 pi_r17` 非 KV `F3far3`（`16` 例）：`flex` **`16/16 one-off`（`3.24%` / max `7.86%`）**；全部 6 个竞品陷入 per-phase 重放拖尾（`reps+spraycc 115.09%`、`adaptive 81.13%`、`hpn 34.63%`、`mprdma 241.34%`、`ecmp 240.43%`、`reps+dq2 602.88%`）。`r17_kv_io F3ssd3`：`flex` `9.73% / 15.19%` vs 竞品 `69.75%–262.91%`。
+- **硬件复杂度（T4 收口）**：Fabric 核心交换机 `0` 改动；L1/Edge `UbSwitchSprayCc` 仅 `m_kDelay + 1 B/口`（vs CAQM `4×64b` 向量 + 定时器）；报文头 `70 B` ACK；端侧 `O(P)`（`P<=10`）状态与分发归约；`TP_OPCODE_PROBE` 复用保留字。
+
+---
+
+## 4. 已验证但尚未彻底消除的诚实边界与限制
+
+1. **`b_moe H1far` 短阶段权衡**：在 `r17_cm b_moe H1far` 与 `r17_ub_pod b_moe H1far`，`flex`（`0.6937 / 0.6676`）低于 `mprdma+dq2+ooo2`（`0.7244 / 0.6895`，`-2.2 ~ -3.1 pp`），源于 `PortCommitDelay=6us` + 25 µs 探测在多屏障重启微增约 2 µs 延迟；同一工作负载在 `F3far3` 仍以 `0.6552 vs 0.1913` 领先 **3.42x**。
+2. **`ub_mesh` 单跳直连物理/路由限制**：`ub_mesh` 单跳直连边跨板绕行受限，`lm_r17` `2/12`（`phys=4, impl=6`）；整体盲测效率仍以 `0.9106` 显著高于 `adaptive 0.7151` / `mprdma 0.6937`。
+3. **`r17_kv_io F3ssd3` s16 指标**：SSD 仅 2 平面，单平面降至 1/4 后余下 62.5% 物理容量，`pi_r17_kv` s16 中位超额 `15.19% > 10%` 阈值（同组竞品为 `69.75%–262.91%`）。
+4. **其余开放项（见 [TODO.md](file:///home/cassius/ub/ns-3-ub/scratch/flexspray/TODO.md)）**：`T12` KV 混合读入公平性、`T15` `1/64` 单流极限下激进假死与 `fence_false_death_bidir`、写/读幂等与不重放/不回收语义假定（`T1-rest`）、`T22`（25/50/100 us）与 `T23`（`UB_LINK_HEALTH_FABRIC_WITHDRAW_NS`）常规敏感性已由早期轮次标注；仿真器运行速度不在性能要求范围（`T25`）。
+
+---
+
+## 5. 数据索引与工作树状态
+
+- **冻结产物与日志**：`/home/cassius/ub/work/frozen/r17cand2/`；`/home/cassius/ub/work/exp/round15/{unseen_s15_16,s12,recov200_2}`；`/home/cassius/ub/work/exp/round16/`；`/home/cassius/ub/work/exp/round17/{tune_s12,r17_ub_pod,r17_cm,r17_cm_osub,r17_mesh,r17_kv,r17_kv_io,reg_r17cand2,lm_r17.jsonl,lm_r17_kv.jsonl,pi_r17.jsonl,pi_r17_kv.jsonl,dag_r17_fa.jsonl,dag_r17_kv_fa.jsonl}`。
+- **未跟踪目录保留**：`scratch/2nodes_single-tp/test/` 按约束保持原样未跟踪。

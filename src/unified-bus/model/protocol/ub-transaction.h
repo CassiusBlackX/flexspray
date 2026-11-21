@@ -36,7 +36,10 @@ enum class UbTpgDispatchPolicy : uint32_t
 {
     FIRST_ADMISSIBLE = 0,
     MIN_DRAIN_TIME = 1,
-    STATIC_RR = 2, //!< strict round-robin striping: wait for the cursor member (static multi-QP)
+    STATIC_RR = 2,     //!< strict round-robin striping: wait for the cursor member (static multi-QP)
+    REPS_CACHE = 3,    //!< REPS (arXiv:2407.21625) 8-entry ACK-recycled ECN-free path cache
+    MPRDMA_OOO = 4,    //!< MP-RDMA (NSDI'18) OOO-bounded slow-path pruning + min-lag dispatch
+    PINNED_PLANE = 5,  //!< HPN (SIGCOMM'24) deterministic per-flow plane pinning with hard failover
 };
 
     /**
@@ -297,6 +300,7 @@ enum class UbTpgDispatchPolicy : uint32_t
          */
         bool SetTargetExecutionDelay(Time delay);
         /** Current target execution delay. */
+        UbTpgDispatchPolicy GetTpgDispatchPolicy() const { return m_tpgDispatchPolicy; }
         Time GetTargetExecutionDelay() const { return m_targetExecutionDelay; }
         bool ProcessInboundTaResponse(Ptr<UbWqeSegment> response);
         /**
@@ -665,6 +669,7 @@ enum class UbTpgDispatchPolicy : uint32_t
         Time m_targetExecutionDelay{NanoSeconds(0)};
         UbTpgDispatchPolicy m_tpgDispatchPolicy{UbTpgDispatchPolicy::FIRST_ADMISSIBLE};
         double m_tpgDispatchSlack{-1.0};
+        uint32_t m_mpRdmaOooThreshold{8};
         bool m_replayFence{true};
         double m_readIngressMarkWeight{0.0};
         bool m_readScoreReturnRate{false};

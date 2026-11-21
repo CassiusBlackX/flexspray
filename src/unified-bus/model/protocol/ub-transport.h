@@ -10,6 +10,7 @@
 #include <deque>
 #include <string>
 #include <utility>
+#include <array>
 #include <vector>
 #include "ns3/object.h"
 #include "ns3/packet.h"
@@ -353,6 +354,7 @@ public:
     bool IsRepeatPacket(uint64_t psn);
     std::queue<Ptr<Packet>> m_ackQ; // ack queue high pg
     std::queue<Ptr<Packet>> m_cnpQ; // higher-priority control queue for standalone CNP
+    Time m_lastCnpRxTime{NanoSeconds(-1000000)};
 
     virtual IngressQueueType GetIngressQueueType() override;
 
@@ -832,7 +834,7 @@ private:
     void TpRecvNotify(uint32_t packetUid, uint32_t psn, uint32_t src, uint32_t dst, uint32_t srcTpn, uint32_t dstTpn,
                       PacketType type, uint32_t size, uint32_t taskId, std::string ackInfo, UbPacketTraceTag traceTag);
     // Node and controller references
-    uint32_t m_nodeId;
+    uint32_t m_nodeId{UINT32_MAX};
 
     // Network identification parameters
     uint32_t m_src;
@@ -1008,7 +1010,16 @@ public:
     bool IsDestroyPending() const;
     UbTpgCleanupMode GetCleanupMode() const;
 
+    /** REPS (arXiv:2407.21625): circular cache of recently un-marked ACKed member indices. */
+    void RecordRepsAck(const UbLifecycleResourceIdentity& tpId, bool ecnMarked, Time now);
+    void OnRepsTimeout(const UbLifecycleResourceIdentity& tpId, Time now, Time freezeDur);
+    uint32_t PopRepsCachedIndex(Time now);
+    uint32_t PeekRepsCacheCount() const { return m_repsCount; }
+    uint32_t NextRepsExploreOffset();
+    bool IsRepsFrozenForTest(Time now) const { return now < m_repsFrozenUntil; }
+
 private:
+    static constexpr uint32_t kRepsCacheSize = 8;
     UbLifecycleResourceIdentity m_identity;
     std::vector<UbTransportGroupMember> m_members;
     uint32_t m_selectionCursor{0};
@@ -1017,6 +1028,11 @@ private:
     bool m_destroyRequested{false};
     UbTpgCleanupMode m_cleanupMode{UbTpgCleanupMode::GRACEFUL};
     uint64_t m_membershipVersion{1};
+    std::array<uint32_t, kRepsCacheSize> m_repsBuf{};
+    uint32_t m_repsHead{0};
+    uint32_t m_repsCount{0};
+    uint32_t m_repsExploreCursor{0};
+    Time m_repsFrozenUntil{Seconds(0)};
 };
 
 } // namespace ns3

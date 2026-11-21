@@ -134,3 +134,30 @@
   - LP 求解器稳定性：`flexspray_analyze.py` 新增 `_solve_lp`（默认 `highs-ipm`，仅对个别数值边界回退 `presolve=False` / 限时 `highs-ds`）。
 - **已用过的样本（开发集）**：仅种子 **1、2** 用于 v6 参数收敛、`s12` 全矩阵（`1080` 仿真）与 4 项单支柱消融（`no_TQS` / `no_READPOOL` / `no_RESFIX` / `no_SCHED`）。
 - **未见盲验样本（锁定参数后零微调）**：种子 **15、16**（`unseen_s15_16`，`968` 仿真，`bad_rc=0, bad_miss=0`）及 `--map 2` / `--fault-ns 35000` / `--scale 0.75`（种子 15）；所有读数严格按 `N_dev` / `4·N_dev` / `N_scope`、`tdev` / `steady(含 n/a 分母)` / `trans` 及 `<` vs `≤` 并列报告。
+
+---
+
+## 第十六轮补充：公开超节点拓扑、开源 AI 工作负载与 Fault-Aware DAG Bound（Stage 2, commit `f2676403`）
+
+- **评估目标**：引入公开文献超节点拓扑与开源 AI 通信基准，在零针对性微调前提下检验 FlexSpray v6（`flex+spraycc`）相对历史基线（`flex+spraycc+b1` / `flex+spraycc+v53`）的泛化性与物理下界一致性。
+- **公开超节点拓扑**（`flexspray_topo_public.py`，400 Gbps × 4 lanes）：
+  1. `cm_pod`（CloudMatrix384 1/12 缩比，`arXiv:2506.12708` §3.3）：`4` 服务器 × (`8` NPU@7 平面 + `4` CPU@4 平面 + `1` NIC@2 平面 + `1` SSD@2 平面)，`K=4` Spine × `J=4` 上行（`16 up >= 13 down`，1:1 无阻塞）。
+  2. `cm_pod_osub`：同主机/平面结构，`K=3` Spine × `J=2` 上行（`6 up vs 13 down`，~2.17:1 超分比）。
+  3. `ub_mesh`（`arXiv:2503.20377` §3.2–3.3）：`4` 板 × `8` NPU（`32` NPU + `8` CPU + `4` NIC + `4` SSD），每 NPU `6` 条 1-hop 直连边（`3` 板内四元全连接 `20 ns` + `3` 跨板同秩全连接 `40 ns`）+ `4` 条 LRS 交换轨道（板间直连 `lrs_links=3` 束，`100 ns`，无 L2 Spine 层，共 `10` 口 = `4.0 Tbps/NPU`）。
+- **开源 AI 基准负载**（`flexspray_aicb.py`）：`b_aicb_tp_ep`、`b_deepep_skew`、`b_deepep_prefill`、`b_nccl_pipe`、`b_kv_skew`。
+- **分析器升级**：`flexspray_analyze.py` 与 `flexspray_lossmatrix.py` 对重复 `(src, dst, planes)` 商品流聚合为单一 LP 商品变量（`_agg_flows`），支持 `ub_mesh` 混合直连 + LRS 端口容量建模；全量验证运行在未见种子 `s15, s16`（`r16_cm` / `r16_cm_osub` / `r16_mesh` / `r16_ub_aicb` / `r16_kv_io` / `r16_kv_s05` / `r16_kv_s20`）。
+
+---
+
+## 第十七轮补充：公平调参、SOTA 全仿真盲测与 SSD 专项对照（Stage 3, frozen `r17cand2`）
+
+- **对比方案锁定与公平调参协议（严格隔离训练集/盲测集）**：
+  - C++ 新增对照策略（`REPS_CACHE`、`MPRDMA_OOO`、`PINNED_PLANE`）与 CC/RTO/队列组合仅在**可见种子 `s1, s2`**（`work/exp/round17/tune_s12/{tune_ub,tune_mesh}`，共 `432 + 72 = 504` 次运行，`0 rc!=0`）调优锁定，随后零改动进入**未见种子 `s15, s16`** 盲测。
+  - 锁定 7 组对比方案：`flex+spraycc`（v6）、`mprdma+dq2+ooo2`（`ooo in {2,4,8,16,32}` 与 `dcqcn/dq2` 共 10 组最佳：`tune_ub 0.6269`, `tune_mesh 0.6435`）、`reps+spraycc`、`reps+dq2`、`adaptive+caqm+rtx+fd`、`ecmp+dq2+rtx+fd`、`hpn+caqm`。
+- **冻结二进制与前置门禁（`r17cand2`，最后一次 C++ 修改后全通过）**：
+  - 含 `UbHostDcqcn::IsTpLifecycleActive()` / `m_tpDestroyRequested` teardown 晚到 CNP 修复与 `UbDcqcnLateCnpDuringDrainTest`。
+  - 门禁：`unified-bus-flexspray` `11/11 PASS`；Golden `25/25 SAME`（`s131` + `r17def2`）；全量单元套件 `50/50 PASS`；`flexspray_regress.py` exit `0`（`fence_on 22/22` 全过、`fence_off P5=False late_execs=9`、`tail4k missing_tasks=0 eff=0.9344`）。
+- **盲测矩阵（未见种子 `s15, s16`，`--stop-ms 5`）**：
+  - 主矩阵 5 组（`756` 次：`r17_ub_pod` `294`、`r17_cm` `126`、`r17_cm_osub` `168`、`r17_mesh` `126`、`r17_kv` `42`），覆盖 `F0 / F3far3 / H1far`。
+  - **SSD 专项矩阵 `r17_kv_io`**（`42` 次）：针对 `r17_kv` 中 `F3far3/H1far` 与 `SSD(planes 4,5) <-> NPU6..7` 正交问题，加测 `b_kv_skew` 的 `F0 / F3ssd3 / H1ssd` 全 7 方案对比。
+  - **规范统计口径**：全部报告严格采用 `flexspray_losstable.py`（最差设备×种子定格，`tdev` 以 `lp_lb >= 1/N` 判 `phys`，`steady/trans` 标 `phys*`，保留 `n/a` 于分母，`<` 与 `<=` 并列，报告 4 种 `N`）、`flexspray_phaseinfl.py` 与 `flexspray_dagbound.py --fault-aware`。

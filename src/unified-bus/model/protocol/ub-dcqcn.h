@@ -71,6 +71,7 @@ public:
     void HandleByteCounterEvent();
     void HandleAlphaTimer();
     void ReleaseHostActiveFlow();
+    bool IsTpLifecycleActive() const;
     void SchedulePacingWakeup();
     void HandlePacingWakeup();
     void InitTrackedEvents();
@@ -120,6 +121,7 @@ public:
     bool m_trackedEventsInitialized{false};
     bool m_senderStarted{false};
     bool m_registeredHostFlow{false};
+    bool m_tpDestroyRequested{false};
 };
 
 class UbSwitchDcqcn : public UbDcqcn

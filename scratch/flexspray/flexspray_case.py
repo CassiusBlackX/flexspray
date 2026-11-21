@@ -516,6 +516,26 @@ def scheme_attrs(name):
         d.update(flow("PER_PACKET_SHORTEST_PATHS")); d["ns3::UbRoutingProcess::MultipathSelector"] = "ROUND_ROBIN"
     elif base == "adaptive":    # per-packet local-queue adaptive (existing UB)
         d.update(flow("PER_PACKET_SHORTEST_PATHS")); d["ns3::UbRoutingProcess::MultipathSelector"] = "ADAPTIVE"
+    elif base == "reps":        # REPS (arXiv:2407.21625): ACK-recycled ECN-free 8-entry path cache + hash spray
+        d.update(flow("PER_PACKET_SHORTEST_PATHS")); d["ns3::UbRoutingProcess::MultipathSelector"] = "HASH64"
+        d["ns3::UbTransaction::TpgDispatchPolicy"] = "REPS_CACHE"
+        d["ns3::UbJetty::TaSegmentBytes"] = "16384"
+        d["ns3::UbTransportChannel::FailureDetection"] = "true"
+        d["ns3::UbTransportChannel::EnableRetrans"] = "true"
+        d["ns3::UbTransportChannel::RetransmissionMode"] = "GBN"
+    elif base == "mprdma":      # MP-RDMA (NSDI'18): OOO-bounded slow-path pruning + min-lag dispatch
+        d.update(flow("PER_PACKET_SHORTEST_PATHS")); d["ns3::UbRoutingProcess::MultipathSelector"] = "HASH64"
+        d["ns3::UbTransaction::TpgDispatchPolicy"] = "MPRDMA_OOO"
+        d["ns3::UbJetty::TaSegmentBytes"] = "16384"
+        d["ns3::UbTransportChannel::FailureDetection"] = "true"
+        d["ns3::UbTransportChannel::EnableRetrans"] = "true"
+        d["ns3::UbTransportChannel::RetransmissionMode"] = "GBN"
+    elif base == "hpn":         # HPN (SIGCOMM'24): per-flow plane pinning with hard-fault failover
+        d.update(flow("PER_FLOW_SHORTEST_PATHS")); d["ns3::UbRoutingProcess::MultipathSelector"] = "HASH64"
+        d["ns3::UbTransaction::TpgDispatchPolicy"] = "PINNED_PLANE"
+        d["ns3::UbTransportChannel::FailureDetection"] = "true"
+        d["ns3::UbTransportChannel::EnableRetrans"] = "true"
+        d["ns3::UbTransportChannel::RetransmissionMode"] = "GBN"
     elif base == "flex":        # FlexSpray switch layer
         d.update(flow("PER_PACKET_SHORTEST_PATHS")); d["ns3::UbRoutingProcess::MultipathSelector"] = "ADAPTIVE_RATE"
         d["ns3::UbTransaction::TpgDispatchPolicy"] = "MIN_DRAIN_TIME"
@@ -564,6 +584,8 @@ def scheme_attrs(name):
             d["ns3::UbRoutingProcess::MultipathSelector"] = "ADAPTIVE"
         elif opt.startswith("slack"):
             d["ns3::UbTransaction::TpgDispatchSlack"] = opt[5:]
+        elif opt.startswith("ooo") and opt[3:].isdigit():
+            d["ns3::UbTransaction::MpRdmaOooThreshold"] = opt[3:]
         elif opt == "caqm":
             cc = "caqm"; g["UB_CC_ENABLED"] = "true"; g["UB_CC_ALGO"] = "CAQM"
         elif opt == "spraycc":

@@ -128,6 +128,7 @@ void
 UbHostDcqcn::OnTpAttached(Ptr<UbTransportChannel> tp)
 {
     m_tp = tp;
+    m_tpDestroyRequested = false;
     m_hostNodeId = tp != nullptr ? tp->GetSrc() : UINT32_MAX;
     m_port = (tp != nullptr && m_hostNodeId != UINT32_MAX)
                  ? DynamicCast<UbPort>(NodeList::GetNode(m_hostNodeId)->GetDevice(tp->GetSport()))
@@ -260,9 +261,35 @@ UbHostDcqcn::HandleTrackedPacingWakeup(uint64_t token)
 }
 
 bool
+UbHostDcqcn::IsTpLifecycleActive() const
+{
+    if (m_tpDestroyRequested || m_tp == nullptr || m_hostNodeId == UINT32_MAX)
+    {
+        return false;
+    }
+    const auto& owner = m_tp->GetLifecycleOwner();
+    if (owner.generation == 0)
+    {
+        return false;
+    }
+    Ptr<Node> node = NodeList::GetNode(m_hostNodeId);
+    if (node == nullptr)
+    {
+        return false;
+    }
+    Ptr<UbLifecycleCoordinator> coordinator = node->GetObject<UbLifecycleCoordinator>();
+    return coordinator != nullptr && coordinator->IsResourceActive(owner);
+}
+
+bool
 UbHostDcqcn::IsCcLimited(uint32_t bytes)
 {
     (void)bytes;
+
+    if (m_tpDestroyRequested)
+    {
+        return false;
+    }
 
     EnsureSenderStartState();
 
@@ -283,6 +310,7 @@ UbHostDcqcn::IsCcLimited(uint32_t bytes)
 void
 UbHostDcqcn::DoDispose()
 {
+    m_tpDestroyRequested = true;
     CancelTrackedEvent(m_pendingCnpEvent, m_pendingCnpTrackedEvents);
     CancelTrackedEvent(m_rateIncreaseEvent, m_rateIncreaseTrackedEvents);
     CancelTrackedEvent(m_alphaEvent, m_alphaTrackedEvents);
@@ -297,7 +325,7 @@ UbHostDcqcn::DoDispose()
 void
 UbHostDcqcn::EnsureSenderStartState()
 {
-    if (m_senderStarted || !m_congestionCtrlEnabled)
+    if (m_senderStarted || !m_congestionCtrlEnabled || m_tpDestroyRequested)
     {
         return;
     }
@@ -418,7 +446,7 @@ UbHostDcqcn::ApplyRecoveryIncreaseRate(bool byteDriven)
 void
 UbHostDcqcn::EmitPendingCnp()
 {
-    if (!m_pendingMarked || m_tp == nullptr)
+    if (!m_pendingMarked || !IsTpLifecycleActive())
     {
         return;
     }
@@ -435,11 +463,20 @@ UbHostDcqcn::EmitPendingCnp()
 void
 UbHostDcqcn::ResetRecoveryState()
 {
+    if (!IsTpLifecycleActive())
+    {
+        return;
+    }
     m_timeRecoveryEvents = 0;
     m_byteRecoveryEvents = 0;
     m_bytesSinceLastIncrease = 0;
     CancelTrackedEvent(m_rateIncreaseEvent, m_rateIncreaseTrackedEvents);
     CancelTrackedEvent(m_alphaEvent, m_alphaTrackedEvents);
+    // Re-check after canceling tracked events: releasing the last lease can synchronously finalize and retire m_tp.
+    if (!IsTpLifecycleActive())
+    {
+        return;
+    }
     m_rateIncreaseEvent = ScheduleRateIncrease();
     m_alphaEvent = ScheduleAlphaUpdate();
 }
@@ -447,14 +484,23 @@ UbHostDcqcn::ResetRecoveryState()
 void
 UbHostDcqcn::HandleRateIncreaseTimer()
 {
+    if (!IsTpLifecycleActive())
+    {
+        return;
+    }
+
     EnsureSenderStartState();
 
-    if (!m_congestionCtrlEnabled)
+    if (!m_congestionCtrlEnabled || !IsTpLifecycleActive())
     {
         return;
     }
 
     ApplyRecoveryIncrease(false);
+    if (!IsTpLifecycleActive())
+    {
+        return;
+    }
     m_rateIncreaseEvent = ScheduleRateIncrease();
 }
 
@@ -474,13 +520,17 @@ UbHostDcqcn::HandleByteCounterEvent()
 void
 UbHostDcqcn::HandleAlphaTimer()
 {
-    if (!m_congestionCtrlEnabled)
+    if (!m_congestionCtrlEnabled || !IsTpLifecycleActive())
     {
         return;
     }
 
     m_alpha = (1.0 - m_g) * m_alpha;
     TraceSenderState("ALPHA_DECAY");
+    if (!IsTpLifecycleActive())
+    {
+        return;
+    }
     m_alphaEvent = ScheduleAlphaUpdate();
 }
 
@@ -504,7 +554,7 @@ UbHostDcqcn::ReleaseHostActiveFlow()
 void
 UbHostDcqcn::SchedulePacingWakeup()
 {
-    if (!m_congestionCtrlEnabled || m_port == nullptr)
+    if (!m_congestionCtrlEnabled || m_port == nullptr || !IsTpLifecycleActive())
     {
         return;
     }
@@ -555,6 +605,7 @@ UbHostDcqcn::OnSenderTransportIdle()
 void
 UbHostDcqcn::OnTpDestroyRequested()
 {
+    m_tpDestroyRequested = true;
     CancelTrackedEvent(m_pendingCnpEvent, m_pendingCnpTrackedEvents);
     OnSenderTransportIdle();
 }
@@ -567,7 +618,7 @@ UbHostDcqcn::OnReceiverDataPacketReceived(uint64_t psn,
     (void)psn;
     (void)size;
 
-    if (!m_congestionCtrlEnabled || m_tp == nullptr)
+    if (!m_congestionCtrlEnabled || !IsTpLifecycleActive())
     {
         return;
     }
@@ -665,12 +716,12 @@ UbHostDcqcn::OnSenderCongestionNotification(TpOpcode opcode,
 {
     (void)psn;
 
-    EnsureSenderStartState();
-
-    if (!m_congestionCtrlEnabled || opcode != TpOpcode::TP_OPCODE_CNP)
+    if (!m_congestionCtrlEnabled || opcode != TpOpcode::TP_OPCODE_CNP || !IsTpLifecycleActive())
     {
         return;
     }
+
+    EnsureSenderStartState();
 
     const uint32_t raw = header.GetRawBytes4to7();
     const uint8_t ecn = static_cast<uint8_t>((raw >> 30) & 0x3U);
