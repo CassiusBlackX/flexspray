@@ -36,17 +36,26 @@ def load_case(case):
 
 
 def capacities(meta, faulted):
-    """Return dev-port caps {(dev, plane): Gbps} and L1 aggregate caps {(p, s): Gbps up/down}."""
+    """Return dev-port caps {(dev, plane): Gbps} and fabric aggregate caps {(k): Gbps up/down}."""
     rate = meta["rate_gbps"]
     hosts = meta["hosts"]
     cap = {(h["id"], p): float(rate) for h in hosts for p in h["planes"]}
-    up = {}
-    for key in meta["l1"]:
-        p, s = map(int, key.split(","))
-        up[(p, s)] = float(rate * meta["spines"] * meta["links_per_pair"])
-    down = dict(up)
+    if meta.get("topo") == "ub_mesh":
+        up = {(p, s1, s2): float(rate * meta["lrs_links"])
+              for p in range(meta["p_lrs"])
+              for s1 in range(meta["servers"])
+              for s2 in range(meta["servers"]) if s1 != s2}
+        down = {}
+    else:
+        up = {}
+        for key in meta["l1"]:
+            p, s = map(int, key.split(","))
+            up[(p, s)] = float(rate * meta["spines"] * meta["links_per_pair"])
+        down = dict(up)
     if faulted:
         l1_by_node = {v: tuple(map(int, k.split(","))) for k, v in meta["l1"].items()}
+        lrs_bundle = {tuple(map(int, k.split(","))): tuple(v)
+                      for k, v in (meta.get("lrs_port_to_bundle") or {}).items()}
         port_of = {(h["id"], h["ports"][p]): p for h in hosts for p in h["planes"]}
         for (_, node, port, action, value) in meta["fault_rows"]:
             if node in l1_by_node and action in ("ISOLATE_NODE", "DOWN_NODE"):
@@ -55,9 +64,14 @@ def capacities(meta, faulted):
                     if h["server"] == s and p in h["planes"]:
                         cap[(h["id"], p)] = 0.0
             elif node in l1_by_node and action in ("ISOLATE", "DOWN"):
-                p, s = l1_by_node[node]
-                up[(p, s)] -= rate
-                down[(p, s)] -= rate
+                if (node, port) in lrs_bundle:
+                    p, s1, s2 = lrs_bundle[(node, port)]
+                    up[(p, s1, s2)] = max(0.0, up[(p, s1, s2)] - rate)
+                    up[(p, s2, s1)] = max(0.0, up[(p, s2, s1)] - rate)
+                else:
+                    p, s = l1_by_node[node]
+                    up[(p, s)] -= rate
+                    down[(p, s)] -= rate
             elif (node, port) in port_of:
                 p = port_of[(node, port)]
                 if action in ("ISOLATE", "DOWN"):
@@ -66,6 +80,25 @@ def capacities(meta, faulted):
                     num, den = map(int, value.split("/"))
                     cap[(node, p)] = rate * num / den
     return cap, up, down
+
+
+def add_flow_constraints(eg, ing, l1u, l1d, is_mesh, p_lrs, f, p, v, data_w, ack_w):
+    """Append host and fabric resource terms for one flow f on plane p (Clos or ub_mesh)."""
+    eg[(f["src"], p)].append((v, data_w))
+    ing[(f["src"], p)].append((v, ack_w))
+    ing[(f["dst"], p)].append((v, data_w))
+    eg[(f["dst"], p)].append((v, ack_w))
+    if not f["cross"]:
+        return
+    if is_mesh:
+        if p < p_lrs:
+            l1u[(p, f["ssrv"], f["dsrv"])].append((v, data_w))
+            l1u[(p, f["dsrv"], f["ssrv"])].append((v, ack_w))
+    else:
+        l1u[(p, f["ssrv"])].append((v, data_w))
+        l1d[(p, f["ssrv"])].append((v, ack_w))
+        l1d[(p, f["dsrv"])].append((v, data_w))
+        l1u[(p, f["dsrv"])].append((v, ack_w))
 
 
 def bulk_flows(meta, tasks):
@@ -93,6 +126,8 @@ def build_constraints(meta, flows, caps_list, durations, ack):
     rows, cols, vals, b = [], [], [], []
     data_w = (MTU + DATA_HDR) / MTU
     ack_w = ack / MTU
+    is_mesh = meta.get("topo") == "ub_mesh"
+    p_lrs = meta.get("p_lrs", 0)
     for ph, (cap, up, down) in enumerate(caps_list):
         eg = collections.defaultdict(list)
         ing = collections.defaultdict(list)
@@ -100,12 +135,7 @@ def build_constraints(meta, flows, caps_list, durations, ack):
         l1d = collections.defaultdict(list)
         for fi, f in enumerate(flows):
             for p in f["planes"]:
-                v = var[(ph, fi, p)]
-                eg[(f["src"], p)].append((v, data_w)); ing[(f["src"], p)].append((v, ack_w))
-                ing[(f["dst"], p)].append((v, data_w)); eg[(f["dst"], p)].append((v, ack_w))
-                if f["cross"]:
-                    l1u[(p, f["ssrv"])].append((v, data_w)); l1d[(p, f["ssrv"])].append((v, ack_w))
-                    l1d[(p, f["dsrv"])].append((v, data_w)); l1u[(p, f["dsrv"])].append((v, ack_w))
+                add_flow_constraints(eg, ing, l1u, l1d, is_mesh, p_lrs, f, p, var[(ph, fi, p)], data_w, ack_w)
         for group, capd in ((eg, cap), (ing, cap), (l1u, up), (l1d, down)):
             for key, terms in group.items():
                 r = len(b)
@@ -116,7 +146,7 @@ def build_constraints(meta, flows, caps_list, durations, ack):
 
 
 def _solve_lp(c, A, b, nv):
-    """Solve LP with primary solver (highs-ipm) and presolve-off / simplex fallbacks."""
+    """Solve LP with primary solver (highs-ipm) and presolve-off / relaxed-IPM / simplex fallbacks."""
     primary = os.environ.get("FLEX_LP_METHOD", "highs-ipm")
     b_arr = np.array(b)
     bounds = [(0, None)] * nv
@@ -124,16 +154,33 @@ def _solve_lp(c, A, b, nv):
     if res.status != 0 and primary == "highs-ipm":
         res = linprog(c, A_ub=A, b_ub=b_arr, bounds=bounds, method="highs-ipm",
                       options={"presolve": False})
+    if res.status != 0 and primary == "highs-ipm":
+        res = linprog(c, A_ub=A, b_ub=b_arr, bounds=bounds, method="highs-ipm",
+                      options={"dual_feasibility_tolerance": 1e-4, "ipm_optimality_tolerance": 1e-6})
     if res.status != 0:
         res = linprog(c, A_ub=A, b_ub=b_arr, bounds=bounds, method="highs-ds",
-                      options={"time_limit": 30.0})
+                      options={"time_limit": 180.0})
     if res.status != 0:
         raise RuntimeError(res.message)
     return res
 
 
+def _agg_flows(flows):
+    """Merge flows sharing identical routing, plane set, and release time (exact LP equivalence)."""
+    merged = {}
+    for f in flows:
+        key = (f["src"], f["dst"], f["ssrv"], f["dsrv"], f["cross"],
+               tuple(f["planes"]), round(f.get("release_us", 0.0), 9))
+        if key not in merged:
+            merged[key] = dict(f)
+        else:
+            merged[key]["bits"] += f["bits"]
+    return list(merged.values())
+
+
 def solve_lambda(meta, flows, caps_list, durations, ack):
     """Max lambda s.t. sum_phase sum_plane r*dur >= lambda*bits_f for all flows (rates in Gbps)."""
+    flows = _agg_flows(flows)
     var, rows, cols, vals, b = build_constraints(meta, flows, caps_list, durations, ack)
     nv = len(var) + 1  # last = lambda
     lam = nv - 1
@@ -166,6 +213,8 @@ def drained_after_fault(meta, samples):
     hosts = meta["hosts"]
     l1_by_node = {v: tuple(map(int, k.split(","))) for k, v in meta["l1"].items()}
     up_port = {v: tuple(map(int, k.split(","))) for k, v in meta["l1_up_port"].items()}
+    lrs_bundle = {tuple(map(int, k.split(","))): tuple(v)
+                  for k, v in (meta.get("lrs_port_to_bundle") or {}).items()}
     allow = {}
     last_ns = tf_ns
 
@@ -193,6 +242,11 @@ def drained_after_fault(meta, samples):
                     tx, rx = after(h["id"], h["ports"][p])
                     allow[("eg", (h["id"], p))] = tx
                     allow[("ing", (h["id"], p))] = rx
+        elif action == "ISOLATE" and (node, port) in lrs_bundle:
+            p, s1, s2 = lrs_bundle[(node, port)]
+            tx, rx = after(node, port)
+            allow[("l1u", (p, s1, s2))] = tx
+            allow[("l1u", (p, s2, s1))] = rx
         elif action == "ISOLATE" and node in l1_by_node:
             p, s_ = l1_by_node[node]
             tx, rx = after(node, port)  # L1 side of the uplink: tx = up, rx = down
@@ -209,20 +263,18 @@ def drained_after_fault(meta, samples):
     return allow, summary
 
 
-def _capacity_rows(flows, cap, up, down, var, ack, allow=None):
+def _capacity_rows(flows, cap, up, down, var, ack, allow=None, meta=None):
     """Yield ([(var_index, weight)], capacity, allowance_bytes) constraint rows for one phase."""
     data_w = (MTU + DATA_HDR) / MTU
     ack_w = ack / MTU
+    is_mesh = (meta or {}).get("topo") == "ub_mesh"
+    p_lrs = (meta or {}).get("p_lrs", 0)
     groups = {"eg": collections.defaultdict(list), "ing": collections.defaultdict(list),
               "l1u": collections.defaultdict(list), "l1d": collections.defaultdict(list)}
     for fi, f in enumerate(flows):
         for p in f["planes"]:
-            v = var[(fi, p)]
-            groups["eg"][(f["src"], p)].append((v, data_w)); groups["ing"][(f["src"], p)].append((v, ack_w))
-            groups["ing"][(f["dst"], p)].append((v, data_w)); groups["eg"][(f["dst"], p)].append((v, ack_w))
-            if f["cross"]:
-                groups["l1u"][(p, f["ssrv"])].append((v, data_w)); groups["l1d"][(p, f["ssrv"])].append((v, ack_w))
-                groups["l1d"][(p, f["dsrv"])].append((v, data_w)); groups["l1u"][(p, f["dsrv"])].append((v, ack_w))
+            add_flow_constraints(groups["eg"], groups["ing"], groups["l1u"], groups["l1d"],
+                                 is_mesh, p_lrs, f, p, var[(fi, p)], data_w, ack_w)
     for name, capd in (("eg", cap), ("ing", cap), ("l1u", up), ("l1d", down)):
         for key, terms in groups[name].items():
             yield terms, capd.get(key, 0.0), (allow or {}).get((name, key), 0.0)
@@ -235,6 +287,7 @@ def ideal_makespan_timeindexed_us(meta, flows, ack, allow=None, with_fault=True)
     flows already released; the last phase from b_K carries volumes b_fp under capacities * z.
     Minimise z; T = b_K + z (the last released flow needs positive time, so T >= b_K is exact).
     The drain allowance of an isolated resource is granted in the first post-fault phase."""
+    flows = _agg_flows(flows)
     tf = meta["fault_ns"] / 1000.0 if (with_fault and meta.get("fault_rows")) else None
     if tf is not None:
         t_h = ideal_makespan_timeindexed_us(meta, flows, ack, None, with_fault=False)
@@ -262,7 +315,7 @@ def ideal_makespan_timeindexed_us(meta, flows, ack, allow=None, with_fault=True)
         svar = {(j, p): vk[(fi, p)] for j, fi in enumerate(idx) for p in flows[fi]["planes"]}
         allow_k = allow if k == first_post else None
         dur = bps[k + 1] - bps[k] if k < nph - 1 else None
-        for terms, c, d in _capacity_rows(sflows, cap, up, down, svar, ack, allow_k):
+        for terms, c, d in _capacity_rows(sflows, cap, up, down, svar, ack, allow_k, meta):
             r = len(b)
             for v, w in terms:
                 rows.append(r); cols.append(v); vals.append(w)
@@ -289,6 +342,7 @@ def ideal_makespan_timeindexed_us(meta, flows, ack, allow=None, with_fault=True)
 
 
 def ideal_makespan_us(meta, flows, ack, allow=None):
+    flows = _agg_flows(flows)
     if any(f.get("release_us", 0) > 0 for f in flows):
         return ideal_makespan_timeindexed_us(meta, flows, ack, allow)
     """Minimum makespan (us) with perfect per-plane splitting (fluid LP).
@@ -320,12 +374,12 @@ def ideal_makespan_us(meta, flows, ack, allow=None):
             var1[(fi, p)] = n0 + len(var1)
     zi = n0 + len(var1)
     rows, cols, vals, b = [], [], [], []
-    for terms, c, _ in _capacity_rows(flows, cap0, up0, down0, var0, ack):
+    for terms, c, _ in _capacity_rows(flows, cap0, up0, down0, var0, ack, None, meta):
         r = len(b)
         for v, w in terms:
             rows.append(r); cols.append(v); vals.append(w)
         b.append(c)
-    for terms, c, d in _capacity_rows(flows, cap1, up1, down1, var1, ack, allow):
+    for terms, c, d in _capacity_rows(flows, cap1, up1, down1, var1, ack, allow, meta):
         r = len(b)
         for v, w in terms:
             rows.append(r); cols.append(v); vals.append(w)

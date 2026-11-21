@@ -184,8 +184,8 @@ def main():
             rows[(ds, r["scenario"], r["fault"], r["scheme"], r["seed"])] = os.path.join(d, r["case"])
     def params(case):
         m = json.load(open(os.path.join(case, "case_meta.json")))
-        return (m.get("scale"), m.get("links_per_pair"), m.get("traffic_map"), m.get("seed"),
-                m.get("scenario"), m.get("scheme"), m.get("servers"), m.get("planes"))
+        return (m.get("topo", "ub_pod"), m.get("scale"), m.get("links_per_pair"), m.get("traffic_map"),
+                m.get("seed"), m.get("scenario"), m.get("scheme"), m.get("servers"), m.get("planes"))
     healthy = collections.defaultdict(list)  # params -> F0 cases (any set)
     for (ds, sc, f, sch, sd), case in rows.items():
         if f == "F0":

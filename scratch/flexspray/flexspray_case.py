@@ -337,8 +337,13 @@ SCENARIOS = {"d2d": wl_d2d, "d2dread": wl_d2d_read, "h2d": wl_h2d, "a2a": wl_a2a
              "stagger": wl_stagger, "staggermixed": wl_stagger_mixed, "incast": wl_incast,
              "d2io": wl_d2io, "d2ioread": wl_d2io_read}
 import flexspray_bench  # noqa: E402  (benchmark v1, multi-phase workloads)
+import flexspray_aicb   # noqa: E402  (stage 2 open-source AI benchmarks)
+import flexspray_topo_public  # noqa: E402  (stage 2 public supernode topologies)
 SCENARIOS.update(flexspray_bench.BENCH)
-SEEDED = {"mixed", "mixedread", "stagger", "staggermixed", "incast"} | set(flexspray_bench.BENCH)
+SCENARIOS.update(flexspray_aicb.AICB_BENCH)
+SEEDED = ({"mixed", "mixedread", "stagger", "staggermixed", "incast"}
+          | set(flexspray_bench.BENCH)
+          | set(flexspray_aicb.AICB_BENCH))
 
 
 def write_traffic(out, tasks):
@@ -370,7 +375,7 @@ def fault_rows(t, fault, t_ns, scenario="d2d"):
     else:
         npu00 = t.find_host("NPU", 0, 0)
         npu10 = t.find_host("NPU", 1, 0)
-    p = 3
+    p = 3 if (scenario != "h2d" or 3 in npu00["ports"]) else npu00["planes"][-1]
     # For reads the near-end device (requester) receives the data and the far end sends it.
     near_dir, far_dir = ("rx", "tx") if scenario == "d2dread" else ("tx", "rx")
     if fault == "F0":
@@ -381,8 +386,11 @@ def fault_rows(t, fault, t_ns, scenario="d2d"):
     if fault == "F1far":    # endpoint single-plane failure, receiver side
         return [(t_ns, npu10["id"], npu10["ports"][p], "ISOLATE", "")], \
             dict(dev=npu10["id"], dir=far_dir, n=len(npu10["planes"]))
-    if fault == "F2up":     # one L1 uplink (switch port) isolated
+    if fault == "F2up":     # one L1 uplink (switch port) or LRS inter-board link isolated
         sw = t.l1[(p, 0)]
+        if getattr(t, "topo_name", "ub_pod") == "ub_mesh":
+            return [(t_ns, sw, t.l1_up_port[(p, 0, 1, 0)], "ISOLATE", "")], \
+                dict(dev=None, dir="agg", n=t.J)
         return [(t_ns, sw, t.l1_up_port[(p, 0, 0, 0)], "ISOLATE", "")], \
             dict(dev=None, dir="agg", n=t.K * t.J)
     # k lanes lost on one port: F3near2 / F3far2 (x4 -> x2, port at 1/2), F3near3 / F3far3
@@ -403,29 +411,31 @@ def fault_rows(t, fault, t_ns, scenario="d2d"):
     if fault == "F4":       # plane failure inside server 0: the plane-3 L1 switch is isolated
         return [(t_ns, t.l1[(p, 0)], 0, "ISOLATE_NODE", "")], dict(dev="server0", dir="agg", n=t.P,
                                                                      plane=p)
-    # Faults on the planes of the 2-plane devices (SSD on planes 4,5; NIC on planes 0,1).
+    # Faults on the 2-plane devices (SSD on planes 4,5 / 5,6 / 2,3; NIC on planes 0,1).
     ssd0, nic0 = t.find_host("SSD", 0, 0), t.find_host("NIC", 0, 0)
+    p_ssd = 4 if 4 in ssd0["ports"] else ssd0["planes"][0]
+    p_nic = 0 if 0 in nic0["ports"] else nic0["planes"][0]
     if fault == "F1ssd":    # SSD0 loses one of its two ports (the storage hotspot in mixed)
-        return [(t_ns, ssd0["id"], ssd0["ports"][4], "ISOLATE", "")], \
-            dict(dev=ssd0["id"], dir="both", n=2, plane=4)
+        return [(t_ns, ssd0["id"], ssd0["ports"][p_ssd], "ISOLATE", "")], \
+            dict(dev=ssd0["id"], dir="both", n=len(ssd0["planes"]), plane=p_ssd)
     if fault == "F3ssd":
-        return [(t_ns, ssd0["id"], ssd0["ports"][4], "DEGRADE", f"{t.lanes - 1}/{t.lanes}")], \
-            dict(dev=ssd0["id"], dir="both", n=2 * t.lanes, plane=4)
-    for side, dev, pl in (("F3ssd", ssd0, 4), ("F3nic", nic0, 0)):  # round 13: x2 / x1 levels
+        return [(t_ns, ssd0["id"], ssd0["ports"][p_ssd], "DEGRADE", f"{t.lanes - 1}/{t.lanes}")], \
+            dict(dev=ssd0["id"], dir="both", n=len(ssd0["planes"]) * t.lanes, plane=p_ssd)
+    for side, dev, pl in (("F3ssd", ssd0, p_ssd), ("F3nic", nic0, p_nic)):  # round 13: x2 / x1 levels
         if fault.startswith(side) and fault[len(side):].isdigit():
             k = int(fault[len(side):])
             assert 1 <= k < t.lanes, f"{fault}: 1 <= lanes lost < {t.lanes}"
             return [(t_ns, dev["id"], dev["ports"][pl], "DEGRADE", f"{t.lanes - k}/{t.lanes}")], \
-                dict(dev=dev["id"], dir="both", n=2 * t.lanes, plane=pl, lanes_lost=k)
+                dict(dev=dev["id"], dir="both", n=len(dev["planes"]) * t.lanes, plane=pl, lanes_lost=k)
     if fault == "F1nic":
-        return [(t_ns, nic0["id"], nic0["ports"][0], "ISOLATE", "")], \
-            dict(dev=nic0["id"], dir="both", n=2, plane=0)
+        return [(t_ns, nic0["id"], nic0["ports"][p_nic], "ISOLATE", "")], \
+            dict(dev=nic0["id"], dir="both", n=len(nic0["planes"]), plane=p_nic)
     if fault == "F3nic":
-        return [(t_ns, nic0["id"], nic0["ports"][0], "DEGRADE", f"{t.lanes - 1}/{t.lanes}")], \
-            dict(dev=nic0["id"], dir="both", n=2 * t.lanes, plane=0)
-    if fault == "F4p4":     # server-0 plane-4 L1 isolated: hits SSD0 (and NPUs/no CPU) of server 0
-        return [(t_ns, t.l1[(4, 0)], 0, "ISOLATE_NODE", "")], dict(dev="server0", dir="agg", n=t.P,
-                                                                    plane=4)
+        return [(t_ns, nic0["id"], nic0["ports"][p_nic], "DEGRADE", f"{t.lanes - 1}/{t.lanes}")], \
+            dict(dev=nic0["id"], dir="both", n=len(nic0["planes"]) * t.lanes, plane=p_nic)
+    if fault == "F4p4":     # server-0 SSD-plane L1 isolated: hits SSD0 (and NPUs) of server 0
+        return [(t_ns, t.l1[(p_ssd, 0)], 0, "ISOLATE_NODE", "")], dict(dev="server0", dir="agg", n=t.P,
+                                                                         plane=p_ssd)
     # Hard link-down variants (link_health DOWN): packets on the link are lost, nobody is told
     # except the link's own two ends (local detection); remote ends must detect it themselves.
     if fault.startswith("H"):
@@ -731,14 +741,19 @@ def main(argv=None):
     ap.add_argument("--links-per-pair", type=int, default=3,
                     help="parallel L1-L2 links; 3 = non-blocking (12 up / 11 down), 2 = 1.375:1 "
                          "oversubscribed")
+    ap.add_argument("--topo", choices=("ub_pod", "cm_pod", "cm_pod_osub", "ub_mesh"),
+                    default="ub_pod", help="fabric topology family")
     a = ap.parse_args(argv)
     os.makedirs(a.out, exist_ok=True)
-    t = Topo(servers=a.servers, links_per_pair=a.links_per_pair)
+    if a.topo == "ub_pod":
+        t = Topo(servers=a.servers, links_per_pair=a.links_per_pair)
+    else:
+        t = flexspray_topo_public.build_topo(a.topo, servers=a.servers)
     t.write(a.out)
     fn = SCENARIOS[a.scenario]
     tasks = fn(t, a.scale, seed=a.seed) if a.scenario in SEEDED else fn(t, a.scale)
     if a.map:
-        cnt = {typ: c for typ, c, _ in DEVICE_TYPES}
+        cnt = t.device_counts() if hasattr(t, "device_counts") else {typ: c for typ, c, _ in DEVICE_TYPES}
         def remap(hid):
             h = t.hosts[hid]
             return t.find_host(h["type"], (h["server"] + a.map) % t.S, cnt[h["type"]] - 1 - h["idx"])["id"]

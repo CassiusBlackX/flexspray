@@ -85,14 +85,12 @@ def lp(meta, flows, deadline, tf, horizon, ack, scale_obj=False):
                   "l1u": collections.defaultdict(list), "l1d": collections.defaultdict(list)}
         data_w = (A.MTU + A.DATA_HDR) / A.MTU
         ack_w = ack / A.MTU
+        is_mesh = meta.get("topo") == "ub_mesh"
+        p_lrs = meta.get("p_lrs", 0)
         for j, f in enumerate(sflows):
             for p in f["planes"]:
-                v = svar[(j, p)]
-                groups["eg"][(f["src"], p)].append((v, data_w)); groups["ing"][(f["src"], p)].append((v, ack_w))
-                groups["ing"][(f["dst"], p)].append((v, data_w)); groups["eg"][(f["dst"], p)].append((v, ack_w))
-                if f["cross"]:
-                    groups["l1u"][(p, f["ssrv"])].append((v, data_w)); groups["l1d"][(p, f["ssrv"])].append((v, ack_w))
-                    groups["l1d"][(p, f["dsrv"])].append((v, data_w)); groups["l1u"][(p, f["dsrv"])].append((v, ack_w))
+                A.add_flow_constraints(groups["eg"], groups["ing"], groups["l1u"], groups["l1d"],
+                                       is_mesh, p_lrs, f, p, svar[(j, p)], data_w, ack_w)
         first_post = tf is not None and abs(bps[k] - tf) < 1e-9
         for name, capd in (("eg", cap), ("ing", cap), ("l1u", up), ("l1d", down)):
             for key, terms in groups[name].items():
