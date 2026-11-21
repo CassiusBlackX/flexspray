@@ -21,6 +21,9 @@ import flexspray_recovery_oracle as O  # noqa: E402
 MB = 1 << 20
 # Cases whose degraded path needs longer than the default 3 ms to drain.
 STOP_MS = {"slow_far_1_64": 30, "fence_false_death_bidir": 30}
+# Post-completion drain window (us) for cases where tasks complete on healthy planes well
+# before stale CBFC-queued packets can physically serialize out of a 1/64 (6.25 Gbps) port.
+DRAIN_US = {"fence_false_death_bidir": 10000}
 
 
 def cases(t):
@@ -118,9 +121,13 @@ def build(root, name, tasks, faults, scheme):
 
 def run(args):
     d, binary = args
+    name = os.path.basename(d)
+    env = dict(os.environ)
+    if "FLEX_DRAIN_AFTER_US" not in env and name in DRAIN_US:
+        env["FLEX_DRAIN_AFTER_US"] = str(DRAIN_US[name])
     with open(os.path.join(d, "stdout.txt"), "w") as out:
-        rc = subprocess.run([binary, f"--case-path={d}", f"--stop-ms={STOP_MS.get(os.path.basename(d), 3)}"], stdout=out,
-                            stderr=subprocess.STDOUT, timeout=1800).returncode
+        rc = subprocess.run([binary, f"--case-path={d}", f"--stop-ms={STOP_MS.get(name, 3)}"], stdout=out,
+                            stderr=subprocess.STDOUT, timeout=1800, env=env).returncode
     try:
         res = O.check(d)
     except Exception as e:  # trace files missing etc.

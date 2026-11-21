@@ -461,8 +461,15 @@ public:
     mutable bool m_egWaiting{false};
     Time m_portCommitDelay{Seconds(0)};
     // Round 10, ServiceResidual: post-send residual (last byte sent -> TP ACK) per TP.
+    struct TxLastSample
+    {
+        int64_t timeNs{0};
+        uint64_t ownInflightBytes{0};
+    };
     bool m_serviceResidual{false};
-    std::unordered_map<const UbWqeSegment*, int64_t> m_txLastNs;
+    bool m_residualSubtractOwn{false};
+    Time m_residualIdleHalfLife{Seconds(0)};
+    std::unordered_map<const UbWqeSegment*, TxLastSample> m_txLastNs;
     double m_residualNs{-1.0};
     double m_residualMinNs{-1.0};
     int64_t m_residualAtNs{0};
@@ -471,8 +478,11 @@ public:
     // READ budget scope: one budget per (node, port).
     uint64_t PortKey() const { return (uint64_t{m_nodeId} << 16) | m_sport; }
     bool m_readBudgetScaleByRate{false};
+    bool m_readBudgetRepoolDead{false};
+    bool m_readBudgetWorkConserving{false};
     uint64_t EffectiveReadBudget(PortReadState& st) const;
     double GetPortRateBps() const;
+    double GetCcRateBps() const;
     static void DumpBudgetStats();
     void PortReadAdd(int64_t delta);
     void PortReadRelease();
@@ -500,6 +510,7 @@ public:
      * was backlogged. Falls back to the local port rate before the first valid sample.
      */
     double GetDeliveryRateBps() const;
+    bool HasDeliveryRateSample() const { return m_deliveryRateBps > 0.0; }
     /**
      * Estimated time to drain this TP's backlog plus @p extraBytes at the delivery rate; used by
      * TPG dispatch to steer segments toward planes that are actually draining.
@@ -875,6 +886,8 @@ private:
     void CheckFailure();
     void EnqueueProbe(TpOpcode opcode);
     bool m_deliveryRateAppLimitedGuard{false};
+    bool m_deliveryRateQueueAware{false};
+    bool m_coalescePortTrigger{false};
     bool m_rateSampleAppLimited{false};
     bool m_ccExemptReadResponses{false};
     bool IsCcExemptSegment(const Ptr<UbWqeSegment>& segment) const;

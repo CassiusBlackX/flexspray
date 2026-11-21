@@ -1085,6 +1085,14 @@ void UbPort::TriggerTransmit()
     DequeuePacket();
 }
 
+void UbPort::TriggerTransmitCoalesced()
+{
+    if (!m_coalescedTrigger.IsPending())
+    {
+        m_coalescedTrigger = Simulator::ScheduleNow(&UbPort::TriggerTransmit, this);
+    }
+}
+
 void UbPort::NotifyAllocationFinish()
 {
     if (m_outputBlocked) {
@@ -1221,6 +1229,7 @@ void UbPort::DoDispose()
 {
     NS_LOG_FUNCTION(this);
     m_lastAckSerialization.Cancel();
+    m_coalescedTrigger.Cancel();
     m_ubEQ = nullptr;
     m_channel = nullptr;
     m_currentPkt = nullptr;

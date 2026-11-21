@@ -342,11 +342,36 @@ TypeId UbTransportChannel::GetTypeId(void)
                       BooleanValue(false),
                       MakeBooleanAccessor(&UbTransportChannel::m_serviceResidual),
                       MakeBooleanChecker())
+        .AddAttribute("ResidualSubtractOwn",
+                      "Subtract this TP's own in-flight serialization time at TX_LAST from the "
+                      "ServiceResidual sample so single-flow degraded paths are not double-counted "
+                      "with inflight / deliveryRate. Default off.",
+                      BooleanValue(false),
+                      MakeBooleanAccessor(&UbTransportChannel::m_residualSubtractOwn),
+                      MakeBooleanChecker())
+        .AddAttribute("ResidualIdleHalfLife",
+                      "Minimum half-life for ServiceResidual decay while the TP is idle across "
+                      "compute gaps between collective phases (0 = legacy 5 us). Default 0.",
+                      TimeValue(Seconds(0)),
+                      MakeTimeAccessor(&UbTransportChannel::m_residualIdleHalfLife),
+                      MakeTimeChecker(Seconds(0)))
         .AddAttribute("ReadBudgetScaleByRate",
                       "Per-port READ budget scaled by the port's current / highest-seen link rate "
                       "(a locally degraded port gets a proportionally smaller byte budget).",
                       BooleanValue(false),
                       MakeBooleanAccessor(&UbTransportChannel::m_readBudgetScaleByRate),
+                      MakeBooleanChecker())
+        .AddAttribute("ReadBudgetRepoolDead",
+                      "Repool the node's READ budget over live (non-hard-down, non-isolated) "
+                      "local ports only, without inflating lane-degraded ports. Default off.",
+                      BooleanValue(false),
+                      MakeBooleanAccessor(&UbTransportChannel::m_readBudgetRepoolDead),
+                      MakeBooleanChecker())
+        .AddAttribute("ReadBudgetWorkConserving",
+                      "Allow active flows on a READ port to pipeline above strict per-TP share "
+                      "while the aggregate port budget has spare headroom and no waiters. Default off.",
+                      BooleanValue(false),
+                      MakeBooleanAccessor(&UbTransportChannel::m_readBudgetWorkConserving),
                       MakeBooleanChecker())
         .AddAttribute("ReadQuotaFollowsUsablePlanes",
                       "Treat MaxOutstandingReadBytes as a per-flow budget spread over the TP group: "
@@ -408,6 +433,19 @@ TypeId UbTransportChannel::GetTypeId(void)
                       "out of queued work during the sample (app-limited), as BBR does.",
                       BooleanValue(false),
                       MakeBooleanAccessor(&UbTransportChannel::m_deliveryRateAppLimitedGuard),
+                      MakeBooleanChecker())
+        .AddAttribute("DeliveryRateQueueAware",
+                      "Do not classify a sample as app-limited when the TP has remote/network "
+                      "queueing (CC/window limited or SRTT clearly above minRtt). Default off.",
+                      BooleanValue(false),
+                      MakeBooleanAccessor(&UbTransportChannel::m_deliveryRateQueueAware),
+                      MakeBooleanChecker())
+        .AddAttribute("CoalescePortTrigger",
+                      "Coalesce synchronous WqeSegment port TriggerTransmit calls within the same "
+                      "timestamp via ScheduleNow so switch arbiters see all peers of a batch wave. "
+                      "Default off.",
+                      BooleanValue(false),
+                      MakeBooleanAccessor(&UbTransportChannel::m_coalescePortTrigger),
                       MakeBooleanChecker())
         .AddAttribute("DeliveryRateGain",
                       "EWMA gain of the delivery-rate estimator (0, 1].",
@@ -967,7 +1005,9 @@ UbTransportChannel::AdvanceNewDataSendState(const NewDataSendContext& ctx,
     if (ctx.segment->IsSentCompleted()) {
         NotifySegState("TX_LAST", ctx.segment);
         if (m_serviceResidual) {
-            m_txLastNs[PeekPointer(ctx.segment)] = Simulator::Now().GetNanoSeconds();
+            m_txLastNs[PeekPointer(ctx.segment)] = {
+                Simulator::Now().GetNanoSeconds(),
+                GetInflightPsns() * UB_MTU_BYTE};
         }
     }
     utils::UbUtils::AddTpPayloadBytes(m_nodeId, m_sport, false, ctx.payloadBytes);
@@ -2734,14 +2774,21 @@ UbTransportChannel::PortReadAdd(int64_t delta)
         --st.active;
         st.weight = std::max(0.0, st.weight - m_portWeight);
     }
+    const uint64_t budget =
+        (delta < 0 && !st.waiters.empty())
+            ? ((m_readBudgetScaleByRate || m_readBudgetRepoolDead || m_readBudgetWorkConserving)
+                   ? EffectiveReadBudget(st)
+                   : m_readPortBudget)
+            : 0;
+    const uint64_t wakeUnit = (m_readBudgetWorkConserving || m_readBudgetRepoolDead) ? 4096 : 16384;
     if (delta < 0 && !st.waiters.empty() &&
-        st.outstanding + 16384 <= m_readPortBudget) {
+        st.outstanding + wakeUnit <= budget) {
         // Budget freed: wake refused TPs (they re-check) in FIFO order. Waking every waiter on
         // every release made the event count quadratic (round 7: ~240k refusals per port); wake a
         // few per release, and all once occupancy is below half the budget (no stall when the
         // last outstanding bytes return with many waiters).
         std::deque<UbTransportChannel*> w;
-        if (st.outstanding < m_readPortBudget / 2 || st.waiters.size() <= 4) {
+        if (st.outstanding < budget / 2 || st.waiters.size() <= 4) {
             w.swap(st.waiters);
         } else {
             for (int i = 0; i < 4; ++i) {
@@ -2767,23 +2814,44 @@ UbTransportChannel::GetPortRateBps() const
     return port == nullptr ? 0.0 : static_cast<double>(port->GetDataRate().GetBitRate());
 }
 
+double
+UbTransportChannel::GetCcRateBps() const
+{
+    return m_congestionCtrl == nullptr ? 0.0 : m_congestionCtrl->GetControlRateBps();
+}
+
 uint64_t
 UbTransportChannel::EffectiveReadBudget(PortReadState& st) const
 {
     // ReadBudgetScaleByRate: the per-port budget is the time a port may be committed ahead
     // (B / nominal rate); a port whose own link runs slower (lanes lost, known locally) gets a
     // proportionally smaller byte budget, so its committed READ data drains as fast as the
-    // other ports' instead of becoming the tail.
-    if (!m_readBudgetScaleByRate) {
+    // other ports' instead of becoming the tail. ReadBudgetRepoolDead repools across live
+    // (non-isolated, non-hard-down) ports without inflating lane-degraded ports.
+    if (!m_readBudgetScaleByRate && !m_readBudgetRepoolDead) {
         return m_readPortBudget;
     }
-    const double rate = GetPortRateBps();
-    st.nominalBps = std::max(st.nominalBps, rate);
-    if (rate <= 0.0 || st.nominalBps <= 0.0) {
-        return m_readPortBudget;
+    double scale = 1.0;
+    if (m_readBudgetScaleByRate) {
+        const double rate = GetPortRateBps();
+        st.nominalBps = std::max(st.nominalBps, rate);
+        if (rate > 0.0 && st.nominalBps > 0.0) {
+            scale *= rate / st.nominalBps;
+        }
     }
-    return std::max<uint64_t>(16384, static_cast<uint64_t>(static_cast<double>(m_readPortBudget) *
-                                                           rate / st.nominalBps));
+    if (m_readBudgetRepoolDead) {
+        Ptr<Node> node = NodeList::GetNode(m_nodeId);
+        Ptr<UbController> ctrl = node == nullptr ? nullptr : node->GetObject<UbController>();
+        if (ctrl != nullptr) {
+            uint32_t linked = 0;
+            uint32_t live = 0;
+            ctrl->GetLocalPortCounts(linked, live);
+            if (linked > 0 && live > 0 && live < linked) {
+                scale *= static_cast<double>(linked) / static_cast<double>(live);
+            }
+        }
+    }
+    return std::max<uint64_t>(16384, static_cast<uint64_t>(static_cast<double>(m_readPortBudget) * scale));
 }
 
 void
@@ -2901,9 +2969,21 @@ UbTransportChannel::ReadBudgetRefuses(Ptr<const UbWqeSegment> segment) const
     const uint64_t share = static_cast<uint64_t>(static_cast<double>(budget) * w /
                                                  std::max(tot, w));
     const bool overTotal = st.outstanding + segment->GetSize() > budget;
+    if (overTotal) {
+        return true;
+    }
+    if (m_readBudgetWorkConserving) {
+        const bool contended =
+            (st.outstanding + segment->GetSize() > budget * 3 / 4) || !st.waiters.empty();
+        if (!contended) {
+            return false;
+        }
+        const uint64_t floorBytes = std::max<uint64_t>(share, 2 * segment->GetSize());
+        return m_outstandingReadBytes + segment->GetSize() > floorBytes;
+    }
     const bool overShare =
         m_outstandingReadBytes + segment->GetSize() > std::max<uint64_t>(share, segment->GetSize());
-    return overTotal || overShare;
+    return overShare;
 }
 
 bool
@@ -2975,13 +3055,20 @@ UbTransportChannel::NoteSegmentAcked(const UbWqeSegment* seg)
         return;
     }
     const int64_t now = Simulator::Now().GetNanoSeconds();
-    const double sample = static_cast<double>(now - it->second);
-    const bool ambiguous = m_lastRetxNs >= it->second;
+    double sample = static_cast<double>(now - it->second.timeNs);
+    const uint64_t ownInflight = it->second.ownInflightBytes;
+    const bool ambiguous = m_lastRetxNs >= it->second.timeNs;
     m_txLastNs.erase(it);
     if (ambiguous) {
         // Karn's rule: a timeout or retransmission after the segment's last byte left makes the
         // ACK time ambiguous (it measures recovery, not the path's service).
         return;
+    }
+    if (m_residualSubtractOwn) {
+        const uint64_t ownBytes = ownInflight > UB_MTU_BYTE ? ownInflight - UB_MTU_BYTE : 0;
+        const double ownDrainNs =
+            static_cast<double>(ownBytes) * 8e9 / std::max(GetDeliveryRateBps(), 1e6);
+        sample = std::max(0.0, sample - ownDrainNs);
     }
     m_residualNs = m_residualNs < 0.0 ? sample : 0.75 * m_residualNs + 0.25 * sample;
     m_residualMinNs = m_residualMinNs < 0.0 ? sample : std::min(m_residualMinNs, sample);
@@ -2998,7 +3085,11 @@ UbTransportChannel::GetServiceResidualNs() const
         return m_residualNs;
     }
     const double age = static_cast<double>(Simulator::Now().GetNanoSeconds() - m_residualAtNs);
-    const double half = std::max(m_residualNs, 5000.0);
+    const double minHalf =
+        m_residualIdleHalfLife.IsStrictlyPositive()
+            ? static_cast<double>(m_residualIdleHalfLife.GetNanoSeconds())
+            : 5000.0;
+    const double half = std::max(m_residualNs, minHalf);
     return m_residualMinNs + (m_residualNs - m_residualMinNs) * std::exp2(-age / half);
 }
 
@@ -3554,7 +3645,16 @@ UbTransportChannel::UpdateDeliveryRate(uint64_t previousSndUna)
     // empty send queue is usually quota-limited (its responses fill the path), which is network-
     // limited and must lower the estimate (guarding it over-loaded a degraded SSD plane).
     if (GetUnsentPayloadBytes() == 0 && m_outstandingReadBytes == 0) {
-        m_rateSampleAppLimited = true;
+        const bool queuedAtRemote =
+            m_deliveryRateQueueAware &&
+            (IsInflightLimited() ||
+             (m_congestionCtrl != nullptr && m_congestionCtrl->IsCcLimited(UB_MTU_BYTE)) ||
+             (GetCcMinRttNs() > 0.0 &&
+              static_cast<double>(GetCcSmoothedRtt().GetNanoSeconds()) >
+                  GetCcMinRttNs() + 4000.0));
+        if (!queuedAtRemote) {
+            m_rateSampleAppLimited = true;
+        }
     }
     const Time elapsed = now - m_rateSampleStart;
     if (elapsed >= m_deliveryRateMinInterval && elapsed.IsStrictlyPositive()) {
@@ -3575,7 +3675,15 @@ UbTransportChannel::UpdateDeliveryRate(uint64_t previousSndUna)
         }
         m_rateSampleStart = now;
         m_rateSampleStartUna = m_psnSndUna;
-        m_rateSampleAppLimited = GetUnsentPayloadBytes() == 0 && m_outstandingReadBytes == 0;
+        const bool queuedAtRemoteEnd =
+            m_deliveryRateQueueAware &&
+            (IsInflightLimited() ||
+             (m_congestionCtrl != nullptr && m_congestionCtrl->IsCcLimited(UB_MTU_BYTE)) ||
+             (GetCcMinRttNs() > 0.0 &&
+              static_cast<double>(GetCcSmoothedRtt().GetNanoSeconds()) >
+                  GetCcMinRttNs() + 4000.0));
+        m_rateSampleAppLimited =
+            GetUnsentPayloadBytes() == 0 && m_outstandingReadBytes == 0 && !queuedAtRemoteEnd;
     }
     // An idle TP is app-limited, not capacity-limited: close the sample so idle time does not
     // depress the estimate (the last estimate is kept).
@@ -3640,6 +3748,11 @@ void UbTransportChannel::WqeSegmentTriggerPortTransmit(Ptr<UbWqeSegment> segment
 {
     WqeSegmentSendsNotify(m_nodeId, segment->GetTaskId(), UbTaSsnSequence::ToWire(segment->GetTaSsn()));
     Ptr<UbPort> port = DynamicCast<UbPort>(NodeList::GetNode(m_nodeId)->GetDevice(m_sport));
+    if (m_coalescePortTrigger)
+    {
+        port->TriggerTransmitCoalesced();
+        return;
+    }
     port->TriggerTransmit(); // 触发发送
 }
 

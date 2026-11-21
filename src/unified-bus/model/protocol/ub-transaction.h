@@ -460,7 +460,7 @@ enum class UbTpgDispatchPolicy : uint32_t
         RtpSegmentAdmissionResult TryAdmitRtpSegment(
             uint32_t jettyNum,
             Ptr<UbWqe> originatingWqe,
-            Ptr<UbWqeSegment> segment,
+            Ptr<UbWqeSegment>& segment,
             Ptr<UbTransportChannel>& admittedTp);
         void ClearRtpWqeSegmentTxState(uint32_t jettyNum, Ptr<UbWqe> originatingWqe);
         struct RtpTxQueueKey
@@ -540,6 +540,7 @@ enum class UbTpgDispatchPolicy : uint32_t
         void EnqueueRemoteRtpWqeSegment(uint32_t tpn, Ptr<UbWqeSegment> segment);
         void RunRemoteRtpWqeSegmentTx(const RtpTxQueueKey& queueKey, const RtpTxQueueEntry& entry);
         void ScheduleRtpTx(const RtpTxQueueKey& queueKey);
+        void FlushRtpTxBatch();
         void FinishActiveRtpTxEntry(uint32_t jettyNum, Ptr<UbWqe> originatingWqe);
         void CancelRtpWqeSegmentTx(RtpTxQueueKey queueKey,
                                     uint32_t jettyNum,
@@ -668,6 +669,14 @@ enum class UbTpgDispatchPolicy : uint32_t
         double m_readIngressMarkWeight{0.0};
         bool m_readScoreReturnRate{false};
         bool m_serviceTimeScore{false};
+        bool m_timeQuantumSeg{false};
+        uint32_t m_readQuantumBytes{0};
+        uint32_t m_quantumTailBytes{0};
+        bool m_slackTailOnly{false};
+        bool m_desyncTpgCursor{false};
+        bool m_prioritizeHeavyWqe{false};
+        std::vector<RtpTxQueueKey> m_pendingRtpTxBatch;
+        EventId m_rtpTxBatchEvent;
         double ServiceTimeNs(const Ptr<UbTransportChannel>& transport,
                              const Ptr<UbWqeSegment>& segment) const;
         void TraceDefer(const Ptr<UbWqeSegment>& segment, const std::string& why);

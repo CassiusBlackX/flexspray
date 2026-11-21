@@ -21,6 +21,7 @@ What it cannot prove: data contents, or ordering promises finer than segment gra
 Usage: flexspray_recovery_oracle.py CASE_DIR [--json]
 """
 import argparse
+import bisect
 import collections
 import csv
 import glob
@@ -115,15 +116,25 @@ def check(case):
         rank = {k: i for i, (t, k) in enumerate(wqes)}
         final_rank = len(wqes) - 1
         last = {}
+        events = []
+        pts_set = set()
         for e in exe:
             if e["initiator"] != src or e["target"] != dst or int(e["opcode"]) != OP_WRITE:
                 continue
             o = offset.get((e["initiator"], e["jetty"], e["tassn"]))
             if o is None or o[0] not in rank:
                 continue
-            region = o[1]
-            if region not in last or int(e["time_ns"]) >= last[region][0]:
-                last[region] = (int(e["time_ns"]), rank[o[0]])
+            l, r = o[1], o[1] + o[2]
+            pts_set.add(l)
+            pts_set.add(r)
+            events.append((int(e["time_ns"]), rank[o[0]], l, r))
+        pts = sorted(pts_set)
+        for tns, rk, l, r in events:
+            i0 = bisect.bisect_left(pts, l)
+            i1 = bisect.bisect_left(pts, r)
+            for idx in range(i0, i1):
+                if idx not in last or tns >= last[idx][0]:
+                    last[idx] = (tns, rk)
         p4 = True if p4 is None else p4
         bad = sum(1 for _, (t, r) in last.items() if r != final_rank)
         violations += bad

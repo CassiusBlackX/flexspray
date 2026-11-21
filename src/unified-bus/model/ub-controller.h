@@ -67,6 +67,8 @@ public:
     // Link sub-health (protection isolation) of RTP TP group members.
     /** Isolate/restore a local device port: TPs sourced on it admit no new segments. */
     void SetLocalPortIsolated(uint16_t port, bool isolated);
+    /** Count attached local ports and those not hard-down or locally isolated (lane-degraded stay live). */
+    void GetLocalPortCounts(uint32_t& linkedPorts, uint32_t& livePorts) const;
     /** Isolate/restore a remote peer port: TPs whose peer is (node, port) admit no new segments. */
     void SetPeerPortIsolated(uint32_t peerNode, uint16_t peerPort, bool isolated);
     /** True when @p tp uses an isolated local port or targets an isolated peer port. */

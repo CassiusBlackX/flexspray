@@ -181,6 +181,7 @@ public:
     void NotifyLinkUp(void);
 
     void TriggerTransmit();
+    void TriggerTransmitCoalesced();
     void NotifyAllocationFinish();
 
     // 判断
@@ -448,6 +449,7 @@ private:
     uint64_t m_packetRateCnt1{0};  // dynamic mode deficit vs AVERAGE_PACKET_LENGTH, in flits
     uint64_t m_packetRateCnt2{0};  // dynamic mode deficit vs the current PKT_DU_LENGTH, in flits
 
+    EventId m_coalescedTrigger;
     bool m_pktTraceEnabled = false;
 };
 

@@ -38,6 +38,9 @@ public:
     /** Minimum RTT seen (0 if not measured). */
     virtual Time GetMinRtt() const { return Time(0); }
 
+    /** Current sending rate cap in bit/s (0 if rate is not tracked by the algorithm). */
+    virtual double GetControlRateBps() const { return 0.0; }
+
     virtual bool IsCcLimited(uint32_t bytes)
     {
         return false;

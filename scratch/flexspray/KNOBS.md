@@ -53,3 +53,23 @@
 - 第十轮为晚绑定加的 500 ns 重试。
 
 **删除后的验证**：见 DELIVERY.md。要求 golden 逐位相同、单测通过，并且默认与 B1 的 FlexSpray 运行逐位相同。
+
+## 第十五轮补充：FlexSpray v6 核心属性合入与否定项（2026-11-21）
+
+自第十五轮起，`flexspray_case.py` 中的默认 `flex+spraycc` 已升级为 **FlexSpray v6**（全部 C++ 默认值仍保持关闭以维持 Golden 25/25 `SAME`；历史对照提供 `+v53` 与 `+b1` 别名）。
+
+### v6 新增并采纳的核心属性（共 20 项配置由 `flex+spraycc` 开启）
+
+| 支柱 | 属性（v6 取值） | 作用说明 |
+|---|---|---|
+| 自适应 RTO（B1） | `RtoSrttFactor=8`、`RtoFloorFirstOnly=true` | 按路径 SRTT 自适应设置首包超时下界，避免降速队列误触发 GBN 重传 |
+| M1 时间量子分段与窗口 | `TimeQuantumSeg=true`、`ReadQuantumBytes=8192`、`QuantumTailBytes=49152`、`SlackTailOnly=true` | 依成员相对容量（第 75 百分位实测/控制速率）切分 WRITE/READ 量子、仅在近尾段启用延迟滞后分发，并修复非 CTP `UbJetty::SetOooAckThreshold` 窗口扩容与 `m_taSsnCnt` 维护及 `ServiceTimeNs` 遗漏 `ReadIngressMarkWeight` |
+| M2 死口重池化与工作守恒 READ 预算 | `ReadPortBudgetBytes=409600`、`ReadScoreReturnRate=true`、`ReadBudgetScaleByRate=true`、`ReadBudgetRepoolDead=true`、`ReadBudgetWorkConserving=true` | 修复 `PortReadAdd` 有效预算与唤醒粒度（`4096`）；仅针对 `HardDown`/本地隔离端口按健康口比例重池化预算（绝不给降 Lane 慢口扩容），未饱和时允许活跃 READ 流水线工作守恒推进 |
+| M3 去自排队残差与队列感知速率 | `PortCommitDelay=6us`、`ServiceTimeScore=true`、`ServiceResidual=true`、`ResidualSubtractOwn=true`、`ResidualIdleHalfLife=150us`、`DeliveryRateQueueAware=true` | 缩短写预承诺时间窗；扣除本 TP 在途自身串行化残差并保留 150 µs 空闲半衰期跨 MoE 间隙记忆；远端排队时避免 `AppLimited` 误判 |
+| T29 调度协同 | `DesyncTpgCursor=true`、`PrioritizeHeavyWqe=true`、`CoalescePortTrigger=true` | 按 `BuildTpgPhaseHash` 初始化 TPG 游标去同步、优先派发同拍剩余字节最多的大 WQE、在 `UbPort` 侧合并同拍 `TriggerTransmit` 调用（`UbPort::m_coalescedTrigger`，`DoDispose` 清理） |
+
+### 已否定（第十五轮，代码已删除）
+
+| 属性 | 否定理由 | 证据 |
+|---|---|---|
+| `ReadQuantumOnFaultOnly` | 仅在故障后启用 READ 小量子会在正常/微扰动切换窗口错失小段流水化收益，导致 `a2aread F3far3` 退化（`11.44% -> 15.44%`） | Round 15 开发探针；已从 `UbTransaction` 删除 |

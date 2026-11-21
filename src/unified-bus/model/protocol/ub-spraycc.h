@@ -68,6 +68,7 @@ class UbHostSprayCc : public UbCongestionControl
     TpOpcode GetAckOpcode() const override;
 
     double GetRateBps() const { return m_rateBps; }
+    double GetControlRateBps() const override { return m_congestionCtrlEnabled ? m_rateBps : 0.0; }
     double GetAlpha() const { return m_alpha; }
     Time GetSrtt() const { return m_srtt; }
     Time GetSmoothedRtt() const override { return m_srtt; }

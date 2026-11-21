@@ -36898,6 +36898,215 @@ class UbTailSegmentationReservationTest : public TestCase
     }
 };
 
+// Regression + v6 functional check: dynamic sub-segment quantum cutting (4 KB/8 KB vs 16 KB
+// reservation), >2048 Jetty OOO TaSsn tracking (SetOooAckThreshold(4096)), and interleaved-WQE
+// IsSentCompleted() completion guard.
+class UbTimeQuantumAndOooWindowTest : public TestCase
+{
+  public:
+    UbTimeQuantumAndOooWindowTest()
+        : TestCase("UnifiedBus - FlexSpray time-quantum sub-segmentation and >2048 OOO TaSsn window")
+    {
+    }
+
+    void DoRun() override
+    {
+        Config::Reset();
+        LocalTpTopology topo = BuildLocalTpTopology();
+        InstallStaticTpPair(topo);
+        Ptr<Node> node = topo.sender;
+        Ptr<UbController> controller = node->GetObject<UbController>();
+        Ptr<UbFunction> function = controller->GetUbFunction();
+        Ptr<UbTransaction> transaction = controller->GetUbTransaction();
+        const uint32_t jettyNum = 9;
+        function->CreateJetty(node->GetId(), topo.receiver->GetId(), jettyNum);
+        const std::vector<uint32_t> tpns = {kUrmaWriteRegressionSenderTpn};
+        NS_TEST_ASSERT_MSG_EQ(
+            transaction->JettyBindTp(node->GetId(), topo.receiver->GetId(), jettyNum, false, tpns),
+            true,
+            "one direct TP binding");
+        Ptr<UbJetty> jetty = function->GetJetty(jettyNum);
+        jetty->SetTaSegmentBytes(16384);
+        NS_TEST_ASSERT_MSG_EQ(jetty->SetInflightMax(4096), true, "raise inflight limit for OOO test");
+        NS_TEST_ASSERT_MSG_EQ(jetty->SetOooAckThreshold(4096), true, "resize idle OOO window");
+        m_completed.clear();
+        jetty->SetCompletionObserver(
+            MakeCallback(&UbTimeQuantumAndOooWindowTest::OnWqeComplete, this));
+
+        // Interleaved WQEs: wqe1 (64 KB) initially reserves 4 slots [0..4), wqe2 (16 KB) gets [4..5).
+        Ptr<UbWqe> wqe1 = function->CreateWqe(node->GetId(), topo.receiver->GetId(), 65536, 901,
+                                              UbTransactionOpcode::WRITE);
+        Ptr<UbWqe> wqe2 = function->CreateWqe(node->GetId(), topo.receiver->GetId(), 16384, 902,
+                                              UbTransactionOpcode::WRITE);
+        function->PushWqeToJetty(wqe1, jettyNum);
+        function->PushWqeToJetty(wqe2, jettyNum);
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetActiveWqeCount(), 2u, "both WQEs queued");
+        // Cut wqe1 into 16 x 4096 B quantum segments (taSsn 0..15), advancing past wqe2's [4..5).
+        for (uint32_t i = 0; i < 16; ++i)
+        {
+            Ptr<UbWqeSegment> seg = jetty->PrepareNextWqeSegment(wqe1, 4096);
+            NS_TEST_ASSERT_MSG_NE(seg, nullptr, "wqe1 segment " << i);
+            NS_TEST_ASSERT_MSG_EQ(seg->GetSize(), 4096u, "time-quantum cut size");
+            jetty->CommitWqeSegmentAdmission(seg);
+        }
+        NS_TEST_ASSERT_MSG_EQ(wqe1->IsSentCompleted(), true, "wqe1 all bytes admitted");
+        NS_TEST_ASSERT_MSG_EQ(wqe2->IsSentCompleted(), false, "wqe2 untouched");
+        // Acknowledge first 10 segments of wqe1 in reverse (OOO -> cumulative una advances to 10 > 5).
+        for (int s = 9; s >= 0; --s)
+        {
+            NS_TEST_ASSERT_MSG_EQ(jetty->ProcessWqeSegmentComplete(static_cast<uint32_t>(s)),
+                                  true,
+                                  "accept taSsn=" << s);
+        }
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetTaSsnSndUnaForTest(), 10u, "una passed wqe2's initial slot");
+        NS_TEST_ASSERT_MSG_EQ(m_completed.count(wqe1->GetWqeId()), 0u, "wqe1 waits for 10..15");
+        NS_TEST_ASSERT_MSG_EQ(m_completed.count(wqe2->GetWqeId()), 0u,
+                              "unsent wqe2 must not complete when taSsnUna passes its reservation");
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetActiveWqeCount(), 2u, "both WQEs remain active");
+        for (uint32_t s = 10; s < 16; ++s)
+        {
+            NS_TEST_ASSERT_MSG_EQ(jetty->ProcessWqeSegmentComplete(s), true, "accept tail " << s);
+        }
+        NS_TEST_ASSERT_MSG_EQ(m_completed[wqe1->GetWqeId()], 1u, "wqe1 completed once");
+        NS_TEST_ASSERT_MSG_EQ(m_completed.count(wqe2->GetWqeId()), 0u, "wqe2 still unsent");
+        NS_TEST_ASSERT_MSG_EQ(jetty->GetActiveWqeCount(), 1u, "only wqe2 active");
+        // Now cut wqe2 at 8192 B (taSsn 16, 17) and complete out of order.
+        Ptr<UbWqeSegment> s2a = jetty->PrepareNextWqeSegment(wqe2, 8192);
+        jetty->CommitWqeSegmentAdmission(s2a);
+        Ptr<UbWqeSegment> s2b = jetty->PrepareNextWqeSegment(wqe2, 8192);
+        jetty->CommitWqeSegmentAdmission(s2b);
+        NS_TEST_ASSERT_MSG_EQ(jetty->ProcessWqeSegmentComplete(s2b->GetTaSsn()), true, "wqe2 OOO");
+        NS_TEST_ASSERT_MSG_EQ(jetty->ProcessWqeSegmentComplete(s2a->GetTaSsn()), true, "wqe2 in-order");
+        NS_TEST_ASSERT_MSG_EQ(m_completed[wqe2->GetWqeId()], 1u, "wqe2 completed once");
+        NS_TEST_ASSERT_MSG_EQ(jetty->IsIdle(), true, "idle after wqe1 & wqe2");
+
+        // >2048 OOO segments in one WQE (2300 x 4 KB = 9,420,800 B with 16 KB initial reservation).
+        Ptr<UbWqe> big = function->CreateWqe(node->GetId(), topo.receiver->GetId(), 2300u * 4096u,
+                                             903, UbTransactionOpcode::WRITE);
+        function->PushWqeToJetty(big, jettyNum);
+        std::vector<uint32_t> bigSsns;
+        bigSsns.reserve(2300);
+        for (uint32_t i = 0; i < 2300; ++i)
+        {
+            Ptr<UbWqeSegment> seg = jetty->PrepareNextWqeSegment(big, 4096);
+            NS_TEST_ASSERT_MSG_NE(seg, nullptr, "big quantum segment " << i);
+            jetty->CommitWqeSegmentAdmission(seg);
+            bigSsns.push_back(seg->GetTaSsn());
+        }
+        // Acknowledge segments 1..2299 out of order first (>2048 ahead of hole at index 0), then index 0.
+        for (uint32_t i = 2299; i >= 1; --i)
+        {
+            NS_TEST_ASSERT_MSG_EQ(jetty->ProcessWqeSegmentComplete(bigSsns[i]), true,
+                                  ">2048 OOO window must accept idx=" << i);
+        }
+        NS_TEST_ASSERT_MSG_EQ(m_completed.count(big->GetWqeId()), 0u, "hole at idx 0 blocks completion");
+        NS_TEST_ASSERT_MSG_EQ(jetty->ProcessWqeSegmentComplete(bigSsns[0]), true, "close hole 0");
+        NS_TEST_ASSERT_MSG_EQ(m_completed[big->GetWqeId()], 1u, "big WQE completed once");
+        NS_TEST_ASSERT_MSG_EQ(jetty->IsIdle(), true, "all WQEs retired cleanly");
+        Simulator::Destroy();
+    }
+
+  private:
+    void OnWqeComplete(uint32_t wqeId, uint32_t)
+    {
+        ++m_completed[wqeId];
+    }
+
+    std::map<uint32_t, uint32_t> m_completed;
+};
+
+class UbFlexSprayV6FarEndDegradeSystemTest : public TestCase
+{
+  public:
+    UbFlexSprayV6FarEndDegradeSystemTest()
+        : TestCase("UnifiedBus - FlexSpray v6 rebalances around a far-end lane degrade")
+    {
+    }
+
+    void DoRun() override
+    {
+        SetDataDir(NS_TEST_SOURCEDIR);
+        const std::filesystem::path repoRoot = LocateRepoRoot();
+        const std::filesystem::path caseDir =
+            std::filesystem::path(CreateTempDirFilename("ub-flexspray-v6-far-end-degrade"));
+        std::filesystem::remove_all(caseDir);
+        std::filesystem::create_directories(caseDir);
+        for (const char* f : {"node.csv", "topology.csv", "routing_table.csv",
+                              "transport_channel.csv", "network_attribute.txt"})
+        {
+            std::filesystem::copy_file(repoRoot / "scratch/2nodes_multiple-tp" / f, caseDir / f);
+        }
+        {
+            std::ofstream traffic(caseDir / "traffic.csv");
+            traffic << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
+                       "dependOnPhases\n0,0,1,40000000,URMA_WRITE,7,10ns,0,\n";
+        }
+        {
+            std::ofstream attrs(caseDir / "network_attribute.txt", std::ios::app);
+            attrs << "\nglobal UB_PARSE_TRACE_ENABLE \"false\"\n"
+                     "global UB_PACKET_TRACE_ENABLE \"false\"\n"
+                     "global UB_RECORD_PKT_TRACE \"false\"\n"
+                     "global UB_CC_ENABLED \"true\"\n"
+                     "global UB_CC_ALGO \"SPRAYCC\"\n"
+                     "default ns3::UbApp::RoutingType \"PER_PACKET_SHORTEST_PATHS\"\n"
+                     "default ns3::UbTransportChannel::RoutingType \"PER_PACKET_SHORTEST_PATHS\"\n"
+                     "default ns3::UbRoutingProcess::MultipathSelector \"ADAPTIVE_RATE\"\n"
+                     "default ns3::UbTransaction::TpgDispatchPolicy \"MIN_DRAIN_TIME\"\n"
+                     "default ns3::UbTransaction::TpgDispatchSlack \"0.1\"\n"
+                     "default ns3::UbSwitchAllocator::TpGroupFairShare \"true\"\n"
+                     "default ns3::UbTransportChannel::ResponseVl \"1\"\n"
+                     "default ns3::UbJetty::TaSegmentBytes \"16384\"\n"
+                     "default ns3::UbTransportChannel::RtoSrttFactor \"8\"\n"
+                     "default ns3::UbTransportChannel::RtoFloorFirstOnly \"true\"\n"
+                     "default ns3::UbTransportChannel::PortCommitDelay \"6us\"\n"
+                     "default ns3::UbTransaction::ServiceTimeScore \"true\"\n"
+                     "default ns3::UbTransportChannel::ServiceResidual \"true\"\n"
+                     "default ns3::UbTransportChannel::ResidualSubtractOwn \"true\"\n"
+                     "default ns3::UbTransportChannel::ResidualIdleHalfLife \"150us\"\n"
+                     "default ns3::UbTransportChannel::DeliveryRateQueueAware \"true\"\n"
+                     "default ns3::UbTransportChannel::ReadPortBudgetBytes \"409600\"\n"
+                     "default ns3::UbTransaction::ReadScoreReturnRate \"true\"\n"
+                     "default ns3::UbTransportChannel::ReadBudgetScaleByRate \"true\"\n"
+                     "default ns3::UbTransportChannel::ReadBudgetRepoolDead \"true\"\n"
+                     "default ns3::UbTransportChannel::ReadBudgetWorkConserving \"true\"\n"
+                     "default ns3::UbTransaction::TimeQuantumSeg \"true\"\n"
+                     "default ns3::UbTransaction::ReadQuantumBytes \"8192\"\n"
+                     "default ns3::UbTransaction::QuantumTailBytes \"49152\"\n"
+                     "default ns3::UbTransaction::SlackTailOnly \"true\"\n"
+                     "default ns3::UbTransaction::DesyncTpgCursor \"true\"\n"
+                     "default ns3::UbTransaction::PrioritizeHeavyWqe \"true\"\n"
+                     "default ns3::UbTransportChannel::CoalescePortTrigger \"true\"\n";
+        }
+        {
+            std::ofstream health(caseDir / "link_health.csv");
+            health << "timeNs,nodeId,portId,action,value\n20000,1,1,DEGRADE,1/4\n";
+        }
+        auto [status, output] = RunQuickExampleAbsoluteCaseCommand(
+            CreateTempDirFilename("ub-flexspray-v6-far-end-degrade.log"), "", "", caseDir);
+        NS_TEST_ASSERT_MSG_EQ(status, 0, "v6 case should complete: " << output);
+        double doneUs = 0.0;
+        for (const auto& entry : std::filesystem::directory_iterator(caseDir / "runlog"))
+        {
+            if (entry.path().filename().string().rfind("TaskTrace", 0) != 0)
+            {
+                continue;
+            }
+            std::ifstream in(entry.path());
+            std::string line;
+            while (std::getline(in, line))
+            {
+                if (line.find("WQE Completes") != std::string::npos)
+                {
+                    doneUs = std::stoull(line.substr(0, line.find(','))) / 1e6;
+                }
+            }
+        }
+        NS_TEST_ASSERT_MSG_GT(doneUs, 0.0, "v6 transfer must complete");
+        NS_TEST_ASSERT_MSG_LT(doneUs, 357.0 * 1.04,
+                              "FlexSpray v6 must rebalance off the degraded far-end plane without T19f regression");
+    }
+};
+
 class UbSprayCcRetransmissionRollbackTest : public TestCase
 {
   public:
@@ -40549,5 +40758,7 @@ class UbFlexSpraySuite : public TestSuite
         AddTestCase(new UbFlexSprayHardLinkDownSystemTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbSprayCcRetransmissionRollbackTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbTailSegmentationReservationTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbTimeQuantumAndOooWindowTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbFlexSprayV6FarEndDegradeSystemTest(), TestCase::Duration::QUICK);
     }
 } g_ubFlexSpraySuite;

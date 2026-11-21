@@ -115,6 +115,23 @@ def build_constraints(meta, flows, caps_list, durations, ack):
     return var, rows, cols, vals, b
 
 
+def _solve_lp(c, A, b, nv):
+    """Solve LP with primary solver (highs-ipm) and presolve-off / simplex fallbacks."""
+    primary = os.environ.get("FLEX_LP_METHOD", "highs-ipm")
+    b_arr = np.array(b)
+    bounds = [(0, None)] * nv
+    res = linprog(c, A_ub=A, b_ub=b_arr, bounds=bounds, method=primary)
+    if res.status != 0 and primary == "highs-ipm":
+        res = linprog(c, A_ub=A, b_ub=b_arr, bounds=bounds, method="highs-ipm",
+                      options={"presolve": False})
+    if res.status != 0:
+        res = linprog(c, A_ub=A, b_ub=b_arr, bounds=bounds, method="highs-ds",
+                      options={"time_limit": 30.0})
+    if res.status != 0:
+        raise RuntimeError(res.message)
+    return res
+
+
 def solve_lambda(meta, flows, caps_list, durations, ack):
     """Max lambda s.t. sum_phase sum_plane r*dur >= lambda*bits_f for all flows (rates in Gbps)."""
     var, rows, cols, vals, b = build_constraints(meta, flows, caps_list, durations, ack)
@@ -130,9 +147,7 @@ def solve_lambda(meta, flows, caps_list, durations, ack):
         b.append(0.0)
     A = coo_matrix((vals, (rows, cols)), shape=(len(b), nv)).tocsr()
     c = np.zeros(nv); c[lam] = -1.0
-    res = linprog(c, A_ub=A, b_ub=np.array(b), bounds=[(0, None)] * nv, method=os.environ.get("FLEX_LP_METHOD", "highs-ipm"))
-    if res.status != 0:
-        raise RuntimeError(res.message)
+    res = _solve_lp(c, A, b, nv)
     return res.x[lam]
 
 
@@ -269,10 +284,7 @@ def ideal_makespan_timeindexed_us(meta, flows, ack, allow=None, with_fault=True)
     nv = zi + 1
     A = coo_matrix((vals, (rows, cols)), shape=(len(b), nv)).tocsr()
     c = np.zeros(nv); c[zi] = 1.0
-    res = linprog(c, A_ub=A, b_ub=np.array(b), bounds=[(0, None)] * nv,
-                  method=os.environ.get("FLEX_LP_METHOD", "highs-ipm"))
-    if res.status != 0:
-        raise RuntimeError(res.message)
+    res = _solve_lp(c, A, b, nv)
     return bps[-1] + res.x[zi]
 
 
@@ -328,9 +340,7 @@ def ideal_makespan_us(meta, flows, ack, allow=None):
     nv = zi + 1
     A = coo_matrix((vals, (rows, cols)), shape=(len(b), nv)).tocsr()
     c = np.zeros(nv); c[zi] = 1.0
-    res = linprog(c, A_ub=A, b_ub=np.array(b), bounds=[(0, None)] * nv, method=os.environ.get("FLEX_LP_METHOD", "highs-ipm"))
-    if res.status != 0:
-        raise RuntimeError(res.message)
+    res = _solve_lp(c, A, b, nv)
     return tf + res.x[zi]
 
 

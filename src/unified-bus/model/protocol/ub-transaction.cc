@@ -13,6 +13,7 @@
 #include "ns3/ub-modulo-sequence.h"
 #include "ns3/ub-utils.h"
 
+#include <algorithm>
 #include <iostream>
 #include <sstream>
 
@@ -173,6 +174,50 @@ TypeId UbTransaction::GetTypeId(void)
             MakeBooleanAccessor(&UbTransaction::m_readScoreReturnRate),
             MakeBooleanChecker())
         .AddAttribute(
+            "TimeQuantumSeg",
+            "Scale dispatched RTP WQE segment bytes proportionally to each candidate plane's "
+            "relative service rate (4 KB / 8 KB / 16 KB) so degraded planes hold the same drain "
+            "time rather than the same byte count. Default off.",
+            BooleanValue(false),
+            MakeBooleanAccessor(&UbTransaction::m_timeQuantumSeg),
+            MakeBooleanChecker())
+        .AddAttribute(
+            "ReadQuantumBytes",
+            "If > 0: cap dispatched READ request segment size (bytes, <= TaSegmentBytes) so many "
+            "peers can pipeline inside a tight time-denominated READ port budget. 0 = off.",
+            UintegerValue(0),
+            MakeUintegerAccessor(&UbTransaction::m_readQuantumBytes),
+            MakeUintegerChecker<uint32_t>())
+        .AddAttribute(
+            "QuantumTailBytes",
+            "If > 0 and multiple live members exist in a TPG: once a WQE has at most this many "
+            "bytes remaining, spray 4 KB segments to eliminate single-plane tail serialization. 0 = off.",
+            UintegerValue(0),
+            MakeUintegerAccessor(&UbTransaction::m_quantumTailBytes),
+            MakeUintegerChecker<uint32_t>())
+        .AddAttribute(
+            "SlackTailOnly",
+            "MIN_DRAIN_TIME: only apply TpgDispatchSlack deferral once a WQE's remaining fast-plane "
+            "transfer time is within 2x bestDrainNs, avoiding starving slow planes on bulk transfers. "
+            "Default off.",
+            BooleanValue(false),
+            MakeBooleanAccessor(&UbTransaction::m_slackTailOnly),
+            MakeBooleanChecker())
+        .AddAttribute(
+            "DesyncTpgCursor",
+            "Initialize each TPG's selection cursor from a deterministic hash of (src, dst, members) "
+            "so synchronized collective waves do not collide on identical initial planes. Default off.",
+            BooleanValue(false),
+            MakeBooleanAccessor(&UbTransaction::m_desyncTpgCursor),
+            MakeBooleanChecker())
+        .AddAttribute(
+            "PrioritizeHeavyWqe",
+            "Coalesce same-timestamp RTP queue dispatch within a node and admit heaviest remaining "
+            "WQEs first (with cyclic peer tie-breaking). Default off.",
+            BooleanValue(false),
+            MakeBooleanAccessor(&UbTransaction::m_prioritizeHeavyWqe),
+            MakeBooleanChecker())
+        .AddAttribute(
             "ReplayFence",
             "Hard link-down recovery: re-dispatched segments carry the dead initiator TPN so the "
             "target fences that TP pair (drops its later packets) before executing the replay.",
@@ -240,10 +285,15 @@ UbTransaction::ServiceTimeNs(const Ptr<UbTransportChannel>& transport,
         const double ret = m_readScoreReturnRate && transport->GetReadReturnRateBps() > 0.0
                                ? transport->GetReadReturnRateBps()
                                : rate;
-        return local +
-               static_cast<double>(transport->GetOutstandingReadBytes() + segment->GetSize()) *
-                   8e9 / std::max(ret, 1e6) +
-               transport->GetReadBudgetWaitNs(segment->GetSize());
+        double score = local +
+                       static_cast<double>(transport->GetOutstandingReadBytes() + segment->GetSize()) *
+                           8e9 / std::max(ret, 1e6) +
+                       transport->GetReadBudgetWaitNs(segment->GetSize());
+        if (m_readIngressMarkWeight > 0.0)
+        {
+            score *= (1.0 + m_readIngressMarkWeight * transport->GetPortResponseMarkFraction());
+        }
+        return score;
     }
     // Data: departure, the TP's bytes already in flight ahead of it, and the post-send residual
     // (remote queueing and ACK return seen by this TP's own segments).
@@ -445,8 +495,17 @@ bool UbTransaction::JettyBindTp(uint32_t src,
                                                                             taskId,
                                                                             boundTransports) %
                                                           boundTransports.size())
-                                                    : m_nextJettyTpStartIndex %
-                                                          boundTransports.size();
+                                                    : (m_desyncTpgCursor
+                                                           ? static_cast<uint32_t>(
+                                                                 BuildTpgPhaseHash(
+                                                                     0,
+                                                                     src,
+                                                                     dest,
+                                                                     taskId,
+                                                                     boundTransports) %
+                                                                 boundTransports.size())
+                                                           : m_nextJettyTpStartIndex %
+                                                                 boundTransports.size());
         Ptr<UbTransportGroup> group =
             controller->CreateRtpTpGroup(boundTransports, initialSelectionCursor);
         if (group == nullptr)
@@ -1313,7 +1372,7 @@ UbTransaction::HasRtpTpGroupWork(
 UbTransaction::RtpSegmentAdmissionResult
 UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
                                   Ptr<UbWqe> originatingWqe,
-                                  Ptr<UbWqeSegment> segment,
+                                  Ptr<UbWqeSegment>& segment,
                                   Ptr<UbTransportChannel>& admittedTp)
 {
     if (originatingWqe == nullptr || segment == nullptr)
@@ -1360,8 +1419,16 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
     {
         return RtpSegmentAdmissionResult::REJECTED;
     }
+    const bool atomic = IsAtomicTransaction(originatingWqe->GetType());
+    const bool isReadReq = segment->GetType() == UbTransactionOpcode::READ &&
+                           segment->GetSegmentKind() == UbTransactionSegmentKind::REQUEST;
     if (reference.IsDirectTp())
     {
+        if (!atomic && isReadReq && m_readQuantumBytes > 0 &&
+            segment->GetSize() > m_readQuantumBytes)
+        {
+            segment = jetty->PrepareNextWqeSegment(originatingWqe, m_readQuantumBytes);
+        }
         if (!resolution.directTp->CanContinueAcceptedWqeSegment(segment))
         {
             return RtpSegmentAdmissionResult::DEFERRED;
@@ -1375,6 +1442,96 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
             MaterializeRtpTpGroup(jettyNum, reference, selectedGroup);
         Ptr<UbController> ownerController = GetOwnerController();
         const bool scoreMembers = m_tpgDispatchPolicy == UbTpgDispatchPolicy::MIN_DRAIN_TIME;
+        const bool useQuantum = !atomic && (m_timeQuantumSeg ||
+                                            (isReadReq && m_readQuantumBytes > 0) ||
+                                            m_quantumTailBytes > 0);
+        std::vector<std::pair<uint32_t, Ptr<UbWqeSegment>>> candCache;
+        auto getCandSeg = [&](uint32_t bytes) -> Ptr<UbWqeSegment> {
+            if (bytes == segment->GetSize())
+            {
+                return segment;
+            }
+            for (const auto& kv : candCache)
+            {
+                if (kv.first == bytes)
+                {
+                    return kv.second;
+                }
+            }
+            Ptr<UbWqeSegment> s = jetty->PrepareNextWqeSegment(originatingWqe, bytes);
+            candCache.emplace_back(bytes, s);
+            return s;
+        };
+        double maxPortRate = 0.0;
+        double refDelivRate = 0.0;
+        double refCcRate = 0.0;
+        double refRetRate = 0.0;
+        uint32_t liveCount = 0;
+        const bool needGroupStats =
+            useQuantum || (scoreMembers && m_tpgDispatchSlack >= 0.0 && m_slackTailOnly);
+        if (needGroupStats)
+        {
+            std::vector<double> delivSamples;
+            std::vector<double> ccSamples;
+            std::vector<double> retSamples;
+            if (useQuantum)
+            {
+                const size_t nMembers = selectedGroup->GetMemberCount();
+                delivSamples.reserve(nMembers);
+                ccSamples.reserve(nMembers);
+                retSamples.reserve(nMembers);
+            }
+            for (uint32_t idx = 0; idx < selectedGroup->GetMemberCount(); ++idx)
+            {
+                if (!selectedGroup->IsMemberSelectable(idx))
+                {
+                    continue;
+                }
+                const UbTransportGroupMember& m = selectedGroup->GetMember(idx);
+                Ptr<UbTransportChannel> tp = materialization.indexedTransports[idx];
+                if (tp == nullptr || tp->GetLifecycleOwner() != m.tpIdentity ||
+                    !m_coordinator->IsResourceActive(m.tpIdentity))
+                {
+                    continue;
+                }
+                if (ownerController != nullptr &&
+                    (ownerController->IsTpDead(tp) || ownerController->IsTpPathIsolated(tp)))
+                {
+                    continue;
+                }
+                ++liveCount;
+                maxPortRate = std::max(maxPortRate, tp->GetPortRateBps());
+                if (useQuantum)
+                {
+                    if (tp->HasDeliveryRateSample())
+                    {
+                        delivSamples.push_back(tp->GetDeliveryRateBps());
+                    }
+                    if (tp->GetPsnSndUna() > 0 && tp->GetCcRateBps() > 0.0)
+                    {
+                        ccSamples.push_back(tp->GetCcRateBps());
+                    }
+                    if (tp->GetReadReturnRateBps() > 0.0)
+                    {
+                        retSamples.push_back(tp->GetReadReturnRateBps());
+                    }
+                }
+            }
+            if (useQuantum)
+            {
+                auto p75 = [](std::vector<double>& v) -> double {
+                    if (v.size() < 2)
+                    {
+                        return 0.0;
+                    }
+                    std::sort(v.begin(), v.end());
+                    return v[(v.size() * 3) / 4];
+                };
+                refDelivRate = p75(delivSamples);
+                refCcRate = p75(ccSamples);
+                refRetRate = p75(retSamples);
+            }
+        }
         double bestDrainNs = 0.0;
         double bestLiveDrainNs = -1.0;
         bool hasLiveMember = false;
@@ -1386,6 +1543,7 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
         {
             why.assign(selectedGroup->GetMemberCount(), 'x');
         }
+        Ptr<UbWqeSegment> admittedSegment = segment;
         for (uint32_t offset = 0; offset < selectedGroup->GetMemberCount(); ++offset)
         {
             const uint32_t candidateIndex = selectedGroup->GetMemberIndexAtOffset(offset);
@@ -1417,38 +1575,89 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
                 }
                 continue;
             }
+            Ptr<UbWqeSegment> candSeg = segment;
+            if (useQuantum)
+            {
+                const uint32_t baseCap =
+                    (isReadReq && m_readQuantumBytes > 0)
+                        ? std::min<uint32_t>(segment->GetSize(), m_readQuantumBytes)
+                        : segment->GetSize();
+                uint32_t q = baseCap;
+                if (m_timeQuantumSeg)
+                {
+                    double r =
+                        maxPortRate > 0.0 ? transport->GetPortRateBps() / maxPortRate : 1.0;
+                    if (isReadReq)
+                    {
+                        if (refRetRate > 0.0 && transport->GetReadReturnRateBps() > 0.0)
+                        {
+                            r = std::min(r, transport->GetReadReturnRateBps() / refRetRate);
+                        }
+                    }
+                    else
+                    {
+                        if (refDelivRate > 0.0 && transport->HasDeliveryRateSample())
+                        {
+                            r = std::min(r, transport->GetDeliveryRateBps() / refDelivRate);
+                        }
+                        if (refCcRate > 0.0 && transport->GetPsnSndUna() > 0 &&
+                            transport->GetCcRateBps() > 0.0)
+                        {
+                            r = std::min(r, transport->GetCcRateBps() / refCcRate);
+                        }
+                    }
+                    if (r <= 0.35)
+                    {
+                        q = std::min<uint32_t>(baseCap, 4096u);
+                    }
+                    else if (r <= 0.65)
+                    {
+                        q = std::min<uint32_t>(baseCap, 8192u);
+                    }
+                }
+                if (m_quantumTailBytes > 0 && liveCount > 1 &&
+                    originatingWqe->GetBytesLeft() <= m_quantumTailBytes)
+                {
+                    q = std::min<uint32_t>(q, 4096u);
+                }
+                const uint32_t candBytes =
+                    std::min<uint32_t>(segment->GetSize(), std::max<uint32_t>(q, 1u));
+                candSeg = getCandSeg(candBytes);
+            }
             if (traceDefer)
             {
-                why[candidateIndex] = transport->AdmissionBlockReason(segment);
+                why[candidateIndex] = transport->AdmissionBlockReason(candSeg);
             }
             if (m_tpgDispatchPolicy == UbTpgDispatchPolicy::STATIC_RR)
             {
                 // Static striping: only the first live member after the cursor may take it.
-                if (transport->CanAdmitWqeSegment(segment))
+                if (transport->CanAdmitWqeSegment(candSeg))
                 {
                     selectedGroupIndex = candidateIndex;
                     admittedTp = transport;
+                    admittedSegment = candSeg;
                 }
                 break;
             }
             if (scoreMembers && m_tpgDispatchSlack >= 0.0)
             {
-                const double liveNs = ScoreMember(transport, segment);
+                const double liveNs = ScoreMember(transport, candSeg);
                 if (bestLiveDrainNs < 0.0 || liveNs < bestLiveDrainNs)
                 {
                     bestLiveDrainNs = liveNs;
                 }
             }
-            if (transport->CanAdmitWqeSegment(segment))
+            if (transport->CanAdmitWqeSegment(candSeg))
             {
                 if (!scoreMembers)
                 {
                     selectedGroupIndex = candidateIndex;
                     admittedTp = transport;
+                    admittedSegment = candSeg;
                     break;
                 }
                 // Strict '<' keeps cursor order on ties.
-                const double drainNs = ScoreMember(transport, segment);
+                const double drainNs = ScoreMember(transport, candSeg);
                 ++nAdmissible;
                 if (admittedTp != nullptr && drainNs >= bestDrainNs)
                 {
@@ -1463,10 +1672,21 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
                     bestDrainNs = drainNs;
                     selectedGroupIndex = candidateIndex;
                     admittedTp = transport;
+                    admittedSegment = candSeg;
                 }
             }
         }
-        if (admittedTp != nullptr && scoreMembers && m_tpgDispatchSlack >= 0.0 &&
+        bool allowSlack = scoreMembers && m_tpgDispatchSlack >= 0.0;
+        if (allowSlack && m_slackTailOnly)
+        {
+            const uint32_t fastPlanes = liveCount > 1 ? liveCount - 1 : 1;
+            const double fastRate =
+                static_cast<double>(fastPlanes) * std::max(maxPortRate, 1e9);
+            const double remainingFastNs =
+                static_cast<double>(originatingWqe->GetBytesLeft()) * 8e9 / fastRate;
+            allowSlack = remainingFastNs <= 2.0 * bestDrainNs;
+        }
+        if (admittedTp != nullptr && allowSlack &&
             bestDrainNs > bestLiveDrainNs * (1.0 + m_tpgDispatchSlack))
         {
             // A clearly faster plane will free capacity soon: wait for it rather than queue the
@@ -1493,6 +1713,7 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
                     static_cast<uint64_t>(Simulator::Now().GetNanoSeconds() - it->second.sinceNs);
                 it->second.sinceNs = -1;
             }
+            segment = admittedSegment;
         }
         if (traceDefer)
         {
@@ -1594,7 +1815,61 @@ UbTransaction::ScheduleRtpTx(const RtpTxQueueKey& queueKey)
         return;
     }
     queueIt->second.txEventPending = true;
+    if (m_prioritizeHeavyWqe)
+    {
+        m_pendingRtpTxBatch.push_back(queueKey);
+        if (!m_rtpTxBatchEvent.IsPending())
+        {
+            m_rtpTxBatchEvent = Simulator::ScheduleNow(&UbTransaction::FlushRtpTxBatch, this);
+        }
+        return;
+    }
     queueIt->second.pendingEvent = Simulator::ScheduleNow(&UbTransaction::RunRtpTx, this, queueKey);
+}
+
+void
+UbTransaction::FlushRtpTxBatch()
+{
+    m_rtpTxBatchEvent = EventId();
+    std::vector<RtpTxQueueKey> batch;
+    batch.swap(m_pendingRtpTxBatch);
+    if (batch.size() > 1)
+    {
+        auto priorityOf = [&](const RtpTxQueueKey& key) {
+            uint64_t bytesLeft = 0;
+            uint32_t cyclicPeer = UINT32_MAX;
+            const auto queueIt = m_rtpTxQueues.find(key);
+            if (queueIt != m_rtpTxQueues.end() && !queueIt->second.pendingTxEntries.empty())
+            {
+                const RtpTxQueueEntry& front = queueIt->second.pendingTxEntries.front();
+                if (front.kind == RtpTxQueueEntry::Kind::LOCAL_WQE)
+                {
+                    const auto opIt = m_operations.find({front.jettyNum, front.wqeId});
+                    if (opIt != m_operations.end() && opIt->second.wqe != nullptr)
+                    {
+                        bytesLeft = opIt->second.wqe->GetBytesLeft();
+                        cyclicPeer = (opIt->second.wqe->GetDest() - m_nodeId) & 0xFFFFu;
+                    }
+                }
+            }
+            return std::tuple<uint64_t, uint32_t, uint64_t>{bytesLeft,
+                                                            UINT32_MAX - cyclicPeer,
+                                                            key.identity.localId};
+        };
+        std::sort(batch.begin(),
+                  batch.end(),
+                  [&](const RtpTxQueueKey& a, const RtpTxQueueKey& b) {
+                      return priorityOf(a) > priorityOf(b);
+                  });
+    }
+    for (const RtpTxQueueKey& key : batch)
+    {
+        const auto queueIt = m_rtpTxQueues.find(key);
+        if (queueIt != m_rtpTxQueues.end() && queueIt->second.txEventPending)
+        {
+            RunRtpTx(key);
+        }
+    }
 }
 
 void
@@ -1632,7 +1907,14 @@ UbTransaction::EnqueueRtpWqe(uint32_t jettyNum, Ptr<UbWqe> originatingWqe, bool 
     if (!restoreWaitingFront && !queue.txEntryActive && !queue.txEventPending &&
         !queue.waitingForTransportCapacity)
     {
-        RunRtpTx(key);
+        if (m_prioritizeHeavyWqe)
+        {
+            ScheduleRtpTx(key);
+        }
+        else
+        {
+            RunRtpTx(key);
+        }
     }
 }
 
@@ -3288,6 +3570,8 @@ UbTransaction::DoDispose()
             Simulator::Cancel(queue.pendingEvent);
         }
     }
+    m_rtpTxBatchEvent.Cancel();
+    m_pendingRtpTxBatch.clear();
     m_rtpTxQueues.clear();
     m_transportByTpn.clear();
     m_orderedWqeIdsByJetty.clear();

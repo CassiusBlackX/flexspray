@@ -1153,6 +1153,11 @@ UbJetty::SetOooAckThreshold(uint32_t value)
 {
     if (IsCtpRequester()) return ResetSsnAckBitset(value);
     m_oooAckThreshold = value;
+    if (value > 0 && IsIdle())
+    {
+        m_ssnAckWindow.Resize(value);
+        m_ssnAckWindow.Reset(m_taSsnSndUna);
+    }
     return true;
 }
 
@@ -1353,6 +1358,10 @@ void UbJetty::CommitWqeSegmentAdmission(Ptr<UbWqeSegment> segment)
     wqe->UpdateSentBytes(segment->GetSize());
     wqe->NoteAdmittedTaSsn(segment->GetTaSsn());
     IncreaseTaSsnSndNxt();
+    if (!IsCtpRequester() && m_taSsnSndNxt > m_taSsnCnt)
+    {
+        m_taSsnCnt = m_taSsnSndNxt;
+    }
 }
 
 void
@@ -1781,6 +1790,9 @@ bool UbJetty::IsWqeCompleted(Ptr<UbWqe> wqe)
     if (!wqe) {
         return false;
     }
+    if (!wqe->IsSentCompleted()) {
+        return false;
+    }
 
     // A WQE is complete when all its bytes were admitted as segments and the last of ITS OWN
     // segments is acknowledged (TaSsns below m_taSsnSndUna are all acknowledged). Segments of
@@ -1789,7 +1801,7 @@ bool UbJetty::IsWqeCompleted(Ptr<UbWqe> wqe)
     // WQE whose remaining segments had not even been admitted, and they were never sent (T14).
     if (wqe->HasAdmittedTaSsn())
     {
-        return wqe->IsSentCompleted() && wqe->GetLastAdmittedTaSsn() < m_taSsnSndUna;
+        return wqe->GetLastAdmittedTaSsn() < m_taSsnSndUna;
     }
     // No segment admitted through CommitWqeSegmentAdmission (e.g. zero-length WQE): the reserved
     // range is the only information.

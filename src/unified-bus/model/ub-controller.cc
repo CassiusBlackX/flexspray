@@ -529,6 +529,31 @@ UbController::SetLocalPortIsolated(uint16_t port, bool isolated)
 }
 
 void
+UbController::GetLocalPortCounts(uint32_t& linkedPorts, uint32_t& livePorts) const
+{
+    linkedPorts = 0;
+    livePorts = 0;
+    Ptr<Node> node = GetObject<Node>();
+    if (node == nullptr)
+    {
+        return;
+    }
+    for (uint32_t i = 0; i < node->GetNDevices(); ++i)
+    {
+        Ptr<UbPort> port = DynamicCast<UbPort>(node->GetDevice(i));
+        if (port == nullptr || port->GetChannel() == nullptr)
+        {
+            continue;
+        }
+        ++linkedPorts;
+        if (!port->IsHardDown() && m_isolatedLocalPorts.count(static_cast<uint16_t>(i)) == 0)
+        {
+            ++livePorts;
+        }
+    }
+}
+
+void
 UbController::SetPeerPortIsolated(uint32_t peerNode, uint16_t peerPort, bool isolated)
 {
     const std::pair<uint32_t, uint16_t> key{peerNode, peerPort};

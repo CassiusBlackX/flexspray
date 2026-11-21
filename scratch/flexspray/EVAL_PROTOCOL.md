@@ -125,3 +125,12 @@
 - benchmark v1 的故障损失按原文口径判定（受损设备完成时间损失 < 1/N_dev）；"每阶段超出"只作附加列。
 - 物理界用 `flexspray_dagbound.py --fault-aware`（c4582026）。
 - **已用过的样本**：b_ring ×4（`--scale 4`）的种子 1、2；a2aread F1near / F4 / H4 带跟踪的种子 1；旧矩阵上 D' 的种子 1、2（调参用）。
+
+## 第十五轮补充：FlexSpray v6（Time-Quantum Commitment，2026-11-21）
+
+- **冻结构建与门禁（`r15cand2`，同编 `ub-quick-example` / `unified-bus-test` / `test-runner`）**：
+  - Golden 25/25 `SAME`（vs `s131`）；默认配置 50/50 单元测试全过；开启 v6 传输属性（含 `CoalescePortTrigger=true`，排除与旧夹具断言冲突的 `ReadQuantumBytes` / `PrioritizeHeavyWqe` / `DesyncTpgCursor`）50/50 全过；`unified-bus-flexspray` 默认与全 20 项 v6 属性下均通过。
+  - 恢复预言机与回归：`recov200_2`（`FLEX_DRAIN_AFTER_US=200`）22/22 `P1..P5=True, tasks_missing=[]`，21/22 `P6=True`；`fence_false_death_bidir` 因 v6 提前于 `2300 us` 完成全部任务（对比 `v5.3` `9400 us`），残留 `2.36 MB` CBFC 包在 `1/64`（`6.25 Gbps`）链路上需至 `5630 us` 排空，已在 `flexspray_recovery_suite.py` 为该用例设 `DRAIN_US=10000`，合入后 `flexspray_regress.py` 三项全 `PASS`。
+  - LP 求解器稳定性：`flexspray_analyze.py` 新增 `_solve_lp`（默认 `highs-ipm`，仅对个别数值边界回退 `presolve=False` / 限时 `highs-ds`）。
+- **已用过的样本（开发集）**：仅种子 **1、2** 用于 v6 参数收敛、`s12` 全矩阵（`1080` 仿真）与 4 项单支柱消融（`no_TQS` / `no_READPOOL` / `no_RESFIX` / `no_SCHED`）。
+- **未见盲验样本（锁定参数后零微调）**：种子 **15、16**（`unseen_s15_16`，`968` 仿真，`bad_rc=0, bad_miss=0`）及 `--map 2` / `--fault-ns 35000` / `--scale 0.75`（种子 15）；所有读数严格按 `N_dev` / `4·N_dev` / `N_scope`、`tdev` / `steady(含 n/a 分母)` / `trans` 及 `<` vs `≤` 并列报告。
