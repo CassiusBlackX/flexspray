@@ -306,6 +306,13 @@ CFG6 CTP 的 requester 使用独立 RCID，并由各自 UbJetty 维护进度。�
 旧 `ExperimentTaAckPacketBytes` 已删除，维护配置不再接受该项（包括零值）。
 实现和验收记录见 [CTP 完整事务头集成记录](doc/implementation/ctp-full-tah-06.md)。
 
+## FlexSpray：面向 AI 超节点的多平面容错自适应传输（NSDI 研究扩展）
+
+在原 `ns-3-ub` 基础上，`feat/flexspray` 分支实现了 **FlexSpray v7** 端网协同多平面自适应分发与故障容错协议栈（C++ 核心实现位于 [`src/unified-bus/model/`](src/unified-bus/model/)，默认 C++ 属性全关以保证对原生 Golden 回归 `25/25 SAME`），并在 [`scratch/flexspray/`](scratch/flexspray/README.md) 提供完整可复现实验框架：
+
+- **核心文档与形式化证明**：[FlexSpray 总索引](scratch/flexspray/README.md) · [理论推导与不变量定理（`THEORY.md`）](scratch/flexspray/THEORY.md) · [学术论文定位与评估（`RESEARCH.md`）](scratch/flexspray/RESEARCH.md) · [工程总报告（`REPORT.md`）](scratch/flexspray/REPORT.md) · [交付核验单（`DELIVERY.md`）](scratch/flexspray/DELIVERY.md)
+- **基准、Trace 与可视化产出**：[公开超节点拓扑与 SimAI/AICB 负载说明（`BENCHMARK.md`）](scratch/flexspray/BENCHMARK.md) · [真实集群 Trace 来源（`traces/README.md`）](scratch/flexspray/traces/README.md) · [Round 19 聚合数据（`results/r19/`）](scratch/flexspray/results/r19/r19_summary.json) · [6 张顶会风格矢量图（`fig/nsdi/`）](scratch/flexspray/plot_nsdi_figs.py)
+
 ## 许可证
 
 本项目遵循 ns-3 许可证协议，GPL v2。详见 [`LICENSE`](LICENSE) 文件。

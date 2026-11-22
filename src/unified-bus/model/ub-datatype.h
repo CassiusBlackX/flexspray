@@ -1609,6 +1609,8 @@ public:
      *  dead; the target must stop accepting packets of that TP pair (replay fence). */
     void SetSupersedesTpn(uint32_t tpn) { m_supersedesTpn = tpn; }
     uint32_t GetSupersedesTpn() const { return m_supersedesTpn; }
+    void SetSupersedesGen(uint32_t gen) { m_supersedesGen = gen; }
+    uint32_t GetSupersedesGen() const { return m_supersedesGen; }
 
     void ResetTransportStateForRedispatch()
     {
@@ -1881,6 +1883,7 @@ private:
     OrderType m_orderType{OrderType::ORDER_NO};     // 所属WQE的order类型
     uint32_t m_tpn{UINT32_MAX}; // 当前WqeSegment由哪一个TP进行传输
     uint32_t m_supersedesTpn{UINT32_MAX}; // replay fence (hard link-down recovery)
+    uint32_t m_supersedesGen{0};          // generation of superseded TP pair
     bool m_hasResolvedTpIdentity{false};
     UbLifecycleResourceIdentity m_resolvedTpIdentity;
     bool m_hasTransactionCorrelation{false};

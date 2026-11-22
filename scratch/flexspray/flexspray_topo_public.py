@@ -149,7 +149,8 @@ class CloudMatrixPod(_BasePublicTopo):
     def meta(self):
         return dict(
             topo=self.topo_name,
-            paper_ref="arXiv:2506.12708 (CloudMatrix384, scaled 1/12 nodes: 4x8=32 NPUs, 7 planes)",
+            paper_ref=(f"arXiv:2506.12708 (CloudMatrix384, scaled {self.S}/48 nodes: "
+                       f"{self.S}x8={self.S * 8} NPUs, 7 planes)"),
             servers=self.S, planes=self.P, spines=self.K, links_per_pair=self.J,
             rate_gbps=self.rate, lanes=self.lanes, hosts=self.hosts,
             l1={f"{p},{s}": n for (p, s), n in self.l1.items()},
@@ -311,14 +312,18 @@ class UbMeshPod(_BasePublicTopo):
         )
 
 
-def build_topo(topo_name, servers=4, links_per_pair=None, rate_gbps=400, lanes=4):
+def build_topo(topo_name, servers=4, links_per_pair=None, rate_gbps=400, lanes=4,
+               host_link_ns=20, fabric_link_ns=100):
     if topo_name == "cm_pod":
         return CloudMatrixPod(topo_name="cm_pod", servers=servers, oversub=False,
-                              rate_gbps=rate_gbps, lanes=lanes)
+                              rate_gbps=rate_gbps, host_link_ns=host_link_ns,
+                              fabric_link_ns=fabric_link_ns, lanes=lanes)
     if topo_name == "cm_pod_osub":
         return CloudMatrixPod(topo_name="cm_pod_osub", servers=servers, oversub=True,
-                              rate_gbps=rate_gbps, lanes=lanes)
+                              rate_gbps=rate_gbps, host_link_ns=host_link_ns,
+                              fabric_link_ns=fabric_link_ns, lanes=lanes)
     if topo_name == "ub_mesh":
         return UbMeshPod(servers=servers, lrs_links=(links_per_pair or 3),
-                         rate_gbps=rate_gbps, lanes=lanes)
+                         rate_gbps=rate_gbps, host_link_ns=host_link_ns,
+                         lrs_link_ns=fabric_link_ns, lanes=lanes)
     raise KeyError(topo_name)

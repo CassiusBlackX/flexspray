@@ -1633,3 +1633,18 @@ E_m(s) = 出发 + 服务
 | **端侧每本地口（`O(P)`, `P <= 10`）** | `PortEgressState` + `PortReadState` + `PortResponseMarkEwma`（~8 标量/口 + 唤醒链表，硬件用就绪位图实现） | 无局部端口预算池 | 无局部端口预算池 | 无 |
 | **端侧每 TP / 每 TPG** | 速率/返回率（4 标量 `32 B`）+ 残差（3 标量 `24 B` + 在途段表 `16 B/seg`）+ FD 状态 + SprayCC `SentPacket` 队列；**TPG 仅 `O(1)` RR 游标 + HOL 重 WQE 比较** | `UbTransportGroup` 固定 **`8×uint32_t` (32 B) 环形缓存 + 20 B 状态 = 52 B/TPG** | 分发期 `O(P)` 扫描 `<= 10` 成员队列深度与 SRTT 差并剪枝 | `UbHostCaqm` 含 **5 张 per-PSN 哈希表**（包长/hint/C/I/发送时间） |
 | **关键路径复杂度** | 分发期 **`O(P)`（`P <= 10`）最小值归约**，无大表查表或中心调度 | `O(1)` 弹栈（空时 `O(P)` 探索） | `O(P)` 两次扫描（求 min + 剪枝择优） | ECN/hint 逐包更新 5 张 PSN 映射表 |
+
+---
+
+## 第十四轮补充：Round 19 NSDI 全维盲测、形式化分析与双向对等代际活性（frozen `r19nsdi`）
+
+在保留原生 Golden（`25/25 SAME`）零改动的前提下，Round 18–19 完成了 FlexSpray v7 终版演化（详见 [THEORY.md](THEORY.md)、[REPORT.md](REPORT.md) 与 [results/r19/r19_summary.json](results/r19/r19_summary.json)）：
+
+1. **核心修复与 v7 机制**：
+   - 修复双向 `URMA_WRITE` 在非对称链路恢复/闪烁下的死锁隐患：`UbController::RecycleDeadTp()` 调用 `m_transaction->TryContinueJettyTransmission(tp)` 唤醒响应队列，`UbTransportChannel` 允许特定条件 `m_ackQ` 排空并安全防护 `RecycleToGeneration()`/`AcceptNewInboundGeneration()`。
+   - 新增无量纲 `CommitDelayRttFactor=4.0`、`ProbeTimeoutSrttFactor=2.5`、`SilenceAwareResidual`、`BypassCommitForHighPrio`（TXN/TP）、`ResetRateOnPortUpgrade` 与 `RecoverFastOnUnmarked`，经 `r19nsdi` 5/5 门禁全通（17/17 专项单测、50/50 单元套件、`flexspray_regress.py` exit `0`）。
+2. **22 个盲测批次 `2,898` 次仿真总览（未见种子 `15, 16`，`flex+spraycc*` `1,076/1,076` 零失败）**：
+   - **E1 SOTA 全拓扑（1,816 runs）**：`flex+spraycc` 总均效 **`0.8181`**（`ub_pod 0.8067 / cm_pod 0.8236 / cm_pod_osub 0.8029 / ub_mesh 0.8669`），Clean DAGBound **`0.9319`**（`66/66` vs `reps 0.8815 / sird 0.8674 / mprdma 0.8290`）；v7 扩展 LossMatrix `lane` **`76/77 (N_dev)` / `77/77 (N_scope, 0 phys, 0 impl)`**，`F3far PhaseInfl` **`34/34` `one-off`（`0` per-phase，均值 `1.62%` / 最大 `6.75%`）**；
+   - **E2 动态扩展（244 runs）**：`e2_dyn_ubpod` **`0.8383`**（`F3multi 0.8250`），`e2_dyn_cmpod` **`0.8128`**（`H1heal 0.8236 vs v6 0.7478` **`+7.58 pp`**，`F3flap 0.8055 vs v6 0.7562` **`+4.93 pp`**）；
+   - **E3–E5 外推（838 runs）**：`cm_pod S=8` (`--scale 0.5`) **`0.7314` / `b_ring` DAG `0.8545`**，`S=16 d2d/b_kv` (`--scale 0.5`) **`0.9343`**，`S=16 b_ring` (`--scale 0.25`) DAG **`0.8340`**；`CBFC`/`PFC` **`0.8923`**、`Lossy+SACK 256K` **`0.8001`**、`128K` **`0.7694`**；零重调参跨 `100G–800G` & `1x–10x` RTT 维持 **`0.8895 / 0.8097 / 0.8441 / 0.7671`** 并将 `H1far` `ctrl_p99` 压缩 **`3.4x–13.2x`** 至 `1.47–5.45 us`；Alibaba SimAI `b_realtrace` 达 DAGBound **`0.7831`**（`ub_pod`）/ **`0.7949`**（`cm_pod`）全通完成。
+

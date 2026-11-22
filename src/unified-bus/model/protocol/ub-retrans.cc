@@ -521,6 +521,19 @@ UbSelectiveRetransStrategy::GetRetainedPayloadBytes(uint64_t psn) const
     return it == m_sentPsnState.end() ? 0 : it->second.descriptor.payloadBytes;
 }
 
+uint64_t
+UbSelectiveRetransStrategy::GetUnacknowledgedBytes() const
+{
+    uint64_t bytes = 0;
+    for (const auto& [psn, state] : m_sentPsnState) {
+        (void)psn;
+        if (!state.acknowledged) {
+            bytes += state.descriptor.payloadBytes;
+        }
+    }
+    return bytes;
+}
+
 bool
 UbSelectiveRetransStrategy::HasOutstandingPackets() const
 {
@@ -593,13 +606,18 @@ UbSelectiveRetransStrategy::OnTimeout()
     }
 
     EnterMarkPsnRetransPhase();
+    uint64_t unackedBytes = 0;
     for (auto& [psn, state] : m_sentPsnState) {
-        if (!state.acknowledged && !state.retransmitPending) {
-            state.retransmitPending = true;
-            m_selectiveRetransmitQ.push_back(psn);
+        if (!state.acknowledged) {
+            unackedBytes += state.descriptor.payloadBytes;
+            if (!state.retransmitPending) {
+                state.retransmitPending = true;
+                m_selectiveRetransmitQ.push_back(psn);
+            }
         }
     }
     result.triggerTransmit = true;
+    result.retransmitBytes = static_cast<uint32_t>(std::min<uint64_t>(unackedBytes, UINT32_MAX));
     return result;
 }
 
@@ -1496,6 +1514,15 @@ UbRetransController::GetNextSelectiveRetransmissionPayloadBytes() const
         return 0;
     }
     return m_selective->GetNextRetransmissionPayloadBytes();
+}
+
+uint64_t
+UbRetransController::GetSelectiveUnackedBytes() const
+{
+    if (!m_enableRetrans || m_retransmissionMode != UbRetransmissionMode::SELECTIVE) {
+        return 0;
+    }
+    return m_selective->GetUnacknowledgedBytes();
 }
 
 uint32_t

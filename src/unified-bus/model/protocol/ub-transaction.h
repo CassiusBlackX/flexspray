@@ -40,6 +40,7 @@ enum class UbTpgDispatchPolicy : uint32_t
     REPS_CACHE = 3,    //!< REPS (arXiv:2407.21625) 8-entry ACK-recycled ECN-free path cache
     MPRDMA_OOO = 4,    //!< MP-RDMA (NSDI'18) OOO-bounded slow-path pruning + min-lag dispatch
     PINNED_PLANE = 5,  //!< HPN (SIGCOMM'24) deterministic per-flow plane pinning with hard failover
+    SIRD_CREDIT = 6,   //!< SIRD (NSDI'24) receiver-credit budget + SRPT request scheduling + spray
 };
 
     /**
@@ -655,6 +656,9 @@ enum class UbTpgDispatchPolicy : uint32_t
                 UbLifecycleResourceIdentity resolvedTpIdentity;
                 UbLifecycleLeaseIdentity transportWorkLease;
                 uint32_t redispatches{0}; // hard-down recovery moves (measurement)
+                uint32_t sirdCreditedDst{UINT32_MAX};
+                uint64_t sirdCreditedBytes{0};
+                RtpTxQueueKey sirdQueueKey{};
             };
             std::map<uint32_t, SegmentRecord> segments;
         };
@@ -680,6 +684,28 @@ enum class UbTpgDispatchPolicy : uint32_t
         bool m_slackTailOnly{false};
         bool m_desyncTpgCursor{false};
         bool m_prioritizeHeavyWqe{false};
+        bool m_bypassCommitForHighPrio{false};
+        uint64_t m_sirdRxBudgetBytes{0};
+        bool m_disposing{false};
+        struct SirdRxWaiter
+        {
+            uint64_t origWqeBytes{0};
+            uint64_t seq{0};
+            UbTransaction* tx{nullptr};
+            RtpTxQueueKey queueKey;
+        };
+        struct SirdRxState
+        {
+            uint64_t inFlight{0};
+            uint64_t nextSeq{0};
+            std::map<std::pair<const UbTransaction*, RtpTxQueueKey>, uint64_t> flowInFlight;
+            std::vector<SirdRxWaiter> waiters;
+        };
+        static std::map<uint32_t, SirdRxState>& SirdRxTable();
+        static void ResetSirdRxTable();
+        static void EnsureSirdResetScheduled();
+        static uint64_t ComputeSirdRxBudget(uint32_t dstNode, uint64_t overrideBytes);
+        void ReleaseSirdCredit(uint32_t dstNode, uint64_t bytes, const RtpTxQueueKey& qKey);
         std::vector<RtpTxQueueKey> m_pendingRtpTxBatch;
         EventId m_rtpTxBatchEvent;
         double ServiceTimeNs(const Ptr<UbTransportChannel>& transport,

@@ -173,4 +173,79 @@ def b_mix(t, scale, seed=1):
     return tasks + rt + kt + ctrl_msgs(t, ep + dp, seed)
 
 
-BENCH = {"b_ring": b_ring, "b_moe": b_moe, "b_kv": b_kv, "b_mix": b_mix}
+def b_multitenant(t, scale, seed=1):
+    """Concurrent multi-tenant supernode share:
+      Tenant A: MoE decode (NPU 0..3 per server)
+      Tenant B: Ring AllReduce (NPU 4..5 per server)
+      Tenant C: Mooncake KVCache SSD read/write (NPU 6..7 per server)
+      + background latency-sensitive control traffic across all NPUs.
+    Separate phase namespaces let all 3 tenants run concurrently from t=0 without false barriers.
+    """
+    ta = sorted(_npus(t, {0, 1, 2, 3}), key=lambda h: (h["server"], h["idx"]))
+    tb = sorted(_npus(t, {4, 5}), key=lambda h: (h["server"], h["idx"]))
+    tc = sorted(_npus(t, {6, 7}), key=lambda h: (h["server"], h["idx"]))
+    t_moe, _ = moe_layers(t, scale, ta, 1, seed, layers=4, cls="mt_moe")
+    t_ring, _ = ring_allreduce(t, scale * 0.25, tb, 101, cls="mt_ring")
+    t_kv, _ = kv_trace(t, scale, tc, 501, cls="mt_kv")
+    return t_moe + t_ring + t_kv + ctrl_msgs(t, ta + tb + tc, seed)
+
+
+def b_realtrace(t, scale, seed=1):
+    """Replay a normalized public AI collective trace CSV (phase,op,size_bytes,group,compute_ns)."""
+    import csv as _csv
+    trace_path = os.environ.get("FLEX_REAL_TRACE",
+                                os.path.join(HERE, "traces", "real_collective_trace.csv"))
+    npus = sorted(_npus(t), key=lambda h: (h["server"], h["idx"]))
+    ep_npus = sorted(_npus(t, set(range(6))), key=lambda h: (h["server"], h["idx"])) or npus
+    tasks = []
+    ph = 1
+    deps = []
+    with open(trace_path) as f:
+        for row in _csv.DictReader(f):
+            op = row["op"].strip().lower()
+            sz = max(4096, int(round(int(row["size_bytes"]) * scale)))
+            grp_kind = row["group"].strip().lower()
+            compute_ns = int(row.get("compute_ns", 0) or 0)
+            if grp_kind == "tp":
+                groups = [sorted([h for h in npus if h["server"] == s], key=lambda h: h["idx"])
+                          for s in range(t.S)]
+            elif grp_kind == "dp":
+                groups = [sorted([h for h in npus if h["idx"] == i], key=lambda h: h["server"])
+                          for i in range(8)]
+            elif grp_kind == "ep":
+                groups = [ep_npus]
+            else:
+                groups = [npus]
+            for grp in groups:
+                m = len(grp)
+                if m < 2:
+                    continue
+                if op == "alltoall":
+                    per_pair = max(4096, sz // max(1, m - 1))
+                    for u in grp:
+                        for v in grp:
+                            if u["id"] != v["id"]:
+                                tasks.append((u["id"], v["id"], per_pair, "URMA_WRITE", BULK_PRIO,
+                                              compute_ns, f"rt_{op}", ph, list(deps)))
+                elif op == "allreduce":
+                    chunk = max(4096, sz // m)
+                    for k in range(m):
+                        u, vf, vr = grp[k]["id"], grp[(k + 1) % m]["id"], grp[(k - 1) % m]["id"]
+                        tasks.append((u, vf, chunk, "URMA_WRITE", BULK_PRIO, compute_ns,
+                                      f"rt_{op}", ph, list(deps)))
+                        if vr != vf:
+                            tasks.append((u, vr, chunk, "URMA_WRITE", BULK_PRIO, compute_ns,
+                                          f"rt_{op}", ph, list(deps)))
+                else:  # allgather / reducescatter ring step exchange
+                    chunk = max(4096, sz // m)
+                    for k in range(m):
+                        u, v = grp[k]["id"], grp[(k + 1) % m]["id"]
+                        tasks.append((u, v, chunk, "URMA_WRITE", BULK_PRIO, compute_ns,
+                                      f"rt_{op}", ph, list(deps)))
+            deps = [ph]
+            ph += 1
+    return tasks + ctrl_msgs(t, npus, seed)
+
+
+BENCH = {"b_ring": b_ring, "b_moe": b_moe, "b_kv": b_kv, "b_mix": b_mix,
+         "b_multitenant": b_multitenant, "b_realtrace": b_realtrace}

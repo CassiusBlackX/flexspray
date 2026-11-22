@@ -158,6 +158,7 @@ UbTransportChannelManager::CreateTp(uint32_t src,
             MakeCallback(&UbTransportChannelManager::NotifyLifecycleStateChanged, this));
     m_controller->GetUbTransaction()->TpInit(tp);
     m_endpoints.emplace(srcTpn, EndpointRecord{tp});
+    ++m_endpointsVersion;
     ++m_transportsCount;
     currentNode->GetObject<UbSwitch>()->RegisterTpWithAllocator(tp, sport, priority);
     m_controller->GetTpConnManager()->NotifyEndpointMaterialized(currentNode->GetId(),
@@ -639,6 +640,7 @@ UbTransportChannelManager::FinalizeDestroy(uint32_t tpn, bool force)
         coordinator->RetireResource(identity);
     }
     m_endpoints.erase(it);
+    ++m_endpointsVersion;
     if (m_transportsCount > 0)
     {
         --m_transportsCount;
@@ -684,6 +686,12 @@ uint32_t
 UbTransportChannelManager::GetCount() const
 {
     return static_cast<uint32_t>(m_endpoints.size());
+}
+
+uint64_t
+UbTransportChannelManager::GetVersion() const
+{
+    return m_endpointsVersion;
 }
 
 std::map<uint32_t, Ptr<UbTransportChannel>>

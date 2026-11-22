@@ -1,85 +1,64 @@
-# FlexSpray — 当前交付（默认配置 = v6；第十七轮 / Stage 3，2026-11-21）
+# FlexSpray v7 交付物与全量验收核验单（Round 19 / `r19nsdi`）
 
-本文件是当前仓库唯一对外交付入口。**最新冻结验证二进制为 `r17cand2`**（位于 `/home/cassius/ub/work/frozen/r17cand2/`，基于提交 `f2676403` 与 Stage 3 未提交补丁 `uncommitted_diff_sha256: 8231c8142c0d968e`，本轮收口后将作为 Stage 3 提交合入 `feat/flexspray`）。
+## 1. 冻结二进制与五道前置正确性门禁（`r19nsdi`）
 
-> 历史交付归档：`v5.3`（第十三轮 `ea030dd2`）报告指标见本分支历史提交，Rounds 4–10 历史材料保留在 `scratch/flexspray/history/`。自第十五轮起，`flexspray_case.py` 中 `flex+spraycc` 默认启用 **FlexSpray v6（Time-Quantum Commitment & Reachability-Aware Pooling）**；全量 C++ `TypeId` 默认值保持关闭以保障 Golden 25/25 逐位一致。
+`r19nsdi` 冻结构建自 `src/unified-bus/`（C++ `Release` 构建，含 `UbController::RecycleDeadTp` 响应唤醒及 `UbTransportChannel` 双向对等代际恢复增强），所有门禁均在末次 C++ 修改后 **5 / 5 全部通过**，且 C++ 默认属性保持关闭以保证原生 Golden 逐位一致：
 
----
-
-## 1. 一键复现与回归验证门禁（`r17cand2` 全部已过）
-
-最后一次 C++ 修改完成后的完整验证结果：
-
-| 验证门禁 | 命令与目标 | 结果 |
+| 门禁 | 执行命令 / 脚本 | 验证结果 |
 |---|---|---|
-| **编译构建** | `./ns3 build ub-quick-example unified-bus-test test-runner` | **exit 0**（release） |
-| **FlexSpray 专项单测** | `/home/cassius/ub/work/frozen/r17cand2/testrunner --test-name=unified-bus-flexspray --verbose` | **11 / 11 PASS**（`1.345 s`，含新增 `UbDcqcnLateCnpDuringDrainTest`） |
-| **Golden 逐位回归** | `J=16 /home/cassius/ub/work/bin/golden.sh r17def2 .../r17cand2/sim` + `cmpgold.sh s131 r17def2`（`a128_4m` `11.16 s`、`a32_32m` `11.68 s`） | **25 / 25 SAME** |
-| **全量 UB 单元套件** | `/home/cassius/ub/work/bin/alltests_frozen.sh r17cand2 r17def2` | **50 / 50 suites PASS**（`rc=0`） |
-| **系统级恢复与尾段回归** | `flexspray_regress.py --out .../reg_r17cand2 --bin .../r17cand2/sim` | **exit 0**（`fence_on 22/22` 全过；`fence_off P5=False, late_execs=9`；`tail4k missing_tasks=0, eff=0.9344`） |
-
-> 完整细节与全机制文档见 [REPORT.md](file:///home/cassius/ub/ns-3-ub/scratch/flexspray/REPORT.md)、[FEASIBILITY.md](file:///home/cassius/ub/ns-3-ub/scratch/flexspray/FEASIBILITY.md)（§13）、[BENCHMARK.md](file:///home/cassius/ub/ns-3-ub/scratch/flexspray/BENCHMARK.md)、[RESEARCH.md](file:///home/cassius/ub/ns-3-ub/scratch/flexspray/RESEARCH.md)（§9.6）及 [TODO.md](file:///home/cassius/ub/ns-3-ub/scratch/flexspray/TODO.md)。
+| Release 构建与 SHA256 校验 | `./ns3 build ub-quick-example unified-bus-test test-runner && freeze.sh r19nsdi` | `libns3.44-unified-bus.so` & `libns3.44-unified-bus-test.so` SHA256 与 `build/lib/` 严格一致 |
+| Gate 1–2：FlexSpray 专项单测 | `/home/cassius/ub/work/frozen/r19nsdi/testrunner --test-name=unified-bus-flexspray --verbose` | **17 / 17 PASS**（`3.498 s`；含 `UbFlexSprayHardDownRecycleTest` 双向 `0 <-> 1` 双周期 Flap 测得 `completed == 4u, RECYCLE gen=2`，`0.785 s`） |
+| Gate 3：Golden 逐位对照 | `/home/cassius/ub/work/bin/golden.sh r19def3 .../r19nsdi/sim` + `cmpgold.sh s131 r19def3` | **25 / 25 SAME** |
+| Gate 4：全量 UB 单元套件 | `/home/cassius/ub/work/bin/alltests_frozen.sh r19nsdi r19all3` | **50 / 50 suites PASS**（`0` non-PASS） |
+| Gate 5：系统级回归脚本 | `flexspray_regress.py --bin /home/cassius/ub/work/frozen/r19nsdi/sim` | **exit 0**（`fence_on: 22 cases passing, failing: none`; `fence_off: P5=False, late_execs=9`; `tail4k: missing_tasks=0, eff=0.9404`） |
 
 ---
 
-## 2. FlexSpray v6 核心交付能力与实现位置
+## 2. 未见盲测核心指标验收（Seeds `15, 16`，总计 `2,898` 次运行）
 
-FlexSpray v6 在 `v5.3`（SprayCC + MIN_DRAIN_TIME + TpGroupFairShare + 12 µs 探测故障检测 + ReplayFence + T20 fabric 路由撤回 + 尾段切分）之上新增 4 项核心能力（20 项属性，见 [KNOBS.md](file:///home/cassius/ub/ns-3-ub/scratch/flexspray/KNOBS.md)）：
+在全部 22 个盲测批次（E1–E5，共 `2,898` 次全仿真，`1,076` 次 `flex+spraycc` / `flex+spraycc+v6` 运行）中：**`flex+spraycc*` 实现 `rc=0` 且 `missing_tasks=0` 100.0% 零失败**，所有数值均来自 [results/r19/r19_summary.json](results/r19/r19_summary.json) 及同目录汇总表：
 
-1. **M1 时间量子分段与尾窗控制**（`ub-transaction.{h,cc}`）：`TimeQuantumSeg=true` 按成员相对速率分档（4/8/16 KB）分配 WRITE 段量子；`ReadQuantumBytes=8192` 拆分 READ 请求；`QuantumTailBytes=49152` + `SlackTailOnly=true` 消除末端单平面长尾串行化。
-2. **M2 可达性感知 READ 重池化与工作守恒**（`ub-transport.{h,cc}`）：`ReadPortBudgetBytes=409600` + `ReadScoreReturnRate=true` + `ReadBudgetScaleByRate=true` + `ReadBudgetRepoolDead=true` + `ReadBudgetWorkConserving=true`，仅将 `HardDown`/隔离端口的配额按比例重池化到健康端口（**绝不扩大降 Lane 慢口配额**），并在未饱和时工作守恒推进。
-3. **M3 去自排队残差与队列感知速率**（`ub-transport.{h,cc}`、`ub-spraycc.{h,cc}`）：`PortCommitDelay=6us` + `ServiceTimeScore=true` + `ServiceResidual=true` + `ResidualSubtractOwn=true` + `ResidualIdleHalfLife=150us` + `DeliveryRateQueueAware=true`，配合 `RtoSrttFactor=8, RtoFloorFirstOnly=true` 防止降速链路误触发超时与重传风暴。
-4. **T29 调度协同与 DCQCN Teardown 修复**：`DesyncTpgCursor=true` + `PrioritizeHeavyWqe=true` + `CoalescePortTrigger=true`；Round 17 新增 `UbHostDcqcn::IsTpLifecycleActive()` / `m_tpDestroyRequested`（`ub-dcqcn.{h,cc}`），根除 TP 退场瞬间晚到 CNP 的竞态中止（`UbDcqcnLateCnpDuringDrainTest`）。
+### 2.1 LossMatrix 规范达标口径（Round 19 全量 77 格扩展集 `e1_losstable_v7_{lt,le}.md` & E1 SOTA 矩阵 `e1_losstable_sota_{lt,le}.md`）
 
----
+1. **Full v7 扩展矩阵（`< 1/N` vs `<= 1/N` 并列，保留 `n/a` 于分母，给出全 4 类 `N` 与 3 个窗口）**：
 
-## 3. 核心实验结论（全仿真，未见种子 `s15, s16`，`r17cand2/sim`）
+| 语义 | 比较符 | 窗口 | `N_dev` | `4N` | `N_scope` | 物理 / 实现归因明细（`N_dev`） |
+|---|---|---|---|---|---|---|
+| `graceful` | `<` | `tdev` | **47 / 51** | 13 / 51 | **47 / 51** | `phys 4, impl 0, miss 0` |
+| `graceful` | `<=` | `tdev` | **47 / 51** | 13 / 51 | **47 / 51** | `phys 4, impl 0, miss 0` |
+| `graceful` | `<` / `<=` | `steady` | 36 / 51 | 11 / 51 | 36 / 51 | `phys* 4, impl 0, n/a 11` |
+| `graceful` | `<` / `<=` | `trans` | 45 / 51 | 18 / 51 | 46 / 51 | `<`: `phys* 6`; `<=`: `phys* 4, impl 2` |
+| `hard` | `<` | `tdev` | **42 / 49** | 13 / 49 | **42 / 49** | `phys 4, impl 3, miss 0` |
+| `hard` | `<=` | `tdev` | **42 / 49** | 13 / 49 | **42 / 49** | `phys 4, impl 3, miss 0` |
+| `hard` | `<` / `<=` | `steady` | 22 / 49 / 23 / 49 | 11 / 49 | 22 / 49 / 23 / 49 | `<`: `phys* 18, n/a 9`; `<=`: `phys* 3, impl 14, n/a 9` |
+| `hard` | `<` / `<=` | `trans` | 28 / 49 / 31 / 49 | 12 / 49 | 28 / 49 / 32 / 49 | `<`: `phys* 21`; `<=`: `phys* 2, impl 16` |
+| `lane` | `<` | `tdev` | **76 / 77** | **34 / 77** | **77 / 77** | `N_dev`: `phys 0, impl 1`; `N_scope`: **`0 phys, 0 impl`** |
+| `lane` | `<=` | `tdev` | **76 / 77** | **34 / 77** | **77 / 77** | 同上（唯一 `N_dev` 未达为 `h2d F3far3` `13.6% > 12.5%`，`N_scope` 达标） |
+| `lane` | `<` / `<=` | `steady` | 60 / 77 | 6 / 77 | 61 / 77 | `<`: `phys* 1, n/a 16`; `<=`: `impl 1, n/a 16` |
+| `lane` | `<` / `<=` | `trans` | 72 / 77 | 12 / 77 | 73 / 77 | `<`: `phys* 1, impl 4`; `<=`: `impl 5` |
 
-### 3a. 跨 SOTA 基线全 blind 矩阵对比（`756` 主矩阵 + `42` `r17_kv_io` SSD 专项 = `798` runs，`0` `rc!=0`）
+2. **E1 分拓扑分层 SOTA 对照（`tdev < 1/N_dev` & `<= 1/N_dev` 同值）**：
+   - `ub_pod`（各 `11` 格）：`flex+spraycc` **`11/11` `graceful`**、**`10/11` `hard`**、**`11/11` `lane`**（且 `11/11` 通过 `1/(4N)`！）；对比 `ecmp` `6/11, 0/11 (miss=10), 3/11`、`reps` `10/11, 6/11, 9/11`、`sird` `11/11, 9/11, 10/11`。
+   - 四拓扑分层汇总（`graceful=16`, `hard=25`, `lane=25`）：`flex+spraycc` **`lane` `25 / 25`（100.0%，`0 phys, 0 impl`）**、**`graceful` `15 / 16`**、**`hard` `19 / 25`（`phys=1, impl=5, miss=0`）**。
+   - 权威归并脚本 `e1_losstable_sota_{lt,le}.md`（按 `(scenario, fault)` 跨拓扑取最差）：`flex+spraycc` **`lane` `11 / 11`（`0 phys, 0 impl`）**、**`graceful` `15 / 16`**、**`hard` `8 / 11`**。
 
-所有对照策略均先在**可见种子 `s1, s2`**（`tune_s12` `504` 次运行）择优调参锁定最优组合（`mprdma+dq2+ooo2` 优于 `ooo4..32` 与 `dcqcn`；`reps+spraycc` / `reps+dq2`；`hpn+caqm`；`ecmp+dq2+rtx+fd`；`adaptive+caqm+rtx+fd`），再在**未见种子 `s15, s16`** 盲测：
+### 2.2 阶段尾膨胀（`PhaseInfl`）与关键路径物理界（`DAGBound`）
 
-| 方案 | 主矩阵总均效 (`n=108`) | `F0` | `F3far3` | `H1far` | 丢任务 (`n=108`) | `ub_pod` | `cm_pod` | `cm_osub` | `ub_mesh` | `kv_io F3ssd3` | `dag_r17_fa` (`n=54`) |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **`flex+spraycc` (v6)** | **0.8271** | **0.8323** | **0.8206** | **0.8284** | **0** | **0.7779** | **0.8667** | **0.8283** | **0.9106** | **0.7654** | **0.9336** |
-| `mprdma+dq2+ooo2` | 0.6354 | 0.7497 | 0.3820 | 0.7747 | 0 | 0.6137 | 0.6348 | 0.5939 | 0.6937 | 0.4128 | 0.7926 |
-| `adaptive+caqm+rtx+fd` | 0.5953 | 0.6718 | 0.4202 | 0.6938 | 0 | 0.5391 | 0.6050 | 0.5566 | 0.7151 | 0.4070 | 0.6610 |
-| `reps+spraycc` | 0.5929 | 0.7374 | 0.3413 | 0.6999 | 2 | 0.5546 | 0.5973 | 0.5965 | 0.6193 | 0.3878 | 0.7979 |
-| `reps+dq2` | 0.5311 | 0.7076 | 0.1533 | 0.7324 | 8 | 0.4935 | 0.5312 | 0.4953 | 0.5940 | 0.3702 | 0.7103 |
-| `ecmp+dq2+rtx+fd` | 0.5099 | 0.6484 | 0.2128 | 0.6684 | 1 | 0.5141 | 0.5252 | 0.4144 | 0.5260 | 0.3830 | 0.6694 |
-| `hpn+caqm` | 0.2735 | 0.2846 | 0.2218 | 0.3142 | 0 | 0.2262 | 0.2772 | 0.2319 | 0.3487 | 0.3619 | 0.3471 |
+- **`F3far` 阶段尾膨胀（每方案 `34` 例；`mprdma` `28`，`flex+v6` `22`，`adaptive` `14`）**：`flex+spraycc` **`34 / 34` `one-off`（`0` 每阶段拖动）**，中位超额均值 **`1.62%`**，最大 **`6.75%`**；`flex+spraycc+v6` `22/22 one-off`（均值 `1.34%`，最大 `3.51%`）；全部 SOTA 基线均发生多例每阶段膨胀：`sird` `13/34`（最大 `28.46%`）、`reps` `12/34`（最大 `28.46%`）、`ecmp` `11/34`（最大 `49.84%`）、`mprdma` `8/28`（最大 `26.35%`）、`adaptive` `2/14`（最大 `22.32%`）。
+- **Clean E1 Fault-Aware DAGBound（`66` 多阶段作业，丢任务记 `0.0`）**：`flex+spraycc` **`0.9319`**（`F0 0.9579 / F3far 0.9428 / H1far 0.8950`）领先 `reps` (`0.8815`)、`sird` (`0.8674`)、`mprdma` (`0.8290`)、`adaptive` (`0.5822, 22/30`)、`ecmp` (`0.5330, 46/66`)、`hpn` (`0.2491, 54/66`)。
 
-### 3b. 单故障损失约束 `< 1/N`（严格按 `flexspray_losstable.py` 全口径并列 `<` 与 `<=`）
+### 2.3 动态故障（E2）、规模扩展（E3）、流控体制（E4）、敏感性与真实 Trace（E5）
 
-| 口径 / 数据集 | 语义 | `flex+spraycc` `tdev/N_dev` (`<` / `<=`) | `4N` / `N_scope` | `steady` (`n/a` 计分母) / `trans` | 最强 SOTA 对照 `tdev/N_dev` |
-|---|---|---|---:|---|---:|
-| **R17 主矩阵逐格 (`n=17`/语义)** | `hard` | `13/17` / `13/17` (`P=1, I=3`) | `1/17` / `13/17` | `6/17 (na=7)` / `13/17` | `mprdma`/`reps+dq2` `14/17` (`P=1,I=2`) |
-| **R17 主矩阵逐格 (`n=17`/语义)** | `lane` | **`14/17` / `14/17`** (`P=1, I=2`) | `0/17` / **`14/17`** | **`9/17 (na=6)`** / `14/17` | `hpn` / `reps+spraycc` **`1/17`**, 余 `0/17` |
-| **R17 主矩阵逐行 (`n=34`/语义)** | `hard` / `lane` | `26/34` / **`29/34`** (总 **`55/68`** `P=4,I=9`) | `3/68` / `55/68` | `28/68 (na=28)` / `55/68` | `mprdma` `28/34` / `1/34` (总 `29/68`) |
-| **R17 联合 `kv_io` 逐行 (`n=36`/语义)** | `hard` / `lane` | `28/36` / **`31/36`** (总 **`59/72`**) | `3/72` / `59/72` | `28/72 (na=32)` / `57/72` | `mprdma` `30/36` / `1/36` (总 `31/72`) |
-| **R15 `lm_old_cov` (`130` 格)** | `lane` | **`57/58`** (`P=0, I=1`) vs B1 `47/58` | `24/58` / **`58/58`** | **`57/58 (na=0)`** / `57/58` | 仅 B1 对比（已超越） |
-| **R15 `lm_bench` (`50` 格)** | `lane` | **`20/20`** (`P=0, I=0`) vs B1 `8/20` | `8/20` / **`20/20`** | `8/20 (na=12)` / `16/20` | `lm_aicb` (R16): **`18/18`** vs B1 `14/18` |
-
-### 3c. 多阶段尾膨胀与公开超节点 / AI Benchmark 总结
-
-- **多阶段尾膨胀（`flexspray_phaseinfl.py`）**：
-  - `R15 phase_bench`（`112` 例）：v6 **`112/112 one-off（0 per-phase）`**，中位超额均值 **`1.06%`**（max `8.75%`），B1 为 `91/21`（`10.07%` / max `92.88%`）。
-  - `R16 pi_bench` 非 KV（`216` 例）：v6 **`216/216 one-off`**（`1.45%` / max `8.76%`）vs B1 `184/32` / v53 `49/7`。
-  - `R17 pi_r17` 非 KV `F3far3`（`16` 例）：`flex` **`16/16 one-off`（`3.24%` / max `7.86%`）**；全部 6 个竞品陷入 per-phase 重放拖尾（`reps+spraycc 115.09%`、`adaptive 81.13%`、`hpn 34.63%`、`mprdma 241.34%`、`ecmp 240.43%`、`reps+dq2 602.88%`）。`r17_kv_io F3ssd3`：`flex` `9.73% / 15.19%` vs 竞品 `69.75%–262.91%`。
-- **硬件复杂度（T4 收口）**：Fabric 核心交换机 `0` 改动；L1/Edge `UbSwitchSprayCc` 仅 `m_kDelay + 1 B/口`（vs CAQM `4×64b` 向量 + 定时器）；报文头 `70 B` ACK；端侧 `O(P)`（`P<=10`）状态与分发归约；`TP_OPCODE_PROBE` 复用保留字。
+- **E2 动态复合故障**：`e2_dyn_ubpod`（`180` runs）`flex+spraycc` **`0.8383`**（`v6` `0.8256`、`mprdma` `0.5980`、`sird` `0.5440`、`reps` `0.5102`、`hpn` `0.2525`），并发故障 `F3multi` 达 **`0.8250`**（`4.37x` over `reps 0.1887`）；`e2_dyn_cmpod`（`64` runs）`flex+spraycc` **`0.8128`**（`H1heal 0.8236 vs v6 0.7478` **`+7.58 pp`**；`F3flap 0.8055 vs v6 0.7562` **`+4.93 pp`**）。
+- **E3 `cm_pod` 规模扩展（32 -> 64 -> 128 NPU）**：`S=8`（`--scale 0.5`, 90 runs）`flex+spraycc` `18/18`（均效 **`0.7314`**, `b_ring` DAGBound `0.8545`）；`S=16 d2d,b_kv`（`--scale 0.5`, 60 runs）`12/12`（**`0.9343`**）；`S=16 b_ring`（`--scale 0.25`, 30 runs）`6/6`（DAGBound **`0.8340`** vs `reps 0.7688`, `hpn 0.5387`, `ecmp 0.3623`）。
+- **E4 流控体制（`192` runs）**：`flex+spraycc` 在 `CBFC`（**`0.8923`**）、`PFC`（**`0.8923`** vs `sird+pfc 0.7883` / `ecmp+pfc 0.5493`）、`Lossy+SACK 256KB`（**`0.8001`** vs `reps 0.7119` / `ecmp 0.5426`）与 `Lossy+SACK 128KB`（**`0.7694`**）下全部 `24/24` 零丢任务完成。
+- **E5 敏感性与真实 SimAI Trace**：
+  - 零重调参跨 `100G / 400G / 800G` 与 `1x / 5x / 10x` RTT：`100G` **`0.8895`**（`18/18` vs `reps/sird 17/18`, `ecmp 16/18`）、`800G` **`0.8097`**、`5x RTT` **`0.8441`**、`10x RTT` **`0.7671`**（领先定长计时 `v6` `0.7463` **`+2.08 pp`**）；`H1far` 下高优控制 `ctrl_p99` 从 `v6` 的 `13.8–21.7 us` 压降至 **`1.47–5.45 us`**（**`3.4x–13.2x` 降幅**）。
+  - Alibaba SimAI `b_realtrace`（`192` runs）：`ub_pod` DAGBound **`0.7831`** / 原始均效 `0.2575`（`12/12`）、`cm_pod` DAGBound **`0.7949`** / 原始均效 `0.2847`（`12/12`），而 `adaptive` 与 `ecmp` 在 `H1far` 与 `F3multi` 全军覆没（各自 `8/12`，丢失 `2,743–3,079` 任务）。
 
 ---
 
-## 4. 已验证但尚未彻底消除的诚实边界与限制
+## 3. 代码、文档与 Git 状态清单
 
-1. **`b_moe H1far` 短阶段权衡**：在 `r17_cm b_moe H1far` 与 `r17_ub_pod b_moe H1far`，`flex`（`0.6937 / 0.6676`）低于 `mprdma+dq2+ooo2`（`0.7244 / 0.6895`，`-2.2 ~ -3.1 pp`），源于 `PortCommitDelay=6us` + 25 µs 探测在多屏障重启微增约 2 µs 延迟；同一工作负载在 `F3far3` 仍以 `0.6552 vs 0.1913` 领先 **3.42x**。
-2. **`ub_mesh` 单跳直连物理/路由限制**：`ub_mesh` 单跳直连边跨板绕行受限，`lm_r17` `2/12`（`phys=4, impl=6`）；整体盲测效率仍以 `0.9106` 显著高于 `adaptive 0.7151` / `mprdma 0.6937`。
-3. **`r17_kv_io F3ssd3` s16 指标**：SSD 仅 2 平面，单平面降至 1/4 后余下 62.5% 物理容量，`pi_r17_kv` s16 中位超额 `15.19% > 10%` 阈值（同组竞品为 `69.75%–262.91%`）。
-4. **其余开放项（见 [TODO.md](file:///home/cassius/ub/ns-3-ub/scratch/flexspray/TODO.md)）**：`T12` KV 混合读入公平性、`T15` `1/64` 单流极限下激进假死与 `fence_false_death_bidir`、写/读幂等与不重放/不回收语义假定（`T1-rest`）、`T22`（25/50/100 us）与 `T23`（`UB_LINK_HEALTH_FABRIC_WITHDRAW_NS`）常规敏感性已由早期轮次标注；仿真器运行速度不在性能要求范围（`T25`）。
-
----
-
-## 5. 数据索引与工作树状态
-
-- **冻结产物与日志**：`/home/cassius/ub/work/frozen/r17cand2/`；`/home/cassius/ub/work/exp/round15/{unseen_s15_16,s12,recov200_2}`；`/home/cassius/ub/work/exp/round16/`；`/home/cassius/ub/work/exp/round17/{tune_s12,r17_ub_pod,r17_cm,r17_cm_osub,r17_mesh,r17_kv,r17_kv_io,reg_r17cand2,lm_r17.jsonl,lm_r17_kv.jsonl,pi_r17.jsonl,pi_r17_kv.jsonl,dag_r17_fa.jsonl,dag_r17_kv_fa.jsonl}`。
-- **未跟踪目录保留**：`scratch/2nodes_single-tp/test/` 按约束保持原样未跟踪。
+- **核心交付目录**：`src/unified-bus/`（FlexSpray v7 C++ 实现与 17 项单测）、`README.md`、`scratch/flexspray/{THEORY,RESEARCH,REPORT,DELIVERY,BENCHMARK,EVAL_PROTOCOL,KNOBS,FEASIBILITY,TODO,README}.md`、`scratch/flexspray/traces/`、`scratch/flexspray/results/r19/`（共 `1.2 MB` `< 4 MB`）、`scratch/flexspray/fig/nsdi/`（6 组矢量 PDF + 300-DPI PNG 共 `2.3 MB`）。
+- **大小与清理约束检查**：`scratch/2nodes_single-tp/test/` 保持未跟踪状态；`scratch/flexspray/` 内**零文件大于 5 MB**。

@@ -66,7 +66,9 @@ def phase_lp(meta, fl, es_us):
     if not FAULT_AWARE or not meta.get("fault_rows"):
         return A.ideal_makespan_timeindexed_us(m, fls, m["ack_bytes"], None, with_fault=False)
     tf = meta["fault_ns"] / 1000.0
+    shift_ns = int(round(es_us * 1000.0))
     m["fault_ns"] = max(0.0, tf - es_us) * 1000.0
+    m["fault_rows"] = [[max(0, r[0] - shift_ns)] + list(r[1:]) for r in m["fault_rows"]]
     return A.ideal_makespan_timeindexed_us(m, fls, m["ack_bytes"], None, with_fault=True)
 
 

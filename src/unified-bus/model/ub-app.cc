@@ -487,6 +487,7 @@ UbApp::SendTraffic(UbTrafficGen::RuntimeTask task)
             {
                 wqe->SetAtomicOptions(*task.atomicOptions);
             }
+            wqe->SetPriority(task.priority);
             ubFunc->PushWqeToJetty(wqe, m_jettyNum);
         }
         m_jettyNum++; // m_jettyNum 在client里是唯一的，不重复的

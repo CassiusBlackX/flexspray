@@ -139,6 +139,8 @@ class UbRoutingProcess : public Object
      * it for that leaf (links-per-pair 1), and end-to-end probes still succeed via other spines.
      */
     void NoteOutputDown(uint16_t outPort);
+    /** Clear route withdrawal when a previously downed switch output link comes back UP. */
+    void ClearOutputDown(uint16_t outPort);
     /** Earliest time (ns) from which this switch has no live shortest output toward @p dip, as
      *  known along withdrawals up to @p depth hops away; INT64_MAX if it can still reach it. */
     int64_t UnreachableSinceNs(uint32_t dip, uint16_t inPort, int depth);

@@ -336,6 +336,9 @@ SCENARIOS = {"d2d": wl_d2d, "d2dread": wl_d2d_read, "h2d": wl_h2d, "a2a": wl_a2a
              "mixed": wl_mixed, "a2aread": wl_a2a_read, "mixedread": wl_mixed_read,
              "stagger": wl_stagger, "staggermixed": wl_stagger_mixed, "incast": wl_incast,
              "d2io": wl_d2io, "d2ioread": wl_d2io_read}
+import sys as _sys  # noqa: E402
+if __name__ == "__main__":
+    _sys.modules.setdefault("flexspray_case", _sys.modules[__name__])
 import flexspray_bench  # noqa: E402  (benchmark v1, multi-phase workloads)
 import flexspray_aicb   # noqa: E402  (stage 2 open-source AI benchmarks)
 import flexspray_topo_public  # noqa: E402  (stage 2 public supernode topologies)
@@ -436,6 +439,38 @@ def fault_rows(t, fault, t_ns, scenario="d2d"):
     if fault == "F4p4":     # server-0 SSD-plane L1 isolated: hits SSD0 (and NPUs) of server 0
         return [(t_ns, t.l1[(p_ssd, 0)], 0, "ISOLATE_NODE", "")], dict(dev="server0", dir="agg", n=t.P,
                                                                          plane=p_ssd)
+    if fault == "F3up3":    # 3 interior fabric links (L1->L2 or LRS inter-board) degraded 1/4
+        sw = t.l1[(p, 0)]
+        if getattr(t, "topo_name", "ub_pod") == "ub_mesh":
+            links = [(p, 0, 1, j) for j in range(min(3, t.J))]
+            n_scope = t.J
+        else:
+            links = [(p, 0, k, j) for k in range(t.K) for j in range(t.J)][:3]
+            n_scope = t.K * t.J
+        return [(t_ns, sw, t.l1_up_port[lk], "DEGRADE", f"1/{t.lanes}") for lk in links], \
+            dict(dev=None, dir="agg", n=n_scope, lanes_lost=t.lanes - 1, interior=True)
+    if fault == "F3heal":   # transient 1/4 lane degrade that self-heals via RESTORE +50us
+        return [(t_ns, npu10["id"], npu10["ports"][p], "DEGRADE", f"1/{t.lanes}"),
+                (t_ns + 50000, npu10["id"], npu10["ports"][p], "RESTORE", "")], \
+            dict(dev=npu10["id"], dir=far_dir, n=len(npu10["planes"]) * t.lanes,
+                 lanes_lost=t.lanes - 1, dynamic="heal")
+    if fault == "F3flap":   # repeated hard link flap DOWN -> UP -> DOWN -> UP
+        return [(t_ns, npu00["id"], npu00["ports"][p], "DOWN", ""),
+                (t_ns + 30000, npu00["id"], npu00["ports"][p], "UP", ""),
+                (t_ns + 60000, npu00["id"], npu00["ports"][p], "DOWN", ""),
+                (t_ns + 90000, npu00["id"], npu00["ports"][p], "UP", "")], \
+            dict(dev=npu00["id"], dir=near_dir, n=len(npu00["planes"]), dynamic="flap")
+    if fault == "F3multi":  # concurrent faults: far-end degrade at t_ns, near-end second-plane DOWN +30us
+        cand = [pl for pl in npu00["planes"] if pl != p]
+        p2 = 5 if 5 in cand else (cand[-1] if cand else p)
+        return [(t_ns, npu10["id"], npu10["ports"][p], "DEGRADE", f"1/{t.lanes}"),
+                (t_ns + 30000, npu00["id"], npu00["ports"][p2], "DOWN", "")], \
+            dict(dev=npu10["id"], dir=far_dir, n=len(npu10["planes"]) * t.lanes,
+                 second_dev=npu00["id"], second_plane=p2, dynamic="multi")
+    if fault == "H1heal":   # hard DOWN at t_ns followed by physical UP + TP recycling at +40us
+        return [(t_ns, npu10["id"], npu10["ports"][p], "DOWN", ""),
+                (t_ns + 40000, npu10["id"], npu10["ports"][p], "UP", "")], \
+            dict(dev=npu10["id"], dir=far_dir, n=len(npu10["planes"]), dynamic="h1heal")
     # Hard link-down variants (link_health DOWN): packets on the link are lost, nobody is told
     # except the link's own two ends (local detection); remote ends must detect it themselves.
     if fault.startswith("H"):
@@ -448,7 +483,8 @@ def fault_rows(t, fault, t_ns, scenario="d2d"):
 FAULTS = ["F0", "F1near", "F1far", "F2up", "F3near", "F3far", "F4",
           "F1ssd", "F3ssd", "F1nic", "F3nic", "F4p4",
           "H1near", "H1far", "H2up", "H4", "H1ssd", "H4p4",
-          "F3near2", "F3far2", "F3near3", "F3far3", "F3ssd2", "F3ssd3", "F3nic2", "F3nic3"]
+          "F3near2", "F3far2", "F3near3", "F3far3", "F3ssd2", "F3ssd3", "F3nic2", "F3nic3",
+          "F3up3", "F3heal", "F3flap", "F3multi", "H1heal"]
 
 
 # ---------------- schemes ----------------
@@ -536,6 +572,14 @@ def scheme_attrs(name):
         d["ns3::UbTransportChannel::FailureDetection"] = "true"
         d["ns3::UbTransportChannel::EnableRetrans"] = "true"
         d["ns3::UbTransportChannel::RetransmissionMode"] = "GBN"
+    elif base == "sird":        # SIRD-style receiver credit admission + oblivious packet spraying
+        d.update(flow("PER_PACKET_SHORTEST_PATHS")); d["ns3::UbRoutingProcess::MultipathSelector"] = "HASH64"
+        d["ns3::UbTransaction::TpgDispatchPolicy"] = "SIRD_CREDIT"
+        d["ns3::UbTransaction::SirdRxBudgetBytes"] = "0"
+        d["ns3::UbJetty::TaSegmentBytes"] = "16384"
+        d["ns3::UbTransportChannel::FailureDetection"] = "true"
+        d["ns3::UbTransportChannel::EnableRetrans"] = "true"
+        d["ns3::UbTransportChannel::RetransmissionMode"] = "GBN"
     elif base == "flex":        # FlexSpray switch layer
         d.update(flow("PER_PACKET_SHORTEST_PATHS")); d["ns3::UbRoutingProcess::MultipathSelector"] = "ADAPTIVE_RATE"
         d["ns3::UbTransaction::TpgDispatchPolicy"] = "MIN_DRAIN_TIME"
@@ -601,13 +645,17 @@ def scheme_attrs(name):
                 # member score x (1 + 0.3 x marked fraction). Picked on seen seed 1 (0, 0.3, 1, 4,
                 # 16), robust on seeds 1,2 over 0.15-0.5 (mixedread worst device 0.910-0.927).
                 d["ns3::UbTransaction::ReadIngressMarkWeight"] = "0.3"
-                # v6 (round 15): Time-Quantum Commitment & Reachability-Aware Pooling.
+                # v6 + v7 (round 18-19): dimensionless auto-scaling, silence-aware residual +
+                # control high-prio bypass, fast RESTORE recovery, and generation-fenced DOWN->UP
+                # TP recycling. (Pass +v6 for exact Round 17 fixed-timer v6 behavior.)
                 d["ns3::UbTransportChannel::RtoSrttFactor"] = "8"
                 d["ns3::UbTransportChannel::RtoFloorFirstOnly"] = "true"
                 d["ns3::UbTransportChannel::PortCommitDelay"] = "6us"
+                d["ns3::UbTransportChannel::CommitDelayRttFactor"] = "4.0"
                 d["ns3::UbTransaction::ServiceTimeScore"] = "true"
                 d["ns3::UbTransportChannel::ServiceResidual"] = "true"
-                d["ns3::UbTransportChannel::ReadPortBudgetBytes"] = "409600"
+                d["ns3::UbTransportChannel::ReadPortBudgetBytes"] = "0"
+                d["ns3::UbTransportChannel::ReadPortCommitDelay"] = "8us"
                 d["ns3::UbTransaction::ReadScoreReturnRate"] = "true"
                 d["ns3::UbTransportChannel::ReadBudgetScaleByRate"] = "true"
                 d["ns3::UbTransaction::TimeQuantumSeg"] = "true"
@@ -622,13 +670,36 @@ def scheme_attrs(name):
                 d["ns3::UbTransportChannel::ResidualIdleHalfLife"] = "150us"
                 d["ns3::UbTransportChannel::DeliveryRateQueueAware"] = "true"
                 d["ns3::UbTransportChannel::CoalescePortTrigger"] = "true"
+                d["ns3::UbTransportChannel::BypassCommitForHighPrio"] = "true"
+                d["ns3::UbTransaction::BypassCommitForHighPrio"] = "true"
+                d["ns3::UbTransportChannel::SilenceAwareResidual"] = "true"
+                d["ns3::UbTransportChannel::ProbeTimeoutSrttFactor"] = "2.5"
+                d["ns3::UbTransportChannel::ResetRateOnPortUpgrade"] = "true"
+                d["ns3::UbTransportChannel::RecycleAfterLinkUp"] = "true"
+                d["ns3::UbTransportChannel::FailureRecycleInterval"] = "25us"
+                d["ns3::UbHostSprayCc::RecoverFastOnUnmarked"] = "true"
+        elif opt == "v6":   # Round 17 fixed-timer v6 baseline alias (no v7 upgrades)
+            d["ns3::UbTransportChannel::PortCommitDelay"] = "6us"
+            d["ns3::UbTransportChannel::CommitDelayRttFactor"] = "0"
+            d["ns3::UbTransportChannel::ReadPortBudgetBytes"] = "409600"
+            d["ns3::UbTransportChannel::ReadPortCommitDelay"] = "0ns"
+            d["ns3::UbTransportChannel::BypassCommitForHighPrio"] = "false"
+            d["ns3::UbTransaction::BypassCommitForHighPrio"] = "false"
+            d["ns3::UbTransportChannel::SilenceAwareResidual"] = "false"
+            d["ns3::UbTransportChannel::ProbeTimeoutSrttFactor"] = "0"
+            d["ns3::UbTransportChannel::ResetRateOnPortUpgrade"] = "false"
+            d["ns3::UbTransportChannel::RecycleAfterLinkUp"] = "false"
+            d["ns3::UbTransportChannel::FailureRecycleInterval"] = "25us"
+            d["ns3::UbHostSprayCc::RecoverFastOnUnmarked"] = "false"
         elif opt == "v53":  # legacy v5.3 (B0) baseline alias
             d["ns3::UbTransportChannel::RtoSrttFactor"] = "0"
             d["ns3::UbTransportChannel::RtoFloorFirstOnly"] = "false"
             d["ns3::UbTransportChannel::PortCommitDelay"] = "0ns"
+            d["ns3::UbTransportChannel::CommitDelayRttFactor"] = "0"
             d["ns3::UbTransaction::ServiceTimeScore"] = "false"
             d["ns3::UbTransportChannel::ServiceResidual"] = "false"
             d["ns3::UbTransportChannel::ReadPortBudgetBytes"] = "0"
+            d["ns3::UbTransportChannel::ReadPortCommitDelay"] = "0ns"
             d["ns3::UbTransaction::ReadScoreReturnRate"] = "false"
             d["ns3::UbTransportChannel::ReadBudgetScaleByRate"] = "false"
             d["ns3::UbTransaction::TimeQuantumSeg"] = "false"
@@ -643,13 +714,23 @@ def scheme_attrs(name):
             d["ns3::UbTransportChannel::ResidualIdleHalfLife"] = "0ns"
             d["ns3::UbTransportChannel::DeliveryRateQueueAware"] = "false"
             d["ns3::UbTransportChannel::CoalescePortTrigger"] = "false"
+            d["ns3::UbTransportChannel::BypassCommitForHighPrio"] = "false"
+            d["ns3::UbTransaction::BypassCommitForHighPrio"] = "false"
+            d["ns3::UbTransportChannel::SilenceAwareResidual"] = "false"
+            d["ns3::UbTransportChannel::ProbeTimeoutSrttFactor"] = "0"
+            d["ns3::UbTransportChannel::ResetRateOnPortUpgrade"] = "false"
+            d["ns3::UbTransportChannel::RecycleAfterLinkUp"] = "false"
+            d["ns3::UbTransportChannel::FailureRecycleInterval"] = "25us"
+            d["ns3::UbHostSprayCc::RecoverFastOnUnmarked"] = "false"
         elif opt == "b1":   # legacy B1 baseline alias (v5.3 + adaptive RTO only)
             d["ns3::UbTransportChannel::RtoSrttFactor"] = "8"
             d["ns3::UbTransportChannel::RtoFloorFirstOnly"] = "true"
             d["ns3::UbTransportChannel::PortCommitDelay"] = "0ns"
+            d["ns3::UbTransportChannel::CommitDelayRttFactor"] = "0"
             d["ns3::UbTransaction::ServiceTimeScore"] = "false"
             d["ns3::UbTransportChannel::ServiceResidual"] = "false"
             d["ns3::UbTransportChannel::ReadPortBudgetBytes"] = "0"
+            d["ns3::UbTransportChannel::ReadPortCommitDelay"] = "0ns"
             d["ns3::UbTransaction::ReadScoreReturnRate"] = "false"
             d["ns3::UbTransportChannel::ReadBudgetScaleByRate"] = "false"
             d["ns3::UbTransaction::TimeQuantumSeg"] = "false"
@@ -664,6 +745,14 @@ def scheme_attrs(name):
             d["ns3::UbTransportChannel::ResidualIdleHalfLife"] = "0ns"
             d["ns3::UbTransportChannel::DeliveryRateQueueAware"] = "false"
             d["ns3::UbTransportChannel::CoalescePortTrigger"] = "false"
+            d["ns3::UbTransportChannel::BypassCommitForHighPrio"] = "false"
+            d["ns3::UbTransaction::BypassCommitForHighPrio"] = "false"
+            d["ns3::UbTransportChannel::SilenceAwareResidual"] = "false"
+            d["ns3::UbTransportChannel::ProbeTimeoutSrttFactor"] = "0"
+            d["ns3::UbTransportChannel::ResetRateOnPortUpgrade"] = "false"
+            d["ns3::UbTransportChannel::RecycleAfterLinkUp"] = "false"
+            d["ns3::UbTransportChannel::FailureRecycleInterval"] = "25us"
+            d["ns3::UbHostSprayCc::RecoverFastOnUnmarked"] = "false"
         elif opt == "rim0":  # ablation: no ingress-mark READ steering (v5.2 behaviour)
             d["ns3::UbTransaction::ReadIngressMarkWeight"] = "0"
         elif opt.startswith("ai") and opt[2:].isdigit():  # ablation: AiFraction in percent (ai5 = v5.1)
@@ -701,10 +790,28 @@ def scheme_attrs(name):
             d["ns3::UbSwitchAllocator::TpGroupFairShareUsableOnly"] = "true"
         elif opt.startswith("fx"):  # fair-share exponent, e.g. fx2 or fx1.5
             d["ns3::UbSwitchAllocator::TpGroupFairShareExponent"] = opt[2:]
-        elif opt.startswith("buf"):  # shallow switch buffer: CBFC credit per VL per port (KB)
+        elif opt == "fc_none":
+            d["ns3::UbSwitch::FlowControl"] = "NONE"
+        elif opt == "fc_pfc":
+            d["ns3::UbSwitch::FlowControl"] = "PFC_DYNAMIC"
+            d["ns3::UbQueueManager::ReservePerQueueBytes"] = "65536"
+            d["ns3::UbQueueManager::SharedPoolBytes"] = "2097152"
+            d["ns3::UbQueueManager::HeadroomPerPortBytes"] = "65536"
+            d["ns3::UbQueueManager::AlphaShift"] = "1"
+        elif opt == "sack":
+            d["ns3::UbTransportChannel::EnableRetrans"] = "true"
+            d["ns3::UbTransportChannel::RetransmissionMode"] = "SELECTIVE"
+            d["ns3::UbTransportChannel::EnableFastRetrans"] = "true"
+        elif opt.startswith("sirdbuf") and opt[7:].isdigit():
+            d["ns3::UbTransaction::SirdRxBudgetBytes"] = str(int(opt[7:]) * 1024)
+        elif opt.startswith("buf") and opt[3:].isdigit():  # shallow switch buffer (CBFC cells or NONE queue cap)
             kb = int(opt[3:])
             d["ns3::UbPort::CbfcInitCreditCell"] = str(kb * 1024 // 160)   # 160 B cells
             d["ns3::UbPort::CbfcCtrlCrdRtrThldCell"] = "64"   # must stay below the credit
+            if "fc_none" in parts[1:]:
+                d["ns3::UbQueueManager::ReservePerQueueBytes"] = str(kb * 1024)
+                d["ns3::UbQueueManager::SharedPoolBytes"] = "0"
+                d["ns3::UbQueueManager::HeadroomPerPortBytes"] = "0"
         elif opt.startswith("rd"):  # read pipeline depth (rd0 = shared with writes, v1)
             d["ns3::UbTransportChannel::MaxActiveReadSegments"] = opt[2:]
         elif opt.startswith("seg"):
@@ -727,8 +834,27 @@ def scheme_attrs(name):
     return d, g, cc
 
 
-def write_attrs(out, scheme, sample_ns=1000):
+def _scale_dcqcn_rate(val_str, factor):
+    if val_str.endswith("Gbps"):
+        gbps = float(val_str[:-4]) * factor
+        return f"{int(round(gbps * 1000))}Mbps"
+    if val_str.endswith("Mbps"):
+        mbps = float(val_str[:-4]) * factor
+        return f"{int(round(mbps))}Mbps"
+    return val_str
+
+
+def write_attrs(out, scheme, sample_ns=1000, rate_gbps=400):
     d, g, cc = scheme_attrs(scheme)
+    if rate_gbps != 400:
+        d["ns3::UbPort::UbDataRate"] = f"{rate_gbps}Gbps"
+        if cc == "dcqcn":
+            d["ns3::UbHostDcqcn::LineRate"] = f"{rate_gbps}Gbps"
+            d["ns3::UbHostDcqcn::InitialRate"] = f"{rate_gbps}Gbps"
+            fac = rate_gbps / 400.0
+            for k in ("ns3::UbHostDcqcn::RateAi", "ns3::UbHostDcqcn::HyperAiRate"):
+                if k in d:
+                    d[k] = _scale_dcqcn_rate(d[k], fac)
     g.setdefault("UB_CC_ENABLED", "false")
     g.update({"UB_TRACE_ENABLE": "true", "UB_TASK_TRACE_ENABLE": "true",
               "UB_PACKET_TRACE_ENABLE": "false", "UB_PORT_TRACE_ENABLE": "false",
@@ -765,12 +891,18 @@ def main(argv=None):
                          "oversubscribed")
     ap.add_argument("--topo", choices=("ub_pod", "cm_pod", "cm_pod_osub", "ub_mesh"),
                     default="ub_pod", help="fabric topology family")
+    ap.add_argument("--rate-gbps", type=int, default=400, help="port link rate in Gbps (100/400/800)")
+    ap.add_argument("--fabric-delay-ns", type=int, default=100,
+                    help="fabric L1-L2 / LRS inter-board link propagation delay in ns")
     a = ap.parse_args(argv)
     os.makedirs(a.out, exist_ok=True)
     if a.topo == "ub_pod":
-        t = Topo(servers=a.servers, links_per_pair=a.links_per_pair)
+        t = Topo(servers=a.servers, links_per_pair=a.links_per_pair,
+                 rate_gbps=a.rate_gbps, fabric_link_ns=a.fabric_delay_ns)
     else:
-        t = flexspray_topo_public.build_topo(a.topo, servers=a.servers)
+        t = flexspray_topo_public.build_topo(a.topo, servers=a.servers,
+                                             rate_gbps=a.rate_gbps,
+                                             fabric_link_ns=a.fabric_delay_ns)
     t.write(a.out)
     fn = SCENARIOS[a.scenario]
     tasks = fn(t, a.scale, seed=a.seed) if a.scenario in SEEDED else fn(t, a.scale)
@@ -781,7 +913,7 @@ def main(argv=None):
             return t.find_host(h["type"], (h["server"] + a.map) % t.S, cnt[h["type"]] - 1 - h["idx"])["id"]
         tasks = [(remap(x[0]), remap(x[1])) + tuple(x[2:]) for x in tasks]
     write_traffic(a.out, tasks)
-    cc = write_attrs(a.out, a.scheme, a.sample_ns)
+    cc = write_attrs(a.out, a.scheme, a.sample_ns, rate_gbps=a.rate_gbps)
     if a.drop:
         with open(os.path.join(a.out, "fault.csv"), "w") as f:
             f.write("taskId,faultType,dropRate(%),delay(ns),lowerDataRate(node port datrate(Mbps)),"

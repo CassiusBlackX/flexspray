@@ -77,11 +77,36 @@ class UbReplayFenceTag : public Tag
         return tid;
     }
     TypeId GetInstanceTypeId() const override { return GetTypeId(); }
-    uint32_t GetSerializedSize() const override { return 4; }
-    void Serialize(TagBuffer b) const override { b.WriteU32(supersededTpn); }
-    void Deserialize(TagBuffer b) override { supersededTpn = b.ReadU32(); }
-    void Print(std::ostream& os) const override { os << supersededTpn; }
+    uint32_t GetSerializedSize() const override { return 8; }
+    void Serialize(TagBuffer b) const override
+    {
+        b.WriteU32(supersededTpn);
+        b.WriteU32(supersededGen);
+    }
+    void Deserialize(TagBuffer b) override
+    {
+        supersededTpn = b.ReadU32();
+        supersededGen = b.ReadU32();
+    }
+    void Print(std::ostream& os) const override { os << supersededTpn << ':' << supersededGen; }
     uint32_t supersededTpn{UINT32_MAX};
+    uint32_t supersededGen{0};
+};
+
+class UbTpGenTag : public Tag
+{
+  public:
+    static TypeId GetTypeId()
+    {
+        static TypeId tid = TypeId("ns3::UbTpGenTag").SetParent<Tag>().AddConstructor<UbTpGenTag>();
+        return tid;
+    }
+    TypeId GetInstanceTypeId() const override { return GetTypeId(); }
+    uint32_t GetSerializedSize() const override { return 4; }
+    void Serialize(TagBuffer b) const override { b.WriteU32(gen); }
+    void Deserialize(TagBuffer b) override { gen = b.ReadU32(); }
+    void Print(std::ostream& os) const override { os << gen; }
+    uint32_t gen{0};
 };
 
 struct UbTransportGroupMember
@@ -395,8 +420,26 @@ public:
     double GetPortEgressWaitNs() const;
     double GetLocalServiceNs(uint64_t extraBytes) const;
     double GetServiceResidualNs() const;
+    /** Silence / suspect / dead penalty (0 when healthy); used both directly and across siblings on the same (port, dest). */
+    double GetOwnSilencePenaltyNs() const;
+    double GetSilencePenaltyNs() const;
     double GetReadBudgetWaitNs(uint64_t extraBytes) const;
-    bool IsPortCommitEnabled() const { return m_portCommitDelay.IsStrictlyPositive(); }
+    bool IsPortCommitEnabled() const
+    {
+        return m_portCommitDelay.IsStrictlyPositive() || m_commitDelayRttFactor > 0.0;
+    }
+    Time EffectivePortCommitDelay() const;
+    Time EffectiveSuspectAfter() const;
+    Time EffectiveProbeTimeout() const;
+    bool IsHighPrioControlSegment(Ptr<const UbWqeSegment> segment) const;
+    bool IsReadBudgetEnabled() const;
+    void OnLocalPortRateIncreased(double newBps);
+    void ScheduleImmediateRecoveryProbe();
+    void RecycleToGeneration(uint32_t newGen);
+    uint32_t GetTpGeneration() const { return m_tpGeneration; }
+    bool IsRecycleAfterLinkUp() const { return m_recycleAfterLinkUp; }
+    bool FenceInboundThroughGen(uint32_t supersededGen);
+    void AcceptNewInboundGeneration(uint32_t newGen);
     bool ReadBudgetRefuses(Ptr<const UbWqeSegment> segment) const;
     bool ReadQuotaRefuses(Ptr<const UbWqeSegment> segment) const;
     bool IsAcceptingNewWorkForTest() const { return m_isActive; }
@@ -450,6 +493,7 @@ public:
         uint64_t peak{0};
         uint64_t refusals{0};
         uint32_t active{0}; // TPs of the port currently holding counted bytes
+        double maxMinRttNs{0.0};
     };
     static std::unordered_map<uint64_t, PortEgressState>& PortEgress();
     void EgressWake(PortEgressState& st);
@@ -462,6 +506,8 @@ public:
     uint64_t m_egReported{0};
     mutable bool m_egWaiting{false};
     Time m_portCommitDelay{Seconds(0)};
+    double m_commitDelayRttFactor{0.0};
+    bool m_bypassCommitForHighPrio{false};
     // Round 10, ServiceResidual: post-send residual (last byte sent -> TP ACK) per TP.
     struct TxLastSample
     {
@@ -470,6 +516,7 @@ public:
     };
     bool m_serviceResidual{false};
     bool m_residualSubtractOwn{false};
+    bool m_silenceAwareResidual{false};
     Time m_residualIdleHalfLife{Seconds(0)};
     std::unordered_map<const UbWqeSegment*, TxLastSample> m_txLastNs;
     double m_residualNs{-1.0};
@@ -479,10 +526,18 @@ public:
     void NoteSegmentAcked(const UbWqeSegment* seg);
     // READ budget scope: one budget per (node, port).
     uint64_t PortKey() const { return (uint64_t{m_nodeId} << 16) | m_sport; }
+    Time m_readPortCommitDelay{Seconds(0)};
     bool m_readBudgetScaleByRate{false};
     bool m_readBudgetRepoolDead{false};
     bool m_readBudgetWorkConserving{false};
+    uint64_t BaseReadBudgetBytes(PortReadState& st) const;
     uint64_t EffectiveReadBudget(PortReadState& st) const;
+    UbPort* GetCachedPort() const;
+    UbController* GetCachedController() const;
+    mutable UbPort* m_cachedPort{nullptr};
+    mutable UbController* m_cachedController{nullptr};
+    mutable uint64_t m_cachedPathSiblingsVer{0};
+    mutable const std::vector<Ptr<UbTransportChannel>>* m_cachedPathSiblings{nullptr};
     double GetPortRateBps() const;
     double GetCcRateBps() const;
     static void DumpBudgetStats();
@@ -672,6 +727,7 @@ public:
     uint64_t GetPsnRecvNxt() const;
     void TriggerTransportTransmit();
     bool IsCcLimitedForRetransmission(uint32_t payloadBytes) const;
+    uint64_t GetSelectiveUnackedBytes() const;
     void SetSendWindowLimited(bool limited);
     void OnSelectiveRetransmissionPacketSent(uint64_t psn, uint32_t payloadBytes);
     void OnSenderReceivesTpsackCongestionFeedback(uint64_t psn,
@@ -873,12 +929,20 @@ private:
     bool m_fdEnabled{false};
     Time m_fdSuspectAfter;
     Time m_fdProbeTimeout;
+    double m_probeTimeoutSrttFactor{0.0};
     uint32_t m_fdProbeRetries{2};
     FdState m_fdState{FdState::HEALTHY};
     uint32_t m_fdProbesSent{0};
     uint64_t m_fdProbesTotal{0};
     Time m_lastPeerActivity;
     EventId m_fdEvent;
+    EventId m_recycleEvent;
+    Time m_fdRecycleInterval{MicroSeconds(25)};
+    bool m_recycleAfterLinkUp{false};
+    bool m_resetRateOnPortUpgrade{false};
+    uint32_t m_tpGeneration{0};
+    uint32_t m_rxGen{0};
+    uint32_t m_fencedBeforeGen{0};
     bool m_dead{false};
     bool m_inboundFenced{false};
     uint64_t m_fencedDrops{0};
@@ -886,7 +950,8 @@ private:
     void ArmFailureDetector();
     void OnPeerActivity();
     void CheckFailure();
-    void EnqueueProbe(TpOpcode opcode);
+    void SendRecoveryProbe();
+    void EnqueueProbe(TpOpcode opcode, std::optional<uint32_t> genTag = std::nullopt);
     bool m_deliveryRateAppLimitedGuard{false};
     bool m_deliveryRateQueueAware{false};
     bool m_coalescePortTrigger{false};

@@ -146,6 +146,7 @@ class UbTransportChannelManager : public Object
     /** Return whether the logical endpoint record exists. */
     bool Contains(uint32_t tpn) const;
     uint32_t GetCount() const;
+    uint64_t GetVersion() const;
     std::map<uint32_t, Ptr<UbTransportChannel>> GetTpnMap() const;
 
   private:
@@ -179,6 +180,7 @@ class UbTransportChannelManager : public Object
     UbController* m_controller{nullptr};
     std::map<uint32_t, EndpointRecord> m_endpoints;
     uint32_t m_transportsCount{0};
+    uint64_t m_endpointsVersion{0};
 };
 
 } // namespace ns3

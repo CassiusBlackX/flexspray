@@ -81,14 +81,30 @@ public:
     // Hard link-down (link_health DOWN) and transport failure detection.
     /** The device's own port @p port went down: every TP sourced on it is dead (local detect). */
     void OnLocalPortDown(uint16_t port);
+    /** The device's own port @p port came back UP: kick recovery probes on dead TPs using it. */
+    void OnLocalPortUp(uint16_t port);
+    /** The device's own port @p port recovered to a higher link rate: reset degraded estimators. */
+    void OnLocalPortRateIncreased(uint16_t port, double newBps);
+    /** Recycle a previously dead TP onto @p newGen after 1-RTT probe verification. */
+    void RecycleDeadTp(const Ptr<UbTransportChannel>& tp, uint32_t newGen);
+    /** Max overdue silence / suspect / dead penalty among live siblings sharing (@p sport, @p dest). */
+    double GetPathSilencePenaltyNs(uint16_t sport,
+                                   uint32_t dest,
+                                   const UbTransportChannel* excludeTp) const;
+    /** Fast pointer+version cached lookup of siblings sharing (@p sport, @p dest). */
+    const std::vector<Ptr<UbTransportChannel>>* GetPathSiblingsFast(
+        uint16_t sport,
+        uint32_t dest,
+        uint64_t& cachedVer,
+        const std::vector<Ptr<UbTransportChannel>>*& cachedPtr) const;
     /** Reversible: a TP whose peer stopped answering admits no new segments while probing. */
     void SetTpSuspect(const Ptr<UbTransportChannel>& tp, bool suspect);
     /** Permanent: the TP's path is gone. Its unfinished segments are re-sent on live members of
      *  its TP group; the TP admits nothing and sends nothing any more. */
     void DeclareTpDead(const Ptr<UbTransportChannel>& tp, const char* cause);
     bool IsTpDead(const Ptr<UbTransportChannel>& tp) const;
-    /** Replay fence: fence the local TP paired with @p peerNode's TP @p peerTpn. */
-    void FenceInboundTp(uint32_t peerNode, uint32_t peerTpn);
+    /** Replay fence: fence the local TP paired with @p peerNode's TP @p peerTpn through @p supersededGen. */
+    void FenceInboundTp(uint32_t peerNode, uint32_t peerTpn, uint32_t supersededGen = 0);
     void DeclareTpDeadByFence(Ptr<UbTransportChannel> tp);
 
 
@@ -258,6 +274,7 @@ public:
     friend class ::utils::UbUtils;
 
     void DoDispose() override;
+    void EnsurePathCacheFresh() const;
     void FinalizeRtpTpGroupMemberRemoval(Ptr<UbTransportGroup> group, uint32_t index);
     void FinalizeRtpTpGroupDestroy(Ptr<UbTransportGroup> group);
     std::vector<uint16_t> ValidateCtpEntityDefinition(
@@ -288,6 +305,9 @@ public:
     Ptr<TpConnectionManager> m_tpConnectionManager;
     uint32_t m_activeSenderFlowCount{0};
     bool m_disposing{false};
+    mutable uint64_t m_pathCacheTpnVersion{UINT64_MAX};
+    mutable uint64_t m_pathCacheVersion{1};
+    mutable std::unordered_map<uint64_t, std::vector<Ptr<UbTransportChannel>>> m_pathSiblingsCache;
     Time m_initiatorProtocolDispatchDelay{NanoSeconds(0)};
     Time m_initiatorProtocolCompletionVisibilityDelay{NanoSeconds(0)};
 };

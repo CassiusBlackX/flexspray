@@ -114,6 +114,10 @@ public:
     // 发送端TP在发送工作清空后进入空闲态
     virtual void OnSenderTransportIdle() {}
     virtual void OnTpDestroyRequested() {}
+    /** Notify sender CC when its local attached port recovers to a higher link rate (e.g. RESTORE). */
+    virtual void OnPortRateRestored(double newPortRateBps) { (void)newPortRateBps; }
+    /** Reset sender/receiver CC window & timers when a previously dead TP recycles to a new generation. */
+    virtual void OnTpRecycled() {}
 
     // 绑定switch，初始化参数
     virtual void OnSwitchAttached(Ptr<UbSwitch> sw);

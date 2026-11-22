@@ -51,6 +51,8 @@ public:
                                         UbCongestionExtTph header) override;
     void OnSenderTransportIdle() override;
     void OnTpDestroyRequested() override;
+    void OnPortRateRestored(double newPortRateBps) override;
+    void OnTpRecycled() override;
     void RescalePacingDebt(uint64_t previousBitRate);
     void ApplyRecoveryIncreaseRate(bool byteDriven);
 

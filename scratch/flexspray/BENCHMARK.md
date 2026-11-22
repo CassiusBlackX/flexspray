@@ -111,3 +111,19 @@
 | `b_deepep_prefill` | DeepSeek-V3 / AICB 双模态服务 | 2 层重流量 Prefill (`~115 us` Combine) + 4 层短爆发 Decode (`~22 us` Combine) | 消息尺寸 ±15%（Prefill）/ ±20%（Decode）随机抖动 | 检验大流量排队与后续微秒级 Decode 低时延需求在同一故障残留下的切换 |
 | `b_nccl_pipe` | NCCL 双环多块流水线 Ring AllReduce | 6 个宏观流水阶段 × 2 并发切片 × 双向双环邻居交换 | `GAP_PIPE_NS=2000`, 单阶段目标 `65 us`, 约 `400 us` 连续流 | 去除全局每步强屏障，聚焦持续流控与尾段拖延 |
 | `b_kv_skew` | Mooncake (`FAST'25`) KVCache 读写混合 | 4 轮并发（`20 us` 轮间隔）：随机 `>=4` 个 `NPU6..7` 从 `SSD0` 热读扇入 + 全部 `NPU6..7` 向其余 SSD 异步写卸载 | 读阶段目标 `70 us`（`SSD0` 吸收 60% 读请求）、写阶段目标 `25 us`，支持 `--scale 0.5 / 1.0 / 2.0` | 通过 **SSD 平面 `4,5`**（在 `ub_pod` 中对应 port `4,5`）收发，故故障测试必须使用 `F3ssd3 / H1ssd`（`r17_kv_io`），`F3far3 / H1far` 不穿过 SSD 口 |
+
+---
+
+## 10. Round 19 新增资产：真实 SimAI Collective Trace 与动态/流控/规模盲测扩展
+
+为进一步检验从学术真实工作负载 Trace、规模、流控体制到参数鲁棒性的外推泛化能力，Round 19 在原有合成/AICB 套件上新增：
+
+1. **真实公开 AI 集群集合通信 Trace（`b_realtrace`）**：
+   - 原始来源：Alibaba [`aliyun/SimAI`](https://github.com/aliyun/SimAI)（Apache-2.0，commit `a57d765c`，文件 `example/workload_analytical.txt` -> [simai_workload_analytical.txt](traces/simai_workload_analytical.txt)）。
+   - 转换规则：由 [convert_trace.py](traces/convert_trace.py) 提取完整 Hybrid Transformer + MoE 前向/反向块与 Embedding AllReduce（共 **18 个带 `deps` 依赖的集合通信阶段**，覆盖 `tp` `allgather`/`reducescatter`/`alltoall`、`ep` `alltoall`、`all` `allgather`/`reducescatter` 及 `dp` `allreduce`），按 `1/128` 保持相对尺寸比例写入 [real_collective_trace.csv](traces/real_collective_trace.csv)，并在 `ub_pod` 与 `cm_pod` 上覆盖 `F0 / F1far / F3far / H1far / F3heal / F3multi` 六类故障盲测（E5 `192` runs）。
+2. **E2 动态复合故障扩展（`flexspray_case.py`）**：
+   - 新增 `F3heal`（`50 us` 降速 `+50 us RESTORE` 自愈）、`H1heal`（硬断 `+40 us UP` 物理恢复与代际升代回收）、`F3flap`（`DOWN -> UP -> DOWN -> UP` 连续闪烁）、`F3multi`（`t_f` 远端 `1/4` 降速叠加 `+30 us` 近端异平面 `DOWN`）与 `F3up3`（核心上行 3 链路 `1/4` 降速）。
+3. **E3 大规模超节点扩展**：
+   - `cm_pod` 扩展至 **`S=8`（`64` NPU，--scale `0.5`）** 与 **`S=16`（`128` NPU，`d2d, b_kv` 使用 `--scale 0.5`，`b_ring` 使用 `--scale 0.25`）**，验证 128 NPU、180 次盲测零失败与无显著效率塌缩。
+4. **E4 流控与有损体制扩展**：
+   - 在 `a2a / incast / b_moe / mixed` 上统一对照 `CBFC`、`PFC_DYNAMIC`（`+fc_pfc`）与关闭硬件流控的 `NONE + SELECTIVE SACK + EnableFastRetrans`（`buf128` / `buf256` 浅缓冲，`192` runs）。

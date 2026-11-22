@@ -144,7 +144,16 @@ TypeId UbTransaction::GetTypeId(void)
                             UbTpgDispatchPolicy::MPRDMA_OOO,
                             "MPRDMA_OOO",
                             UbTpgDispatchPolicy::PINNED_PLANE,
-                            "PINNED_PLANE"))
+                            "PINNED_PLANE",
+                            UbTpgDispatchPolicy::SIRD_CREDIT,
+                            "SIRD_CREDIT"))
+        .AddAttribute(
+            "SirdRxBudgetBytes",
+            "SIRD_CREDIT only: global receiver credit budget per destination node (bytes). "
+            "0 = auto (262144 x live receiver planes).",
+            UintegerValue(0),
+            MakeUintegerAccessor(&UbTransaction::m_sirdRxBudgetBytes),
+            MakeUintegerChecker<uint64_t>())
         .AddAttribute(
             "MpRdmaOooThreshold",
             "MPRDMA_OOO only: maximum out-of-order lag (packets) relative to the fastest live "
@@ -236,6 +245,13 @@ TypeId UbTransaction::GetTypeId(void)
             "target fences that TP pair (drops its later packets) before executing the replay.",
             BooleanValue(true),
             MakeBooleanAccessor(&UbTransaction::m_replayFence),
+            MakeBooleanChecker())
+        .AddAttribute(
+            "BypassCommitForHighPrio",
+            "Give small high-priority control WQEs (priority <= 3 and size <= MTU) priority over "
+            "bulk WQEs in RTP batch dispatch so commit delays never head-of-line block control.",
+            BooleanValue(false),
+            MakeBooleanAccessor(&UbTransaction::m_bypassCommitForHighPrio),
             MakeBooleanChecker());
     return tid;
 }
@@ -306,7 +322,7 @@ UbTransaction::ServiceTimeNs(const Ptr<UbTransportChannel>& transport,
         {
             score *= (1.0 + m_readIngressMarkWeight * transport->GetPortResponseMarkFraction());
         }
-        return score;
+        return score + transport->GetSilencePenaltyNs();
     }
     // Data: departure, the TP's bytes already in flight ahead of it, and the post-send residual
     // (remote queueing and ACK return seen by this TP's own segments).
@@ -1435,6 +1451,9 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
     const bool atomic = IsAtomicTransaction(originatingWqe->GetType());
     const bool isReadReq = segment->GetType() == UbTransactionOpcode::READ &&
                            segment->GetSegmentKind() == UbTransactionSegmentKind::REQUEST;
+    bool sirdChargePending = false;
+    uint32_t sirdCreditDst = UINT32_MAX;
+    RtpTxQueueKey sirdQKey{};
     if (reference.IsDirectTp())
     {
         if (!atomic && isReadReq && m_readQuantumBytes > 0 &&
@@ -1454,6 +1473,65 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
         const RtpTpgMaterialization& materialization =
             MaterializeRtpTpGroup(jettyNum, reference, selectedGroup);
         Ptr<UbController> ownerController = GetOwnerController();
+        if (m_tpgDispatchPolicy == UbTpgDispatchPolicy::SIRD_CREDIT)
+        {
+            const bool sirdIsCtrl =
+                static_cast<uint32_t>(originatingWqe->GetPriority()) <= 3 &&
+                segment->GetSize() <= UB_MTU_BYTE;
+            bool sirdHasLive = false;
+            for (uint32_t idx = 0; idx < selectedGroup->GetMemberCount(); ++idx)
+            {
+                if (!selectedGroup->IsMemberSelectable(idx))
+                {
+                    continue;
+                }
+                const UbTransportGroupMember& m = selectedGroup->GetMember(idx);
+                Ptr<UbTransportChannel> tp = materialization.indexedTransports[idx];
+                if (tp != nullptr && tp->GetLifecycleOwner() == m.tpIdentity &&
+                    m_coordinator->IsResourceActive(m.tpIdentity) &&
+                    (ownerController == nullptr || !ownerController->IsTpDead(tp)))
+                {
+                    sirdHasLive = true;
+                    break;
+                }
+            }
+            if (!sirdHasLive)
+            {
+                return RtpSegmentAdmissionResult::REJECTED;
+            }
+            if (!sirdIsCtrl)
+            {
+                EnsureSirdResetScheduled();
+                sirdCreditDst = isReadReq ? m_nodeId : originatingWqe->GetDest();
+                sirdQKey = MakeRtpTxQueueKey(reference);
+                SirdRxState& rxSt = SirdRxTable()[sirdCreditDst];
+                const uint64_t budget = ComputeSirdRxBudget(sirdCreditDst, m_sirdRxBudgetBytes);
+                const uint64_t flowCap = std::max<uint64_t>(2ull * segment->GetSize(), budget / 16);
+                const auto fIt = rxSt.flowInFlight.find({this, sirdQKey});
+                const uint64_t curFlow = fIt == rxSt.flowInFlight.end() ? 0 : fIt->second;
+                const bool globalFull =
+                    rxSt.inFlight > 0 && rxSt.inFlight + segment->GetSize() > budget;
+                const bool flowFull =
+                    (!rxSt.waiters.empty() || rxSt.inFlight + flowCap > budget) &&
+                    curFlow >= flowCap;
+                if (globalFull || flowFull)
+                {
+                    const bool alreadyQueued = std::any_of(
+                        rxSt.waiters.begin(),
+                        rxSt.waiters.end(),
+                        [&](const SirdRxWaiter& w) {
+                            return w.tx == this && w.queueKey == sirdQKey;
+                        });
+                    if (!alreadyQueued)
+                    {
+                        rxSt.waiters.push_back(
+                            {originatingWqe->GetSize(), ++rxSt.nextSeq, this, sirdQKey});
+                    }
+                    return RtpSegmentAdmissionResult::DEFERRED;
+                }
+                sirdChargePending = true;
+            }
+        }
         const bool scoreMembers = m_tpgDispatchPolicy == UbTpgDispatchPolicy::MIN_DRAIN_TIME;
         const bool useQuantum = !atomic && (m_timeQuantumSeg ||
                                             (isReadReq && m_readQuantumBytes > 0) ||
@@ -1912,7 +1990,11 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
             }
         }
         } // end else standard/FlexSpray dispatch policy
-        bool allowSlack = scoreMembers && m_tpgDispatchSlack >= 0.0;
+        const bool highPrioCtrlSeg =
+            m_bypassCommitForHighPrio &&
+            static_cast<uint32_t>(originatingWqe->GetPriority()) <= 3 &&
+            originatingWqe->GetSize() <= UB_MTU_BYTE;
+        bool allowSlack = scoreMembers && m_tpgDispatchSlack >= 0.0 && !highPrioCtrlSeg;
         if (allowSlack && m_slackTailOnly)
         {
             const uint32_t fastPlanes = liveCount > 1 ? liveCount - 1 : 1;
@@ -1983,6 +2065,12 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
         record.resolvedTpIdentity,
         UbLifecycleLeaseKind::TRANSPORT_WORK,
         record.identity);
+    if (sirdChargePending)
+    {
+        record.sirdCreditedDst = sirdCreditDst;
+        record.sirdCreditedBytes = segment->GetSize();
+        record.sirdQueueKey = sirdQKey;
+    }
     segment->SetTransactionCorrelation(operation->second.operationIdentity, record.identity);
     const bool inserted =
         operation->second.segments.emplace(segment->GetTaSsn(), record).second;
@@ -1995,6 +2083,12 @@ UbTransaction::TryAdmitRtpSegment(uint32_t jettyNum,
                     "RTP TP admission changed after owner-local preflight");
     NS_ABORT_MSG_IF(segment->GetResolvedTpIdentity() != record.resolvedTpIdentity,
                     "Admitted segment did not pin the resolved TP generation");
+    if (sirdChargePending)
+    {
+        SirdRxState& rxSt = SirdRxTable()[sirdCreditDst];
+        rxSt.inFlight += segment->GetSize();
+        rxSt.flowInFlight[{this, sirdQKey}] += segment->GetSize();
+    }
     jetty->CommitWqeSegmentAdmission(segment);
     if (selectedGroup != nullptr)
     {
@@ -2072,6 +2166,7 @@ UbTransaction::FlushRtpTxBatch()
     if (batch.size() > 1)
     {
         auto priorityOf = [&](const RtpTxQueueKey& key) {
+            uint32_t prioTier = 0;
             uint64_t bytesLeft = 0;
             uint32_t cyclicPeer = UINT32_MAX;
             const auto queueIt = m_rtpTxQueues.find(key);
@@ -2083,14 +2178,22 @@ UbTransaction::FlushRtpTxBatch()
                     const auto opIt = m_operations.find({front.jettyNum, front.wqeId});
                     if (opIt != m_operations.end() && opIt->second.wqe != nullptr)
                     {
-                        bytesLeft = opIt->second.wqe->GetBytesLeft();
-                        cyclicPeer = (opIt->second.wqe->GetDest() - m_nodeId) & 0xFFFFu;
+                        const Ptr<UbWqe>& wqe = opIt->second.wqe;
+                        if (m_bypassCommitForHighPrio &&
+                            static_cast<uint32_t>(wqe->GetPriority()) <= 3 &&
+                            wqe->GetSize() <= UB_MTU_BYTE)
+                        {
+                            prioTier = 1;
+                        }
+                        bytesLeft = wqe->GetBytesLeft();
+                        cyclicPeer = (wqe->GetDest() - m_nodeId) & 0xFFFFu;
                     }
                 }
             }
-            return std::tuple<uint64_t, uint32_t, uint64_t>{bytesLeft,
-                                                            UINT32_MAX - cyclicPeer,
-                                                            key.identity.localId};
+            return std::tuple<uint32_t, uint64_t, uint32_t, uint64_t>{prioTier,
+                                                                      bytesLeft,
+                                                                      UINT32_MAX - cyclicPeer,
+                                                                      key.identity.localId};
         };
         std::sort(batch.begin(),
                   batch.end(),
@@ -2124,13 +2227,16 @@ UbTransaction::EnqueueRtpWqe(uint32_t jettyNum, Ptr<UbWqe> originatingWqe, bool 
 
     const RtpTxQueueKey key = MakeRtpTxQueueKey(operation->second.transportReference);
     RtpTxQueue& queue = m_rtpTxQueues[key];
+    const bool highPrioCtrl = m_bypassCommitForHighPrio &&
+                              static_cast<uint32_t>(originatingWqe->GetPriority()) <= 3 &&
+                              originatingWqe->GetSize() <= UB_MTU_BYTE;
     if (!operation->second.txEntryQueued)
     {
         const RtpTxQueueEntry entry{RtpTxQueueEntry::Kind::LOCAL_WQE,
                                     jettyNum,
                                     originatingWqe->GetWqeId(),
                                     operation->second.operationIdentity};
-        if (restoreWaitingFront)
+        if (restoreWaitingFront || highPrioCtrl)
         {
             queue.pendingTxEntries.push_front(entry);
         }
@@ -2141,7 +2247,7 @@ UbTransaction::EnqueueRtpWqe(uint32_t jettyNum, Ptr<UbWqe> originatingWqe, bool 
         operation->second.txEntryQueued = true;
     }
     if (!restoreWaitingFront && !queue.txEntryActive && !queue.txEventPending &&
-        !queue.waitingForTransportCapacity)
+        (!queue.waitingForTransportCapacity || highPrioCtrl))
     {
         if (m_prioritizeHeavyWqe)
         {
@@ -2650,6 +2756,7 @@ UbTransaction::RedispatchDeadTpSegments(Ptr<UbTransportChannel> dead,
         clone->ResetTransportStateForRedispatch();
         // Replay fence: the target must stop accepting the dead TP pair before executing this.
         clone->SetSupersedesTpn(m_replayFence ? dead->GetTpn() : UINT32_MAX);
+        clone->SetSupersedesGen(dead->GetTpGeneration());
         target->ForceAdmitWqeSegment(clone);
         m_coordinator->ReleaseLease(record.transportWorkLease);
         record.transportWorkLease = m_coordinator->AcquireLease(target->GetLifecycleOwner(),
@@ -2735,7 +2842,11 @@ UbTransaction::RecordSegmentSuccess(uint32_t jettyNum,
         coordinator->RecordWorkTerminal(segment->second.identity, UbWorkOutcome::COMPLETED);
     }
     coordinator->RetireResource(segment->second.identity);
+    const uint32_t sirdDst = segment->second.sirdCreditedDst;
+    const uint64_t sirdBytes = segment->second.sirdCreditedBytes;
+    const RtpTxQueueKey sirdQKey = segment->second.sirdQueueKey;
     operation->second.segments.erase(segment);
+    ReleaseSirdCredit(sirdDst, sirdBytes, sirdQKey);
     if (awaitingTpSegmentCleanup && operation->second.segments.empty())
     {
         const UbRtpTransportReference reference = operation->second.transportReference;
@@ -3626,7 +3737,11 @@ UbTransaction::FinishWqe(uint32_t jettyNum,
             coordinator->ReleaseLease(segment->second.transportWorkLease);
             coordinator->RecordWorkTerminal(segment->second.identity, outcome);
             coordinator->RetireResource(segment->second.identity);
+            const uint32_t sirdDst = segment->second.sirdCreditedDst;
+            const uint64_t sirdBytes = segment->second.sirdCreditedBytes;
+            const RtpTxQueueKey sirdQKey = segment->second.sirdQueueKey;
             operation->second.segments.erase(segment);
+            ReleaseSirdCredit(sirdDst, sirdBytes, sirdQKey);
         }
         if (!operation->second.segments.empty())
         {
@@ -3759,6 +3874,7 @@ UbTransaction::DiscardRetainedWqeSegmentsForSimulationStop(uint32_t jettyNum, ui
         coordinator->ReleaseLease(segment.childLease);
         coordinator->ReleaseLease(segment.transportWorkLease);
         coordinator->RetireResource(segment.identity);
+        ReleaseSirdCredit(segment.sirdCreditedDst, segment.sirdCreditedBytes, segment.sirdQueueKey);
     }
     operation->second.segments.clear();
     const UbRtpTransportReference reference = operation->second.transportReference;
@@ -3791,6 +3907,27 @@ UbTransaction::DiscardJettyRetainedWqeSegmentsForSimulationStop(uint32_t jettyNu
 void
 UbTransaction::DoDispose()
 {
+    m_disposing = true;
+    for (auto& [dst, rxSt] : SirdRxTable())
+    {
+        (void)dst;
+        rxSt.waiters.erase(
+            std::remove_if(rxSt.waiters.begin(),
+                           rxSt.waiters.end(),
+                           [this](const SirdRxWaiter& w) { return w.tx == this; }),
+            rxSt.waiters.end());
+        for (auto fit = rxSt.flowInFlight.begin(); fit != rxSt.flowInFlight.end();)
+        {
+            if (fit->first.first == this)
+            {
+                fit = rxSt.flowInFlight.erase(fit);
+            }
+            else
+            {
+                ++fit;
+            }
+        }
+    }
     for (const auto& event : m_delayedInboundEvents)
     {
         Simulator::Cancel(event);
@@ -3843,6 +3980,132 @@ UbTransaction::DoDispose()
     }
     m_orderedWqeIdsByJetty.clear();
     Object::DoDispose();
+}
+
+std::map<uint32_t, UbTransaction::SirdRxState>&
+UbTransaction::SirdRxTable()
+{
+    static auto* s = new std::map<uint32_t, SirdRxState>();
+    return *s;
+}
+
+namespace
+{
+bool g_sirdResetScheduled = false;
+} // namespace
+
+void
+UbTransaction::ResetSirdRxTable()
+{
+    SirdRxTable().clear();
+    g_sirdResetScheduled = false;
+}
+
+void
+UbTransaction::EnsureSirdResetScheduled()
+{
+    if (!g_sirdResetScheduled)
+    {
+        g_sirdResetScheduled = true;
+        Simulator::ScheduleDestroy(&UbTransaction::ResetSirdRxTable);
+    }
+}
+
+uint64_t
+UbTransaction::ComputeSirdRxBudget(uint32_t dstNode, uint64_t overrideBytes)
+{
+    if (overrideBytes > 0)
+    {
+        return overrideBytes;
+    }
+    uint32_t rxPlanes = 1;
+    if (dstNode < NodeList::GetNNodes())
+    {
+        Ptr<Node> dn = NodeList::GetNode(dstNode);
+        Ptr<UbController> dctrl = dn == nullptr ? nullptr : dn->GetObject<UbController>();
+        if (dctrl != nullptr)
+        {
+            uint32_t linked = 0;
+            uint32_t live = 0;
+            dctrl->GetLocalPortCounts(linked, live);
+            rxPlanes = std::max<uint32_t>(live, 1u);
+        }
+    }
+    return 262144ull * rxPlanes;
+}
+
+void
+UbTransaction::ReleaseSirdCredit(uint32_t dstNode, uint64_t bytes, const RtpTxQueueKey& qKey)
+{
+    if (bytes == 0 || dstNode == UINT32_MAX)
+    {
+        return;
+    }
+    auto it = SirdRxTable().find(dstNode);
+    if (it == SirdRxTable().end())
+    {
+        return;
+    }
+    SirdRxState& st = it->second;
+    st.inFlight = st.inFlight > bytes ? st.inFlight - bytes : 0;
+    auto fit = st.flowInFlight.find({this, qKey});
+    if (fit != st.flowInFlight.end())
+    {
+        if (fit->second > bytes)
+        {
+            fit->second -= bytes;
+        }
+        else
+        {
+            st.flowInFlight.erase(fit);
+        }
+    }
+    if (m_disposing || st.waiters.empty() || dstNode >= NodeList::GetNNodes())
+    {
+        return;
+    }
+    const uint64_t budget = ComputeSirdRxBudget(dstNode, m_sirdRxBudgetBytes);
+    if (st.inFlight >= budget && st.inFlight > 0)
+    {
+        return;
+    }
+    const uint64_t flowCap = std::max<uint64_t>(32768ull, budget / 16);
+    auto sirdSizeBucket = [](uint64_t sz) -> uint32_t {
+        if (sz <= 65536ull) return 0;
+        if (sz <= 262144ull) return 1;
+        if (sz <= 1048576ull) return 2;
+        return 3;
+    };
+    const size_t maxWakes = st.inFlight < budget / 2 ? st.waiters.size() : std::min<size_t>(st.waiters.size(), 8);
+    for (size_t k = 0; k < maxWakes && !st.waiters.empty(); ++k)
+    {
+        if (st.inFlight >= budget)
+        {
+            break;
+        }
+        auto flowBytes = [&](const SirdRxWaiter& w) -> uint64_t {
+            const auto f = st.flowInFlight.find({w.tx, w.queueKey});
+            return f == st.flowInFlight.end() ? 0 : f->second;
+        };
+        auto best = std::min_element(st.waiters.begin(),
+                                     st.waiters.end(),
+                                     [&](const SirdRxWaiter& a, const SirdRxWaiter& b) {
+                                         const uint64_t aFlow = flowBytes(a);
+                                         const uint64_t bFlow = flowBytes(b);
+                                         const bool aOver = aFlow >= flowCap;
+                                         const bool bOver = bFlow >= flowCap;
+                                         const uint32_t aBucket = sirdSizeBucket(a.origWqeBytes);
+                                         const uint32_t bBucket = sirdSizeBucket(b.origWqeBytes);
+                                         return std::tie(aOver, aBucket, aFlow, a.seq) <
+                                                std::tie(bOver, bBucket, bFlow, b.seq);
+                                     });
+        SirdRxWaiter w = *best;
+        st.waiters.erase(best);
+        if (w.tx != nullptr && !w.tx->m_disposing && w.tx->m_ownerController != nullptr)
+        {
+            w.tx->TryContinueRtpTxQueue(w.queueKey, true);
+        }
+    }
 }
 
 std::vector<uint32_t> UbTransaction::GetUselessTpns()

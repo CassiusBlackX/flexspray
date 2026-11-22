@@ -83,6 +83,9 @@ void
 UbController::DoDispose()
 {
     m_disposing = true;
+    m_pathSiblingsCache.clear();
+    m_pathCacheTpnVersion = UINT64_MAX;
+    ++m_pathCacheVersion;
     m_transportChannelManager->ForceDispose();
     std::vector<UbLifecycleResourceIdentity> groups;
     groups.reserve(m_rtpTpGroups.size());
@@ -604,15 +607,20 @@ UbController::IsTpDead(const Ptr<UbTransportChannel>& tp) const
 }
 
 void
-UbController::FenceInboundTp(uint32_t peerNode, uint32_t peerTpn)
+UbController::FenceInboundTp(uint32_t peerNode, uint32_t peerTpn, uint32_t supersededGen)
 {
     for (const auto& [tpn, tp] : GetTransportChannelManager()->GetTpnMap())
     {
         (void)tpn;
         if (tp != nullptr && tp->GetDest() == peerNode && tp->GetDstTpn() == peerTpn)
         {
-            const bool first = !tp->IsInboundFenced();
-            tp->SetInboundFenced();
+            const bool first = tp->IsRecycleAfterLinkUp()
+                                   ? tp->FenceInboundThroughGen(supersededGen)
+                                   : !tp->IsInboundFenced();
+            if (!tp->IsRecycleAfterLinkUp())
+            {
+                tp->SetInboundFenced();
+            }
             if (first && m_deadTpns.count(tp->GetTpn()) == 0)
             {
                 // The peer abandoned its side of this TP pair (it re-sent a dead TP's work
@@ -650,6 +658,127 @@ UbController::OnLocalPortDown(uint16_t port)
     {
         DeclareTpDead(tp, "local-port-down");
     }
+}
+
+void
+UbController::OnLocalPortUp(uint16_t port)
+{
+    for (const auto& [tpn, tp] : GetTransportChannelManager()->GetTpnMap())
+    {
+        (void)tpn;
+        if (tp != nullptr && tp->GetSport() == port && IsTpDead(tp))
+        {
+            tp->ScheduleImmediateRecoveryProbe();
+        }
+    }
+}
+
+void
+UbController::OnLocalPortRateIncreased(uint16_t port, double newBps)
+{
+    for (const auto& [tpn, tp] : GetTransportChannelManager()->GetTpnMap())
+    {
+        (void)tpn;
+        if (tp != nullptr && tp->GetSport() == port && !IsTpDead(tp))
+        {
+            tp->OnLocalPortRateIncreased(newBps);
+        }
+    }
+}
+
+void
+UbController::RecycleDeadTp(const Ptr<UbTransportChannel>& tp, uint32_t newGen)
+{
+    if (tp == nullptr || m_deadTpns.erase(tp->GetTpn()) == 0)
+    {
+        return;
+    }
+    m_suspectTpns.erase(tp->GetTpn());
+    utils::UbUtils::FailureEventNotify(GetObject<Node>()->GetId(),
+                                       tp->GetTpn(),
+                                       tp->GetDest(),
+                                       tp->GetSport(),
+                                       ("RECYCLE gen=" + std::to_string(newGen)).c_str());
+    tp->RecycleToGeneration(newGen);
+    if (m_transaction != nullptr)
+    {
+        m_transaction->TryContinueJettyTransmission(tp);
+    }
+    WakeRtpTpGroupsAfterIsolationChange();
+}
+
+void
+UbController::EnsurePathCacheFresh() const
+{
+    const uint64_t curVer = m_transportChannelManager->GetVersion();
+    if (m_pathCacheTpnVersion == curVer)
+    {
+        return;
+    }
+    const auto tpnMap = m_transportChannelManager->GetTpnMap();
+    m_pathSiblingsCache.clear();
+    for (const auto& [tpn, tp] : tpnMap)
+    {
+        (void)tpn;
+        if (tp != nullptr)
+        {
+            const uint64_t key = (uint64_t{tp->GetSport()} << 32) | tp->GetDest();
+            m_pathSiblingsCache[key].push_back(tp);
+        }
+    }
+    m_pathCacheTpnVersion = curVer;
+    ++m_pathCacheVersion;
+}
+
+const std::vector<Ptr<UbTransportChannel>>*
+UbController::GetPathSiblingsFast(uint16_t sport,
+                                  uint32_t dest,
+                                  uint64_t& cachedVer,
+                                  const std::vector<Ptr<UbTransportChannel>>*& cachedPtr) const
+{
+    if (m_disposing || m_transportChannelManager == nullptr)
+    {
+        cachedVer = 0;
+        cachedPtr = nullptr;
+        return nullptr;
+    }
+    EnsurePathCacheFresh();
+    if (cachedVer != m_pathCacheVersion)
+    {
+        const uint64_t key = (uint64_t{sport} << 32) | dest;
+        const auto it = m_pathSiblingsCache.find(key);
+        cachedPtr = it == m_pathSiblingsCache.end() ? nullptr : &it->second;
+        cachedVer = m_pathCacheVersion;
+    }
+    return cachedPtr;
+}
+
+double
+UbController::GetPathSilencePenaltyNs(uint16_t sport,
+                                      uint32_t dest,
+                                      const UbTransportChannel* excludeTp) const
+{
+    if (m_disposing || m_transportChannelManager == nullptr)
+    {
+        return 0.0;
+    }
+    EnsurePathCacheFresh();
+    const uint64_t key = (uint64_t{sport} << 32) | dest;
+    const auto it = m_pathSiblingsCache.find(key);
+    if (it == m_pathSiblingsCache.end())
+    {
+        return 0.0;
+    }
+    double maxPenalty = 0.0;
+    for (const Ptr<UbTransportChannel>& sibling : it->second)
+    {
+        if (sibling == nullptr || PeekPointer(sibling) == excludeTp)
+        {
+            continue;
+        }
+        maxPenalty = std::max(maxPenalty, sibling->GetOwnSilencePenaltyNs());
+    }
+    return maxPenalty;
 }
 
 void

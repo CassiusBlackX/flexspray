@@ -77,6 +77,7 @@ struct UbGbnPacketDescriptor
     bool lastPacket{false};
     uint32_t serializedSizeBytes{0};
     uint32_t supersedesTpn{UINT32_MAX}; // replay fence: dead initiator TP this packet supersedes
+    uint32_t supersedesGen{0};          // generation of superseded TP pair
 };
 
 struct UbRetransTimerTestStats
@@ -171,6 +172,7 @@ public:
     uint32_t GetNextRetransmissionSize() const;
     uint32_t GetNextRetransmissionPayloadBytes() const;
     uint32_t GetRetainedPayloadBytes(uint64_t psn) const;
+    uint64_t GetUnacknowledgedBytes() const;
     bool HasOutstandingPackets() const;
 
     uint32_t GetPendingRetransmissionCountForTest() const;
@@ -280,6 +282,7 @@ public:
     bool CanSendSelectiveRetransmission() const;
     uint32_t GetNextSelectiveRetransmissionSize() const;
     uint32_t GetNextSelectiveRetransmissionPayloadBytes() const;
+    uint64_t GetSelectiveUnackedBytes() const;
     uint32_t GetPendingSelectiveRetransmissionCountForTest() const;
     uint32_t GetRawSelectiveRetransmissionQueueCountForTest() const;
     bool WasPsnSelectivelyReportedMissingForTest(uint64_t psn) const;

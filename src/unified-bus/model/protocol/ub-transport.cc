@@ -447,6 +447,56 @@ TypeId UbTransportChannel::GetTypeId(void)
                       BooleanValue(false),
                       MakeBooleanAccessor(&UbTransportChannel::m_coalescePortTrigger),
                       MakeBooleanChecker())
+        .AddAttribute("CommitDelayRttFactor",
+                      "Scale PortCommitDelay automatically as max(PortCommitDelay, factor x minRtt). "
+                      "0 = off (default).",
+                      DoubleValue(0.0),
+                      MakeDoubleAccessor(&UbTransportChannel::m_commitDelayRttFactor),
+                      MakeDoubleChecker<double>(0.0))
+        .AddAttribute("ReadPortCommitDelay",
+                      "If > 0 and ReadPortBudgetBytes == 0: derive aggregate READ port budget from "
+                      "port nominal rate x ReadPortCommitDelay. 0 = off (default).",
+                      TimeValue(Seconds(0)),
+                      MakeTimeAccessor(&UbTransportChannel::m_readPortCommitDelay),
+                      MakeTimeChecker(Seconds(0)))
+        .AddAttribute("BypassCommitForHighPrio",
+                      "Allow small high-priority control segments (priority <= 3 and wqeSize <= MTU) "
+                      "to bypass PortCommitDelay and ReadPortBudget refusal checks. Default off.",
+                      BooleanValue(false),
+                      MakeBooleanAccessor(&UbTransportChannel::m_bypassCommitForHighPrio),
+                      MakeBooleanChecker())
+        .AddAttribute("SilenceAwareResidual",
+                      "Escalate GetServiceResidualNs() when peer silence with outstanding work "
+                      "exceeds expected RTT/drain time, preventing black-hole plane steering prior "
+                      "to FailureSuspectAfter. Default off.",
+                      BooleanValue(false),
+                      MakeBooleanAccessor(&UbTransportChannel::m_silenceAwareResidual),
+                      MakeBooleanChecker())
+        .AddAttribute("ProbeTimeoutSrttFactor",
+                      "Scale failure-detector probe timeout and suspect floor by "
+                      "factor x RTT + 2*MTU/rate when larger than configured values. 0 = off.",
+                      DoubleValue(0.0),
+                      MakeDoubleAccessor(&UbTransportChannel::m_probeTimeoutSrttFactor),
+                      MakeDoubleChecker<double>(0.0))
+        .AddAttribute("ResetRateOnPortUpgrade",
+                      "Reset degraded delivery-rate and residual estimators on local link-rate "
+                      "upgrade and accelerate upward/idle rate recovery. Default off.",
+                      BooleanValue(false),
+                      MakeBooleanAccessor(&UbTransportChannel::m_resetRateOnPortUpgrade),
+                      MakeBooleanChecker())
+        .AddAttribute("RecycleAfterLinkUp",
+                      "Periodically probe dead TPs and recycle them onto a fresh generation "
+                      "(carried in UbTpGenTag / UbReplayFenceTag) once the link comes back UP. "
+                      "Default off.",
+                      BooleanValue(false),
+                      MakeBooleanAccessor(&UbTransportChannel::m_recycleAfterLinkUp),
+                      MakeBooleanChecker())
+        .AddAttribute("FailureRecycleInterval",
+                      "Probe interval while a dead TP waits for link-up recovery (when "
+                      "RecycleAfterLinkUp is enabled).",
+                      TimeValue(MicroSeconds(25)),
+                      MakeTimeAccessor(&UbTransportChannel::m_fdRecycleInterval),
+                      MakeTimeChecker(NanoSeconds(100)))
         .AddAttribute("DeliveryRateGain",
                       "EWMA gain of the delivery-rate estimator (0, 1].",
                       DoubleValue(0.25),
@@ -715,6 +765,12 @@ UbTransportChannel::IsCcLimitedForRetransmission(uint32_t payloadBytes) const
     return m_congestionCtrl->IsCcLimited(payloadBytes);
 }
 
+uint64_t
+UbTransportChannel::GetSelectiveUnackedBytes() const
+{
+    return m_retrans != nullptr ? m_retrans->GetSelectiveUnackedBytes() : 0;
+}
+
 void
 UbTransportChannel::SetSendWindowLimited(bool limited)
 {
@@ -759,6 +815,7 @@ UbTransportChannel::UbTransportChannel()
 UbTransportChannel::~UbTransportChannel()
 {
     m_fdEvent.Cancel();
+    m_recycleEvent.Cancel();
     // Clear WQE queues and release resources
     NS_LOG_INFO("tp release, node:" << m_src << " tpn:" << m_tpn);
     NS_LOG_FUNCTION(this);
@@ -768,8 +825,13 @@ UbTransportChannel::~UbTransportChannel()
 void UbTransportChannel::DoDispose()
 {
     NS_LOG_FUNCTION(this);
+    m_cachedPort = nullptr;
+    m_cachedController = nullptr;
+    m_cachedPathSiblingsVer = 0;
+    m_cachedPathSiblings = nullptr;
     // The failure-detector timer holds a raw `this`: cancel it before the TP is released.
     m_fdEvent.Cancel();
+    m_recycleEvent.Cancel();
     PortReadRelease();
     EgressRelease();
     if (m_retrans != nullptr) {
@@ -942,6 +1004,7 @@ UbTransportChannel::BuildGbnPacketDescriptor(const NewDataSendContext& ctx,
     descriptor.requestOpcode = ctx.segment->GetRequestOpcode();
     descriptor.segmentKind = ctx.segment->GetSegmentKind();
     descriptor.supersedesTpn = ctx.segment->GetSupersedesTpn();
+    descriptor.supersedesGen = ctx.segment->GetSupersedesGen();
     descriptor.taSsn = ctx.segment->GetTaSsn();
     descriptor.requestTaSsn = ctx.segment->GetRequestTassn();
     descriptor.order = ctx.segment->GetOrderType();
@@ -1096,6 +1159,15 @@ Ptr<Packet> UbTransportChannel::GetNextPacket()
     Ptr<Packet> packet = PopQueuedPacket(m_cnpQ);
     if (packet != nullptr) {
         return finish(packet);
+    }
+    if (m_dead) {
+        if (m_recycleAfterLinkUp && !m_inboundFenced && m_rxGen > 0) {
+            packet = PopQueuedPacket(m_ackQ);
+            if (packet != nullptr) {
+                return finish(packet);
+            }
+        }
+        return finish(nullptr);
     }
 
     packet = PopQueuedPacket(m_ackQ);
@@ -1388,7 +1460,13 @@ UbTransportChannel::BuildRtpDataPacket(const UbGbnPacketDescriptor& descriptor)
     if (descriptor.supersedesTpn != UINT32_MAX) {
         UbReplayFenceTag fence;
         fence.supersededTpn = descriptor.supersedesTpn;
+        fence.supersededGen = descriptor.supersedesGen;
         p->AddPacketTag(fence);
+    }
+    if (m_recycleAfterLinkUp) {
+        UbTpGenTag genTag;
+        genTag.gen = m_tpGeneration;
+        p->AddPacketTag(genTag);
     }
     return p;
 }
@@ -2118,12 +2196,41 @@ void UbTransportChannel::RecvTpAck(Ptr<Packet> p)
     const bool wasSuspect = m_fdState == FdState::SUSPECT;
     OnPeerActivity();
     if (ctx.opcode == TpOpcode::TP_OPCODE_PROBE) {
+        UbTpGenTag genTag;
+        const bool hasGenTag = p->PeekPacketTag(genTag);
+        if (m_recycleAfterLinkUp && hasGenTag) {
+            Ptr<Node> node = NodeList::GetNode(m_nodeId);
+            Ptr<UbPort> port =
+                node == nullptr ? nullptr : DynamicCast<UbPort>(node->GetDevice(m_sport));
+            if (port != nullptr && !port->IsHardDown() && genTag.gen >= m_fencedBeforeGen) {
+                if (genTag.gen > m_rxGen) {
+                    AcceptNewInboundGeneration(genTag.gen);
+                }
+                EnqueueProbe(TpOpcode::TP_OPCODE_PROBE_REPLY, genTag.gen);
+                if (m_dead) {
+                    ScheduleImmediateRecoveryProbe();
+                }
+            }
+            return;
+        }
         if (!m_dead) {
             EnqueueProbe(TpOpcode::TP_OPCODE_PROBE_REPLY);
         }
         return;
     }
     if (ctx.opcode == TpOpcode::TP_OPCODE_PROBE_REPLY) {
+        UbTpGenTag genTag;
+        const bool hasGenTag = p->PeekPacketTag(genTag);
+        if (m_recycleAfterLinkUp && m_dead && hasGenTag && genTag.gen == m_tpGeneration + 1) {
+            Ptr<Node> node = NodeList::GetNode(m_nodeId);
+            Ptr<UbPort> port =
+                node == nullptr ? nullptr : DynamicCast<UbPort>(node->GetDevice(m_sport));
+            Ptr<UbController> ctrl = node == nullptr ? nullptr : node->GetObject<UbController>();
+            if (port != nullptr && !port->IsHardDown() && ctrl != nullptr) {
+                ctrl->RecycleDeadTp(this, genTag.gen);
+                return;
+            }
+        }
         // CLEARS: the reply ended a suspicion. LATE: the TP was already declared dead (the reply
         // came after the last retry). DUPLICATE: the TP was healthy (an earlier reply or data
         // already cleared the suspicion).
@@ -2633,7 +2740,7 @@ UbTransportChannel::CompleteInboundTaUnits(
  */
 void UbTransportChannel::RecvDataPacket(Ptr<Packet> p)
 {
-    if (m_inboundFenced) {
+    if (!m_recycleAfterLinkUp && m_inboundFenced) {
         // Replay fence: the initiator re-sent this TP pair's work elsewhere; an old copy that
         // arrives now must not be executed (it could land after the initiator's completion).
         ++m_fencedDrops;
@@ -2644,7 +2751,16 @@ void UbTransportChannel::RecvDataPacket(Ptr<Packet> p)
     if (p->PeekPacketTag(fence)) {
         Ptr<UbController> ctrl = NodeList::GetNode(m_nodeId)->GetObject<UbController>();
         if (ctrl != nullptr) {
-            ctrl->FenceInboundTp(m_dest, fence.supersededTpn);
+            ctrl->FenceInboundTp(m_dest, fence.supersededTpn, fence.supersededGen);
+        }
+    }
+    if (m_recycleAfterLinkUp) {
+        UbTpGenTag genTag;
+        const uint32_t pktGen = p->PeekPacketTag(genTag) ? genTag.gen : 0u;
+        if (pktGen < m_fencedBeforeGen || pktGen != m_rxGen) {
+            ++m_fencedDrops;
+            utils::UbUtils::RecordRuntimePacketDrop("replay fence");
+            return;
         }
     }
     ReceivedDataPacketContext ctx;
@@ -2742,6 +2858,9 @@ UbTransportChannel::TryContinueAcceptedWqeSegment(Ptr<UbWqeSegment> segment)
     }
 
     if (IsZeroPayloadReadRequest(segment)) {
+        if ((m_fdEnabled || m_silenceAwareResidual) && !HasOutstandingPeerWork()) {
+            m_lastPeerActivity = Simulator::Now();
+        }
         m_outstandingReadBytes += segment->GetSize();
         PortReadAdd(static_cast<int64_t>(segment->GetSize()));
     }
@@ -2784,13 +2903,47 @@ UbTransportChannel::PortRead()
     return *m;
 }
 
+bool
+UbTransportChannel::IsHighPrioControlSegment(Ptr<const UbWqeSegment> segment) const
+{
+    return segment != nullptr &&
+           std::min<uint32_t>(m_priority, static_cast<uint32_t>(segment->GetPriority())) <= 3 &&
+           segment->GetWqeSize() <= UB_MTU_BYTE;
+}
+
+bool
+UbTransportChannel::IsReadBudgetEnabled() const
+{
+    return m_portReadCounted &&
+           (m_readPortBudget > 0 || m_readPortCommitDelay.IsStrictlyPositive());
+}
+
+uint64_t
+UbTransportChannel::BaseReadBudgetBytes(PortReadState& st) const
+{
+    if (m_readPortBudget > 0) {
+        return m_readPortBudget;
+    }
+    if (!m_readPortCommitDelay.IsStrictlyPositive()) {
+        return 0;
+    }
+    const double nominal = std::max(st.nominalBps, GetPortRateBps());
+    if (nominal <= 0.0) {
+        return 0;
+    }
+    return std::max<uint64_t>(
+        32768,
+        static_cast<uint64_t>(nominal * m_readPortCommitDelay.GetSeconds() / 8.0));
+}
+
 void
 UbTransportChannel::PortReadAdd(int64_t delta)
 {
-    if (!m_portReadCounted || m_readPortBudget == 0) {
+    if (!IsReadBudgetEnabled()) {
         return;
     }
     auto& st = PortRead()[PortKey()];
+    st.nominalBps = std::max(st.nominalBps, GetPortRateBps());
     st.outstanding = static_cast<uint64_t>(std::max<int64_t>(0, static_cast<int64_t>(st.outstanding) + delta));
     st.peak = std::max(st.peak, st.outstanding);
     static bool dumpScheduled = false;
@@ -2809,11 +2962,7 @@ UbTransportChannel::PortReadAdd(int64_t delta)
         st.weight = std::max(0.0, st.weight - m_portWeight);
     }
     const uint64_t budget =
-        (delta < 0 && !st.waiters.empty())
-            ? ((m_readBudgetScaleByRate || m_readBudgetRepoolDead || m_readBudgetWorkConserving)
-                   ? EffectiveReadBudget(st)
-                   : m_readPortBudget)
-            : 0;
+        (delta < 0 && !st.waiters.empty()) ? EffectiveReadBudget(st) : 0;
     const uint64_t wakeUnit = (m_readBudgetWorkConserving || m_readBudgetRepoolDead) ? 4096 : 16384;
     if (delta < 0 && !st.waiters.empty() &&
         st.outstanding + wakeUnit <= budget) {
@@ -2840,11 +2989,39 @@ UbTransportChannel::PortReadAdd(int64_t delta)
     }
 }
 
+UbPort*
+UbTransportChannel::GetCachedPort() const
+{
+    if (m_ownerControllerDisposing || m_nodeId >= NodeList::GetNNodes()) {
+        return nullptr;
+    }
+    if (m_cachedPort == nullptr) {
+        Ptr<Node> node = NodeList::GetNode(m_nodeId);
+        if (node != nullptr && m_sport < node->GetNDevices()) {
+            m_cachedPort = PeekPointer(DynamicCast<UbPort>(node->GetDevice(m_sport)));
+        }
+    }
+    return m_cachedPort;
+}
+
+UbController*
+UbTransportChannel::GetCachedController() const
+{
+    if (m_ownerControllerDisposing || m_nodeId >= NodeList::GetNNodes()) {
+        return nullptr;
+    }
+    if (m_cachedController == nullptr) {
+        Ptr<Node> node = NodeList::GetNode(m_nodeId);
+        m_cachedController =
+            node == nullptr ? nullptr : PeekPointer(node->GetObject<UbController>());
+    }
+    return m_cachedController;
+}
+
 double
 UbTransportChannel::GetPortRateBps() const
 {
-    Ptr<Node> node = NodeList::GetNode(m_nodeId);
-    Ptr<UbPort> port = node == nullptr ? nullptr : DynamicCast<UbPort>(node->GetDevice(m_sport));
+    UbPort* port = GetCachedPort();
     return port == nullptr ? 0.0 : static_cast<double>(port->GetDataRate().GetBitRate());
 }
 
@@ -2857,13 +3034,9 @@ UbTransportChannel::GetCcRateBps() const
 uint64_t
 UbTransportChannel::EffectiveReadBudget(PortReadState& st) const
 {
-    // ReadBudgetScaleByRate: the per-port budget is the time a port may be committed ahead
-    // (B / nominal rate); a port whose own link runs slower (lanes lost, known locally) gets a
-    // proportionally smaller byte budget, so its committed READ data drains as fast as the
-    // other ports' instead of becoming the tail. ReadBudgetRepoolDead repools across live
-    // (non-isolated, non-hard-down) ports without inflating lane-degraded ports.
+    const uint64_t baseBudget = BaseReadBudgetBytes(st);
     if (!m_readBudgetScaleByRate && !m_readBudgetRepoolDead) {
-        return m_readPortBudget;
+        return baseBudget;
     }
     double scale = 1.0;
     if (m_readBudgetScaleByRate) {
@@ -2874,9 +3047,7 @@ UbTransportChannel::EffectiveReadBudget(PortReadState& st) const
         }
     }
     if (m_readBudgetRepoolDead) {
-        Ptr<Node> node = NodeList::GetNode(m_nodeId);
-        Ptr<UbController> ctrl = node == nullptr ? nullptr : node->GetObject<UbController>();
-        if (ctrl != nullptr) {
+        if (UbController* ctrl = GetCachedController()) {
             uint32_t linked = 0;
             uint32_t live = 0;
             ctrl->GetLocalPortCounts(linked, live);
@@ -2885,7 +3056,7 @@ UbTransportChannel::EffectiveReadBudget(PortReadState& st) const
             }
         }
     }
-    return std::max<uint64_t>(16384, static_cast<uint64_t>(static_cast<double>(m_readPortBudget) * scale));
+    return std::max<uint64_t>(16384, static_cast<uint64_t>(static_cast<double>(baseBudget) * scale));
 }
 
 void
@@ -2901,8 +3072,7 @@ UbTransportChannel::DumpBudgetStats()
 double
 UbTransportChannel::PortShareWeight() const
 {
-    Ptr<Node> node = NodeList::GetNode(m_nodeId);
-    Ptr<UbController> ctrl = node == nullptr ? nullptr : node->GetObject<UbController>();
+    UbController* ctrl = GetCachedController();
     const uint32_t size = ctrl == nullptr ? 1 : ctrl->GetRtpTpGroupSizeForTpn(m_tpn);
     return 1.0 / std::max<uint32_t>(size, 1);
 }
@@ -2911,7 +3081,7 @@ void
 UbTransportChannel::PortReadRelease()
 {
     // A dead or disposed TP's outstanding responses will never arrive through this port.
-    if (!m_portReadCounted || m_readPortBudget == 0) {
+    if (!IsReadBudgetEnabled()) {
         m_portReadCounted = false;
         return;
     }
@@ -2983,10 +3153,13 @@ UbTransportChannel::CanAdmitWqeSegment(Ptr<const UbWqeSegment> segment) const
 bool
 UbTransportChannel::ReadBudgetRefuses(Ptr<const UbWqeSegment> segment) const
 {
-    if (segment == nullptr || m_readPortBudget == 0 || !m_portReadCounted ||
+    if (segment == nullptr || !IsReadBudgetEnabled() ||
         m_outstandingReadBytes == 0 ||
         segment->GetType() != UbTransactionOpcode::READ ||
         segment->GetSegmentKind() != UbTransactionSegmentKind::REQUEST) {
+        return false;
+    }
+    if (m_bypassCommitForHighPrio && IsHighPrioControlSegment(segment)) {
         return false;
     }
     // Aggregate READ admission per requester ingress port: every response requested through
@@ -3104,48 +3277,211 @@ UbTransportChannel::NoteSegmentAcked(const UbWqeSegment* seg)
             static_cast<double>(ownBytes) * 8e9 / std::max(GetDeliveryRateBps(), 1e6);
         sample = std::max(0.0, sample - ownDrainNs);
     }
-    m_residualNs = m_residualNs < 0.0 ? sample : 0.75 * m_residualNs + 0.25 * sample;
+    const double resGain = (m_resetRateOnPortUpgrade && m_residualNs >= 0.0 && sample < m_residualNs)
+                               ? 0.5
+                               : 0.25;
+    m_residualNs =
+        m_residualNs < 0.0 ? sample : (1.0 - resGain) * m_residualNs + resGain * sample;
     m_residualMinNs = m_residualMinNs < 0.0 ? sample : std::min(m_residualMinNs, sample);
     m_residualAtNs = now;
 }
 
 double
-UbTransportChannel::GetServiceResidualNs() const
+UbTransportChannel::GetOwnSilencePenaltyNs() const
 {
-    if (!m_serviceResidual || m_residualNs < 0.0) {
+    if (!m_silenceAwareResidual) {
         return 0.0;
     }
-    if (GetInflightPsns() > 0 || m_residualNs <= m_residualMinNs) {
-        return m_residualNs;
+    if (m_dead) {
+        return 1.0e8;
     }
-    const double age = static_cast<double>(Simulator::Now().GetNanoSeconds() - m_residualAtNs);
-    const double minHalf =
-        m_residualIdleHalfLife.IsStrictlyPositive()
-            ? static_cast<double>(m_residualIdleHalfLife.GetNanoSeconds())
-            : 5000.0;
-    const double half = std::max(m_residualNs, minHalf);
-    return m_residualMinNs + (m_residualNs - m_residualMinNs) * std::exp2(-age / half);
+    auto computeFdRefNs = [this]() -> double {
+        return (m_fdEnabled && EffectiveSuspectAfter().IsStrictlyPositive())
+                   ? static_cast<double>(
+                         (EffectiveSuspectAfter() + EffectiveProbeTimeout() * (m_fdProbeRetries + 1))
+                             .GetNanoSeconds())
+                   : 0.0;
+    };
+    if (m_fdState == FdState::SUSPECT) {
+        return std::max(computeFdRefNs(), 25000.0);
+    }
+    if (!HasOutstandingPeerWork()) {
+        return 0.0;
+    }
+    const int64_t nowNs = Simulator::Now().GetNanoSeconds();
+    const int64_t actNs = m_lastPeerActivity.GetNanoSeconds();
+    if (nowNs <= actNs) {
+        return 0.0;
+    }
+    const double silentNs = static_cast<double>(nowNs - actNs);
+    const double portRate = std::max(GetPortRateBps(), 1e6);
+    const double ccRate = GetCcRateBps();
+    const double delivRate = GetDeliveryRateBps();
+    const double effRate = std::max(ccRate > 0.0 ? std::min(delivRate, ccRate) : delivRate, 1e6);
+    const double mtuTxNs = 4174.0 * 8e9 / portRate;
+    const double inflightBytes = static_cast<double>(GetInflightPsns()) * 4174.0 +
+                                 static_cast<double>(m_outstandingReadBytes);
+    const double inflightDrainNs = inflightBytes * 8e9 / effRate;
+    const double srttNs = static_cast<double>(GetCcSmoothedRtt().GetNanoSeconds());
+    const double ccMin = GetCcMinRttNs();
+    const double minRttNs = ccMin > 0.0 ? ccMin : std::max(0.0, m_residualMinNs);
+    const double rttRefNs = srttNs > 0.0 ? srttNs : minRttNs;
+    const double resRefNs = std::max(0.0, m_residualNs);
+    const double expectedNs = std::max({resRefNs, rttRefNs, minRttNs + inflightDrainNs});
+    const double probeRefNs = m_fdProbeTimeout.IsStrictlyPositive()
+                                  ? static_cast<double>(m_fdProbeTimeout.GetNanoSeconds())
+                                  : 16.0 * mtuTxNs;
+    const double baseExpected = expectedNs > 0.0 ? expectedNs : probeRefNs;
+    const double graceNs = std::max(1.5 * baseExpected, baseExpected + 4.0 * mtuTxNs);
+    if (silentNs <= graceNs) {
+        return 0.0;
+    }
+    const double overdue = silentNs - graceNs;
+    const double ratio = overdue / std::max(graceNs, mtuTxNs);
+    const double quadPenalty = overdue * (1.0 + ratio);
+    return std::max(quadPenalty, computeFdRefNs() * std::min(1.0, ratio));
 }
+
+double
+UbTransportChannel::GetSilencePenaltyNs() const
+{
+    if (!m_silenceAwareResidual) {
+        return 0.0;
+    }
+    double penalty = GetOwnSilencePenaltyNs();
+    if (UbController* ctrl = GetCachedController()) {
+        if (const auto* siblings = ctrl->GetPathSiblingsFast(m_sport,
+                                                             m_dest,
+                                                             m_cachedPathSiblingsVer,
+                                                             m_cachedPathSiblings)) {
+            for (const Ptr<UbTransportChannel>& sibling : *siblings) {
+                if (sibling != nullptr && PeekPointer(sibling) != this) {
+                    penalty = std::max(penalty, sibling->GetOwnSilencePenaltyNs());
+                }
+            }
+        }
+    }
+    return penalty;
+}
+
+double
+UbTransportChannel::GetServiceResidualNs() const
+{
+    double base = 0.0;
+    if (m_serviceResidual && m_residualNs >= 0.0) {
+        if (GetInflightPsns() > 0 || m_residualNs <= m_residualMinNs) {
+            base = m_residualNs;
+        } else {
+            const double age =
+                static_cast<double>(Simulator::Now().GetNanoSeconds() - m_residualAtNs);
+            const double minHalf =
+                m_residualIdleHalfLife.IsStrictlyPositive()
+                    ? static_cast<double>(m_residualIdleHalfLife.GetNanoSeconds())
+                    : 5000.0;
+            const double half = std::max(m_residualNs, minHalf);
+            base = m_residualMinNs + (m_residualNs - m_residualMinNs) * std::exp2(-age / half);
+        }
+    }
+    const double penalty = GetSilencePenaltyNs();
+    return penalty > 0.0 ? base + penalty : base;
+}
+
+namespace
+{
+bool g_portEgressResetScheduled = false;
+} // namespace
 
 std::unordered_map<uint64_t, UbTransportChannel::PortEgressState>&
 UbTransportChannel::PortEgress()
 {
     static auto* m = new std::unordered_map<uint64_t, PortEgressState>();
+    if (!g_portEgressResetScheduled) {
+        g_portEgressResetScheduled = true;
+        Simulator::ScheduleDestroy([]() {
+            m->clear();
+            g_portEgressResetScheduled = false;
+        });
+    }
     return *m;
+}
+
+Time
+UbTransportChannel::EffectivePortCommitDelay() const
+{
+    Time delay = m_portCommitDelay;
+    if (m_commitDelayRttFactor > 0.0) {
+        double minRttNs = GetCcMinRttNs();
+        if (minRttNs <= 0.0 && m_residualMinNs > 0.0) {
+            minRttNs = m_residualMinNs;
+        }
+        auto& st = PortEgress()[EgressKey()];
+        if (minRttNs > st.maxMinRttNs) {
+            st.maxMinRttNs = minRttNs;
+        }
+        if (st.maxMinRttNs > 0.0) {
+            const Time rttScaled =
+                NanoSeconds(static_cast<uint64_t>(st.maxMinRttNs * m_commitDelayRttFactor));
+            if (rttScaled > delay) {
+                delay = rttScaled;
+            }
+        }
+    }
+    return delay;
+}
+
+Time
+UbTransportChannel::EffectiveSuspectAfter() const
+{
+    if (m_probeTimeoutSrttFactor > 0.0) {
+        const double srttNs = static_cast<double>(GetCcSmoothedRtt().GetNanoSeconds());
+        const double minRttNs = GetCcMinRttNs() > 0.0 ? GetCcMinRttNs() : std::max(0.0, m_residualMinNs);
+        const double rttNs = srttNs > 0.0 ? srttNs : minRttNs;
+        if (rttNs > 0.0) {
+            const Time scaled = NanoSeconds(static_cast<uint64_t>(rttNs * m_probeTimeoutSrttFactor));
+            if (scaled > m_fdSuspectAfter) {
+                return scaled;
+            }
+        }
+    }
+    return m_fdSuspectAfter;
+}
+
+Time
+UbTransportChannel::EffectiveProbeTimeout() const
+{
+    if (m_probeTimeoutSrttFactor > 0.0) {
+        const double srttNs = static_cast<double>(GetCcSmoothedRtt().GetNanoSeconds());
+        const double minRttNs = GetCcMinRttNs() > 0.0 ? GetCcMinRttNs() : std::max(0.0, m_residualMinNs);
+        const double rttNs = srttNs > 0.0 ? srttNs : minRttNs;
+        if (rttNs > 0.0) {
+            const double rate = std::max(GetPortRateBps(), 1e6);
+            const double twoMtuNs = 2.0 * 4174.0 * 8e9 / rate;
+            const Time scaled =
+                NanoSeconds(static_cast<uint64_t>(rttNs * m_probeTimeoutSrttFactor + twoMtuNs));
+            if (scaled > m_fdProbeTimeout) {
+                return scaled;
+            }
+        }
+    }
+    return m_fdProbeTimeout;
 }
 
 uint64_t
 UbTransportChannel::EgressCapBytes() const
 {
+    const Time delay = EffectivePortCommitDelay();
+    if (!delay.IsStrictlyPositive()) {
+        return 0;
+    }
     const double rate = GetPortRateBps();
-    const double bytes = rate * m_portCommitDelay.GetSeconds() / 8.0;
+    const double bytes = rate * delay.GetSeconds() / 8.0;
     return std::max<uint64_t>(16384, static_cast<uint64_t>(bytes));
 }
 
 void
 UbTransportChannel::EgressSync()
 {
-    if (!m_portCommitDelay.IsStrictlyPositive() || !m_egCounted) {
+    if (!IsPortCommitEnabled() || !m_egCounted) {
         return;
     }
     // Only bytes the port itself is holding back count: a TP that is dead, suspect, or blocked by
@@ -3176,7 +3512,11 @@ UbTransportChannel::EgressSync()
 void
 UbTransportChannel::EgressWake(PortEgressState& st)
 {
-    if (st.waiters.empty() || st.unsent + 16384 > EgressCapBytes()) {
+    if (st.waiters.empty()) {
+        return;
+    }
+    const uint64_t cap = EgressCapBytes();
+    if (cap > 0 && st.unsent + 16384 > cap) {
         return;
     }
     std::deque<UbTransportChannel*> w;
@@ -3196,7 +3536,7 @@ UbTransportChannel::EgressRelease()
     if (!m_egCounted) {
         return;
     }
-    if (m_portCommitDelay.IsStrictlyPositive()) {
+    if (IsPortCommitEnabled()) {
         auto& st = PortEgress()[EgressKey()];
         st.unsent -= std::min(st.unsent, m_egReported);
         if (m_egReported > 0 && st.active > 0) {
@@ -3216,8 +3556,11 @@ UbTransportChannel::EgressRelease()
 bool
 UbTransportChannel::EgressRefuses(Ptr<const UbWqeSegment> segment) const
 {
-    if (!m_portCommitDelay.IsStrictlyPositive() || !m_egCounted || segment == nullptr ||
+    if (!EffectivePortCommitDelay().IsStrictlyPositive() || !m_egCounted || segment == nullptr ||
         segment->GetBytesLeft() == 0) {
+        return false;
+    }
+    if (m_bypassCommitForHighPrio && IsHighPrioControlSegment(segment)) {
         return false;
     }
     const auto it = PortEgress().find(EgressKey());
@@ -3238,7 +3581,7 @@ UbTransportChannel::GetLocalServiceNs(uint64_t extraBytes) const
     const double rate = std::max(GetDeliveryRateBps(), 1e6);
     const double portRate = std::max(GetPortRateBps(), 1e6);
     double portNs = own * 8e9 / portRate;
-    if (m_portCommitDelay.IsStrictlyPositive()) {
+    if (EffectivePortCommitDelay().IsStrictlyPositive()) {
         const auto it = PortEgress().find(EgressKey());
         if (it != PortEgress().end()) {
             const double n = static_cast<double>(it->second.active + (m_egReported == 0 ? 1 : 0));
@@ -3252,7 +3595,7 @@ UbTransportChannel::GetLocalServiceNs(uint64_t extraBytes) const
 double
 UbTransportChannel::GetPortEgressWaitNs() const
 {
-    if (!m_portCommitDelay.IsStrictlyPositive()) {
+    if (!EffectivePortCommitDelay().IsStrictlyPositive()) {
         return static_cast<double>(GetUnsentPayloadBytes()) * 8e9 / std::max(GetPortRateBps(), 1e6);
     }
     const auto it = PortEgress().find(EgressKey());
@@ -3263,7 +3606,7 @@ UbTransportChannel::GetPortEgressWaitNs() const
 double
 UbTransportChannel::GetReadBudgetWaitNs(uint64_t extraBytes) const
 {
-    if (m_readPortBudget == 0 || !m_portReadCounted) {
+    if (!IsReadBudgetEnabled()) {
         return 0.0;
     }
     auto& st = PortRead()[PortKey()];
@@ -3360,6 +3703,9 @@ UbTransportChannel::ForceAdmitWqeSegment(Ptr<UbWqeSegment> segment)
     // TryContinueAcceptedWqeSegment without the capacity checks: the segment was already admitted
     // once (to a member that died) and must not wait behind the shallow pipeline limit.
     if (IsZeroPayloadReadRequest(segment)) {
+        if ((m_fdEnabled || m_silenceAwareResidual) && !HasOutstandingPeerWork()) {
+            m_lastPeerActivity = Simulator::Now();
+        }
         m_outstandingReadBytes += segment->GetSize();
         PortReadAdd(static_cast<int64_t>(segment->GetSize()));
     }
@@ -3385,10 +3731,174 @@ UbTransportChannel::MarkDead()
     PortReadRelease();
     EgressRelease();
     m_fdEvent.Cancel();
+    m_recycleEvent.Cancel();
+    m_cnpQ = queue<Ptr<Packet>>();
     if (m_retrans != nullptr) {
         m_retrans->CancelTimer();
     }
+    if (m_recycleAfterLinkUp && !m_ownerControllerDisposing && m_fdRecycleInterval.IsStrictlyPositive()) {
+        m_recycleEvent = Simulator::Schedule(m_fdRecycleInterval,
+                                             &UbTransportChannel::SendRecoveryProbe,
+                                             this);
+    }
     RefreshAllocatorSummary();
+}
+
+void
+UbTransportChannel::ScheduleImmediateRecoveryProbe()
+{
+    if (!m_dead || !m_recycleAfterLinkUp || m_ownerControllerDisposing) {
+        return;
+    }
+    m_recycleEvent.Cancel();
+    m_recycleEvent = Simulator::ScheduleNow(&UbTransportChannel::SendRecoveryProbe, this);
+}
+
+void
+UbTransportChannel::SendRecoveryProbe()
+{
+    if (!m_dead || !m_recycleAfterLinkUp || m_ownerControllerDisposing) {
+        return;
+    }
+    Ptr<Node> node = m_nodeId < NodeList::GetNNodes() ? NodeList::GetNode(m_nodeId) : nullptr;
+    Ptr<UbController> ctrl = node == nullptr ? nullptr : node->GetObject<UbController>();
+    if (ctrl == nullptr || ctrl->IsDisposing()) {
+        return;
+    }
+    Ptr<UbPort> port = DynamicCast<UbPort>(node->GetDevice(m_sport));
+    if (port != nullptr && !port->IsHardDown()) {
+        EnqueueProbe(TpOpcode::TP_OPCODE_PROBE, m_tpGeneration + 1);
+    }
+    if (m_dead && m_fdRecycleInterval.IsStrictlyPositive()) {
+        m_recycleEvent = Simulator::Schedule(m_fdRecycleInterval,
+                                             &UbTransportChannel::SendRecoveryProbe,
+                                             this);
+    }
+}
+
+void
+UbTransportChannel::OnLocalPortRateIncreased(double newBps)
+{
+    if (!m_resetRateOnPortUpgrade) {
+        return;
+    }
+    m_deliveryRateBps = 0.0;
+    m_rateSampleOpen = false;
+    m_rateSampleAppLimited = false;
+    m_residualNs = m_residualMinNs > 0.0 ? m_residualMinNs : -1.0;
+    m_residualAtNs = Simulator::Now().GetNanoSeconds();
+    if (m_congestionCtrl != nullptr) {
+        m_congestionCtrl->OnPortRateRestored(newBps);
+    }
+    EgressSync();
+    if (HasPendingTransmitWork()) {
+        Ptr<Node> node = m_nodeId < NodeList::GetNNodes() ? NodeList::GetNode(m_nodeId) : nullptr;
+        Ptr<UbPort> port = node == nullptr ? nullptr : DynamicCast<UbPort>(node->GetDevice(m_sport));
+        if (port != nullptr) {
+            port->TriggerTransmit();
+        }
+    }
+}
+
+bool
+UbTransportChannel::FenceInboundThroughGen(uint32_t supersededGen)
+{
+    const uint32_t targetGen = supersededGen + 1;
+    if (targetGen > m_fencedBeforeGen) {
+        m_fencedBeforeGen = targetGen;
+    }
+    const bool firstForCurGen = !m_inboundFenced && (m_rxGen < m_fencedBeforeGen);
+    if (m_rxGen < m_fencedBeforeGen) {
+        m_inboundFenced = true;
+    }
+    return firstForCurGen;
+}
+
+void
+UbTransportChannel::AcceptNewInboundGeneration(uint32_t newGen)
+{
+    if (newGen <= m_rxGen || newGen < m_fencedBeforeGen) {
+        return;
+    }
+    m_rxGen = newGen;
+    m_inboundFenced = false;
+    m_psnRecvNxt = 0;
+    m_maxRcvPsn = 0;
+    m_hasReceivedAnyPsn = false;
+    m_recvPsnWindow.Resize(m_psnOooThreshold);
+    m_recvPsnWindow.Reset(0);
+    m_bufferedInboundPackets.clear();
+    m_inboundTaUnits.clear();
+    m_inboundTpMsnReferences.clear();
+    m_ackQ = queue<Ptr<Packet>>();
+    RefreshAllocatorSummary();
+}
+
+void
+UbTransportChannel::RecycleToGeneration(uint32_t newGen)
+{
+    m_dead = false;
+    m_inboundFenced = false;
+    m_fdState = FdState::HEALTHY;
+    m_fdProbesSent = 0;
+    m_tpGeneration = newGen;
+    m_fdEvent.Cancel();
+    m_recycleEvent.Cancel();
+    m_cnpQ = queue<Ptr<Packet>>();
+    if (m_rxGen == 0 || m_inboundFenced) {
+        m_ackQ = queue<Ptr<Packet>>();
+    }
+    m_txLastNs.clear();
+    m_lastRetxNs = -1;
+    m_deliveryRateBps = 0.0;
+    m_rateSampleOpen = false;
+    m_rateSampleAppLimited = false;
+    m_residualNs = -1.0;
+    m_residualMinNs = -1.0;
+    m_residualAtNs = 0;
+    m_lastPeerActivity = Simulator::Now();
+    m_sendWindowLimited = false;
+    m_tpFullFlag = false;
+    m_portReadCounted = true;
+    m_egCounted = true;
+    m_egReported = 0;
+    m_portWaiting = false;
+    m_egWaiting = false;
+    m_psnSndUna = 0;
+    m_psnSndNxt = 0;
+    m_tpPsnCnt = 0;
+    m_tpMsnCnt = 0;
+    m_outstandingReadBytes = 0;
+    if (m_retrans != nullptr) {
+        m_retrans->CancelTimer();
+        m_retrans->ClearRetainedState();
+    }
+    for (const Ptr<UbWqeSegment>& seg : m_wqeSegmentVector) {
+        if (seg != nullptr) {
+            if (IsZeroPayloadReadRequest(seg)) {
+                m_outstandingReadBytes += seg->GetSize();
+                PortReadAdd(static_cast<int64_t>(seg->GetSize()));
+            }
+            seg->ResetSentBytes();
+            seg->SetTpMsn(GetMsnCnt());
+            seg->SetPsnStart(GetPsnCnt());
+            UpdatePsnCnt(seg->GetPsnSize());
+            UpDateMsnCnt(1);
+        }
+    }
+    if (m_congestionCtrl != nullptr) {
+        m_congestionCtrl->OnTpRecycled();
+    }
+    EgressSync();
+    RefreshAllocatorSummary();
+    if (!m_wqeSegmentVector.empty()) {
+        ArmFailureDetector();
+        Ptr<Node> node = m_nodeId < NodeList::GetNNodes() ? NodeList::GetNode(m_nodeId) : nullptr;
+        Ptr<UbPort> port = node == nullptr ? nullptr : DynamicCast<UbPort>(node->GetDevice(m_sport));
+        if (port != nullptr) {
+            port->TriggerTransmit();
+        }
+    }
 }
 
 bool
@@ -3400,25 +3910,32 @@ UbTransportChannel::HasOutstandingPeerWork() const
 void
 UbTransportChannel::ArmFailureDetector()
 {
-    if (!m_fdEnabled || m_dead) {
+    if ((!m_fdEnabled && !m_silenceAwareResidual) || m_dead) {
         return;
     }
     if (!HasOutstandingPeerWork()) {
         // Going from idle to busy: the silence clock starts now, not at the last old answer.
         m_lastPeerActivity = Simulator::Now();
     }
+    if (!m_fdEnabled) {
+        return;
+    }
     if (!m_fdEvent.IsPending()) {
-        m_fdEvent = Simulator::Schedule(m_fdSuspectAfter, &UbTransportChannel::CheckFailure, this);
+        m_fdEvent =
+            Simulator::Schedule(EffectiveSuspectAfter(), &UbTransportChannel::CheckFailure, this);
     }
 }
 
 void
 UbTransportChannel::OnPeerActivity()
 {
-    if (!m_fdEnabled) {
+    if (!m_fdEnabled && !m_silenceAwareResidual) {
         return;
     }
     m_lastPeerActivity = Simulator::Now();
+    if (!m_fdEnabled) {
+        return;
+    }
     if (m_fdState == FdState::SUSPECT && !m_dead) {
         m_fdState = FdState::HEALTHY;
         m_fdProbesSent = 0;
@@ -3437,13 +3954,14 @@ UbTransportChannel::CheckFailure()
         return;
     }
     const Time now = Simulator::Now();
+    const Time suspectAfter = EffectiveSuspectAfter();
     if (m_fdState == FdState::HEALTHY) {
         if (!HasOutstandingPeerWork()) {
             return; // idle: nothing to expect from the peer; re-armed on the next send
         }
         const Time silent = now - m_lastPeerActivity;
-        if (silent < m_fdSuspectAfter) {
-            m_fdEvent = Simulator::Schedule(m_fdSuspectAfter - silent,
+        if (silent < suspectAfter) {
+            m_fdEvent = Simulator::Schedule(suspectAfter - silent,
                                             &UbTransportChannel::CheckFailure,
                                             this);
             return;
@@ -3475,15 +3993,20 @@ UbTransportChannel::CheckFailure()
     utils::UbUtils::FailureEventNotify(m_nodeId, m_tpn, m_dest, m_sport,
                                        "PROBE n=" + std::to_string(m_fdProbesSent));
     EnqueueProbe(TpOpcode::TP_OPCODE_PROBE);
-    m_fdEvent = Simulator::Schedule(m_fdProbeTimeout, &UbTransportChannel::CheckFailure, this);
+    m_fdEvent = Simulator::Schedule(EffectiveProbeTimeout(), &UbTransportChannel::CheckFailure, this);
 }
 
 void
-UbTransportChannel::EnqueueProbe(TpOpcode opcode)
+UbTransportChannel::EnqueueProbe(TpOpcode opcode, std::optional<uint32_t> genTag)
 {
     // PROBE / PROBE_REPLY (TP opcodes 0x4 / 0x7, previously reserved): a bare TP header, no PSN,
     // sent ahead of data on the control VL (ResponseVl) so data-VL congestion cannot delay it.
     Ptr<Packet> probe = Create<Packet>(0);
+    if (genTag.has_value()) {
+        UbTpGenTag tag;
+        tag.gen = *genTag;
+        probe->AddPacketTag(tag);
+    }
     UbTransportHeader tpHeader;
     tpHeader.SetLastPacket(false);
     tpHeader.SetTPOpcode(opcode);
@@ -3632,11 +4155,27 @@ double
 UbTransportChannel::GetDeliveryRateBps() const
 {
     if (m_deliveryRateBps > 0.0) {
+        if (!m_resetRateOnPortUpgrade || !m_wqeSegmentVector.empty() || HasOutstandingPeerWork()) {
+            return m_deliveryRateBps;
+        }
+        const double portRate = GetPortRateBps();
+        if (portRate > 0.0 && m_deliveryRateBps < 0.95 * portRate) {
+            const double nowNs = static_cast<double>(Simulator::Now().GetNanoSeconds());
+            const double idleStartNs = static_cast<double>(
+                std::max(m_lastPeerActivity.GetNanoSeconds(), m_residualAtNs));
+            const double idleNs = nowNs - idleStartNs;
+            const double srttNs = static_cast<double>(GetCcSmoothedRtt().GetNanoSeconds());
+            const double minRttNs =
+                GetCcMinRttNs() > 0.0 ? GetCcMinRttNs() : std::max(0.0, m_residualMinNs);
+            const double graceIdle = std::max(10000.0, 4.0 * std::max(srttNs, minRttNs));
+            if (idleNs > graceIdle) {
+                return portRate -
+                       (portRate - m_deliveryRateBps) * std::exp2(-(idleNs - graceIdle) / 20000.0);
+            }
+        }
         return m_deliveryRateBps;
     }
-    Ptr<Node> node = NodeList::GetNode(m_nodeId);
-    Ptr<UbPort> port = node == nullptr ? nullptr : DynamicCast<UbPort>(node->GetDevice(m_sport));
-    return port == nullptr ? 0.0 : static_cast<double>(port->GetDataRate().GetBitRate());
+    return GetPortRateBps();
 }
 
 std::unordered_map<uint64_t, double>&
@@ -3702,10 +4241,14 @@ UbTransportChannel::UpdateDeliveryRate(uint64_t previousSndUna)
         const bool ignore = m_deliveryRateAppLimitedGuard && m_rateSampleAppLimited &&
                             m_deliveryRateBps > 0.0 && sample < m_deliveryRateBps;
         if (!ignore) {
-            m_deliveryRateBps = m_deliveryRateBps <= 0.0
-                                    ? sample
-                                    : (1.0 - m_deliveryRateGain) * m_deliveryRateBps +
-                                          m_deliveryRateGain * sample;
+            const double gain = (m_resetRateOnPortUpgrade && m_deliveryRateBps > 0.0 &&
+                                 sample > 1.25 * m_deliveryRateBps)
+                                    ? std::max(m_deliveryRateGain, 0.75)
+                                    : m_deliveryRateGain;
+            m_deliveryRateBps =
+                m_deliveryRateBps <= 0.0
+                    ? sample
+                    : (1.0 - gain) * m_deliveryRateBps + gain * sample;
         }
         m_rateSampleStart = now;
         m_rateSampleStartUna = m_psnSndUna;
@@ -3919,6 +4462,10 @@ bool UbTransportChannel::HasPendingTransmitWork()
 bool UbTransportChannel::IsLimited()
 {
     if (m_dead) {
+        if (m_recycleAfterLinkUp &&
+            (!m_cnpQ.empty() || (!m_inboundFenced && m_rxGen > 0 && !m_ackQ.empty()))) {
+            return false;
+        }
         return true;
     }
     if (!m_cnpQ.empty()) {

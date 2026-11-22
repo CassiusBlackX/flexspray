@@ -65,7 +65,13 @@ class UbHostSprayCc : public UbCongestionControl
     void OnSenderCongestionNotification(TpOpcode opcode,
                                         uint32_t psn,
                                         UbCongestionExtTph header) override;
+    void OnSenderCongestionNotification(TpOpcode opcode,
+                                        uint32_t psn,
+                                        UbCongestionExtTph header,
+                                        uint32_t retransmitBytes) override;
     TpOpcode GetAckOpcode() const override;
+    void OnPortRateRestored(double newPortRateBps) override;
+    void OnTpRecycled() override;
 
     double GetRateBps() const { return m_rateBps; }
     double GetControlRateBps() const override { return m_congestionCtrlEnabled ? m_rateBps : 0.0; }
@@ -87,6 +93,7 @@ class UbHostSprayCc : public UbCongestionControl
         uint32_t size;
         Time sendTime;
         bool retransmitted{false};
+        uint32_t accountedSize{0};
     };
 
     using GroupKey = std::tuple<uint32_t, uint32_t, uint16_t>;
@@ -115,6 +122,7 @@ class UbHostSprayCc : public UbCongestionControl
     bool m_coupled;
     bool m_hyperIncrease;
     bool m_pacing;
+    bool m_recoverFastOnUnmarked{false};
 
     // Sender state.
     double m_rateBps{0.0};

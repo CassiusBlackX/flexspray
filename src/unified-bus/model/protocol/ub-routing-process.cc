@@ -669,6 +669,12 @@ UbRoutingProcess::NoteOutputDown(uint16_t outPort)
     s_fabricDown = true;
 }
 
+void
+UbRoutingProcess::ClearOutputDown(uint16_t outPort)
+{
+    m_downSinceNs.erase(outPort);
+}
+
 std::pair<Ptr<UbRoutingProcess>, uint16_t>
 UbRoutingProcess::NeighborRouting(uint16_t outPort)
 {

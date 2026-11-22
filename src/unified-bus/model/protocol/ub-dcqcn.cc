@@ -611,6 +611,52 @@ UbHostDcqcn::OnTpDestroyRequested()
 }
 
 void
+UbHostDcqcn::OnPortRateRestored(double newPortRateBps)
+{
+    if (!m_congestionCtrlEnabled || !IsTpLifecycleActive() || newPortRateBps <= 0.0)
+    {
+        return;
+    }
+    const uint64_t newBits = static_cast<uint64_t>(newPortRateBps);
+    if (newBits > m_lineRate.GetBitRate())
+    {
+        const uint64_t prevBits = m_currentRate.GetBitRate();
+        m_lineRate = DataRate(newBits);
+        if (m_senderStarted)
+        {
+            m_currentRate = m_lineRate;
+            m_targetRate = m_lineRate;
+            m_alpha = 0.0;
+            RescalePacingDebt(prevBits);
+        }
+    }
+}
+
+void
+UbHostDcqcn::OnTpRecycled()
+{
+    if (!IsTpLifecycleActive())
+    {
+        return;
+    }
+    CancelTrackedEvent(m_rateIncreaseEvent, m_rateIncreaseTrackedEvents);
+    CancelTrackedEvent(m_alphaEvent, m_alphaTrackedEvents);
+    CancelTrackedEvent(m_pacingWakeupEvent, m_pacingTrackedEvents);
+    if (m_port != nullptr)
+    {
+        m_lineRate = m_port->GetDataRate();
+    }
+    m_senderStarted = false;
+    m_alpha = 1.0;
+    m_currentRate = m_initialRate;
+    m_targetRate = m_initialRate;
+    m_timeRecoveryEvents = 0;
+    m_byteRecoveryEvents = 0;
+    m_bytesSinceLastIncrease = 0;
+    m_nextAvailableSendTime = Simulator::Now();
+}
+
+void
 UbHostDcqcn::OnReceiverDataPacketReceived(uint64_t psn,
                                           uint32_t size,
                                           UbIpBasedNetworkHeader header)

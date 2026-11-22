@@ -35,8 +35,13 @@ def load_case(case):
     return meta, tasks
 
 
-def capacities(meta, faulted):
-    """Return dev-port caps {(dev, plane): Gbps} and fabric aggregate caps {(k): Gbps up/down}."""
+def capacities(meta, faulted, t_ns=None):
+    """Return dev-port caps {(dev, plane): Gbps} and fabric aggregate caps {(k): Gbps up/down}.
+
+    When ``t_ns`` is specified, replays only fault rows with ``row_t_ns <= t_ns`` in chronological
+    order so ``DEGRADE``/``RESTORE``/``DOWN``/``UP`` transitions and interior uplink ``DEGRADE``s
+    yield exact piecewise capacities without perturbing single-fault runs.
+    """
     rate = meta["rate_gbps"]
     hosts = meta["hosts"]
     cap = {(h["id"], p): float(rate) for h in hosts for p in h["planes"]}
@@ -57,28 +62,46 @@ def capacities(meta, faulted):
         lrs_bundle = {tuple(map(int, k.split(","))): tuple(v)
                       for k, v in (meta.get("lrs_port_to_bundle") or {}).items()}
         port_of = {(h["id"], h["ports"][p]): p for h in hosts for p in h["planes"]}
-        for (_, node, port, action, value) in meta["fault_rows"]:
+        l1_link_factor = {}
+        node_zero = set()
+        for (rt, node, port, action, value) in sorted(meta.get("fault_rows") or [], key=lambda r: r[0]):
+            if t_ns is not None and rt > t_ns:
+                continue
             if node in l1_by_node and action in ("ISOLATE_NODE", "DOWN_NODE"):
                 p, s = l1_by_node[node]
                 for h in hosts:
                     if h["server"] == s and p in h["planes"]:
-                        cap[(h["id"], p)] = 0.0
-            elif node in l1_by_node and action in ("ISOLATE", "DOWN"):
+                        node_zero.add((h["id"], p))
+            elif node in l1_by_node and action in ("ISOLATE", "DOWN", "DEGRADE", "RESTORE", "UP"):
+                if action in ("ISOLATE", "DOWN"):
+                    f = 0.0
+                elif action in ("RESTORE", "UP"):
+                    f = 1.0
+                else:
+                    num, den = map(int, value.split("/"))
+                    f = num / den
+                old = l1_link_factor.get((node, port), 1.0)
+                l1_link_factor[(node, port)] = f
+                delta = (f - old) * rate
                 if (node, port) in lrs_bundle:
                     p, s1, s2 = lrs_bundle[(node, port)]
-                    up[(p, s1, s2)] = max(0.0, up[(p, s1, s2)] - rate)
-                    up[(p, s2, s1)] = max(0.0, up[(p, s2, s1)] - rate)
+                    up[(p, s1, s2)] = max(0.0, up[(p, s1, s2)] + delta)
+                    up[(p, s2, s1)] = max(0.0, up[(p, s2, s1)] + delta)
                 else:
                     p, s = l1_by_node[node]
-                    up[(p, s)] -= rate
-                    down[(p, s)] -= rate
+                    up[(p, s)] = max(0.0, up[(p, s)] + delta)
+                    down[(p, s)] = max(0.0, down[(p, s)] + delta)
             elif (node, port) in port_of:
                 p = port_of[(node, port)]
                 if action in ("ISOLATE", "DOWN"):
                     cap[(node, p)] = 0.0
+                elif action in ("RESTORE", "UP"):
+                    cap[(node, p)] = float(rate)
                 elif action == "DEGRADE":
                     num, den = map(int, value.split("/"))
                     cap[(node, p)] = rate * num / den
+        for k in node_zero:
+            cap[k] = 0.0
     return cap, up, down
 
 
@@ -280,22 +303,8 @@ def _capacity_rows(flows, cap, up, down, var, ack, allow=None, meta=None):
             yield terms, capd.get(key, 0.0), (allow or {}).get((name, key), 0.0)
 
 
-def ideal_makespan_timeindexed_us(meta, flows, ack, allow=None, with_fault=True):
-    """Exact fluid bound with per-flow release times (and an optional fault): time-indexed LP.
-
-    Breakpoints = {0, release times, t_f}. Fixed phases [b_k, b_k+1) carry rates r_kfp (Gbps) of
-    flows already released; the last phase from b_K carries volumes b_fp under capacities * z.
-    Minimise z; T = b_K + z (the last released flow needs positive time, so T >= b_K is exact).
-    The drain allowance of an isolated resource is granted in the first post-fault phase."""
-    flows = _agg_flows(flows)
-    tf = meta["fault_ns"] / 1000.0 if (with_fault and meta.get("fault_rows")) else None
-    if tf is not None:
-        t_h = ideal_makespan_timeindexed_us(meta, flows, ack, None, with_fault=False)
-        if t_h <= tf:
-            return t_h
-    bps = sorted({0.0} | {f["release_us"] for f in flows} | ({tf} if tf is not None else set()))
+def _solve_timeindexed_bps(meta, flows, ack, allow, bps, ft0):
     caps_h = capacities(meta, faulted=False)
-    caps_f = capacities(meta, faulted=True) if tf is not None else caps_h
     nph = len(bps)  # phases 0..nph-2 fixed, nph-1 variable
     var = {}
     for k in range(nph):
@@ -305,9 +314,12 @@ def ideal_makespan_timeindexed_us(meta, flows, ack, allow=None, with_fault=True)
                     var[(k, fi, p)] = len(var)
     zi = len(var)
     rows, cols, vals, b = [], [], [], []
-    first_post = next((k for k in range(nph) if tf is not None and bps[k] >= tf - 1e-9), None)
+    first_post = next((k for k in range(nph) if ft0 is not None and bps[k] >= ft0 - 1e-9), None)
     for k in range(nph):
-        cap, up, down = caps_f if (tf is not None and bps[k] >= tf - 1e-9) else caps_h
+        if ft0 is not None and bps[k] >= ft0 - 1e-9:
+            cap, up, down = capacities(meta, True, t_ns=int(round(bps[k] * 1000.0)))
+        else:
+            cap, up, down = caps_h
         vk = {(fi, p): v for (kk, fi, p), v in var.items() if kk == k}
         sub = [f if any((fi, p) in vk for p in f["planes"]) else None for fi, f in enumerate(flows)]
         idx = [fi for fi, f in enumerate(sub) if f is not None]
@@ -341,9 +353,35 @@ def ideal_makespan_timeindexed_us(meta, flows, ack, allow=None, with_fault=True)
     return bps[-1] + res.x[zi]
 
 
+def ideal_makespan_timeindexed_us(meta, flows, ack, allow=None, with_fault=True):
+    """Exact fluid bound with per-flow release times and piecewise multi-fault timelines.
+
+    Breakpoints = {0, release times, active fault times}. Solves prefix-by-prefix over fault
+    timestamps so a job finishing before a later RESTORE/UP transition keeps exact causality."""
+    flows = _agg_flows(flows)
+    frows = (meta.get("fault_rows") or []) if with_fault else []
+    ft_list = sorted({r[0] / 1000.0 for r in frows})
+    rel_set = {f["release_us"] for f in flows}
+    max_rel = max(rel_set, default=0.0)
+    if not ft_list:
+        return _solve_timeindexed_bps(meta, flows, ack, None, sorted({0.0} | rel_set), None)
+    t_h = _solve_timeindexed_bps(meta, flows, ack, None, sorted({0.0} | rel_set), None)
+    if t_h <= ft_list[0] + 1e-9:
+        return t_h
+    ft0 = ft_list[0]
+    for m in range(1, len(ft_list) + 1):
+        sub_ft = ft_list[:m]
+        bps = sorted({0.0} | rel_set | set(sub_ft))
+        t_m = _solve_timeindexed_bps(meta, flows, ack, allow, bps, ft0)
+        if m == len(ft_list) or (t_m <= ft_list[m] + 1e-9 and max_rel <= ft_list[m] + 1e-9):
+            return t_m
+    return t_h
+
+
 def ideal_makespan_us(meta, flows, ack, allow=None):
     flows = _agg_flows(flows)
-    if any(f.get("release_us", 0) > 0 for f in flows):
+    fault_times = {r[0] for r in (meta.get("fault_rows") or [])}
+    if any(f.get("release_us", 0) > 0 for f in flows) or len(fault_times) > 1:
         return ideal_makespan_timeindexed_us(meta, flows, ack, allow)
     """Minimum makespan (us) with perfect per-plane splitting (fluid LP).
 
@@ -457,8 +495,11 @@ def analyze(case):
     # drain each scheme happened to get), every scheme is measured against the same bound, so
     # eff_fixed may exceed 1 when a scheme kept using an isolated port (see exposure).
     t_ideal_fixed = t_ideal_nodrain
-    if meta.get("fault_rows") and any(r[3] in ("ISOLATE", "ISOLATE_NODE") for r in meta["fault_rows"]):
-        shift = dict(meta, fault_ns=meta["fault_ns"] + FIXED_NOTIFY_NS)
+    frows = meta.get("fault_rows") or []
+    if len({r[0] for r in frows}) == 1 and any(r[3] in ("ISOLATE", "ISOLATE_NODE") for r in frows):
+        shift_ns = meta["fault_ns"] + FIXED_NOTIFY_NS
+        shift = dict(meta, fault_ns=shift_ns,
+                     fault_rows=[[shift_ns] + list(r[1:]) for r in frows])
         t_ideal_fixed = ideal_makespan_us(shift, flows, ack)
     start, done = read_tasks(case)
     bulk_ids = [f["task"] for f in flows]

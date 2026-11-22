@@ -236,6 +236,9 @@ RunRow(UbLinkHealthRow row)
     case UbLinkHealthAction::DOWN:
         UbLinkHealthSetLinkDown(row.nodeId, row.portId);
         return;
+    case UbLinkHealthAction::UP:
+        UbLinkHealthSetLinkUp(row.nodeId, row.portId);
+        return;
     case UbLinkHealthAction::DOWN_NODE:
     {
         Ptr<Node> node = NodeList::GetNode(row.nodeId);
@@ -263,8 +266,20 @@ UbLinkHealthSetLinkRate(uint32_t nodeId, uint32_t portId, DataRate rate)
                     "link_health: node " << nodeId << " port " << portId << " is not attached");
     SaveOriginalRate(port);
     SaveOriginalRate(peer);
-    port->SetDataRate(rate);
-    peer->SetDataRate(rate);
+    for (const Ptr<UbPort>& p : {port, peer})
+    {
+        const uint64_t oldBps = p->GetDataRate().GetBitRate();
+        p->SetDataRate(rate);
+        if (rate.GetBitRate() > oldBps && !IsSwitchNode(p->GetNode()->GetId()))
+        {
+            Ptr<UbController> ctrl = p->GetNode()->GetObject<UbController>();
+            if (ctrl != nullptr)
+            {
+                ctrl->OnLocalPortRateIncreased(static_cast<uint16_t>(p->GetIfIndex()),
+                                               static_cast<double>(rate.GetBitRate()));
+            }
+        }
+    }
 }
 
 void
@@ -291,7 +306,17 @@ UbLinkHealthRestoreLinkRate(uint32_t nodeId, uint32_t portId)
         auto it = OriginalRates().find({p->GetNode()->GetId(), p->GetIfIndex()});
         if (it != OriginalRates().end())
         {
+            const uint64_t oldBps = p->GetDataRate().GetBitRate();
             p->SetDataRate(it->second);
+            if (it->second.GetBitRate() > oldBps && !IsSwitchNode(p->GetNode()->GetId()))
+            {
+                Ptr<UbController> ctrl = p->GetNode()->GetObject<UbController>();
+                if (ctrl != nullptr)
+                {
+                    ctrl->OnLocalPortRateIncreased(static_cast<uint16_t>(p->GetIfIndex()),
+                                                   static_cast<double>(it->second.GetBitRate()));
+                }
+            }
         }
     }
 }
@@ -366,6 +391,46 @@ UbLinkHealthSetNodeIsolated(uint32_t nodeId, bool isolated)
 }
 
 void
+ApplyDeviceLocalPortUp(uint32_t nodeId, uint16_t portId)
+{
+    Ptr<UbController> ctrl = NodeList::GetNode(nodeId)->GetObject<UbController>();
+    if (ctrl != nullptr)
+    {
+        ctrl->OnLocalPortUp(portId);
+    }
+}
+
+void
+SetEndpointUp(const Ptr<UbPort>& port, bool peerIsSwitch)
+{
+    const uint32_t nodeId = port->GetNode()->GetId();
+    const uint16_t portId = static_cast<uint16_t>(port->GetIfIndex());
+    port->SetHardDown(false);
+    if (IsSwitchNode(nodeId))
+    {
+        if (peerIsSwitch)
+        {
+            Ptr<UbRoutingProcess> routing =
+                NodeList::GetNode(nodeId)->GetObject<UbSwitch>()->GetRoutingProcess();
+            routing->ClearOutputIsolated(portId);
+            routing->ClearOutputDown(portId);
+        }
+        port->TriggerTransmit();
+        return;
+    }
+    const uint64_t localNs = GetNs(g_linkHealthLocalDetect);
+    if (localNs == 0)
+    {
+        ApplyDeviceLocalPortUp(nodeId, portId);
+    }
+    else
+    {
+        Simulator::Schedule(NanoSeconds(localNs), &ApplyDeviceLocalPortUp, nodeId, portId);
+    }
+    port->TriggerTransmit();
+}
+
+void
 UbLinkHealthSetLinkDown(uint32_t nodeId, uint32_t portId)
 {
     Ptr<UbPort> port = GetPort(nodeId, portId);
@@ -376,6 +441,19 @@ UbLinkHealthSetLinkDown(uint32_t nodeId, uint32_t portId)
     const bool peerIsSwitch = IsSwitchNode(peer->GetNode()->GetId());
     SetEndpointDown(port, peerIsSwitch);
     SetEndpointDown(peer, portIsSwitch);
+}
+
+void
+UbLinkHealthSetLinkUp(uint32_t nodeId, uint32_t portId)
+{
+    Ptr<UbPort> port = GetPort(nodeId, portId);
+    Ptr<UbPort> peer = GetPeer(port);
+    NS_ABORT_MSG_IF(port == nullptr || peer == nullptr,
+                    "link_health: node " << nodeId << " port " << portId << " is not attached");
+    const bool portIsSwitch = IsSwitchNode(nodeId);
+    const bool peerIsSwitch = IsSwitchNode(peer->GetNode()->GetId());
+    SetEndpointUp(port, peerIsSwitch);
+    SetEndpointUp(peer, portIsSwitch);
 }
 
 void
@@ -496,6 +574,10 @@ TryReadLinkHealthSchedule(const std::string& path,
         else if (action == "DOWN")
         {
             row.action = UbLinkHealthAction::DOWN;
+        }
+        else if (action == "UP")
+        {
+            row.action = UbLinkHealthAction::UP;
         }
         else if (action == "DOWN_NODE")
         {

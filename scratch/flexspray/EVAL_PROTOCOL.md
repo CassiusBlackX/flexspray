@@ -161,3 +161,14 @@
   - 主矩阵 5 组（`756` 次：`r17_ub_pod` `294`、`r17_cm` `126`、`r17_cm_osub` `168`、`r17_mesh` `126`、`r17_kv` `42`），覆盖 `F0 / F3far3 / H1far`。
   - **SSD 专项矩阵 `r17_kv_io`**（`42` 次）：针对 `r17_kv` 中 `F3far3/H1far` 与 `SSD(planes 4,5) <-> NPU6..7` 正交问题，加测 `b_kv_skew` 的 `F0 / F3ssd3 / H1ssd` 全 7 方案对比。
   - **规范统计口径**：全部报告严格采用 `flexspray_losstable.py`（最差设备×种子定格，`tdev` 以 `lp_lb >= 1/N` 判 `phys`，`steady/trans` 标 `phys*`，保留 `n/a` 于分母，`<` 与 `<=` 并列，报告 4 种 `N`）、`flexspray_phaseinfl.py` 与 `flexspray_dagbound.py --fault-aware`。
+
+---
+
+## 第十八–十九轮补充：FlexSpray v7 无量纲化、双向对等代际活性与 NSDI 全维盲测协议（frozen `r19nsdi`）
+
+- **冻结与门禁约束**：禁止修改 Golden 默认值；每次源码变更后重新 `Release` 编译并 `freeze.sh r19nsdi`，核对共享库 SHA256 一致，全数通过 5 道前置门禁（17/17 专项单测、Golden `25/25 SAME`、全量 `50/50 PASS`、`flexspray_regress.py` exit `0`）。
+- **绝对盲测与干净汇总准则**：
+  1. 全部 E1–E5 评估统一在**未见盲测种子 `15, 16`**、固定整数 `--stop-ms 4` 上运行，共计 **22 个批次 `2,898` 次全仿真**，不针对未见样本做任何超参再调优；
+  2. 在聚合原始效率与 Fault-Aware DAGBound 均值时，所有 `rc != 0` 或 `missing_tasks > 0` 的失败算例**强制以 `0.0` 计入分母**（如 Clean `e1_dagbound_summary.csv` 与 `e3_e5_dagbound_summary.csv` 均通过逐例关联 `results.jsonl` 修复未过滤缺失任务时 `B/T > 1` 虚高偏差）；
+  3. LossMatrix 同时输出规范归并视图（`e1_losstable_{v7,sota}_{lt,le}.md`）与**按拓扑严格分层视图**（`r19_summary.json["losstable"]["sota_topology_stratified_tdev"]`），防止同名 `(scenario, fault)` 跨拓扑混并丢失空间差异；
+  4. E3 大规模实验显式声明载荷缩放系数（`S=8` 及 `S=16 d2d/b_kv` 为 `--scale 0.5`，`S=16 b_ring` 为 `--scale 0.25`）与 `ub_mesh` 中 `ALPHA_US` 对 `b_ring F0` 造成的 `~1.04` 边界备注。

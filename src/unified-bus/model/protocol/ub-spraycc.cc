@@ -93,6 +93,12 @@ UbHostSprayCc::GetTypeId()
                           "periods (x2 per period, up to x16).",
                           BooleanValue(false),
                           MakeBooleanAccessor(&UbHostSprayCc::m_hyperIncrease),
+                          MakeBooleanChecker())
+            .AddAttribute("RecoverFastOnUnmarked",
+                          "Allocate unmarked coupled AI across unclamped group members (instead of "
+                          "by current rate share) so degraded planes recover rapidly on RESTORE.",
+                          BooleanValue(false),
+                          MakeBooleanAccessor(&UbHostSprayCc::m_recoverFastOnUnmarked),
                           MakeBooleanChecker());
     return tid;
 }
@@ -220,10 +226,19 @@ UbHostSprayCc::OnSenderRetransmissionRollback(uint32_t retransmitBytes)
     {
         return;
     }
+    if (m_tp != nullptr && m_tp->GetRetransmissionMode() == UbRetransmissionMode::SELECTIVE)
+    {
+        for (auto& entry : m_sent)
+        {
+            entry.accountedSize = 0;
+        }
+        m_inflight = 0;
+        return;
+    }
     uint64_t removed = 0;
     while (!m_sent.empty() && removed < retransmitBytes)
     {
-        removed += m_sent.back().size;
+        removed += m_sent.back().accountedSize;
         m_sent.pop_back();
     }
     m_inflight = m_inflight > removed ? m_inflight - removed : 0;
@@ -236,11 +251,62 @@ UbHostSprayCc::OnSenderRetransmissionRollback(uint32_t retransmitBytes)
 void
 UbHostSprayCc::OnSenderRetransmissionPacketSent(uint32_t psn, uint32_t size)
 {
-    OnSenderDataPacketSent(psn, size);
-    if (m_congestionCtrlEnabled && !m_sent.empty())
+    if (!m_congestionCtrlEnabled)
     {
-        m_sent.back().retransmitted = true;  // Karn: never sample RTT on a retransmitted PSN
+        return;
     }
+    const uint32_t wirePsn = psn & kPsnMask;
+    bool found = false;
+    for (auto it = m_sent.rbegin(); it != m_sent.rend(); ++it)
+    {
+        if (it->psn == wirePsn)
+        {
+            it->retransmitted = true; // Karn: never sample RTT on a retransmitted PSN
+            it->accountedSize += size;
+            m_inflight += size;
+            found = true;
+            break;
+        }
+    }
+    if (!found)
+    {
+        OnSenderDataPacketSent(psn, size);
+        if (!m_sent.empty())
+        {
+            m_sent.back().retransmitted = true;
+        }
+    }
+}
+
+void
+UbHostSprayCc::OnPortRateRestored(double newPortRateBps)
+{
+    if (!m_congestionCtrlEnabled || newPortRateBps <= 0.0)
+    {
+        return;
+    }
+    m_rateBps = std::clamp(std::max(m_rateBps, newPortRateBps),
+                           m_minRateFraction * newPortRateBps,
+                           newPortRateBps);
+    m_alpha = 0.0;
+    m_unmarkedPeriods = 0;
+}
+
+void
+UbHostSprayCc::OnTpRecycled()
+{
+    m_pacingEvent.Cancel();
+    m_sent.clear();
+    m_inflight = 0;
+    m_periodMarked = 0;
+    m_periodTotal = 0;
+    m_rxMarked = 0;
+    m_rxTotal = 0;
+    m_alpha = 0.0;
+    m_unmarkedPeriods = 0;
+    m_lastUpdate = Time(0);
+    m_rateBps = LineRateBps();
+    m_nextSend = Simulator::Now();
 }
 
 bool
@@ -282,7 +348,7 @@ UbHostSprayCc::OnSenderDataPacketSent(uint32_t psn, uint32_t size)
         return;
     }
     const Time now = Simulator::Now();
-    m_sent.push_back({psn & kPsnMask, size, now});
+    m_sent.push_back({psn & kPsnMask, size, now, false, size});
     m_inflight += size;
     if (m_nextSend < now)
     {
@@ -382,8 +448,28 @@ UbHostSprayCc::OnPeriodEnd()
         const double boost =
             m_hyperIncrease ? std::min<double>(1u << std::min<uint32_t>(m_unmarkedPeriods - 1, 4), 16)
                             : 1.0;
-        // Group gains AI*line per period, split by this plane's rate share.
-        const double share = m_rateBps / GroupRateBps();
+        // Group gains AI*line per period, split by this plane's rate share (or over unclamped
+        // planes during fast recovery so saturated healthy planes do not starve a healing plane).
+        double share = m_rateBps / GroupRateBps();
+        if (m_recoverFastOnUnmarked && m_coupled && m_inGroup)
+        {
+            const auto it = Groups().find(m_groupKey);
+            if (it != Groups().end() && !it->second.empty())
+            {
+                uint32_t unclamped = 0;
+                for (const UbHostSprayCc* m : it->second)
+                {
+                    if (m->m_rateBps < 0.99 * line)
+                    {
+                        ++unclamped;
+                    }
+                }
+                if (unclamped > 0 && m_rateBps < 0.99 * line)
+                {
+                    share = std::max(share, 1.0 / static_cast<double>(unclamped));
+                }
+            }
+        }
         m_rateBps += m_aiFraction * line * share * boost;
     }
     m_rateBps = std::clamp(m_rateBps, m_minRateFraction * line, line);
@@ -424,7 +510,7 @@ UbHostSprayCc::OnSenderCongestionNotification(TpOpcode opcode, uint32_t psn, UbC
                 m_srtt = m_srtt.IsStrictlyPositive() ? (m_srtt * 7 + sample) / 8 : sample;
             }
         }
-        acked += m_sent.front().size;
+        acked += m_sent.front().accountedSize;
         m_sent.pop_front();
     }
     m_inflight = acked >= m_inflight ? 0 : m_inflight - acked;
@@ -439,6 +525,54 @@ UbHostSprayCc::OnSenderCongestionNotification(TpOpcode opcode, uint32_t psn, UbC
     {
         m_lastUpdate = now;
         OnPeriodEnd();
+    }
+}
+
+void
+UbHostSprayCc::OnSenderCongestionNotification(TpOpcode opcode,
+                                              uint32_t psn,
+                                              UbCongestionExtTph header,
+                                              uint32_t retransmitBytes)
+{
+    OnSenderCongestionNotification(opcode, psn, header);
+    if (!m_congestionCtrlEnabled || opcode != TpOpcode::TP_OPCODE_ACK_WITH_CETPH)
+    {
+        return;
+    }
+    if (m_tp != nullptr && m_tp->GetRetransmissionMode() == UbRetransmissionMode::SELECTIVE)
+    {
+        const uint64_t unacked = m_tp->GetSelectiveUnackedBytes();
+        const uint64_t effInflight = unacked > retransmitBytes ? unacked - retransmitBytes : 0;
+        if (m_inflight > effInflight)
+        {
+            uint64_t drop = m_inflight - effInflight;
+            m_inflight = effInflight;
+            for (auto& entry : m_sent)
+            {
+                if (drop == 0)
+                {
+                    break;
+                }
+                const uint32_t d = static_cast<uint32_t>(
+                    std::min<uint64_t>(entry.accountedSize, drop));
+                entry.accountedSize -= d;
+                drop -= d;
+            }
+        }
+    }
+    else if (retransmitBytes > 0)
+    {
+        uint64_t removed = 0;
+        while (!m_sent.empty() && removed < retransmitBytes)
+        {
+            removed += m_sent.back().accountedSize;
+            m_sent.pop_back();
+        }
+        m_inflight = m_inflight > removed ? m_inflight - removed : 0;
+        if (m_sent.empty())
+        {
+            m_inflight = 0;
+        }
     }
 }
 

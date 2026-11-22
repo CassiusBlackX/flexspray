@@ -40972,6 +40972,674 @@ class UbDcqcnLateCnpDuringDrainTest : public TestCase
     uint32_t m_callbackCount{0};
 };
 
+class UbFlexSpraySilenceResidualControlLatencyTest : public TestCase
+{
+  public:
+    UbFlexSpraySilenceResidualControlLatencyTest()
+        : TestCase("UnifiedBus - FlexSpray v7 SilenceAwareResidual + BypassCommitForHighPrio "
+                   "protects control latency under far-end down")
+    {
+    }
+
+    void DoRun() override
+    {
+        SetDataDir(NS_TEST_SOURCEDIR);
+        const std::filesystem::path repoRoot = LocateRepoRoot();
+        auto writeBaseAttrs = [](std::ofstream& attrs) {
+            attrs << "\nglobal UB_PARSE_TRACE_ENABLE \"false\"\n"
+                     "global UB_PACKET_TRACE_ENABLE \"false\"\n"
+                     "global UB_RECORD_PKT_TRACE \"false\"\n"
+                     "global UB_CC_ENABLED \"true\"\n"
+                     "global UB_CC_ALGO \"SPRAYCC\"\n"
+                     "default ns3::UbApp::RoutingType \"PER_PACKET_SHORTEST_PATHS\"\n"
+                     "default ns3::UbTransportChannel::RoutingType \"PER_PACKET_SHORTEST_PATHS\"\n"
+                     "default ns3::UbRoutingProcess::MultipathSelector \"ADAPTIVE_RATE\"\n"
+                     "default ns3::UbTransaction::TpgDispatchPolicy \"MIN_DRAIN_TIME\"\n"
+                     "default ns3::UbTransaction::TpgDispatchSlack \"0.1\"\n"
+                     "default ns3::UbSwitchAllocator::TpGroupFairShare \"true\"\n"
+                     "default ns3::UbTransportChannel::ResponseVl \"1\"\n"
+                     "default ns3::UbTransportChannel::FailureDetection \"true\"\n"
+                     "default ns3::UbTransportChannel::EnableRetrans \"true\"\n"
+                     "default ns3::UbTransportChannel::RetransmissionMode \"GBN\"\n"
+                     "default ns3::UbJetty::TaSegmentBytes \"16384\"\n"
+                     "default ns3::UbTransportChannel::RtoSrttFactor \"8\"\n"
+                     "default ns3::UbTransportChannel::RtoFloorFirstOnly \"true\"\n"
+                     "default ns3::UbTransportChannel::PortCommitDelay \"6us\"\n"
+                     "default ns3::UbTransaction::ServiceTimeScore \"true\"\n"
+                     "default ns3::UbTransportChannel::ServiceResidual \"true\"\n"
+                     "default ns3::UbTransportChannel::ResidualSubtractOwn \"true\"\n"
+                     "default ns3::UbTransportChannel::ResidualIdleHalfLife \"150us\"\n"
+                     "default ns3::UbTransaction::PrioritizeHeavyWqe \"true\"\n"
+                     "default ns3::UbTransportChannel::SilenceAwareResidual \"true\"\n"
+                     "default ns3::UbTransportChannel::BypassCommitForHighPrio \"true\"\n"
+                     "default ns3::UbTransaction::BypassCommitForHighPrio \"true\"\n";
+        };
+        const std::filesystem::path caseDir = std::filesystem::path(
+            CreateTempDirFilename("ub-flexspray-v7-silence-ctrl"));
+        std::filesystem::remove_all(caseDir);
+        std::filesystem::create_directories(caseDir);
+        for (const char* f : {"node.csv", "topology.csv", "routing_table.csv",
+                              "transport_channel.csv", "network_attribute.txt"})
+        {
+            std::filesystem::copy_file(repoRoot / "scratch/2nodes_multiple-tp" / f, caseDir / f);
+        }
+        {
+            std::ofstream traffic(caseDir / "traffic.csv");
+            traffic << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
+                       "dependOnPhases\n"
+                       "0,0,1,40000000,URMA_WRITE,7,10ns,0,\n"
+                       "1,0,1,256,URMA_WRITE,2,23000ns,0,\n"
+                       "2,0,1,256,URMA_WRITE,2,26000ns,0,\n"
+                       "3,0,1,256,URMA_WRITE,2,29000ns,0,\n"
+                       "4,0,1,256,URMA_WRITE,2,32000ns,0,\n";
+        }
+        {
+            std::ofstream attrs(caseDir / "network_attribute.txt", std::ios::app);
+            writeBaseAttrs(attrs);
+        }
+        {
+            std::ofstream health(caseDir / "link_health.csv");
+            health << "timeNs,nodeId,portId,action,value\n15000,1,1,DOWN,\n";
+        }
+        auto [status, output] = RunQuickExampleAbsoluteCaseCommand(
+            CreateTempDirFilename("ub-flexspray-v7-silence-ctrl.log"), "", "", caseDir);
+        NS_TEST_ASSERT_MSG_EQ(status, 0, "v7 silence ctrl case must complete: " << output);
+        std::map<uint32_t, double> ctrlDoneUs;
+        uint32_t completed = 0;
+        for (const auto& entry : std::filesystem::directory_iterator(caseDir / "runlog"))
+        {
+            if (entry.path().filename().string().rfind("TaskTrace", 0) != 0)
+            {
+                continue;
+            }
+            std::ifstream in(entry.path());
+            std::string line;
+            while (std::getline(in, line))
+            {
+                if (line.find("WQE Completes") == std::string::npos)
+                {
+                    continue;
+                }
+                ++completed;
+                const auto c1 = line.find(',');
+                const auto c2 = c1 == std::string::npos ? std::string::npos : line.find(',', c1 + 1);
+                const auto c3 = c2 == std::string::npos ? std::string::npos : line.find(',', c2 + 1);
+                if (c1 != std::string::npos && c2 != std::string::npos && c3 != std::string::npos)
+                {
+                    const uint32_t tid = std::stoul(line.substr(c2 + 1, c3 - c2 - 1));
+                    const double tUs = std::stoull(line.substr(0, c1)) / 1e6;
+                    ctrlDoneUs[tid] = tUs;
+                }
+            }
+        }
+        NS_TEST_ASSERT_MSG_EQ(completed, 5u, "bulk + all 4 control WQEs must complete");
+        for (uint32_t tid = 1; tid <= 4; ++tid)
+        {
+            const double startUs = 20.0 + 3.0 * tid;
+            const double latUs = ctrlDoneUs[tid] - startUs;
+            NS_TEST_ASSERT_MSG_LT(latUs,
+                                  6.0,
+                                  "v7 SilenceAwareResidual + BypassCommitForHighPrio must avoid "
+                                  "black-hole stalling ctrl task "
+                                      << tid);
+        }
+    }
+};
+
+class UbFlexSprayLinkRestoreAndFlapTest : public TestCase
+{
+  public:
+    UbFlexSprayLinkRestoreAndFlapTest()
+        : TestCase("UnifiedBus - FlexSpray v7 DEGRADE->RESTORE fast rate recovery")
+    {
+    }
+
+    void DoRun() override
+    {
+        SetDataDir(NS_TEST_SOURCEDIR);
+        const std::filesystem::path repoRoot = LocateRepoRoot();
+        const std::filesystem::path caseDir =
+            std::filesystem::path(CreateTempDirFilename("ub-flexspray-v7-restore"));
+        std::filesystem::remove_all(caseDir);
+        std::filesystem::create_directories(caseDir);
+        for (const char* f : {"node.csv", "topology.csv", "routing_table.csv",
+                              "transport_channel.csv", "network_attribute.txt"})
+        {
+            std::filesystem::copy_file(repoRoot / "scratch/2nodes_multiple-tp" / f, caseDir / f);
+        }
+        {
+            std::ofstream traffic(caseDir / "traffic.csv");
+            traffic << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
+                       "dependOnPhases\n0,0,1,40000000,URMA_WRITE,7,10ns,0,\n";
+        }
+        {
+            std::ofstream attrs(caseDir / "network_attribute.txt", std::ios::app);
+            attrs << "\nglobal UB_PARSE_TRACE_ENABLE \"false\"\n"
+                     "global UB_PACKET_TRACE_ENABLE \"false\"\n"
+                     "global UB_RECORD_PKT_TRACE \"false\"\n"
+                     "global UB_CC_ENABLED \"true\"\n"
+                     "global UB_CC_ALGO \"SPRAYCC\"\n"
+                     "default ns3::UbApp::RoutingType \"PER_PACKET_SHORTEST_PATHS\"\n"
+                     "default ns3::UbTransportChannel::RoutingType \"PER_PACKET_SHORTEST_PATHS\"\n"
+                     "default ns3::UbRoutingProcess::MultipathSelector \"ADAPTIVE_RATE\"\n"
+                     "default ns3::UbTransaction::TpgDispatchPolicy \"MIN_DRAIN_TIME\"\n"
+                     "default ns3::UbTransaction::TpgDispatchSlack \"0.1\"\n"
+                     "default ns3::UbSwitchAllocator::TpGroupFairShare \"true\"\n"
+                     "default ns3::UbTransportChannel::ResponseVl \"1\"\n"
+                     "default ns3::UbJetty::TaSegmentBytes \"16384\"\n"
+                     "default ns3::UbTransportChannel::CommitDelayRttFactor \"4\"\n"
+                     "default ns3::UbTransaction::ServiceTimeScore \"true\"\n"
+                     "default ns3::UbTransportChannel::ServiceResidual \"true\"\n"
+                     "default ns3::UbTransportChannel::ResetRateOnPortUpgrade \"true\"\n"
+                     "default ns3::UbHostSprayCc::RecoverFastOnUnmarked \"true\"\n";
+        }
+        {
+            std::ofstream health(caseDir / "link_health.csv");
+            health << "timeNs,nodeId,portId,action,value\n"
+                      "20000,0,1,DEGRADE,1/4\n"
+                      "60000,0,1,RESTORE,\n";
+        }
+        auto [status, output] = RunQuickExampleAbsoluteCaseCommand(
+            CreateTempDirFilename("ub-flexspray-v7-restore.log"), "", "", caseDir);
+        NS_TEST_ASSERT_MSG_EQ(status, 0, "restore case should complete: " << output);
+        double doneUs = 0.0;
+        for (const auto& entry : std::filesystem::directory_iterator(caseDir / "runlog"))
+        {
+            if (entry.path().filename().string().rfind("TaskTrace", 0) != 0)
+            {
+                continue;
+            }
+            std::ifstream in(entry.path());
+            std::string line;
+            while (std::getline(in, line))
+            {
+                if (line.find("WQE Completes") != std::string::npos)
+                {
+                    doneUs = std::stoull(line.substr(0, line.find(','))) / 1e6;
+                }
+            }
+        }
+        NS_TEST_ASSERT_MSG_GT(doneUs, 0.0, "transfer must complete");
+        // Without RESTORE on 2x400G links (400+100G after 20us), 40MB takes > 440 us; with
+        // RESTORE at 60 us (back to 800G) it must recover sharply below 390 us.
+        NS_TEST_ASSERT_MSG_LT(doneUs, 390.0, "RESTORE must recover restored link capacity quickly");
+    }
+};
+
+class UbFlexSprayHardDownRecycleTest : public TestCase
+{
+  public:
+    UbFlexSprayHardDownRecycleTest()
+        : TestCase("UnifiedBus - FlexSpray v7 DOWN->UP generation-fenced TP recycling")
+    {
+    }
+
+    void DoRun() override
+    {
+        // 1. Unit check of generation-aware replay fence & UbTpGenTag serialization.
+        UbReplayFenceTag ftag;
+        ftag.supersededTpn = 42;
+        ftag.supersededGen = 7;
+        UbTpGenTag gtag;
+        gtag.gen = 8;
+        Ptr<Packet> p = Create<Packet>(64);
+        p->AddPacketTag(ftag);
+        p->AddPacketTag(gtag);
+        UbReplayFenceTag fout;
+        UbTpGenTag gout;
+        NS_TEST_ASSERT_MSG_EQ(p->PeekPacketTag(fout), true, "fence tag round-trips");
+        NS_TEST_ASSERT_MSG_EQ(p->PeekPacketTag(gout), true, "gen tag round-trips");
+        NS_TEST_ASSERT_MSG_EQ(fout.supersededTpn, 42u, "supersededTpn preserved");
+        NS_TEST_ASSERT_MSG_EQ(fout.supersededGen, 7u, "supersededGen preserved");
+        NS_TEST_ASSERT_MSG_EQ(gout.gen, 8u, "gen preserved");
+
+        Ptr<UbTransportChannel> tp = CreateObject<UbTransportChannel>();
+        tp->SetAttribute("RecycleAfterLinkUp", BooleanValue(true));
+        NS_TEST_ASSERT_MSG_EQ(tp->FenceInboundThroughGen(0), true, "first fence of gen 0 succeeds");
+        NS_TEST_ASSERT_MSG_EQ(tp->IsInboundFenced(), true, "gen 0 is fenced");
+        NS_TEST_ASSERT_MSG_EQ(tp->FenceInboundThroughGen(0), false, "duplicate fence of gen 0 ignored");
+        tp->AcceptNewInboundGeneration(1);
+        NS_TEST_ASSERT_MSG_EQ(tp->IsInboundFenced(), false, "new generation 1 is unfenced");
+        tp->Dispose();
+        Simulator::Destroy();
+
+        // 2. End-to-end DOWN -> UP on 2nodes_multiple-tp with pre-down & post-up WQEs.
+        SetDataDir(NS_TEST_SOURCEDIR);
+        const std::filesystem::path repoRoot = LocateRepoRoot();
+        const std::filesystem::path caseDir =
+            std::filesystem::path(CreateTempDirFilename("ub-flexspray-v7-recycle"));
+        std::filesystem::remove_all(caseDir);
+        std::filesystem::create_directories(caseDir);
+        for (const char* f : {"node.csv", "topology.csv", "routing_table.csv",
+                              "transport_channel.csv", "network_attribute.txt"})
+        {
+            std::filesystem::copy_file(repoRoot / "scratch/2nodes_multiple-tp" / f, caseDir / f);
+        }
+        {
+            std::ofstream traffic(caseDir / "traffic.csv");
+            traffic << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
+                       "dependOnPhases\n"
+                       "0,0,1,20000000,URMA_WRITE,7,10ns,0,\n"
+                       "1,0,1,12000000,URMA_WRITE,7,100000ns,0,\n";
+        }
+        {
+            std::ofstream attrs(caseDir / "network_attribute.txt", std::ios::app);
+            attrs << "\nglobal UB_PARSE_TRACE_ENABLE \"false\"\n"
+                     "global UB_PACKET_TRACE_ENABLE \"false\"\n"
+                     "global UB_RECORD_PKT_TRACE \"false\"\n"
+                     "global UB_CC_ENABLED \"true\"\n"
+                     "global UB_CC_ALGO \"SPRAYCC\"\n"
+                     "default ns3::UbApp::RoutingType \"PER_PACKET_SHORTEST_PATHS\"\n"
+                     "default ns3::UbTransportChannel::RoutingType \"PER_PACKET_SHORTEST_PATHS\"\n"
+                     "default ns3::UbRoutingProcess::MultipathSelector \"ADAPTIVE_RATE\"\n"
+                     "default ns3::UbTransaction::TpgDispatchPolicy \"MIN_DRAIN_TIME\"\n"
+                     "default ns3::UbTransportChannel::ResponseVl \"1\"\n"
+                     "default ns3::UbTransportChannel::FailureDetection \"true\"\n"
+                     "default ns3::UbTransportChannel::EnableRetrans \"true\"\n"
+                     "default ns3::UbTransportChannel::RetransmissionMode \"GBN\"\n"
+                     "default ns3::UbJetty::TaSegmentBytes \"16384\"\n"
+                     "default ns3::UbTransportChannel::RecycleAfterLinkUp \"true\"\n"
+                     "default ns3::UbTransportChannel::FailureRecycleInterval \"10us\"\n";
+        }
+        {
+            std::ofstream health(caseDir / "link_health.csv");
+            health << "timeNs,nodeId,portId,action,value\n"
+                      "15000,0,1,DOWN,\n"
+                      "55000,0,1,UP,\n";
+        }
+        auto [status, output] = RunQuickExampleAbsoluteCaseCommand(
+            CreateTempDirFilename("ub-flexspray-v7-recycle.log"), "", "", caseDir);
+        NS_TEST_ASSERT_MSG_EQ(status, 0, "recycle case must complete: " << output);
+        uint32_t completed = 0;
+        for (const auto& entry : std::filesystem::directory_iterator(caseDir / "runlog"))
+        {
+            if (entry.path().filename().string().rfind("TaskTrace", 0) != 0)
+            {
+                continue;
+            }
+            std::ifstream in(entry.path());
+            std::string line;
+            while (std::getline(in, line))
+            {
+                completed += line.find("WQE Completes") != std::string::npos ? 1 : 0;
+            }
+        }
+        NS_TEST_ASSERT_MSG_EQ(completed, 2u, "both pre-fault and post-UP WQEs must complete");
+        std::ifstream events(caseDir / "runlog/FailureEvent.csv");
+        std::string line;
+        uint32_t recycles = 0;
+        while (std::getline(events, line))
+        {
+            if (line.find("RECYCLE gen=1") != std::string::npos)
+            {
+                ++recycles;
+            }
+        }
+        NS_TEST_ASSERT_MSG_GT(recycles, 0u, "dead TPs must recycle to gen=1 after link comes UP");
+
+        // 3. Bidirectional traffic under rapid DOWN -> UP -> DOWN -> UP link flapping with
+        // PortCommitDelay enabled (guards against parked DIRECT_TP response queues and dropped
+        // ACKs during asymmetric peer recycle).
+        const std::filesystem::path flapDir =
+            std::filesystem::path(CreateTempDirFilename("ub-flexspray-v7-recycle-bidir"));
+        std::filesystem::remove_all(flapDir);
+        std::filesystem::create_directories(flapDir);
+        for (const char* f : {"node.csv", "topology.csv", "routing_table.csv",
+                              "transport_channel.csv", "network_attribute.txt"})
+        {
+            std::filesystem::copy_file(repoRoot / "scratch/2nodes_multiple-tp" / f, flapDir / f);
+        }
+        {
+            std::ofstream traffic(flapDir / "traffic.csv");
+            traffic << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
+                       "dependOnPhases\n"
+                       "0,0,1,12000000,URMA_WRITE,7,10ns,0,\n"
+                       "1,1,0,12000000,URMA_WRITE,7,10ns,0,\n"
+                       "2,0,1,8000000,URMA_WRITE,7,120000ns,0,\n"
+                       "3,1,0,8000000,URMA_WRITE,7,120000ns,0,\n";
+        }
+        {
+            std::ofstream attrs(flapDir / "network_attribute.txt", std::ios::app);
+            attrs << "\nglobal UB_PARSE_TRACE_ENABLE \"false\"\n"
+                     "global UB_PACKET_TRACE_ENABLE \"false\"\n"
+                     "global UB_RECORD_PKT_TRACE \"false\"\n"
+                     "global UB_CC_ENABLED \"true\"\n"
+                     "global UB_CC_ALGO \"SPRAYCC\"\n"
+                     "default ns3::UbApp::RoutingType \"PER_PACKET_SHORTEST_PATHS\"\n"
+                     "default ns3::UbTransportChannel::RoutingType \"PER_PACKET_SHORTEST_PATHS\"\n"
+                     "default ns3::UbRoutingProcess::MultipathSelector \"ADAPTIVE_RATE\"\n"
+                     "default ns3::UbTransaction::TpgDispatchPolicy \"MIN_DRAIN_TIME\"\n"
+                     "default ns3::UbTransportChannel::ResponseVl \"1\"\n"
+                     "default ns3::UbTransportChannel::FailureDetection \"true\"\n"
+                     "default ns3::UbTransportChannel::EnableRetrans \"true\"\n"
+                     "default ns3::UbTransportChannel::RetransmissionMode \"GBN\"\n"
+                     "default ns3::UbJetty::TaSegmentBytes \"16384\"\n"
+                     "default ns3::UbTransportChannel::PortCommitDelay \"6us\"\n"
+                     "default ns3::UbTransportChannel::CommitDelayRttFactor \"4.0\"\n"
+                     "default ns3::UbTransportChannel::RecycleAfterLinkUp \"true\"\n"
+                     "default ns3::UbTransportChannel::FailureRecycleInterval \"25us\"\n";
+        }
+        {
+            std::ofstream health(flapDir / "link_health.csv");
+            health << "timeNs,nodeId,portId,action,value\n"
+                      "15000,0,1,DOWN,\n"
+                      "45000,0,1,UP,\n"
+                      "75000,0,1,DOWN,\n"
+                      "105000,0,1,UP,\n";
+        }
+        auto [flapStatus, flapOutput] = RunQuickExampleAbsoluteCaseCommand(
+            CreateTempDirFilename("ub-flexspray-v7-recycle-bidir.log"), "", "", flapDir);
+        NS_TEST_ASSERT_MSG_EQ(flapStatus, 0, "bidirectional flap case must complete: " << flapOutput);
+        uint32_t flapCompleted = 0;
+        for (const auto& entry : std::filesystem::directory_iterator(flapDir / "runlog"))
+        {
+            if (entry.path().filename().string().rfind("TaskTrace", 0) != 0)
+            {
+                continue;
+            }
+            std::ifstream in(entry.path());
+            std::string tline;
+            while (std::getline(in, tline))
+            {
+                flapCompleted += tline.find("WQE Completes") != std::string::npos ? 1 : 0;
+            }
+        }
+        NS_TEST_ASSERT_MSG_EQ(flapCompleted, 4u, "all bidirectional pre/post flap WQEs must complete");
+        std::ifstream flapEvents(flapDir / "runlog/FailureEvent.csv");
+        std::string fline;
+        uint32_t recyclesGen2 = 0;
+        while (std::getline(flapEvents, fline))
+        {
+            if (fline.find("RECYCLE gen=2") != std::string::npos)
+            {
+                ++recyclesGen2;
+            }
+        }
+        NS_TEST_ASSERT_MSG_GT(recyclesGen2, 0u, "flapping TPs must recycle through gen=2");
+    }
+};
+
+class UbFlexSprayAutoScaleRateRttTest : public TestCase
+{
+  public:
+    UbFlexSprayAutoScaleRateRttTest()
+        : TestCase("UnifiedBus - FlexSpray v7 dimensionless rate/RTT auto-scaling")
+    {
+    }
+
+    void DoRun() override
+    {
+        SetDataDir(NS_TEST_SOURCEDIR);
+        const std::filesystem::path repoRoot = LocateRepoRoot();
+        const std::filesystem::path caseDir =
+            std::filesystem::path(CreateTempDirFilename("ub-flexspray-v7-autoscale"));
+        std::filesystem::remove_all(caseDir);
+        std::filesystem::create_directories(caseDir);
+        for (const char* f : {"node.csv", "routing_table.csv",
+                              "transport_channel.csv", "network_attribute.txt"})
+        {
+            std::filesystem::copy_file(repoRoot / "scratch/2nodes_multiple-tp" / f, caseDir / f);
+        }
+        {
+            std::ifstream in(repoRoot / "scratch/2nodes_multiple-tp/topology.csv");
+            std::ofstream out(caseDir / "topology.csv");
+            std::string line;
+            bool header = true;
+            while (std::getline(in, line))
+            {
+                if (header)
+                {
+                    header = false;
+                    out << line << "\n";
+                    continue;
+                }
+                if (line.empty())
+                {
+                    continue;
+                }
+                // Rewrite 400Gbps,20ns -> 100Gbps,5000ns to verify RTT + rate scaling without
+                // false FailureDetection timeouts.
+                std::stringstream ss(line);
+                std::string f0, f1, f2, f3;
+                std::getline(ss, f0, ',');
+                std::getline(ss, f1, ',');
+                std::getline(ss, f2, ',');
+                std::getline(ss, f3, ',');
+                out << f0 << ',' << f1 << ',' << f2 << ',' << f3 << ",100Gbps,5000ns\n";
+            }
+        }
+        {
+            std::ofstream traffic(caseDir / "traffic.csv");
+            traffic << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
+                       "dependOnPhases\n"
+                       "0,0,1,4000000,URMA_WRITE,7,10ns,0,\n"
+                       "1,0,1,4000000,URMA_READ,7,10ns,0,\n";
+        }
+        {
+            std::ofstream attrs(caseDir / "network_attribute.txt", std::ios::app);
+            attrs << "\nglobal UB_PARSE_TRACE_ENABLE \"false\"\n"
+                     "global UB_PACKET_TRACE_ENABLE \"false\"\n"
+                     "global UB_RECORD_PKT_TRACE \"false\"\n"
+                     "global UB_CC_ENABLED \"true\"\n"
+                     "global UB_CC_ALGO \"SPRAYCC\"\n"
+                     "default ns3::UbApp::RoutingType \"PER_PACKET_SHORTEST_PATHS\"\n"
+                     "default ns3::UbTransportChannel::RoutingType \"PER_PACKET_SHORTEST_PATHS\"\n"
+                     "default ns3::UbRoutingProcess::MultipathSelector \"ADAPTIVE_RATE\"\n"
+                     "default ns3::UbTransaction::TpgDispatchPolicy \"MIN_DRAIN_TIME\"\n"
+                     "default ns3::UbTransportChannel::ResponseVl \"1\"\n"
+                     "default ns3::UbTransportChannel::FailureDetection \"true\"\n"
+                     "default ns3::UbTransportChannel::FailureSuspectAfter \"10us\"\n"
+                     "default ns3::UbTransportChannel::FailureProbeTimeout \"5us\"\n"
+                     "default ns3::UbTransportChannel::EnableRetrans \"true\"\n"
+                     "default ns3::UbTransportChannel::RetransmissionMode \"GBN\"\n"
+                     "default ns3::UbJetty::TaSegmentBytes \"16384\"\n"
+                     "default ns3::UbTransportChannel::RtoSrttFactor \"8\"\n"
+                     "default ns3::UbTransportChannel::RtoFloorFirstOnly \"true\"\n"
+                     "default ns3::UbTransportChannel::PortCommitDelay \"0ns\"\n"
+                     "default ns3::UbTransportChannel::CommitDelayRttFactor \"4\"\n"
+                     "default ns3::UbTransportChannel::ReadPortBudgetBytes \"0\"\n"
+                     "default ns3::UbTransportChannel::ReadPortCommitDelay \"8us\"\n"
+                     "default ns3::UbTransportChannel::ProbeTimeoutSrttFactor \"2.5\"\n"
+                     "default ns3::UbTransaction::ServiceTimeScore \"true\"\n"
+                     "default ns3::UbTransportChannel::ServiceResidual \"true\"\n";
+        }
+        {
+            std::ofstream health(caseDir / "link_health.csv");
+            health << "timeNs,nodeId,portId,action,value\n100000,1,1,DEGRADE,1/4\n";
+        }
+        auto [status, output] = RunQuickExampleAbsoluteCaseCommand(
+            CreateTempDirFilename("ub-flexspray-v7-autoscale.log"), "", "", caseDir);
+        NS_TEST_ASSERT_MSG_EQ(status, 0, "autoscale case should complete: " << output);
+        uint32_t completed = 0;
+        for (const auto& entry : std::filesystem::directory_iterator(caseDir / "runlog"))
+        {
+            if (entry.path().filename().string().rfind("TaskTrace", 0) != 0)
+            {
+                continue;
+            }
+            std::ifstream in(entry.path());
+            std::string line;
+            while (std::getline(in, line))
+            {
+                completed += line.find("WQE Completes") != std::string::npos ? 1 : 0;
+            }
+        }
+        NS_TEST_ASSERT_MSG_EQ(completed, 2u, "both WRITE and READ must complete at 100G + 5us delay");
+        std::ifstream events(caseDir / "runlog/FailureEvent.csv");
+        std::string line;
+        uint32_t falseDeaths = 0;
+        while (std::getline(events, line))
+        {
+            if (line.find("probe-timeout") != std::string::npos)
+            {
+                ++falseDeaths;
+            }
+        }
+        NS_TEST_ASSERT_MSG_EQ(falseDeaths,
+                              0u,
+                              "ProbeTimeoutSrttFactor must prevent false FD deaths on 5x RTT");
+    }
+};
+
+class UbFlexSpraySirdBaselineTest : public TestCase
+{
+  public:
+    UbFlexSpraySirdBaselineTest()
+        : TestCase("UnifiedBus - SIRD_CREDIT receiver credit budget, SRPT wake, and mixed R/W")
+    {
+    }
+
+    void DoRun() override
+    {
+        SetDataDir(NS_TEST_SOURCEDIR);
+        const std::filesystem::path repoRoot = LocateRepoRoot();
+        const std::filesystem::path caseDir =
+            std::filesystem::path(CreateTempDirFilename("ub-flexspray-sird-baseline"));
+        std::filesystem::remove_all(caseDir);
+        std::filesystem::create_directories(caseDir);
+        for (const char* f : {"node.csv", "topology.csv", "routing_table.csv",
+                              "transport_channel.csv", "network_attribute.txt"})
+        {
+            std::filesystem::copy_file(repoRoot / "scratch/2nodes_multiple-tp" / f, caseDir / f);
+        }
+        {
+            std::ofstream traffic(caseDir / "traffic.csv");
+            traffic << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
+                       "dependOnPhases\n"
+                       "0,0,1,8000000,URMA_WRITE,7,10ns,0,\n"
+                       "1,0,1,8000000,URMA_WRITE,7,20ns,0,\n"
+                       "2,0,1,32768,URMA_WRITE,7,5000ns,0,\n"
+                       "3,0,1,2000000,URMA_READ,7,30ns,0,\n";
+        }
+        {
+            std::ofstream attrs(caseDir / "network_attribute.txt", std::ios::app);
+            attrs << "\nglobal UB_PARSE_TRACE_ENABLE \"false\"\n"
+                     "global UB_PACKET_TRACE_ENABLE \"false\"\n"
+                     "global UB_RECORD_PKT_TRACE \"false\"\n"
+                     "global UB_CC_ENABLED \"true\"\n"
+                     "global UB_CC_ALGO \"SPRAYCC\"\n"
+                     "default ns3::UbApp::RoutingType \"PER_PACKET_SHORTEST_PATHS\"\n"
+                     "default ns3::UbTransportChannel::RoutingType \"PER_PACKET_SHORTEST_PATHS\"\n"
+                     "default ns3::UbRoutingProcess::MultipathSelector \"HASH64\"\n"
+                     "default ns3::UbTransaction::TpgDispatchPolicy \"SIRD_CREDIT\"\n"
+                     "default ns3::UbTransaction::SirdRxBudgetBytes \"65536\"\n"
+                     "default ns3::UbTransportChannel::ResponseVl \"1\"\n"
+                     "default ns3::UbTransportChannel::FailureDetection \"true\"\n"
+                     "default ns3::UbTransportChannel::EnableRetrans \"true\"\n"
+                     "default ns3::UbTransportChannel::RetransmissionMode \"GBN\"\n"
+                     "default ns3::UbJetty::TaSegmentBytes \"16384\"\n";
+        }
+        auto [status, output] = RunQuickExampleAbsoluteCaseCommand(
+            CreateTempDirFilename("ub-flexspray-sird-baseline.log"), "", "", caseDir);
+        NS_TEST_ASSERT_MSG_EQ(status, 0, "SIRD baseline case should complete: " << output);
+        std::map<uint32_t, double> doneUs;
+        for (const auto& entry : std::filesystem::directory_iterator(caseDir / "runlog"))
+        {
+            if (entry.path().filename().string().rfind("TaskTrace", 0) != 0)
+            {
+                continue;
+            }
+            std::ifstream in(entry.path());
+            std::string line;
+            while (std::getline(in, line))
+            {
+                if (line.find("WQE Completes") == std::string::npos)
+                {
+                    continue;
+                }
+                const auto c1 = line.find(',');
+                const auto c2 = c1 == std::string::npos ? std::string::npos : line.find(',', c1 + 1);
+                const auto c3 = c2 == std::string::npos ? std::string::npos : line.find(',', c2 + 1);
+                if (c1 != std::string::npos && c2 != std::string::npos && c3 != std::string::npos)
+                {
+                    doneUs[std::stoul(line.substr(c2 + 1, c3 - c2 - 1))] =
+                        std::stoull(line.substr(0, c1)) / 1e6;
+                }
+            }
+        }
+        NS_TEST_ASSERT_MSG_EQ(doneUs.size(), 4u, "all 4 SIRD WQEs (WRITE + READ + short) must complete");
+        NS_TEST_ASSERT_MSG_LT(doneUs[2],
+                              doneUs[0],
+                              "SRPT waiter wake must finish the 32KB WQE ahead of the 8MB bulk WQE");
+    }
+};
+
+class UbFlexSprayLossyDropSackTest : public TestCase
+{
+  public:
+    UbFlexSprayLossyDropSackTest()
+        : TestCase("UnifiedBus - Lossy FlowControl=NONE switch buffer drop + SELECTIVE SACK + SprayCC")
+    {
+    }
+
+    void DoRun() override
+    {
+        SetDataDir(NS_TEST_SOURCEDIR);
+        const std::filesystem::path repoRoot = LocateRepoRoot();
+        const std::filesystem::path caseDir =
+            std::filesystem::path(CreateTempDirFilename("ub-flexspray-lossy-sack"));
+        std::filesystem::remove_all(caseDir);
+        std::filesystem::create_directories(caseDir);
+        for (const char* f : {"node.csv", "topology.csv", "routing_table.csv",
+                              "transport_channel.csv", "network_attribute.txt"})
+        {
+            std::filesystem::copy_file(repoRoot / "scratch/2nodes_multiple-tp" / f, caseDir / f);
+        }
+        {
+            std::ofstream traffic(caseDir / "traffic.csv");
+            traffic << "taskId,sourceNode,destNode,dataSize(Byte),opType,priority,delay,phaseId,"
+                       "dependOnPhases\n"
+                       "0,0,1,4000000,URMA_WRITE,7,10ns,0,\n"
+                       "1,0,1,4000000,URMA_WRITE,7,10ns,0,\n";
+        }
+        {
+            std::ofstream attrs(caseDir / "network_attribute.txt", std::ios::app);
+            attrs << "\nglobal UB_PARSE_TRACE_ENABLE \"false\"\n"
+                     "global UB_PACKET_TRACE_ENABLE \"false\"\n"
+                     "global UB_RECORD_PKT_TRACE \"false\"\n"
+                     "global UB_CC_ENABLED \"true\"\n"
+                     "global UB_CC_ALGO \"SPRAYCC\"\n"
+                     "default ns3::UbSwitch::FlowControl \"NONE\"\n"
+                     "default ns3::UbQueueManager::ReservePerQueueBytes \"12288\"\n"
+                     "default ns3::UbQueueManager::SharedPoolBytes \"0\"\n"
+                     "default ns3::UbQueueManager::HeadroomPerPortBytes \"0\"\n"
+                     "default ns3::UbApp::RoutingType \"PER_PACKET_SHORTEST_PATHS\"\n"
+                     "default ns3::UbTransportChannel::RoutingType \"PER_PACKET_SHORTEST_PATHS\"\n"
+                     "default ns3::UbRoutingProcess::MultipathSelector \"ADAPTIVE_RATE\"\n"
+                     "default ns3::UbTransaction::TpgDispatchPolicy \"MIN_DRAIN_TIME\"\n"
+                     "default ns3::UbSwitchAllocator::TpGroupFairShare \"true\"\n"
+                     "default ns3::UbTransportChannel::ResponseVl \"1\"\n"
+                     "default ns3::UbTransportChannel::FailureDetection \"true\"\n"
+                     "default ns3::UbTransportChannel::EnableRetrans \"true\"\n"
+                     "default ns3::UbTransportChannel::RetransmissionMode \"SELECTIVE\"\n"
+                     "default ns3::UbTransportChannel::EnableFastRetrans \"true\"\n"
+                     "default ns3::UbJetty::TaSegmentBytes \"16384\"\n";
+        }
+        {
+            std::ofstream health(caseDir / "link_health.csv");
+            health << "timeNs,nodeId,portId,action,value\n20000,1,1,DEGRADE,1/4\n";
+        }
+        auto [status, output] = RunQuickExampleAbsoluteCaseCommand(
+            CreateTempDirFilename("ub-flexspray-lossy-sack.log"), "", "", caseDir);
+        NS_TEST_ASSERT_MSG_EQ(status, 0, "lossy SACK case should complete: " << output);
+        uint32_t completed = 0;
+        for (const auto& entry : std::filesystem::directory_iterator(caseDir / "runlog"))
+        {
+            if (entry.path().filename().string().rfind("TaskTrace", 0) != 0)
+            {
+                continue;
+            }
+            std::ifstream in(entry.path());
+            std::string line;
+            while (std::getline(in, line))
+            {
+                completed += line.find("WQE Completes") != std::string::npos ? 1 : 0;
+            }
+        }
+        NS_TEST_ASSERT_MSG_EQ(completed, 2u, "both lossy SACK WQEs must recover drops and complete");
+    }
+};
+
 class UbFlexSpraySuite : public TestSuite
 {
   public:
@@ -40988,5 +41656,11 @@ class UbFlexSpraySuite : public TestSuite
         AddTestCase(new UbFlexSprayV6FarEndDegradeSystemTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbRepsCacheAndComparatorPoliciesTest(), TestCase::Duration::QUICK);
         AddTestCase(new UbDcqcnLateCnpDuringDrainTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbFlexSpraySilenceResidualControlLatencyTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbFlexSprayLinkRestoreAndFlapTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbFlexSprayHardDownRecycleTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbFlexSprayAutoScaleRateRttTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbFlexSpraySirdBaselineTest(), TestCase::Duration::QUICK);
+        AddTestCase(new UbFlexSprayLossyDropSackTest(), TestCase::Duration::QUICK);
     }
 } g_ubFlexSpraySuite;
